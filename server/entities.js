@@ -124,6 +124,22 @@ export const entityRegistry = {
   Supplier: {
     defaults: { status: 'active' }
   },
+  User: {
+    defaults: { role: 'user', status: 'active' },
+    schema: z.object({
+      email: z.string().trim().email('A valid email address is required'),
+      full_name: stringOptional,
+      role: z.enum(['admin', 'manager', 'user']).optional().nullable(),
+      status: stringOptional,
+      site_id: stringOptional,
+      site_name: stringOptional,
+      password: stringOptional,
+      temporary_password: stringOptional,
+      phone: stringOptional,
+      language: stringOptional,
+      avatar_url: stringOptional
+    }).passthrough()
+  },
   UserGroup: {
     defaults: { total_members: 0, members: [] }
   },

@@ -28,8 +28,34 @@ const randomId = (prefix = 'doc') => `${prefix}_${crypto.randomUUID()}`;
 
 function sanitizeUser(user) {
   if (!user) return null;
-  const { password_hash, temporary_password, ...publicUser } = user;
+  const { password_hash, temporary_password, password, ...publicUser } = user;
   return publicUser;
+}
+
+function resolvePasswordFields(data = {}, existing = null) {
+  const nextPassword = typeof data.password === 'string' ? data.password.trim() : '';
+  const nextTemporaryPassword = typeof data.temporary_password === 'string'
+    ? data.temporary_password.trim()
+    : '';
+
+  if (nextPassword) {
+    return {
+      password_hash: bcrypt.hashSync(nextPassword, 10),
+      temporary_password: null
+    };
+  }
+
+  if (nextTemporaryPassword) {
+    return {
+      password_hash: bcrypt.hashSync(nextTemporaryPassword, 10),
+      temporary_password: nextTemporaryPassword
+    };
+  }
+
+  return {
+    password_hash: data.password_hash || existing?.password_hash || null,
+    temporary_password: existing?.temporary_password || null
+  };
 }
 
 function toUserRecord(row) {
@@ -212,6 +238,12 @@ async function createUser(data) {
 
   const id = data.id || randomId('user');
   const timestamp = nowIso();
+  const credentials = resolvePasswordFields(data);
+  if (!credentials.password_hash) {
+    const error = new Error('Password is required when creating a user');
+    error.status = 400;
+    throw error;
+  }
   const profile = { ...data };
   delete profile.id;
   delete profile.email;
@@ -220,6 +252,7 @@ async function createUser(data) {
   delete profile.status;
   delete profile.site_id;
   delete profile.site_name;
+  delete profile.password;
   delete profile.password_hash;
   delete profile.temporary_password;
   delete profile.created_date;
@@ -236,8 +269,8 @@ async function createUser(data) {
       data.status || 'active',
       data.site_id || null,
       data.site_name || null,
-      data.password_hash,
-      data.temporary_password || null,
+      credentials.password_hash,
+      credentials.temporary_password,
       JSON.stringify(profile),
       timestamp
     ]
@@ -250,9 +283,11 @@ async function updateUser(id, patch) {
   const existing = await findUserById(id);
   if (!existing) return null;
 
+  const credentials = resolvePasswordFields(patch, existing);
   const merged = {
     ...existing,
     ...patch,
+    ...credentials,
     id,
     updated_date: nowIso()
   };
@@ -264,6 +299,7 @@ async function updateUser(id, patch) {
   delete profile.status;
   delete profile.site_id;
   delete profile.site_name;
+  delete profile.password;
   delete profile.password_hash;
   delete profile.temporary_password;
   delete profile.created_date;
@@ -433,8 +469,7 @@ async function inviteUser(email, role = 'user') {
     full_name: email.split('@')[0],
     role,
     status: 'invited',
-    temporary_password: temporaryPassword,
-    password_hash: bcrypt.hashSync(temporaryPassword, 10)
+    temporary_password: temporaryPassword
   });
 }
 

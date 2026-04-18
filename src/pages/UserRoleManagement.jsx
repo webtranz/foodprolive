@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,72 +11,95 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import PageHeader from '@/components/ui/PageHeader';
 import { usePermissions } from '@/components/auth/usePermissions';
-import { Shield, User, Briefcase, ShieldAlert, UserPlus, Mail, Pencil, Building2, CheckCircle2 } from 'lucide-react';
+import { Shield, User, Briefcase, ShieldAlert, UserPlus, Mail, Pencil, Building2, KeyRound } from 'lucide-react';
 
 const ROLE_CONFIG = {
   admin: {
     label: 'Administrator',
     color: 'bg-red-100 text-red-800 border-red-200',
     icon: Shield,
-    description: 'Full access — manage users, sessions, reports, and all modules',
-    permissions: ['Scan QR', 'Dashboard', 'Reports', 'Create Sessions', 'Manage Sessions', 'Manage Groups', 'Manage Users', 'Delete Records', 'Export Data'],
+    description: 'Full access - manage users, sessions, reports, and all modules',
+    permissions: ['Scan QR', 'Dashboard', 'Reports', 'Create Sessions', 'Manage Sessions', 'Manage Groups', 'Manage Users', 'Delete Records', 'Export Data']
   },
   manager: {
     label: 'Manager',
     color: 'bg-amber-100 text-amber-800 border-amber-200',
     icon: Briefcase,
-    description: 'Can create sessions, manage groups, view reports — cannot manage users',
-    permissions: ['Scan QR', 'Dashboard', 'Reports', 'Create Sessions', 'Manage Sessions', 'Manage Groups', 'Export Data'],
+    description: 'Can create sessions, manage groups, and view reports',
+    permissions: ['Scan QR', 'Dashboard', 'Reports', 'Create Sessions', 'Manage Sessions', 'Manage Groups', 'Export Data']
   },
   user: {
     label: 'Regular User',
     color: 'bg-blue-100 text-blue-800 border-blue-200',
     icon: User,
-    description: 'Can scan QR codes and view the attendance dashboard only',
-    permissions: ['Scan QR', 'Dashboard'],
-  },
+    description: 'Can scan QR codes and view the attendance dashboard',
+    permissions: ['Scan QR', 'Dashboard']
+  }
+};
+
+const emptyCreateForm = {
+  full_name: '',
+  email: '',
+  password: '',
+  role: 'user',
+  site_id: ''
+};
+
+const emptyEditForm = {
+  full_name: '',
+  role: 'user',
+  site_id: '',
+  password: ''
 };
 
 export default function UserRoleManagement() {
-  const { can, isAdmin, loading: permLoading } = usePermissions();
+  const { can, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
-  const [savingId, setSavingId] = useState(null);
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
-  const [deleteUser, setDeleteUser] = useState(null);
-  const [inviteSent, setInviteSent] = useState(false);
-  const [inviteForm, setInviteForm] = useState({ email: '', role: 'user', site_id: '' });
-  const [editForm, setEditForm] = useState({ role: 'user', site_id: '' });
+  const [createError, setCreateError] = useState('');
+  const [editError, setEditError] = useState('');
+  const [createForm, setCreateForm] = useState(emptyCreateForm);
+  const [editForm, setEditForm] = useState(emptyEditForm);
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['users'],
-    queryFn: () => base44.entities.User.list(),
+    queryFn: () => base44.entities.User.list()
   });
 
   const { data: sites = [] } = useQuery({
     queryKey: ['sites'],
-    queryFn: () => base44.entities.Site.list(),
+    queryFn: () => base44.entities.Site.list()
   });
 
-  const inviteMutation = useMutation({
-    mutationFn: async ({ email, role, site_id }) => {
-      const invited = await base44.users.inviteUser(email, role);
-      // If site assigned, update the newly created user's site after a short delay
-      if (site_id) {
-        const newUsers = await base44.entities.User.list();
-        const newUser = newUsers.find(u => u.email === email);
-        if (newUser) {
-          const site = sites.find(s => s.id === site_id);
-          await base44.entities.User.update(newUser.id, { site_id, site_name: site?.name || '' });
-        }
-      }
-      return invited;
+  const adminUsers = useMemo(
+    () => users.filter((user) => (user.role || 'user') === 'admin'),
+    [users]
+  );
+
+  const createUserMutation = useMutation({
+    mutationFn: async ({ full_name, email, password, role, site_id }) => {
+      const site = sites.find((entry) => entry.id === site_id);
+      return base44.entities.User.create({
+        full_name: full_name.trim(),
+        email: email.trim().toLowerCase(),
+        password,
+        role,
+        status: 'active',
+        site_id: role === 'admin' ? null : (site_id || null),
+        site_name: role === 'admin' ? null : (site?.name || null)
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      setInviteSent(true);
+      setCreateOpen(false);
+      setCreateError('');
+      setCreateForm(emptyCreateForm);
     },
+    onError: (error) => {
+      setCreateError(error.message || 'Failed to create user');
+    }
   });
 
   const updateUserMutation = useMutation({
@@ -85,37 +108,81 @@ export default function UserRoleManagement() {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       setEditOpen(false);
       setEditingUser(null);
-      setSavingId(null);
+      setEditError('');
+      setEditForm(emptyEditForm);
     },
-    onSettled: () => setSavingId(null),
+    onError: (error) => {
+      setEditError(error.message || 'Failed to update user');
+    }
   });
 
-  const openInvite = () => {
-    setInviteForm({ email: '', role: 'user', site_id: '' });
-    setInviteSent(false);
-    setInviteOpen(true);
+  const openCreate = () => {
+    setCreateForm(emptyCreateForm);
+    setCreateError('');
+    setCreateOpen(true);
   };
 
   const openEdit = (user) => {
     setEditingUser(user);
-    setEditForm({ role: user.role || 'user', site_id: user.site_id || '' });
+    setEditForm({
+      full_name: user.full_name || '',
+      role: user.role || 'user',
+      site_id: user.site_id || '',
+      password: ''
+    });
+    setEditError('');
     setEditOpen(true);
   };
 
-  const handleInviteSubmit = (e) => {
-    e.preventDefault();
-    inviteMutation.mutate(inviteForm);
+  const handleCreateSubmit = (event) => {
+    event.preventDefault();
+    setCreateError('');
+
+    if (!createForm.full_name.trim()) {
+      setCreateError('Full name is required');
+      return;
+    }
+
+    if (createForm.password.trim().length < 8) {
+      setCreateError('Password must be at least 8 characters long');
+      return;
+    }
+
+    createUserMutation.mutate(createForm);
   };
 
-  const handleEditSubmit = (e) => {
-    e.preventDefault();
-    const site = sites.find(s => s.id === editForm.site_id);
+  const handleEditSubmit = (event) => {
+    event.preventDefault();
+    setEditError('');
+
+    if (!editingUser) {
+      return;
+    }
+
+    if (!editForm.full_name.trim()) {
+      setEditError('Full name is required');
+      return;
+    }
+
+    if (adminUsers.length === 1 && editingUser.id === adminUsers[0].id && editForm.role !== 'admin') {
+      setEditError('At least one administrator must remain in the system');
+      return;
+    }
+
+    if (editForm.password && editForm.password.trim().length < 8) {
+      setEditError('New password must be at least 8 characters long');
+      return;
+    }
+
+    const site = sites.find((entry) => entry.id === editForm.site_id);
     updateUserMutation.mutate({
       id: editingUser.id,
       data: {
+        full_name: editForm.full_name.trim(),
         role: editForm.role,
-        site_id: editForm.site_id || null,
-        site_name: site?.name || null,
+        site_id: editForm.role === 'admin' ? null : (editForm.site_id || null),
+        site_name: editForm.role === 'admin' ? null : (site?.name || null),
+        ...(editForm.password.trim() ? { password: editForm.password.trim() } : {})
       }
     });
   };
@@ -139,18 +206,17 @@ export default function UserRoleManagement() {
       <div className="max-w-5xl mx-auto space-y-6">
         <PageHeader
           title="User Management"
-          description="Invite users, assign roles and sites to control access"
+          description="Create active users, assign roles, and control site access from one place"
         >
-          <Button onClick={openInvite} className="bg-emerald-600 hover:bg-emerald-700">
-            <UserPlus className="w-4 h-4 mr-2" /> Invite User
+          <Button onClick={openCreate} className="bg-emerald-600 hover:bg-emerald-700">
+            <UserPlus className="w-4 h-4 mr-2" /> Create User
           </Button>
         </PageHeader>
 
-        {/* Role Overview Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {Object.entries(ROLE_CONFIG).map(([roleKey, cfg]) => {
             const Icon = cfg.icon;
-            const count = users.filter(u => (u.role || 'user') === roleKey).length;
+            const count = users.filter((user) => (user.role || 'user') === roleKey).length;
             return (
               <Card key={roleKey} className="border-2 border-slate-100">
                 <CardHeader className="pb-2">
@@ -165,8 +231,8 @@ export default function UserRoleManagement() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex flex-wrap gap-1">
-                    {cfg.permissions.map(p => (
-                      <Badge key={p} variant="secondary" className="text-xs">{p}</Badge>
+                    {cfg.permissions.map((permission) => (
+                      <Badge key={permission} variant="secondary" className="text-xs">{permission}</Badge>
                     ))}
                   </div>
                 </CardContent>
@@ -175,15 +241,14 @@ export default function UserRoleManagement() {
           })}
         </div>
 
-        {/* User List */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
                 <Shield className="w-5 h-5" /> All Users ({users.length})
               </CardTitle>
-              <Button onClick={openInvite} size="sm" className="bg-emerald-600 hover:bg-emerald-700">
-                <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Invite
+              <Button onClick={openCreate} size="sm" className="bg-emerald-600 hover:bg-emerald-700">
+                <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Create
               </Button>
             </div>
           </CardHeader>
@@ -194,22 +259,28 @@ export default function UserRoleManagement() {
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>Assigned Site</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {users.map(user => {
+                {users.map((user) => {
                   const roleKey = user.role || 'user';
                   const cfg = ROLE_CONFIG[roleKey] || ROLE_CONFIG.user;
                   const Icon = cfg.icon;
                   return (
                     <TableRow key={user.id}>
-                      <TableCell className="font-medium">{user.full_name || '—'}</TableCell>
+                      <TableCell className="font-medium">{user.full_name || '-'}</TableCell>
                       <TableCell className="text-sm text-slate-600">{user.email}</TableCell>
                       <TableCell>
                         <Badge className={`${cfg.color} flex items-center gap-1 w-fit`}>
                           <Icon className="w-3 h-3" />{cfg.label}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={user.status === 'active' ? 'default' : 'secondary'}>
+                          {user.status || 'active'}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -222,19 +293,16 @@ export default function UserRoleManagement() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" className="h-7 w-7"
-                            onClick={() => openEdit(user)}>
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(user)}>
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
                       </TableCell>
                     </TableRow>
                   );
                 })}
                 {users.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-slate-400">No users found</TableCell>
+                    <TableCell colSpan={6} className="text-center py-8 text-slate-400">No users found</TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -243,103 +311,107 @@ export default function UserRoleManagement() {
         </Card>
       </div>
 
-      {/* Invite User Dialog */}
-      <Dialog open={inviteOpen} onOpenChange={(o) => { if (!o) { setInviteOpen(false); setInviteSent(false); } }}>
+      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setCreateError(''); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-emerald-600" /> Invite New User
+              <UserPlus className="w-5 h-5 text-emerald-600" /> Create New User
             </DialogTitle>
           </DialogHeader>
+          <form onSubmit={handleCreateSubmit} className="space-y-4">
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">Full Name <span className="text-red-500">*</span></Label>
+              <Input
+                required
+                value={createForm.full_name}
+                onChange={(event) => setCreateForm((current) => ({ ...current, full_name: event.target.value }))}
+                placeholder="Kitchen Supervisor"
+              />
+            </div>
 
-          {inviteSent ? (
-            <div className="text-center py-6">
-              <CheckCircle2 className="w-14 h-14 text-emerald-500 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-slate-800">Invitation Sent!</h3>
-              <p className="text-sm text-slate-500 mt-1">
-                An invitation email has been sent to <strong>{inviteForm.email}</strong>.<br />
-                They will receive a link to set up their account.
-              </p>
-              <div className="mt-4 flex gap-2 justify-center">
-                <Button variant="outline" onClick={() => { setInviteSent(false); setInviteForm({ email: '', role: 'user', site_id: '' }); }}>
-                  Invite Another
-                </Button>
-                <Button onClick={() => setInviteOpen(false)} className="bg-emerald-600 hover:bg-emerald-700">Done</Button>
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">Email Address <span className="text-red-500">*</span></Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  type="email"
+                  required
+                  value={createForm.email}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, email: event.target.value }))}
+                  placeholder="user@example.com"
+                  className="pl-9"
+                />
               </div>
             </div>
-          ) : (
-            <form onSubmit={handleInviteSubmit} className="space-y-4">
-              <div>
-                <Label className="text-sm font-medium mb-1.5 block">Email Address <span className="text-red-500">*</span></Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <Input
-                    type="email"
-                    required
-                    value={inviteForm.email}
-                    onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
-                    placeholder="user@example.com"
-                    className="pl-9"
-                  />
-                </div>
-              </div>
 
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">Password <span className="text-red-500">*</span></Label>
+              <div className="relative">
+                <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  type="password"
+                  required
+                  minLength={8}
+                  value={createForm.password}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))}
+                  placeholder="Minimum 8 characters"
+                  className="pl-9"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">Role <span className="text-red-500">*</span></Label>
+              <Select value={createForm.role} onValueChange={(value) => setCreateForm((current) => ({ ...current, role: value }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin">Administrator</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
+                  <SelectItem value="user">Regular User</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-400 mt-1">{ROLE_CONFIG[createForm.role]?.description}</p>
+            </div>
+
+            {createForm.role !== 'admin' && (
               <div>
-                <Label className="text-sm font-medium mb-1.5 block">Role <span className="text-red-500">*</span></Label>
-                <Select value={inviteForm.role} onValueChange={v => setInviteForm(f => ({ ...f, role: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Label className="text-sm font-medium mb-1.5 block">Assign to Site</Label>
+                <Select
+                  value={createForm.site_id || 'none'}
+                  onValueChange={(value) => setCreateForm((current) => ({ ...current, site_id: value === 'none' ? '' : value }))}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select a site (optional)" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">
-                      <div className="flex items-center gap-2"><Shield className="w-3.5 h-3.5 text-red-500" /> Administrator</div>
-                    </SelectItem>
-                    <SelectItem value="manager">
-                      <div className="flex items-center gap-2"><Briefcase className="w-3.5 h-3.5 text-amber-500" /> Manager</div>
-                    </SelectItem>
-                    <SelectItem value="user">
-                      <div className="flex items-center gap-2"><User className="w-3.5 h-3.5 text-blue-500" /> Regular User</div>
-                    </SelectItem>
+                    <SelectItem value="none">No specific site</SelectItem>
+                    {sites.map((site) => (
+                      <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-slate-400 mt-1">{ROLE_CONFIG[inviteForm.role]?.description}</p>
               </div>
+            )}
 
-              {inviteForm.role !== 'admin' && (
-                <div>
-                  <Label className="text-sm font-medium mb-1.5 block">Assign to Site</Label>
-                  <Select value={inviteForm.site_id || 'none'} onValueChange={v => setInviteForm(f => ({ ...f, site_id: v === 'none' ? '' : v }))}>
-                    <SelectTrigger><SelectValue placeholder="Select a site (optional)" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No specific site</SelectItem>
-                      {sites.map(s => (
-                        <SelectItem key={s.id} value={s.id}>
-                          <div className="flex items-center gap-2">
-                            <Building2 className="w-3.5 h-3.5 text-slate-400" /> {s.name}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+            {createError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {createError}
+              </div>
+            ) : null}
 
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setInviteOpen(false)}>Cancel</Button>
-                <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700"
-                  disabled={inviteMutation.isPending}>
-                  {inviteMutation.isPending ? 'Sending…' : 'Send Invitation'}
-                </Button>
-              </DialogFooter>
-            </form>
-          )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+              <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={createUserMutation.isPending}>
+                {createUserMutation.isPending ? 'Creating...' : 'Create User'}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
-      {/* Edit User Dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+      <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) setEditError(''); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Pencil className="w-5 h-5 text-slate-600" /> Edit User — {editingUser?.full_name || editingUser?.email}
+              <Pencil className="w-5 h-5 text-slate-600" /> Edit User - {editingUser?.full_name || editingUser?.email}
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleEditSubmit} className="space-y-4">
@@ -348,8 +420,17 @@ export default function UserRoleManagement() {
             </div>
 
             <div>
+              <Label className="text-sm font-medium mb-1.5 block">Full Name</Label>
+              <Input
+                value={editForm.full_name}
+                onChange={(event) => setEditForm((current) => ({ ...current, full_name: event.target.value }))}
+                placeholder="User full name"
+              />
+            </div>
+
+            <div>
               <Label className="text-sm font-medium mb-1.5 block">Role</Label>
-              <Select value={editForm.role} onValueChange={v => setEditForm(f => ({ ...f, role: v }))}>
+              <Select value={editForm.role} onValueChange={(value) => setEditForm((current) => ({ ...current, role: value }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="admin">Administrator</SelectItem>
@@ -363,27 +444,46 @@ export default function UserRoleManagement() {
             {editForm.role !== 'admin' && (
               <div>
                 <Label className="text-sm font-medium mb-1.5 block">Assigned Site</Label>
-                <Select value={editForm.site_id || 'none'} onValueChange={v => setEditForm(f => ({ ...f, site_id: v === 'none' ? '' : v }))}>
+                <Select
+                  value={editForm.site_id || 'none'}
+                  onValueChange={(value) => setEditForm((current) => ({ ...current, site_id: value === 'none' ? '' : value }))}
+                >
                   <SelectTrigger><SelectValue placeholder="No specific site" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">No specific site</SelectItem>
-                    {sites.map(s => (
-                      <SelectItem key={s.id} value={s.id}>
-                        <div className="flex items-center gap-2">
-                          <Building2 className="w-3.5 h-3.5 text-slate-400" /> {s.name}
-                        </div>
-                      </SelectItem>
+                    {sites.map((site) => (
+                      <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
             )}
 
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">Reset Password</Label>
+              <div className="relative">
+                <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  type="password"
+                  minLength={8}
+                  value={editForm.password}
+                  onChange={(event) => setEditForm((current) => ({ ...current, password: event.target.value }))}
+                  placeholder="Leave blank to keep current password"
+                  className="pl-9"
+                />
+              </div>
+            </div>
+
+            {editError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {editError}
+              </div>
+            ) : null}
+
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
-              <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700"
-                disabled={updateUserMutation.isPending}>
-                {updateUserMutation.isPending ? 'Saving…' : 'Save Changes'}
+              <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={updateUserMutation.isPending}>
+                {updateUserMutation.isPending ? 'Saving...' : 'Save Changes'}
               </Button>
             </DialogFooter>
           </form>
