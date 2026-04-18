@@ -26,9 +26,10 @@ export default function Login() {
     }
   };
 
+  const routedError = location.state?.error === 'Authentication required' ? null : location.state?.error;
   const visibleError = authError?.type === 'auth_required'
-    ? null
-    : (authError?.message || location.state?.error || null);
+    ? routedError
+    : (authError?.message || routedError || null);
 
   return (
     <div className="min-h-screen bg-stone-50 text-slate-900 flex items-center justify-center p-6">

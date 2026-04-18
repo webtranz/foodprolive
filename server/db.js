@@ -153,11 +153,26 @@ async function seedDefaults() {
   const passwordHash = bcrypt.hashSync(adminPassword, 10);
   const existingUser = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [adminEmail]);
   if (existingUser.rowCount === 0) {
-    await query(
-      `INSERT INTO users (id, email, full_name, role, status, password_hash, created_at, updated_at)
-       VALUES ($1, $2, $3, 'admin', 'active', $4, NOW(), NOW())`,
-      [randomId('user'), adminEmail, adminName, passwordHash]
-    );
+    const anyAdmin = await query(`SELECT id FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`);
+    if (anyAdmin.rowCount > 0) {
+      await query(
+        `UPDATE users
+         SET email = $2,
+             full_name = $3,
+             role = 'admin',
+             status = 'active',
+             password_hash = $4,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [anyAdmin.rows[0].id, adminEmail, adminName, passwordHash]
+      );
+    } else {
+      await query(
+        `INSERT INTO users (id, email, full_name, role, status, password_hash, created_at, updated_at)
+         VALUES ($1, $2, $3, 'admin', 'active', $4, NOW(), NOW())`,
+        [randomId('user'), adminEmail, adminName, passwordHash]
+      );
+    }
   } else {
     await query(
       `UPDATE users
