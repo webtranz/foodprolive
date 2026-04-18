@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/AuthContext';
 export default function Login() {
   const location = useLocation();
   const { login, isAuthenticated, isLoadingAuth, authError } = useAuth();
-  const [form, setForm] = useState({ email: 'admin@foodpro.local', password: 'admin12345' });
+  const [form, setForm] = useState({ email: 'humayoonkhizar12@gmail.com', password: 'admin12345' });
   const [submitting, setSubmitting] = useState(false);
 
   if (isAuthenticated) {
