@@ -17,10 +17,18 @@ async function apiRequest(path, options = {}) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(path, {
-    ...options,
-    headers
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers
+    });
+  } catch (error) {
+    const networkError = new Error('Cannot reach the server. Check that the deployment is running and the domain points to the correct VPS.');
+    networkError.status = 503;
+    networkError.cause = error;
+    throw networkError;
+  }
 
   if (response.status === 204) {
     return null;
