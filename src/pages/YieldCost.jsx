@@ -1,0 +1,338 @@
+import React, { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { base44 } from '@/api/base44Client';
+import PageHeader from '@/components/ui/PageHeader';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { TrendingDown, DollarSign, Scale, Search, Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { downloadCSV } from '../components/utils/exportData';
+import StatCard from '@/components/ui/StatCard';
+import { Skeleton } from '@/components/ui/skeleton';
+import YieldTemplateDownload from '../components/yield/YieldTemplateDownload';
+import YieldUpload from '../components/yield/YieldUpload';
+import CostReport from '../components/yield/CostReport';
+
+export default function YieldCost() {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCuisine, setSelectedCuisine] = useState('all');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const queryClient = useQueryClient();
+
+  const { data: ingredients = [], isLoading } = useQuery({
+    queryKey: ['ingredients'],
+    queryFn: () => base44.entities.Ingredient.list()
+  });
+
+  const { data: recipes = [] } = useQuery({
+    queryKey: ['recipes'],
+    queryFn: () => base44.entities.Recipe.list()
+  });
+
+  const handleUploadSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ['ingredients'] });
+  };
+
+  const filteredIngredients = ingredients.filter(ing => {
+    const matchesSearch = ing.name?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCuisine = selectedCuisine === 'all' || ing.cuisine_type === selectedCuisine;
+    const matchesCategory = selectedCategory === 'all' || ing.category === selectedCategory;
+    return matchesSearch && matchesCuisine && matchesCategory;
+  });
+
+  // Calculate statistics
+  const avgYield = filteredIngredients.length > 0 
+    ? (filteredIngredients.reduce((sum, ing) => sum + (ing.cooking_yield_percent || 0), 0) / filteredIngredients.filter(i => i.cooking_yield_percent).length).toFixed(1)
+    : 0;
+
+  const avgShrinkage = filteredIngredients.length > 0
+    ? (filteredIngredients.reduce((sum, ing) => sum + (ing.shrinkage_percent || 0), 0) / filteredIngredients.filter(i => i.shrinkage_percent).length).toFixed(1)
+    : 0;
+
+  const avgCost = filteredIngredients.length > 0
+    ? (filteredIngredients.reduce((sum, ing) => sum + (ing.cost_per_unit || 0), 0) / filteredIngredients.filter(i => i.cost_per_unit).length).toFixed(2)
+    : 0;
+
+  const totalInventoryValue = filteredIngredients.reduce((sum, ing) => sum + (ing.cost_per_unit || 0), 0).toFixed(2);
+
+  // Calculate recipe costs
+  const recipeCosts = recipes.map(recipe => {
+    let totalCost = 0;
+    let hasAllCosts = true;
+
+    recipe.ingredients?.forEach(recipeIng => {
+      const ingredient = ingredients.find(i => i.id === recipeIng.ingredient_id);
+      if (ingredient?.cost_per_unit) {
+        const quantity = recipeIng.quantity || 0;
+        totalCost += (quantity * ingredient.cost_per_unit);
+      } else {
+        hasAllCosts = false;
+      }
+    });
+
+    return {
+      ...recipe,
+      total_cost: hasAllCosts ? totalCost : null,
+      cost_per_serving: hasAllCosts && recipe.servings ? (totalCost / recipe.servings) : null
+    };
+  }).filter(r => r.total_cost !== null);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50 p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <PageHeader
+          title="Yield & Cost Management"
+          description="Track cooking yields, shrinkage, and cost analysis"
+        >
+          <Button
+            variant="outline"
+            onClick={() => downloadCSV(filteredIngredients, 'yield-cost-data')}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Export
+          </Button>
+        </PageHeader>
+
+        {/* Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            title="Avg Cooking Yield"
+            value={`${avgYield}%`}
+            subtitle="Weight retention"
+            icon={Scale}
+            iconColor="text-blue-600"
+            bgColor="bg-blue-50"
+          />
+          <StatCard
+            title="Avg Shrinkage"
+            value={`${avgShrinkage}%`}
+            subtitle="Weight loss"
+            icon={TrendingDown}
+            iconColor="text-red-600"
+            bgColor="bg-red-50"
+          />
+          <StatCard
+            title="Avg Cost/Unit"
+            value={`$${avgCost}`}
+            subtitle="Per ingredient"
+            icon={DollarSign}
+            iconColor="text-green-600"
+            bgColor="bg-green-50"
+          />
+          <StatCard
+            title="Total Value"
+            value={`$${totalInventoryValue}`}
+            subtitle="All ingredients"
+            icon={DollarSign}
+            iconColor="text-purple-600"
+            bgColor="bg-purple-50"
+          />
+        </div>
+
+        {/* Templates and Upload */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Yield Data Management</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <YieldTemplateDownload />
+            <YieldUpload onSuccess={handleUploadSuccess} />
+          </CardContent>
+        </Card>
+
+        {/* Cost Reports */}
+        <CostReport ingredients={ingredients} recipes={recipes} />
+
+        <Tabs defaultValue="ingredients" className="w-full">
+          <TabsList>
+            <TabsTrigger value="ingredients">Ingredient Yields</TabsTrigger>
+            <TabsTrigger value="recipes">Recipe Costs</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="ingredients" className="space-y-4">
+            {/* Filters */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <Input
+                      placeholder="Search ingredients..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  <Select value={selectedCuisine} onValueChange={setSelectedCuisine}>
+                    <SelectTrigger className="w-full sm:w-[200px]">
+                      <SelectValue placeholder="Cuisine" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Cuisines</SelectItem>
+                      <SelectItem value="universal">Universal</SelectItem>
+                      <SelectItem value="continental">Continental</SelectItem>
+                      <SelectItem value="desi">Desi</SelectItem>
+                      <SelectItem value="italian">Italian</SelectItem>
+                      <SelectItem value="chinese">Chinese</SelectItem>
+                      <SelectItem value="japanese">Japanese</SelectItem>
+                      <SelectItem value="korean">Korean</SelectItem>
+                      <SelectItem value="thai">Thai</SelectItem>
+                      <SelectItem value="middle_eastern">Middle Eastern</SelectItem>
+                      <SelectItem value="mediterranean">Mediterranean</SelectItem>
+                      <SelectItem value="mexican">Mexican</SelectItem>
+                      <SelectItem value="latin_american">Latin American</SelectItem>
+                      <SelectItem value="african">African</SelectItem>
+                      <SelectItem value="seafood">Seafood</SelectItem>
+                      <SelectItem value="vegetarian">Vegetarian</SelectItem>
+                      <SelectItem value="vegan">Vegan</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                    <SelectTrigger className="w-full sm:w-[200px]">
+                      <SelectValue placeholder="Category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Categories</SelectItem>
+                      <SelectItem value="proteins_meat">Meat</SelectItem>
+                      <SelectItem value="proteins_poultry">Poultry</SelectItem>
+                      <SelectItem value="proteins_seafood">Seafood</SelectItem>
+                      <SelectItem value="vegetables">Vegetables</SelectItem>
+                      <SelectItem value="grains_cereals">Grains</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Ingredients Table */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Ingredient Yield & Cost Analysis</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {isLoading ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-12" />)}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Ingredient</TableHead>
+                          <TableHead>Cuisine</TableHead>
+                          <TableHead>Category</TableHead>
+                          <TableHead className="text-right">Raw Weight (g)</TableHead>
+                          <TableHead className="text-right">Cooked Weight (g)</TableHead>
+                          <TableHead className="text-right">Yield %</TableHead>
+                          <TableHead className="text-right">Shrinkage %</TableHead>
+                          <TableHead className="text-right">Cost/Unit</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredIngredients.map(ingredient => (
+                          <TableRow key={ingredient.id}>
+                            <TableCell className="font-medium">{ingredient.name}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="capitalize">
+                                {ingredient.cuisine_type?.replace(/_/g, ' ')}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm text-slate-600">
+                              {ingredient.category?.replace(/_/g, ' ')}
+                            </TableCell>
+                            <TableCell className="text-right">{ingredient.raw_weight_per_unit || '-'}</TableCell>
+                            <TableCell className="text-right">{ingredient.cooked_weight_per_unit || '-'}</TableCell>
+                            <TableCell className="text-right">
+                              {ingredient.cooking_yield_percent ? (
+                                <Badge className="bg-blue-100 text-blue-700">
+                                  {ingredient.cooking_yield_percent}%
+                                </Badge>
+                              ) : '-'}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {ingredient.shrinkage_percent ? (
+                                <Badge className="bg-red-100 text-red-700">
+                                  {ingredient.shrinkage_percent}%
+                                </Badge>
+                              ) : '-'}
+                            </TableCell>
+                            <TableCell className="text-right font-semibold">
+                              {ingredient.cost_per_unit ? `$${ingredient.cost_per_unit.toFixed(2)}` : '-'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="recipes" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Recipe Cost Analysis</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Recipe</TableHead>
+                        <TableHead>Cuisine</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead className="text-right">Servings</TableHead>
+                        <TableHead className="text-right">Total Cost</TableHead>
+                        <TableHead className="text-right">Cost/Serving</TableHead>
+                        <TableHead className="text-right">Calories/Serving</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {recipeCosts.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center py-8 text-slate-500">
+                            No recipes with cost data available
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        recipeCosts.map(recipe => (
+                          <TableRow key={recipe.id}>
+                            <TableCell className="font-medium">{recipe.name}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="capitalize">
+                                {recipe.cuisine_type?.replace(/_/g, ' ')}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm text-slate-600 capitalize">
+                              {recipe.category}
+                            </TableCell>
+                            <TableCell className="text-right">{recipe.servings}</TableCell>
+                            <TableCell className="text-right font-semibold text-green-700">
+                              ${recipe.total_cost.toFixed(2)}
+                            </TableCell>
+                            <TableCell className="text-right font-semibold">
+                              ${recipe.cost_per_serving.toFixed(2)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {recipe.calories_per_serving || '-'}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
