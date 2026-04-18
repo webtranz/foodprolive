@@ -32,8 +32,8 @@ npm run dev
 
 4. Sign in with the seeded admin account:
 
-- Email: `admin@foodpro.local`
-- Password: `admin12345`
+- Email: `humayoonkhizar12@gmail.com`
+- Password: `Tafga@2030`
 
 Override those defaults in `.env` before first production deployment.
 
@@ -63,11 +63,18 @@ See `.env.example` for the full list. The most important values are:
 
 1. Push this repository to GitHub.
 2. In Dokploy, create a new application from the GitHub repository.
-3. Select Dockerfile deployment.
-4. Set the required environment variables from `.env.example`.
-5. Mount persistent storage for:
+3. Prefer importing the included `docker-compose.yml` so Dokploy runs both `foodpro` and `postgres` together.
+4. Expose only the `foodpro` service publicly on port `3000`.
+5. Set the required environment variables from `.env.example` in Dokploy:
+   - `PUBLIC_APP_URL`
+   - `DATABASE_URL`
+   - `POSTGRES_*`
+   - `ADMIN_NAME`
+   - `ADMIN_EMAIL`
+   - `ADMIN_PASSWORD`
+6. Keep persistent storage for:
    - `/app/uploads`
    - PostgreSQL data volume
-6. Expose the container port configured by `PORT` or use the default `3000`.
+7. After deployment, open `/api/health` on the public domain and confirm it returns JSON with `{"status":"ok"}` before testing login.
 
-The included `docker-compose.yml` can also be imported into Dokploy if you prefer compose-based deployment.
+If `/api/health` returns the frontend HTML instead of JSON, Dokploy is routing to a static/frontend target instead of the Express service and login will fail until that routing is corrected.

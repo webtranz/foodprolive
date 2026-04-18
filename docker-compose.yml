@@ -17,8 +17,27 @@ services:
       - postgres
     ports:
       - "3000:3000"
-    env_file:
-      - .env
+    environment:
+      PORT: ${PORT:-3000}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://foodpro.example.com}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://foodpro:foodpro@postgres:5432/foodpro}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-foodpro}
+      POSTGRES_USER: ${POSTGRES_USER:-foodpro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-foodpro}
+      POSTGRES_SSL: ${POSTGRES_SSL:-false}
+      ADMIN_NAME: ${ADMIN_NAME:-Humayun Khizar}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-humayoonkhizar12@gmail.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Tafga@2030}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
     volumes:
       - ./uploads:/app/uploads
     restart: unless-stopped

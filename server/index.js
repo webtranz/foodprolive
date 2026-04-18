@@ -22,7 +22,7 @@ import {
 import { authorizeEntityAction, ensureKnownEntity } from './entities.js';
 
 const app = express();
-const port = Number(process.env.PORT || 3001);
+const port = Number(process.env.PORT || 3000);
 const rootDir = path.resolve(process.cwd());
 const distDir = path.join(rootDir, 'dist');
 
