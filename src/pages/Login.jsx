@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/AuthContext';
 export default function Login() {
   const location = useLocation();
   const { login, isAuthenticated, isLoadingAuth, authError } = useAuth();
-  const [form, setForm] = useState({ email: 'humayunkhizar12@gmail.com', password: 'Tafga@2030' });
+  const [form, setForm] = useState({ email: 'humayoonkhizar12@gmail.com', password: 'Tafga@2030' });
   const [submitting, setSubmitting] = useState(false);
 
   if (isAuthenticated) {
@@ -75,7 +75,7 @@ export default function Login() {
               {submitting || isLoadingAuth ? 'Signing in...' : 'Sign In'}
             </Button>
             <p className="text-xs text-slate-500">
-              Default admin credentials: <strong>humayunkhizar12@gmail.com</strong> / <strong>Tafga@2030</strong>
+              Default admin credentials: <strong>humayoonkhizar12@gmail.com</strong> / <strong>Tafga@2030</strong>
             </p>
           </form>
         </CardContent>

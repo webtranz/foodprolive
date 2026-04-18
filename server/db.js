@@ -125,7 +125,7 @@ async function initDatabase() {
 }
 
 async function seedDefaults() {
-  const adminEmail = process.env.ADMIN_EMAIL || 'humayunkhizar12@gmail.com';
+  const adminEmail = process.env.ADMIN_EMAIL || 'humayoonkhizar12@gmail.com';
   const adminPassword = process.env.ADMIN_PASSWORD || 'Tafga@2030';
   const adminName = process.env.ADMIN_NAME || 'Humayun Khizar';
 
