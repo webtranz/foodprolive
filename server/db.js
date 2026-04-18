@@ -125,9 +125,9 @@ async function initDatabase() {
 }
 
 async function seedDefaults() {
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@foodpro.local';
-  const adminPassword = process.env.ADMIN_PASSWORD || 'admin12345';
-  const adminName = process.env.ADMIN_NAME || 'FoodPro Administrator';
+  const adminEmail = process.env.ADMIN_EMAIL || 'humayunkhizar12@gmail.com';
+  const adminPassword = process.env.ADMIN_PASSWORD || 'Tafga@2030';
+  const adminName = process.env.ADMIN_NAME || 'Humayun Khizar';
 
   const existingSite = await query(`SELECT id FROM entity_records WHERE entity_name = 'Site' LIMIT 1`);
   if (existingSite.rowCount === 0) {
