@@ -448,10 +448,3 @@ export {
   createAppLog,
   createEmailLog
 };
-UPDATE users
-SET email = 'humayoonkhizar12@gmail.com',
-    role = 'admin',
-    status = 'active',
-    password_hash = 'HASH_HERE',
-    updated_at = NOW()
-WHERE role = 'admin';
