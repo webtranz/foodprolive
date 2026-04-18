@@ -1,9 +1,26 @@
 const ACCESS_TOKEN_KEY = 'foodpro_access_token';
 const eventBus = new EventTarget();
 
-const getStoredToken = () => window.localStorage.getItem(ACCESS_TOKEN_KEY);
-const setStoredToken = (token) => window.localStorage.setItem(ACCESS_TOKEN_KEY, token);
-const clearStoredToken = () => window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+const getStoredToken = () => (
+  window.localStorage.getItem(ACCESS_TOKEN_KEY) ||
+  window.sessionStorage.getItem(ACCESS_TOKEN_KEY)
+);
+
+function setStoredToken(token, remember = true) {
+  if (remember) {
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, token);
+    window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+    return;
+  }
+
+  window.sessionStorage.setItem(ACCESS_TOKEN_KEY, token);
+  window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+}
+
+function clearStoredToken() {
+  window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+  window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+}
 
 async function apiRequest(path, options = {}) {
   const token = getStoredToken();
@@ -116,12 +133,12 @@ async function ensureAuth() {
 export const base44 = {
   entities,
   auth: {
-    async login(email, password) {
+    async login(email, password, options = {}) {
       const session = await apiRequest('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password })
       });
-      setStoredToken(session.token);
+      setStoredToken(session.token, options.remember !== false);
       return session.user;
     },
     async me() {

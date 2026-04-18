@@ -39,11 +39,11 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (email, password) => {
+  const login = async (email, password, options = {}) => {
     setIsLoadingAuth(true);
     setAuthError(null);
     try {
-      const currentUser = await base44.auth.login(email, password);
+      const currentUser = await base44.auth.login(email, password, options);
       setUser(currentUser);
       setIsAuthenticated(true);
       return currentUser;

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/lib/AuthContext';
@@ -10,6 +11,7 @@ export default function Login() {
   const location = useLocation();
   const { login, isAuthenticated, isLoadingAuth, authError } = useAuth();
   const [form, setForm] = useState({ email: '', password: '' });
+  const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   if (isAuthenticated) {
@@ -20,7 +22,7 @@ export default function Login() {
     event.preventDefault();
     setSubmitting(true);
     try {
-      await login(form.email, form.password);
+      await login(form.email, form.password, { remember });
     } finally {
       setSubmitting(false);
     }
@@ -65,6 +67,16 @@ export default function Login() {
                 autoComplete="current-password"
                 required
               />
+            </div>
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="remember-login"
+                checked={remember}
+                onCheckedChange={(checked) => setRemember(checked === true)}
+              />
+              <Label htmlFor="remember-login" className="text-sm font-normal text-slate-600">
+                Remember me
+              </Label>
             </div>
             {visibleError ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
