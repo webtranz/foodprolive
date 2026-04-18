@@ -29,10 +29,12 @@ import {
   QrCode,
   Shield,
   ChefHat,
-  MapPin
+  MapPin,
+  LogOut
 } from 'lucide-react';
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { LanguageProvider, useLanguage } from '@/components/i18n/LanguageContext';
+import { useAuth } from '@/lib/AuthContext';
 
 function buildNavigation(t) {
   const n = t.nav;
@@ -178,6 +180,7 @@ function Sidebar({ onNavigate }) {
   const location = useLocation();
   const currentPath = location.pathname.split('/').pop() || 'Dashboard';
   const { t } = useLanguage();
+  const { user, logout } = useAuth();
   const navigation = buildNavigation(t);
 
   return (
@@ -212,6 +215,22 @@ function Sidebar({ onNavigate }) {
       {/* Footer */}
       <div className="p-4 border-t border-slate-100 space-y-3">
         <SiteIndicator />
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+          <p className="text-sm font-medium text-slate-900 truncate">{user?.full_name || user?.email || 'Signed in'}</p>
+          <p className="text-xs text-slate-500 truncate">{user?.role ? `${user.role} access` : 'Authenticated user'}</p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full justify-start gap-2 border-slate-200 text-slate-700 hover:bg-slate-100"
+          onClick={() => {
+            logout(true);
+            onNavigate?.();
+          }}
+        >
+          <LogOut className="w-4 h-4" />
+          <span>Logout</span>
+        </Button>
         <LanguageSwitcher />
         <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl p-4">
           <p className="text-sm font-medium text-emerald-900">{t.common.needHelp}</p>
@@ -224,6 +243,7 @@ function Sidebar({ onNavigate }) {
 
 export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { logout } = useAuth();
 
   return (
     <LanguageProvider>
@@ -241,17 +261,29 @@ export default function Layout({ children }) {
           </div>
           <span className="font-bold text-slate-900">FoodPro</span>
         </Link>
-        
-        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <Menu className="w-5 h-5" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="left" className="w-72 p-0">
-            <Sidebar onNavigate={() => setMobileOpen(false)} />
-          </SheetContent>
-        </Sheet>
+
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => logout(true)}
+            aria-label="Logout"
+            title="Logout"
+          >
+            <LogOut className="w-5 h-5" />
+          </Button>
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <Menu className="w-5 h-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="w-72 p-0">
+              <Sidebar onNavigate={() => setMobileOpen(false)} />
+            </SheetContent>
+          </Sheet>
+        </div>
       </header>
 
       {/* Main Content */}
