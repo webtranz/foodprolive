@@ -116,19 +116,19 @@ function buildManualOrders(rows, sites = []) {
   const groupedOrders = new Map();
 
   rows.forEach((row, rowIndex) => {
-    const externalOrderId = String(pickValue(row, ['external_order_id', 'order_id', 'ticket_id', 'check_id']) || '').trim();
-    const orderNumber = String(pickValue(row, ['order_number', 'ticket_number', 'check_number', 'receipt_number']) || externalOrderId || `ROW-${rowIndex + 1}`).trim();
-    const soldAt = excelDateToIso(pickValue(row, ['sold_at', 'order_date', 'created_at', 'business_datetime']));
-    const businessDate = String(pickValue(row, ['business_date', 'date']) || soldAt.slice(0, 10)).slice(0, 10);
-    const siteId = String(pickValue(row, ['site_id', 'location_id']) || '').trim();
-    const locationName = String(pickValue(row, ['location_name', 'site_name', 'location', 'branch']) || '').trim();
+    const externalOrderId = String(pickValue(row, ['external_order_id', 'order_id', 'ticket_id', 'check_id', 'invoice_id', 'transaction_id']) || '').trim();
+    const orderNumber = String(pickValue(row, ['order_number', 'ticket_number', 'check_number', 'receipt_number', 'bill_no', 'invoice_number']) || externalOrderId || `ROW-${rowIndex + 1}`).trim();
+    const soldAt = excelDateToIso(pickValue(row, ['sold_at', 'order_date', 'created_at', 'business_datetime', 'sale_time', 'transaction_time']));
+    const businessDate = String(pickValue(row, ['business_date', 'date', 'sale_date', 'transaction_date']) || soldAt.slice(0, 10)).slice(0, 10);
+    const siteId = String(pickValue(row, ['site_id', 'location_id', 'branch_id', 'store_id']) || '').trim();
+    const locationName = String(pickValue(row, ['location_name', 'site_name', 'location', 'branch', 'branch_name', 'store_name', 'outlet']) || '').trim();
     const site = sites.find((entry) => entry.id === siteId || entry.name === locationName);
-    const siteName = String(pickValue(row, ['site_name', 'branch_name']) || site?.name || locationName).trim();
-    const itemCode = String(pickValue(row, ['pos_item_code', 'item_code', 'sku', 'menu_code']) || '').trim();
-    const itemName = String(pickValue(row, ['pos_item_name', 'item_name', 'menu_item', 'product_name']) || '').trim();
-    const quantity = toSafeNumber(pickValue(row, ['quantity', 'qty', 'sold_qty']), 0);
-    const unitPrice = toSafeNumber(pickValue(row, ['unit_price', 'price']), 0);
-    const totalPrice = toSafeNumber(pickValue(row, ['total_price', 'line_total', 'amount']), quantity * unitPrice);
+    const siteName = String(pickValue(row, ['site_name', 'branch_name', 'store_name', 'location_name']) || site?.name || locationName).trim();
+    const itemCode = String(pickValue(row, ['pos_item_code', 'item_code', 'sku', 'menu_code', 'product_code', 'plu']) || '').trim();
+    const itemName = String(pickValue(row, ['pos_item_name', 'item_name', 'menu_item', 'product_name', 'description', 'item']) || '').trim();
+    const quantity = toSafeNumber(pickValue(row, ['quantity', 'qty', 'sold_qty', 'sales_qty', 'item_qty', 'count']), 0);
+    const unitPrice = toSafeNumber(pickValue(row, ['unit_price', 'price', 'rate', 'avg_price']), 0);
+    const totalPrice = toSafeNumber(pickValue(row, ['total_price', 'line_total', 'amount', 'net_amount', 'gross_amount', 'sales_amount']), quantity * unitPrice);
 
     if (!itemName || quantity <= 0) {
       return;
@@ -488,16 +488,15 @@ export default function POSIntegration() {
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      setParsedRows(rows.slice(0, 5));
       const orders = buildManualOrders(rows, sites);
 
       if (!orders.length) {
-        setUploadError('No valid POS rows found. Include item name and quantity columns.');
-        setParsedRows([]);
+        setUploadError('The file loaded, but FoodPro could not group rows into valid POS orders. Check item name and quantity columns, then try again.');
         setParsedOrders([]);
         return;
       }
 
-      setParsedRows(rows.slice(0, 5));
       setParsedOrders(orders);
     } catch (error) {
       setUploadError(error.message || 'Failed to parse the file');
@@ -843,6 +842,31 @@ export default function POSIntegration() {
                   <CardTitle>Upload Preview</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {parsedRows.length ? (
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            {Object.keys(parsedRows[0]).slice(0, 6).map((header) => (
+                              <TableHead key={header}>{header}</TableHead>
+                            ))}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {parsedRows.map((row, rowIndex) => (
+                            <TableRow key={`preview-${rowIndex}`}>
+                              {Object.keys(parsedRows[0]).slice(0, 6).map((header) => (
+                                <TableCell key={`${rowIndex}-${header}`} className="max-w-[180px] truncate">
+                                  {String(row[header] ?? '')}
+                                </TableCell>
+                              ))}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : null}
+
                   {parsedOrders.slice(0, 5).map((order) => (
                     <div key={`${order.external_order_id}-${order.business_date}`} className="rounded-2xl border border-slate-200 p-4">
                       <div className="flex items-center justify-between gap-3">
@@ -862,9 +886,9 @@ export default function POSIntegration() {
                       </div>
                     </div>
                   ))}
-                  {!parsedOrders.length ? (
+                  {!parsedRows.length && !parsedOrders.length ? (
                     <div className="py-10 text-center text-sm text-slate-500">
-                      Upload a file to preview grouped POS orders.
+                      Upload a file to preview POS rows and grouped orders.
                     </div>
                   ) : null}
                 </CardContent>
