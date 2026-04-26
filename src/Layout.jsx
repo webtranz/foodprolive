@@ -30,7 +30,8 @@ import {
   Shield,
   ChefHat,
   MapPin,
-  LogOut
+  LogOut,
+  Cable
 } from 'lucide-react';
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { LanguageProvider, useLanguage } from '@/components/i18n/LanguageContext';
