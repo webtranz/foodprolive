@@ -18,6 +18,7 @@ const LOCATION_SCOPED_ENTITIES = new Set([
   'DinerScan',
   'BranchOrder',
   'Recipe',
+  'AdvancedReportSchedule',
   'User',
   'Site'
 ]);

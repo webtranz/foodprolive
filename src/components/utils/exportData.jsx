@@ -1,4 +1,28 @@
 import { format } from 'date-fns';
+import * as XLSX from 'xlsx';
+
+function normalizeExportRows(data) {
+  if (!data || data.length === 0) {
+    return [];
+  }
+
+  return data.map((row) => {
+    const normalized = {};
+    Object.entries(row || {}).forEach(([key, value]) => {
+      if (key.startsWith('_') || key === 'id' || key === 'created_by_id' || key === 'entity_name' || key === 'app_id') {
+        return;
+      }
+      if (Array.isArray(value)) {
+        normalized[key] = JSON.stringify(value);
+      } else if (typeof value === 'object' && value !== null) {
+        normalized[key] = JSON.stringify(value);
+      } else {
+        normalized[key] = value ?? '';
+      }
+    });
+    return normalized;
+  });
+}
 
 export function downloadCSV(data, filename) {
   if (!data || data.length === 0) {
@@ -8,7 +32,9 @@ export function downloadCSV(data, filename) {
 
   // Get all keys from all objects to handle different structures
   const allKeys = new Set();
-  data.forEach(item => {
+  const normalizedRows = normalizeExportRows(data);
+
+  normalizedRows.forEach(item => {
     Object.keys(item).forEach(key => allKeys.add(key));
   });
   
@@ -19,7 +45,7 @@ export function downloadCSV(data, filename) {
   // Create CSV content
   let csv = headers.join(',') + '\n';
   
-  data.forEach(row => {
+  normalizedRows.forEach(row => {
     const values = headers.map(header => {
       let value = row[header] || row.data?.[header] || '';
       
@@ -53,6 +79,19 @@ export function downloadCSV(data, filename) {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+}
+
+export function downloadExcel(data, filename, sheetName = 'Report') {
+  if (!data || data.length === 0) {
+    alert('No data to export');
+    return;
+  }
+
+  const rows = normalizeExportRows(data);
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  XLSX.writeFile(workbook, `${filename}_${format(new Date(), 'yyyy-MM-dd_HHmm')}.xlsx`);
 }
 
 export function exportToCSV(data, filename, customHeaders = null) {

@@ -7,6 +7,9 @@ const arrayOptional = z.array(z.any()).optional().nullable();
 const objectOptional = z.record(z.any()).optional().nullable();
 
 export const entityRegistry = {
+  AdvancedReportSchedule: {
+    defaults: { status: 'active', frequency: 'weekly' }
+  },
   AttendanceRecord: {
     defaults: { status: 'checked_in' }
   },
@@ -179,6 +182,7 @@ const readRoles = {
 
 const writeRoles = {
   Site: 'admin',
+  AdvancedReportSchedule: 'manager',
   User: 'admin',
   UserGroup: 'manager',
   Production: 'manager',
