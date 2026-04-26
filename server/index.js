@@ -20,6 +20,21 @@ import {
   createEmailLog
 } from './db.js';
 import { authorizeEntityAction, ensureKnownEntity } from './entities.js';
+import {
+  getPosSources,
+  createPosSource,
+  updatePosSource,
+  deletePosSource,
+  getRecipeMappings,
+  createRecipeMapping,
+  updateRecipeMapping,
+  deleteRecipeMapping,
+  getSyncLogs,
+  importPosOrders,
+  syncPosSource,
+  getDailySalesSummary,
+  getSalesProductionVariance
+} from './pos.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -57,6 +72,15 @@ async function requireAuth(request, response, next) {
   request.user = user;
   request.token = token;
   return next();
+}
+
+function requireRole(roles) {
+  return (request, response, next) => {
+    if (!request.user || !roles.includes(request.user.role)) {
+      return response.status(403).json({ message: 'You do not have permission to access this resource' });
+    }
+    return next();
+  };
 }
 
 function numericMatch(input, fallback = 0) {
@@ -481,6 +505,164 @@ app.post('/api/app-logs', requireAuth, (request, response) => {
   }).catch((error) => {
     response.status(500).json({ message: error.message || 'Failed to create app log' });
   });
+});
+
+app.get('/api/pos/sources', requireAuth, requireRole(['admin']), async (_request, response, next) => {
+  try {
+    response.json(await getPosSources());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/pos/sources', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const created = await createPosSource(request.body || {});
+    response.status(201).json(created);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/pos/sources/:id', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const updated = await updatePosSource(request.params.id, request.body || {});
+    if (!updated) {
+      return response.status(404).json({ message: 'POS source not found' });
+    }
+    response.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/pos/sources/:id', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const removed = await deletePosSource(request.params.id);
+    if (!removed) {
+      return response.status(404).json({ message: 'POS source not found' });
+    }
+    response.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/pos/mappings', requireAuth, requireRole(['admin', 'manager']), async (_request, response, next) => {
+  try {
+    response.json(await getRecipeMappings());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/pos/mappings', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const created = await createRecipeMapping(request.body || {});
+    response.status(201).json(created);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/pos/mappings/:id', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const updated = await updateRecipeMapping(request.params.id, request.body || {});
+    if (!updated) {
+      return response.status(404).json({ message: 'POS mapping not found' });
+    }
+    response.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/pos/mappings/:id', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const removed = await deleteRecipeMapping(request.params.id);
+    if (!removed) {
+      return response.status(404).json({ message: 'POS mapping not found' });
+    }
+    response.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/pos/sync-logs', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    const limit = request.query.limit ? Number(request.query.limit) : 100;
+    response.json(await getSyncLogs(limit));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/pos/import/manual', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const result = await importPosOrders({
+      sourceId: request.body?.source_id || null,
+      syncType: 'manual_upload',
+      actorEmail: request.user.email,
+      orders: request.body?.orders || [],
+      requestPayload: {
+        source_id: request.body?.source_id || null,
+        order_count: Array.isArray(request.body?.orders) ? request.body.orders.length : 0
+      }
+    });
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/pos/sources/:id/sync', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const result = await syncPosSource(request.params.id, request.user.email);
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/pos/sales-summary', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.json(await getDailySalesSummary({
+      startDate: request.query.start_date,
+      endDate: request.query.end_date,
+      locationId: request.query.location_id
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/pos/variance-report', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.json(await getSalesProductionVariance({
+      startDate: request.query.start_date,
+      endDate: request.query.end_date,
+      locationId: request.query.location_id
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/pos/webhooks/:sourceId', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const payload = Array.isArray(request.body?.orders) ? request.body.orders : (Array.isArray(request.body) ? request.body : []);
+    const result = await importPosOrders({
+      sourceId: request.params.sourceId,
+      syncType: 'webhook',
+      actorEmail: request.user.email,
+      orders: payload,
+      requestPayload: { sourceId: request.params.sourceId, webhook: true }
+    });
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/api/health', (_request, response) => {

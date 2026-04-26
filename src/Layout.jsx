@@ -81,6 +81,7 @@ function buildNavigation(t) {
       ]
     },
     { name: n.d365Integration, href: 'D365Integration', icon: Database },
+    { name: n.posIntegration, href: 'POSIntegration', icon: Cable },
     { name: n.supplierPortal, href: 'SupplierPortal', icon: Building2 },
     { name: n.userRoles, href: 'UserRoleManagement', icon: Shield }
   ];

@@ -68,6 +68,17 @@ function emitEntityChange(entity, detail = {}) {
   eventBus.dispatchEvent(new CustomEvent(entityCacheKey(entity), { detail }));
 }
 
+function buildQueryString(params = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && typeof value !== 'undefined' && value !== '') {
+      search.set(key, String(value));
+    }
+  });
+  const serialized = search.toString();
+  return serialized ? `?${serialized}` : '';
+}
+
 function createEntityModule(entity) {
   return {
     list(sort, limit) {
@@ -168,6 +179,69 @@ export const base44 = {
         method: 'POST',
         body: JSON.stringify({ email, role })
       });
+    }
+  },
+  pos: {
+    listSources() {
+      return apiRequest('/api/pos/sources');
+    },
+    createSource(data) {
+      return apiRequest('/api/pos/sources', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    updateSource(id, data) {
+      return apiRequest(`/api/pos/sources/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      });
+    },
+    deleteSource(id) {
+      return apiRequest(`/api/pos/sources/${id}`, {
+        method: 'DELETE'
+      });
+    },
+    syncSource(id) {
+      return apiRequest(`/api/pos/sources/${id}/sync`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+    },
+    listMappings() {
+      return apiRequest('/api/pos/mappings');
+    },
+    createMapping(data) {
+      return apiRequest('/api/pos/mappings', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    updateMapping(id, data) {
+      return apiRequest(`/api/pos/mappings/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      });
+    },
+    deleteMapping(id) {
+      return apiRequest(`/api/pos/mappings/${id}`, {
+        method: 'DELETE'
+      });
+    },
+    importManual(data) {
+      return apiRequest('/api/pos/import/manual', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    listSyncLogs(limit = 100) {
+      return apiRequest(`/api/pos/sync-logs${buildQueryString({ limit })}`);
+    },
+    getSalesSummary(filters = {}) {
+      return apiRequest(`/api/pos/sales-summary${buildQueryString(filters)}`);
+    },
+    getVarianceReport(filters = {}) {
+      return apiRequest(`/api/pos/variance-report${buildQueryString(filters)}`);
     }
   },
   integrations: {

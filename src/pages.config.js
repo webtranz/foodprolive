@@ -74,6 +74,7 @@ import Production from './pages/Production';
 import ProductionCalculator from './pages/ProductionCalculator';
 import ProductionTransfer from './pages/ProductionTransfer';
 import ProductivityTracking from './pages/ProductivityTracking';
+import POSIntegration from './pages/POSIntegration';
 import QRManagement from './pages/QRManagement';
 import QualityControl from './pages/QualityControl';
 import Recipes from './pages/Recipes';
@@ -113,6 +114,7 @@ export const PAGES = {
     "ProductionCalculator": ProductionCalculator,
     "ProductionTransfer": ProductionTransfer,
     "ProductivityTracking": ProductivityTracking,
+    "POSIntegration": POSIntegration,
     "QRManagement": QRManagement,
     "QualityControl": QualityControl,
     "Recipes": Recipes,
