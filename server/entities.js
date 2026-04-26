@@ -17,10 +17,13 @@ export const entityRegistry = {
     defaults: { status: 'pending', retry_count: 0, request_payload: {}, response_payload: {} }
   },
   AttendanceRecord: {
-    defaults: { status: 'checked_in' }
+    defaults: { status: 'checked_in', approval_status: 'pending', attendance_status: 'present' }
   },
   AttendanceSession: {
     defaults: { status: 'active' }
+  },
+  StaffShift: {
+    defaults: { status: 'scheduled', break_minutes: 60, approval_status: 'pending' }
   },
   BranchOrder: {
     defaults: { status: 'draft' }
@@ -214,6 +217,7 @@ const writeRoles = {
   D365Master: 'manager',
   CategoryQRSession: 'manager',
   AttendanceSession: 'manager',
+  StaffShift: 'manager',
   InventoryLot: 'manager'
 };
 
