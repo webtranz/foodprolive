@@ -101,19 +101,30 @@ export const entityRegistry = {
       carbs_per_serving: numberOptional,
       fat_per_serving: numberOptional,
       total_calories: numberOptional,
-      is_active: booleanOptional
+      is_active: booleanOptional,
+      site_scope: stringOptional,
+      site_ids: arrayOptional,
+      site_names: arrayOptional
     }).passthrough()
   },
   RFQ: {
     defaults: { status: 'draft' }
   },
   Site: {
-    defaults: { is_active: true, type: 'kitchen' },
+    defaults: { is_active: true, type: 'location', hierarchy_level: 'location' },
     schema: z.object({
       name: z.string().trim().min(1, 'Site name is required'),
       project_code: stringOptional,
       type: stringOptional,
+      hierarchy_level: stringOptional,
       parent_site_id: stringOptional,
+      parent_site_name: stringOptional,
+      hierarchy_path: stringOptional,
+      company_name: stringOptional,
+      region_name: stringOptional,
+      location_name: stringOptional,
+      kitchen_name: stringOptional,
+      storage_name: stringOptional,
       address: stringOptional,
       city: stringOptional,
       country: stringOptional,
@@ -136,6 +147,9 @@ export const entityRegistry = {
       status: stringOptional,
       site_id: stringOptional,
       site_name: stringOptional,
+      allowed_site_ids: arrayOptional,
+      allowed_site_names: arrayOptional,
+      visibility_scope: stringOptional,
       password: stringOptional,
       temporary_password: stringOptional,
       phone: stringOptional,

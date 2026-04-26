@@ -37,6 +37,10 @@ export function usePermissions() {
   const can = (permission) => permissions.includes(permission);
   const isAdmin = role === 'admin';
   const isManager = role === 'manager' || role === 'admin';
+  const allowedSiteIds = Array.isArray(currentUser?.allowed_site_ids)
+    ? currentUser.allowed_site_ids
+    : (currentUser?.site_id ? [currentUser.site_id] : []);
+  const visibilityScope = currentUser?.visibility_scope || (isAdmin ? 'all_locations' : 'subtree');
 
-  return { currentUser, role, can, isAdmin, isManager, loading };
+  return { currentUser, role, can, isAdmin, isManager, allowedSiteIds, visibilityScope, loading };
 }

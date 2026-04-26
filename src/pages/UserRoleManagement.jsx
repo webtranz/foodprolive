@@ -7,33 +7,31 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import PageHeader from '@/components/ui/PageHeader';
 import { usePermissions } from '@/components/auth/usePermissions';
-import { Shield, User, Briefcase, ShieldAlert, UserPlus, Mail, Pencil, Building2, KeyRound } from 'lucide-react';
+import { Shield, User, Briefcase, ShieldAlert, UserPlus, Mail, Pencil, Building2, KeyRound, Network } from 'lucide-react';
 
 const ROLE_CONFIG = {
   admin: {
     label: 'Administrator',
     color: 'bg-red-100 text-red-800 border-red-200',
     icon: Shield,
-    description: 'Full access - manage users, sessions, reports, and all modules',
-    permissions: ['Scan QR', 'Dashboard', 'Reports', 'Create Sessions', 'Manage Sessions', 'Manage Groups', 'Manage Users', 'Delete Records', 'Export Data']
+    description: 'Full cross-location access with central administration controls'
   },
   manager: {
     label: 'Manager',
     color: 'bg-amber-100 text-amber-800 border-amber-200',
     icon: Briefcase,
-    description: 'Can create sessions, manage groups, and view reports',
-    permissions: ['Scan QR', 'Dashboard', 'Reports', 'Create Sessions', 'Manage Sessions', 'Manage Groups', 'Export Data']
+    description: 'Operational access for assigned locations and reporting'
   },
   user: {
     label: 'Regular User',
     color: 'bg-blue-100 text-blue-800 border-blue-200',
     icon: User,
-    description: 'Can scan QR codes and view the attendance dashboard',
-    permissions: ['Scan QR', 'Dashboard']
+    description: 'Daily operations access limited to assigned locations'
   }
 };
 
@@ -42,15 +40,55 @@ const emptyCreateForm = {
   email: '',
   password: '',
   role: 'user',
-  site_id: ''
+  site_id: '',
+  allowed_site_ids: [],
+  visibility_scope: 'subtree'
 };
 
 const emptyEditForm = {
   full_name: '',
   role: 'user',
   site_id: '',
-  password: ''
+  password: '',
+  allowed_site_ids: [],
+  visibility_scope: 'subtree'
 };
+
+function buildChildMap(sites) {
+  const map = new Map();
+  sites.forEach((site) => {
+    const parentId = site.parent_site_id || null;
+    if (!map.has(parentId)) {
+      map.set(parentId, []);
+    }
+    map.get(parentId).push(site);
+  });
+  return map;
+}
+
+function SiteAccessChecklist({ roots, childMap, selectedIds, onToggle }) {
+  const renderNode = (site, depth = 0) => {
+    const children = childMap.get(site.id) || [];
+    const isChecked = selectedIds.includes(site.id);
+    return (
+      <div key={site.id} className="space-y-2">
+        <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" style={{ marginLeft: depth * 14 }}>
+          <Checkbox checked={isChecked} onCheckedChange={(checked) => onToggle(site.id, Boolean(checked))} />
+          <span className="font-medium text-slate-700">{site.name}</span>
+          <span className="text-xs text-slate-400">{site.type}</span>
+        </label>
+        {children.map((child) => renderNode(child, depth + 1))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="max-h-56 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
+      {roots.map((site) => renderNode(site))}
+      {roots.length === 0 ? <p className="text-sm text-slate-500">No locations available.</p> : null}
+    </div>
+  );
+}
 
 export default function UserRoleManagement() {
   const { can, loading: permLoading } = usePermissions();
@@ -73,22 +111,24 @@ export default function UserRoleManagement() {
     queryFn: () => base44.entities.Site.list()
   });
 
-  const adminUsers = useMemo(
-    () => users.filter((user) => (user.role || 'user') === 'admin'),
-    [users]
-  );
+  const adminUsers = useMemo(() => users.filter((user) => (user.role || 'user') === 'admin'), [users]);
+  const roots = useMemo(() => sites.filter((site) => !site.parent_site_id), [sites]);
+  const childMap = useMemo(() => buildChildMap(sites), [sites]);
 
   const createUserMutation = useMutation({
-    mutationFn: async ({ full_name, email, password, role, site_id }) => {
-      const site = sites.find((entry) => entry.id === site_id);
+    mutationFn: async (payload) => {
+      const primarySite = sites.find((site) => site.id === payload.site_id);
+      const allowedSiteIds = Array.from(new Set([payload.site_id, ...(payload.allowed_site_ids || [])].filter(Boolean)));
       return base44.entities.User.create({
-        full_name: full_name.trim(),
-        email: email.trim().toLowerCase(),
-        password,
-        role,
+        full_name: payload.full_name.trim(),
+        email: payload.email.trim().toLowerCase(),
+        password: payload.password,
+        role: payload.role,
         status: 'active',
-        site_id: role === 'admin' ? null : (site_id || null),
-        site_name: role === 'admin' ? null : (site?.name || null)
+        site_id: payload.role === 'admin' ? null : (payload.site_id || null),
+        site_name: payload.role === 'admin' ? null : (primarySite?.name || null),
+        allowed_site_ids: payload.role === 'admin' ? [] : allowedSiteIds,
+        visibility_scope: payload.role === 'admin' ? 'all_locations' : payload.visibility_scope
       });
     },
     onSuccess: () => {
@@ -116,10 +156,14 @@ export default function UserRoleManagement() {
     }
   });
 
-  const openCreate = () => {
-    setCreateForm(emptyCreateForm);
-    setCreateError('');
-    setCreateOpen(true);
+  const toggleSelectedSite = (setter, selectedIds, siteId, checked) => {
+    setter((current) => ({
+      ...current,
+      allowed_site_ids: checked
+        ? Array.from(new Set([...(selectedIds || []), siteId]))
+        : (selectedIds || []).filter((id) => id !== siteId),
+      site_id: current.site_id || siteId
+    }));
   };
 
   const openEdit = (user) => {
@@ -128,7 +172,9 @@ export default function UserRoleManagement() {
       full_name: user.full_name || '',
       role: user.role || 'user',
       site_id: user.site_id || '',
-      password: ''
+      password: '',
+      allowed_site_ids: Array.isArray(user.allowed_site_ids) ? user.allowed_site_ids : (user.site_id ? [user.site_id] : []),
+      visibility_scope: user.visibility_scope || 'subtree'
     });
     setEditError('');
     setEditOpen(true);
@@ -155,33 +201,32 @@ export default function UserRoleManagement() {
     event.preventDefault();
     setEditError('');
 
-    if (!editingUser) {
-      return;
-    }
-
+    if (!editingUser) return;
     if (!editForm.full_name.trim()) {
       setEditError('Full name is required');
       return;
     }
-
     if (adminUsers.length === 1 && editingUser.id === adminUsers[0].id && editForm.role !== 'admin') {
       setEditError('At least one administrator must remain in the system');
       return;
     }
-
     if (editForm.password && editForm.password.trim().length < 8) {
       setEditError('New password must be at least 8 characters long');
       return;
     }
 
-    const site = sites.find((entry) => entry.id === editForm.site_id);
+    const primarySite = sites.find((site) => site.id === editForm.site_id);
+    const allowedSiteIds = Array.from(new Set([editForm.site_id, ...(editForm.allowed_site_ids || [])].filter(Boolean)));
+
     updateUserMutation.mutate({
       id: editingUser.id,
       data: {
         full_name: editForm.full_name.trim(),
         role: editForm.role,
         site_id: editForm.role === 'admin' ? null : (editForm.site_id || null),
-        site_name: editForm.role === 'admin' ? null : (site?.name || null),
+        site_name: editForm.role === 'admin' ? null : (primarySite?.name || null),
+        allowed_site_ids: editForm.role === 'admin' ? [] : allowedSiteIds,
+        visibility_scope: editForm.role === 'admin' ? 'all_locations' : editForm.visibility_scope,
         ...(editForm.password.trim() ? { password: editForm.password.trim() } : {})
       }
     });
@@ -203,12 +248,12 @@ export default function UserRoleManagement() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-6">
         <PageHeader
           title="User Management"
-          description="Create active users, assign roles, and control site access from one place"
+          description="Assign primary locations, multi-location access, and visibility scope for each user"
         >
-          <Button onClick={openCreate} className="bg-emerald-600 hover:bg-emerald-700">
+          <Button onClick={() => { setCreateForm(emptyCreateForm); setCreateError(''); setCreateOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700">
             <UserPlus className="w-4 h-4 mr-2" /> Create User
           </Button>
         </PageHeader>
@@ -229,13 +274,6 @@ export default function UserRoleManagement() {
                   </div>
                   <p className="text-xs text-slate-500 mt-1">{cfg.description}</p>
                 </CardHeader>
-                <CardContent>
-                  <div className="flex flex-wrap gap-1">
-                    {cfg.permissions.map((permission) => (
-                      <Badge key={permission} variant="secondary" className="text-xs">{permission}</Badge>
-                    ))}
-                  </div>
-                </CardContent>
               </Card>
             );
           })}
@@ -243,14 +281,9 @@ export default function UserRoleManagement() {
 
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="w-5 h-5" /> All Users ({users.length})
-              </CardTitle>
-              <Button onClick={openCreate} size="sm" className="bg-emerald-600 hover:bg-emerald-700">
-                <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Create
-              </Button>
-            </div>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5" /> Multi-Location Access Matrix
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
@@ -260,7 +293,8 @@ export default function UserRoleManagement() {
                   <TableHead>Email</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Assigned Site</TableHead>
+                  <TableHead>Primary Location</TableHead>
+                  <TableHead>Visibility</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -269,6 +303,7 @@ export default function UserRoleManagement() {
                   const roleKey = user.role || 'user';
                   const cfg = ROLE_CONFIG[roleKey] || ROLE_CONFIG.user;
                   const Icon = cfg.icon;
+                  const assignedCount = Array.isArray(user.allowed_site_ids) ? user.allowed_site_ids.length : (user.site_id ? 1 : 0);
                   return (
                     <TableRow key={user.id}>
                       <TableCell className="font-medium">{user.full_name || '-'}</TableCell>
@@ -289,8 +324,11 @@ export default function UserRoleManagement() {
                             <Building2 className="w-3 h-3" />{user.site_name}
                           </Badge>
                         ) : (
-                          <span className="text-slate-400 text-xs">{roleKey === 'admin' ? 'All Sites' : 'Unassigned'}</span>
+                          <span className="text-slate-400 text-xs">{roleKey === 'admin' ? 'All Locations' : 'Unassigned'}</span>
                         )}
+                      </TableCell>
+                      <TableCell className="text-sm text-slate-600">
+                        {roleKey === 'admin' ? 'All locations' : `${user.visibility_scope || 'subtree'} • ${assignedCount} assigned`}
                       </TableCell>
                       <TableCell>
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(user)}>
@@ -300,102 +338,93 @@ export default function UserRoleManagement() {
                     </TableRow>
                   );
                 })}
-                {users.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-slate-400">No users found</TableCell>
-                  </TableRow>
-                )}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
       </div>
 
-      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setCreateError(''); }}>
-        <DialogContent className="max-w-md">
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-emerald-600" /> Create New User
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreateSubmit} className="space-y-4">
-            <div>
-              <Label className="text-sm font-medium mb-1.5 block">Full Name <span className="text-red-500">*</span></Label>
-              <Input
-                required
-                value={createForm.full_name}
-                onChange={(event) => setCreateForm((current) => ({ ...current, full_name: event.target.value }))}
-                placeholder="Kitchen Supervisor"
-              />
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium mb-1.5 block">Email Address <span className="text-red-500">*</span></Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input
-                  type="email"
-                  required
-                  value={createForm.email}
-                  onChange={(event) => setCreateForm((current) => ({ ...current, email: event.target.value }))}
-                  placeholder="user@example.com"
-                  className="pl-9"
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium mb-1.5 block">Password <span className="text-red-500">*</span></Label>
-              <div className="relative">
-                <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input
-                  type="password"
-                  required
-                  minLength={8}
-                  value={createForm.password}
-                  onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))}
-                  placeholder="Minimum 8 characters"
-                  className="pl-9"
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium mb-1.5 block">Role <span className="text-red-500">*</span></Label>
-              <Select value={createForm.role} onValueChange={(value) => setCreateForm((current) => ({ ...current, role: value }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Administrator</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="user">Regular User</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-slate-400 mt-1">{ROLE_CONFIG[createForm.role]?.description}</p>
-            </div>
-
-            {createForm.role !== 'admin' && (
+            <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <Label className="text-sm font-medium mb-1.5 block">Assign to Site</Label>
-                <Select
-                  value={createForm.site_id || 'none'}
-                  onValueChange={(value) => setCreateForm((current) => ({ ...current, site_id: value === 'none' ? '' : value }))}
-                >
-                  <SelectTrigger><SelectValue placeholder="Select a site (optional)" /></SelectTrigger>
+                <Label className="mb-1.5 block">Full Name</Label>
+                <Input value={createForm.full_name} onChange={(event) => setCreateForm((current) => ({ ...current, full_name: event.target.value }))} required />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Email Address</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input type="email" className="pl-9" value={createForm.email} onChange={(event) => setCreateForm((current) => ({ ...current, email: event.target.value }))} required />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label className="mb-1.5 block">Password</Label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input type="password" className="pl-9" value={createForm.password} onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))} required minLength={8} />
+                </div>
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Role</Label>
+                <Select value={createForm.role} onValueChange={(value) => setCreateForm((current) => ({ ...current, role: value }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No specific site</SelectItem>
-                    {sites.map((site) => (
-                      <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
-                    ))}
+                    <SelectItem value="admin">Administrator</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="user">Regular User</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-            )}
+            </div>
 
-            {createError ? (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {createError}
-              </div>
+            {createForm.role !== 'admin' ? (
+              <>
+                <div>
+                  <Label className="mb-1.5 block">Primary Location</Label>
+                  <Select value={createForm.site_id || 'none'} onValueChange={(value) => setCreateForm((current) => ({ ...current, site_id: value === 'none' ? '' : value }))}>
+                    <SelectTrigger><SelectValue placeholder="Select primary location" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No primary location</SelectItem>
+                      {sites.map((site) => <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="mb-1.5 flex items-center gap-2">
+                    <Network className="w-4 h-4 text-slate-500" />
+                    Location Access
+                  </Label>
+                  <SiteAccessChecklist
+                    roots={roots}
+                    childMap={childMap}
+                    selectedIds={createForm.allowed_site_ids}
+                    onToggle={(siteId, checked) => toggleSelectedSite(setCreateForm, createForm.allowed_site_ids, siteId, checked)}
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block">Visibility Scope</Label>
+                  <Select value={createForm.visibility_scope} onValueChange={(value) => setCreateForm((current) => ({ ...current, visibility_scope: value }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="assigned_only">Assigned Locations Only</SelectItem>
+                      <SelectItem value="subtree">Assigned Locations and Children</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
             ) : null}
+
+            {createError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{createError}</div> : null}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -407,8 +436,8 @@ export default function UserRoleManagement() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) setEditError(''); }}>
-        <DialogContent className="max-w-md">
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="w-5 h-5 text-slate-600" /> Edit User - {editingUser?.full_name || editingUser?.email}
@@ -419,66 +448,70 @@ export default function UserRoleManagement() {
               <strong>Email:</strong> {editingUser?.email}
             </div>
 
-            <div>
-              <Label className="text-sm font-medium mb-1.5 block">Full Name</Label>
-              <Input
-                value={editForm.full_name}
-                onChange={(event) => setEditForm((current) => ({ ...current, full_name: event.target.value }))}
-                placeholder="User full name"
-              />
-            </div>
-
-            <div>
-              <Label className="text-sm font-medium mb-1.5 block">Role</Label>
-              <Select value={editForm.role} onValueChange={(value) => setEditForm((current) => ({ ...current, role: value }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Administrator</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="user">Regular User</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-slate-400 mt-1">{ROLE_CONFIG[editForm.role]?.description}</p>
-            </div>
-
-            {editForm.role !== 'admin' && (
+            <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <Label className="text-sm font-medium mb-1.5 block">Assigned Site</Label>
-                <Select
-                  value={editForm.site_id || 'none'}
-                  onValueChange={(value) => setEditForm((current) => ({ ...current, site_id: value === 'none' ? '' : value }))}
-                >
-                  <SelectTrigger><SelectValue placeholder="No specific site" /></SelectTrigger>
+                <Label className="mb-1.5 block">Full Name</Label>
+                <Input value={editForm.full_name} onChange={(event) => setEditForm((current) => ({ ...current, full_name: event.target.value }))} />
+              </div>
+              <div>
+                <Label className="mb-1.5 block">Role</Label>
+                <Select value={editForm.role} onValueChange={(value) => setEditForm((current) => ({ ...current, role: value }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No specific site</SelectItem>
-                    {sites.map((site) => (
-                      <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
-                    ))}
+                    <SelectItem value="admin">Administrator</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="user">Regular User</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-            )}
+            </div>
+
+            {editForm.role !== 'admin' ? (
+              <>
+                <div>
+                  <Label className="mb-1.5 block">Primary Location</Label>
+                  <Select value={editForm.site_id || 'none'} onValueChange={(value) => setEditForm((current) => ({ ...current, site_id: value === 'none' ? '' : value }))}>
+                    <SelectTrigger><SelectValue placeholder="Select primary location" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No primary location</SelectItem>
+                      {sites.map((site) => <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="mb-1.5 flex items-center gap-2">
+                    <Network className="w-4 h-4 text-slate-500" />
+                    Location Access
+                  </Label>
+                  <SiteAccessChecklist
+                    roots={roots}
+                    childMap={childMap}
+                    selectedIds={editForm.allowed_site_ids}
+                    onToggle={(siteId, checked) => toggleSelectedSite(setEditForm, editForm.allowed_site_ids, siteId, checked)}
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block">Visibility Scope</Label>
+                  <Select value={editForm.visibility_scope} onValueChange={(value) => setEditForm((current) => ({ ...current, visibility_scope: value }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="assigned_only">Assigned Locations Only</SelectItem>
+                      <SelectItem value="subtree">Assigned Locations and Children</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            ) : null}
 
             <div>
-              <Label className="text-sm font-medium mb-1.5 block">Reset Password</Label>
+              <Label className="mb-1.5 block">Reset Password</Label>
               <div className="relative">
                 <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input
-                  type="password"
-                  minLength={8}
-                  value={editForm.password}
-                  onChange={(event) => setEditForm((current) => ({ ...current, password: event.target.value }))}
-                  placeholder="Leave blank to keep current password"
-                  className="pl-9"
-                />
+                <Input type="password" minLength={8} className="pl-9" value={editForm.password} onChange={(event) => setEditForm((current) => ({ ...current, password: event.target.value }))} placeholder="Leave blank to keep current password" />
               </div>
             </div>
 
-            {editError ? (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {editError}
-              </div>
-            ) : null}
+            {editError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{editError}</div> : null}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>

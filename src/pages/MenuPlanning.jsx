@@ -131,6 +131,13 @@ export default function MenuPlanning() {
     setFormOpen(false);
   };
 
+  const availableRecipes = recipes.filter((recipe) => {
+    if (!recipe.site_scope || recipe.site_scope === 'global') {
+      return true;
+    }
+    return Array.isArray(recipe.site_ids) && recipe.site_ids.includes(selectedSite);
+  });
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-[1600px] mx-auto">
@@ -144,7 +151,7 @@ export default function MenuPlanning() {
             </SelectTrigger>
             <SelectContent>
               {sites.map(site => (
-                <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
+                <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -292,14 +299,14 @@ export default function MenuPlanning() {
                     <SelectValue placeholder="Select recipe" />
                   </SelectTrigger>
                   <SelectContent>
-                    {recipes
+                    {availableRecipes
                       .filter(r => r.category === formData.meal_type || formData.meal_type === 'snack')
                       .map(recipe => (
                         <SelectItem key={recipe.id} value={recipe.id}>
                           {recipe.name}
                         </SelectItem>
                       ))}
-                    {recipes
+                    {availableRecipes
                       .filter(r => r.category !== formData.meal_type && formData.meal_type !== 'snack')
                       .map(recipe => (
                         <SelectItem key={recipe.id} value={recipe.id}>

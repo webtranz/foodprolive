@@ -5,19 +5,24 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Trash2, Flame } from 'lucide-react';
 
-export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredients = [], isLoading }) {
+export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredients = [], sites = [], isLoading }) {
   const [formData, setFormData] = useState({
     name: '',
     recipe_code: '',
     recipe_type: 'full',
+    category: '',
+    cuisine_type: '',
     description: '',
     prep_time_minutes: '',
     cook_time_minutes: '',
     instructions: '',
     ingredients: [],
-    is_active: true
+    is_active: true,
+    site_scope: 'global',
+    site_ids: []
   });
 
   const [calculatedCalories, setCalculatedCalories] = useState({ total: 0, perServing: 0 });
@@ -28,24 +33,32 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
         name: recipe.name || '',
         recipe_code: recipe.recipe_code || '',
         recipe_type: recipe.recipe_type || 'full',
+        category: recipe.category || '',
+        cuisine_type: recipe.cuisine_type || '',
         description: recipe.description || '',
         prep_time_minutes: recipe.prep_time_minutes || '',
         cook_time_minutes: recipe.cook_time_minutes || '',
         instructions: recipe.instructions || '',
         ingredients: recipe.ingredients || [],
-        is_active: recipe.is_active !== false
+        is_active: recipe.is_active !== false,
+        site_scope: recipe.site_scope || 'global',
+        site_ids: Array.isArray(recipe.site_ids) ? recipe.site_ids : []
       });
     } else {
       setFormData({
         name: '',
         recipe_code: '',
         recipe_type: 'full',
+        category: '',
+        cuisine_type: '',
         description: '',
         prep_time_minutes: '',
         cook_time_minutes: '',
         instructions: '',
         ingredients: [],
-        is_active: true
+        is_active: true,
+        site_scope: 'global',
+        site_ids: []
       });
     }
   }, [recipe, open]);
@@ -105,6 +118,8 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
       cook_time_minutes: formData.cook_time_minutes ? parseInt(formData.cook_time_minutes) : null,
       total_calories: calculatedCalories.total,
       calories_per_serving: calculatedCalories.total,
+      site_scope: formData.site_scope,
+      site_ids: formData.site_scope === 'specific' ? formData.site_ids : [],
       ingredients: formData.ingredients.map(ing => ({
         ...ing,
         quantity: parseFloat(ing.quantity) || 0
@@ -162,6 +177,28 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
                   <SelectItem value="semi">Semi (Semi-Finished)</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="category">Category</Label>
+              <Input
+                id="category"
+                value={formData.category}
+                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                className="mt-1"
+                placeholder="e.g., lunch"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="cuisine_type">Cuisine</Label>
+              <Input
+                id="cuisine_type"
+                value={formData.cuisine_type}
+                onChange={(e) => setFormData({ ...formData, cuisine_type: e.target.value })}
+                className="mt-1"
+                placeholder="e.g., middle_eastern"
+              />
             </div>
 
             <div>
@@ -306,6 +343,42 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
               className="mt-1"
               rows={4}
             />
+          </div>
+
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div>
+              <Label>Location Availability</Label>
+              <Select value={formData.site_scope} onValueChange={(value) => setFormData((current) => ({ ...current, site_scope: value }))}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="global">Global Recipe</SelectItem>
+                  <SelectItem value="specific">Specific Locations</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {formData.site_scope === 'specific' ? (
+              <div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-white p-3">
+                {sites.map((site) => {
+                  const checked = formData.site_ids.includes(site.id);
+                  return (
+                    <label key={site.id} className="flex items-center gap-3 text-sm">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(nextChecked) => setFormData((current) => ({
+                          ...current,
+                          site_ids: nextChecked
+                            ? Array.from(new Set([...current.site_ids, site.id]))
+                            : current.site_ids.filter((id) => id !== site.id)
+                        }))}
+                      />
+                      <span>{site.hierarchy_path || site.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
 
           <DialogFooter>

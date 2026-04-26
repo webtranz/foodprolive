@@ -187,10 +187,10 @@ export default function Dashboard() {
     [ingredients]
   );
 
-  const rootLocations = useMemo(
-    () => sites.filter((site) => !site.parent_site_id),
-    [sites]
-  );
+  const rootLocations = useMemo(() => {
+    const operational = sites.filter((site) => ['location', 'branch', 'camp', 'headquarters'].includes(site.type));
+    return operational.length > 0 ? operational : sites.filter((site) => !site.parent_site_id);
+  }, [sites]);
 
   const kitchens = useMemo(
     () => sites.filter((site) => site.type === 'kitchen'),

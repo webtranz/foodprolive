@@ -45,6 +45,11 @@ export default function Recipes() {
     queryFn: () => base44.entities.Ingredient.list()
   });
 
+  const { data: sites = [] } = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => base44.entities.Site.list()
+  });
+
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.Recipe.create(data),
     onSuccess: () => {
@@ -207,6 +212,7 @@ export default function Recipes() {
           onSubmit={handleSubmit}
           recipe={editingRecipe}
           ingredients={ingredients}
+          sites={sites}
           isLoading={createMutation.isPending || updateMutation.isPending}
         />
 

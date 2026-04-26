@@ -17,9 +17,12 @@ export function useSiteContext() {
   }, []);
 
   const isAdmin = currentUser?.role === 'admin';
-  // Admins see all sites; others are scoped to their site
-  const siteId = isAdmin ? null : (currentUser?.site_id || null);
+  const allowedSiteIds = Array.isArray(currentUser?.allowed_site_ids)
+    ? currentUser.allowed_site_ids
+    : (currentUser?.site_id ? [currentUser.site_id] : []);
+  const siteId = isAdmin ? null : (currentUser?.site_id || allowedSiteIds[0] || null);
   const siteName = currentUser?.site_name || null;
+  const visibilityScope = currentUser?.visibility_scope || (isAdmin ? 'all_locations' : 'subtree');
 
   /**
    * Filter a query object to scope to the current user's site.
@@ -35,8 +38,15 @@ export function useSiteContext() {
    */
   const filterBySite = (records = []) => {
     if (!siteId) return records;
-    return records.filter(r => r.site_id === siteId);
+    if (allowedSiteIds.length === 0) return records.filter(r => r.site_id === siteId);
+    return records.filter((record) => {
+      if (record.site_id && allowedSiteIds.includes(record.site_id)) return true;
+      if (record.from_site_id && allowedSiteIds.includes(record.from_site_id)) return true;
+      if (record.to_site_id && allowedSiteIds.includes(record.to_site_id)) return true;
+      if (Array.isArray(record.site_ids) && record.site_ids.some((id) => allowedSiteIds.includes(id))) return true;
+      return false;
+    });
   };
 
-  return { currentUser, siteId, siteName, isAdmin, loading, withSite, filterBySite };
+  return { currentUser, siteId, siteName, allowedSiteIds, visibilityScope, isAdmin, loading, withSite, filterBySite };
 }

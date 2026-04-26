@@ -67,6 +67,14 @@ import {
   getInventoryValuationReport,
   listInventoryLots
 } from './inventory.js';
+import {
+  getLocationScope,
+  filterRecordsByLocation,
+  assertPayloadLocationAccess,
+  buildSiteHierarchy,
+  normalizeUserLocationPayload,
+  normalizeRecipeLocationPayload
+} from './locationScope.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -113,6 +121,45 @@ function requireRole(roles) {
     }
     return next();
   };
+}
+
+async function prepareEntityPayload(user, entity, payload = {}, existing = null) {
+  const scope = await getLocationScope(user);
+  assertPayloadLocationAccess(user, entity, payload, scope);
+  const merged = existing ? { ...existing, ...payload } : payload;
+
+  if (entity === 'Site') {
+    return {
+      ...merged,
+      ...buildSiteHierarchy(merged, existing, scope)
+    };
+  }
+
+  if (entity === 'User') {
+    return normalizeUserLocationPayload(merged, scope);
+  }
+
+  if (entity === 'Recipe') {
+    return normalizeRecipeLocationPayload(merged, scope);
+  }
+
+  return merged;
+}
+
+async function scopeEntityRecords(user, entity, records = []) {
+  const scope = await getLocationScope(user);
+  return filterRecordsByLocation(user, entity, records, scope);
+}
+
+function filterRowsByAccessibleSites(rows = [], scope, fields = ['site_id']) {
+  if (scope?.unrestricted) {
+    return rows;
+  }
+
+  return rows.filter((row) => fields
+    .map((field) => row?.[field])
+    .filter(Boolean)
+    .every((siteId) => scope.accessibleSiteIds.has(String(siteId))));
 }
 
 function numericMatch(input, fallback = 0) {
@@ -392,7 +439,7 @@ app.get('/api/entities/:entity', requireAuth, async (request, response, next) =>
       sort: request.query.sort,
       limit
     });
-    response.json(records);
+    response.json(await scopeEntityRecords(request.user, entity, records));
   } catch (error) {
     next(error);
   }
@@ -408,7 +455,7 @@ app.post('/api/entities/:entity/filter', requireAuth, async (request, response, 
       sort: request.body?.sort,
       limit: request.body?.limit
     });
-    response.json(records);
+    response.json(await scopeEntityRecords(request.user, entity, records));
   } catch (error) {
     next(error);
   }
@@ -419,7 +466,8 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
     const entity = request.params.entity;
     ensureKnownEntity(entity);
     authorizeEntityAction(request.user, entity, 'create', request.body || {});
-    const record = await createDocument(entity, request.body || {});
+    const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {});
+    const record = await createDocument(entity, preparedPayload);
     response.status(201).json(record);
   } catch (error) {
     next(error);
@@ -434,8 +482,13 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
     if (!existing) {
       return response.status(404).json({ message: 'Record not found' });
     }
+    const scopedExisting = (await scopeEntityRecords(request.user, entity, [existing]))[0];
+    if (!scopedExisting) {
+      return response.status(403).json({ message: 'You do not have access to this record' });
+    }
     authorizeEntityAction(request.user, entity, 'update', request.body || {}, existing);
-    const updated = await updateDocument(entity, request.params.id, request.body || {});
+    const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {}, existing);
+    const updated = await updateDocument(entity, request.params.id, preparedPayload);
     return response.json(updated);
   } catch (error) {
     next(error);
@@ -449,6 +502,10 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
     const existing = await findDocument(entity, request.params.id);
     if (!existing) {
       return response.status(404).json({ message: 'Record not found' });
+    }
+    const scopedExisting = (await scopeEntityRecords(request.user, entity, [existing]))[0];
+    if (!scopedExisting) {
+      return response.status(403).json({ message: 'You do not have access to this record' });
     }
     authorizeEntityAction(request.user, entity, 'delete', null, existing);
     const removed = await deleteDocument(entity, request.params.id);
@@ -659,11 +716,15 @@ app.post('/api/pos/sources/:id/sync', requireAuth, requireRole(['admin']), async
 
 app.get('/api/pos/sales-summary', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
-    response.json(await getDailySalesSummary({
+    const scope = await getLocationScope(request.user);
+    const report = await getDailySalesSummary({
       startDate: request.query.start_date,
       endDate: request.query.end_date,
-      locationId: request.query.location_id
-    }));
+      locationId: request.user.role === 'admin'
+        ? request.query.location_id
+        : (request.query.location_id || [...scope.accessibleSiteIds][0] || null)
+    });
+    response.json(filterRowsByAccessibleSites(report, scope, ['site_id']));
   } catch (error) {
     next(error);
   }
@@ -671,11 +732,15 @@ app.get('/api/pos/sales-summary', requireAuth, requireRole(['admin', 'manager'])
 
 app.get('/api/pos/variance-report', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
-    response.json(await getSalesProductionVariance({
+    const scope = await getLocationScope(request.user);
+    const report = await getSalesProductionVariance({
       startDate: request.query.start_date,
       endDate: request.query.end_date,
-      locationId: request.query.location_id
-    }));
+      locationId: request.user.role === 'admin'
+        ? request.query.location_id
+        : (request.query.location_id || [...scope.accessibleSiteIds][0] || null)
+    });
+    response.json(filterRowsByAccessibleSites(report, scope, ['site_id']));
   } catch (error) {
     next(error);
   }
@@ -739,7 +804,8 @@ app.delete('/api/procurement/suppliers/:id', requireAuth, requireRole(['admin'])
 
 app.get('/api/procurement/requests', requireAuth, async (_request, response, next) => {
   try {
-    response.json(await listPurchaseRequests());
+    const scope = await getLocationScope(_request.user);
+    response.json(filterRowsByAccessibleSites(await listPurchaseRequests(), scope));
   } catch (error) {
     next(error);
   }
@@ -747,6 +813,8 @@ app.get('/api/procurement/requests', requireAuth, async (_request, response, nex
 
 app.post('/api/procurement/requests', requireAuth, async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    assertPayloadLocationAccess(request.user, 'MaterialRequest', request.body || {}, scope);
     response.status(201).json(await createPurchaseRequest(request.body || {}, request.user));
   } catch (error) {
     next(error);
@@ -755,6 +823,8 @@ app.post('/api/procurement/requests', requireAuth, async (request, response, nex
 
 app.post('/api/procurement/requests/auto-generate', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    assertPayloadLocationAccess(request.user, 'MaterialRequest', request.body || {}, scope);
     response.status(201).json(await autoGeneratePurchaseRequestFromLowStock(request.body || {}, request.user));
   } catch (error) {
     next(error);
@@ -787,7 +857,8 @@ app.post('/api/procurement/requests/:id/reject', requireAuth, requireRole(['admi
 
 app.get('/api/procurement/orders', requireAuth, async (_request, response, next) => {
   try {
-    response.json(await listPurchaseOrders());
+    const scope = await getLocationScope(_request.user);
+    response.json(filterRowsByAccessibleSites(await listPurchaseOrders(), scope));
   } catch (error) {
     next(error);
   }
@@ -795,6 +866,8 @@ app.get('/api/procurement/orders', requireAuth, async (_request, response, next)
 
 app.post('/api/procurement/orders', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    assertPayloadLocationAccess(request.user, 'PurchaseOrder', request.body || {}, scope);
     response.status(201).json(await createPurchaseOrder(request.body || {}, request.user));
   } catch (error) {
     next(error);
@@ -827,7 +900,8 @@ app.post('/api/procurement/orders/:id/cancel', requireAuth, requireRole(['admin'
 
 app.get('/api/procurement/receipts', requireAuth, async (_request, response, next) => {
   try {
-    response.json(await listGoodsReceipts());
+    const scope = await getLocationScope(_request.user);
+    response.json(filterRowsByAccessibleSites(await listGoodsReceipts(), scope));
   } catch (error) {
     next(error);
   }
@@ -835,6 +909,8 @@ app.get('/api/procurement/receipts', requireAuth, async (_request, response, nex
 
 app.post('/api/procurement/receipts', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    assertPayloadLocationAccess(request.user, 'PurchaseOrder', request.body || {}, scope);
     response.status(201).json(await createGoodsReceipt(request.body || {}, request.user));
   } catch (error) {
     next(error);
@@ -843,7 +919,8 @@ app.post('/api/procurement/receipts', requireAuth, requireRole(['admin', 'manage
 
 app.get('/api/procurement/invoices', requireAuth, async (_request, response, next) => {
   try {
-    response.json(await listSupplierInvoices());
+    const scope = await getLocationScope(_request.user);
+    response.json(filterRowsByAccessibleSites(await listSupplierInvoices(), scope));
   } catch (error) {
     next(error);
   }
@@ -851,6 +928,8 @@ app.get('/api/procurement/invoices', requireAuth, async (_request, response, nex
 
 app.post('/api/procurement/invoices', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    assertPayloadLocationAccess(request.user, 'PurchaseOrder', request.body || {}, scope);
     response.status(201).json(await createSupplierInvoice(request.body || {}, request.user));
   } catch (error) {
     next(error);
@@ -870,7 +949,8 @@ app.get('/api/procurement/price-comparison', requireAuth, async (request, respon
 
 app.get('/api/procurement/performance', requireAuth, requireRole(['admin', 'manager']), async (_request, response, next) => {
   try {
-    response.json(await getSupplierPerformanceDashboard());
+    const scope = await getLocationScope(_request.user);
+    response.json(filterRowsByAccessibleSites(await getSupplierPerformanceDashboard(), scope));
   } catch (error) {
     next(error);
   }
@@ -878,6 +958,8 @@ app.get('/api/procurement/performance', requireAuth, requireRole(['admin', 'mana
 
 app.post('/api/inventory/receive', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    assertPayloadLocationAccess(request.user, 'Inventory', request.body || {}, scope);
     response.status(201).json(await receiveStock({
       ...(request.body || {}),
       performed_by: request.user.email
@@ -889,6 +971,11 @@ app.post('/api/inventory/receive', requireAuth, requireRole(['admin', 'manager']
 
 app.post('/api/inventory/adjust', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    const inventoryRecord = request.body?.inventory_id ? await findDocument('Inventory', request.body.inventory_id) : null;
+    if (inventoryRecord) {
+      assertPayloadLocationAccess(request.user, 'Inventory', inventoryRecord, scope);
+    }
     response.json(await adjustStock({
       ...(request.body || {}),
       performed_by: request.user.email
@@ -900,6 +987,8 @@ app.post('/api/inventory/adjust', requireAuth, requireRole(['admin', 'manager'])
 
 app.post('/api/inventory/transfer', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    assertPayloadLocationAccess(request.user, 'ProductionTransfer', request.body || {}, scope);
     response.json(await transferStock({
       ...(request.body || {}),
       performed_by: request.user.email
@@ -911,6 +1000,11 @@ app.post('/api/inventory/transfer', requireAuth, requireRole(['admin', 'manager'
 
 app.post('/api/inventory/production/:id/complete', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    const production = await findDocument('Production', request.params.id);
+    if (!production || !filterRowsByAccessibleSites([production], scope).length) {
+      return response.status(403).json({ message: 'You do not have access to this production record' });
+    }
     response.json(await completeProduction(request.params.id, request.user));
   } catch (error) {
     next(error);
@@ -919,19 +1013,22 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requireRole(['ad
 
 app.get('/api/inventory/lots', requireAuth, async (request, response, next) => {
   try {
-    response.json(await listInventoryLots({
+    const scope = await getLocationScope(request.user);
+    const lots = await listInventoryLots({
       siteId: request.query.site_id,
       ingredientId: request.query.ingredient_id,
       includeEmpty: request.query.include_empty === 'true'
-    }));
+    });
+    response.json(filterRowsByAccessibleSites(lots, scope));
   } catch (error) {
     next(error);
   }
 });
 
-app.get('/api/inventory/reports/stock-on-hand', requireAuth, async (_request, response, next) => {
+app.get('/api/inventory/reports/stock-on-hand', requireAuth, async (request, response, next) => {
   try {
-    response.json(await getStockOnHandReport());
+    const scope = await getLocationScope(request.user);
+    response.json(filterRowsByAccessibleSites(await getStockOnHandReport(), scope));
   } catch (error) {
     next(error);
   }
@@ -939,12 +1036,14 @@ app.get('/api/inventory/reports/stock-on-hand', requireAuth, async (_request, re
 
 app.get('/api/inventory/reports/movements', requireAuth, async (request, response, next) => {
   try {
-    response.json(await getStockMovementReport({
+    const scope = await getLocationScope(request.user);
+    const report = await getStockMovementReport({
       siteId: request.query.site_id,
       ingredientId: request.query.ingredient_id,
       dateFrom: request.query.date_from,
       dateTo: request.query.date_to
-    }));
+    });
+    response.json(filterRowsByAccessibleSites(report, scope));
   } catch (error) {
     next(error);
   }
@@ -952,9 +1051,11 @@ app.get('/api/inventory/reports/movements', requireAuth, async (request, respons
 
 app.get('/api/inventory/reports/expiry', requireAuth, async (request, response, next) => {
   try {
-    response.json(await getExpiryReport({
+    const scope = await getLocationScope(request.user);
+    const report = await getExpiryReport({
       thresholdDays: request.query.threshold_days ? Number(request.query.threshold_days) : 30
-    }));
+    });
+    response.json(filterRowsByAccessibleSites(report, scope));
   } catch (error) {
     next(error);
   }
@@ -970,9 +1071,10 @@ app.get('/api/inventory/reports/velocity', requireAuth, async (request, response
   }
 });
 
-app.get('/api/inventory/reports/valuation', requireAuth, async (_request, response, next) => {
+app.get('/api/inventory/reports/valuation', requireAuth, async (request, response, next) => {
   try {
-    response.json(await getInventoryValuationReport());
+    const scope = await getLocationScope(request.user);
+    response.json(filterRowsByAccessibleSites(await getInventoryValuationReport(), scope));
   } catch (error) {
     next(error);
   }
