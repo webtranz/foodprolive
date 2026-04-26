@@ -19,6 +19,7 @@ const LOCATION_SCOPED_ENTITIES = new Set([
   'BranchOrder',
   'Recipe',
   'AdvancedReportSchedule',
+  'ERPIntegrationLog',
   'User',
   'Site'
 ]);

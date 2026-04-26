@@ -382,6 +382,23 @@ export const base44 = {
       return apiRequest('/api/inventory/reports/valuation');
     }
   },
+  erp: {
+    export(data) {
+      return apiRequest('/api/erp/export', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    listLogs() {
+      return apiRequest('/api/erp/logs');
+    },
+    retryLog(id) {
+      return apiRequest(`/api/erp/logs/${id}/retry`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+    }
+  },
   integrations: {
     Core: {
       UploadFile({ file }) {

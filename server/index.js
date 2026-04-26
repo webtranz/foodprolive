@@ -68,6 +68,11 @@ import {
   listInventoryLots
 } from './inventory.js';
 import {
+  exportToErp,
+  retryErpSync,
+  listErpLogs
+} from './erpIntegration.js';
+import {
   getLocationScope,
   filterRecordsByLocation,
   assertPayloadLocationAccess,
@@ -1075,6 +1080,40 @@ app.get('/api/inventory/reports/valuation', requireAuth, async (request, respons
   try {
     const scope = await getLocationScope(request.user);
     response.json(filterRowsByAccessibleSites(await getInventoryValuationReport(), scope));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/erp/export', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.json(await exportToErp({
+      user: request.user,
+      configId: request.body?.config_id || null,
+      moduleKey: request.body?.module_key,
+      transport: request.body?.transport || 'csv',
+      startDate: request.body?.start_date || '',
+      endDate: request.body?.end_date || '',
+      locationId: request.body?.location_id || '',
+      category: request.body?.category || ''
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/erp/logs', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    response.json(await listErpLogs(scope));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/erp/logs/:id/retry', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.json(await retryErpSync(request.params.id, request.user));
   } catch (error) {
     next(error);
   }

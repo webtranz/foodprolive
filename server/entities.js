@@ -10,6 +10,12 @@ export const entityRegistry = {
   AdvancedReportSchedule: {
     defaults: { status: 'active', frequency: 'weekly' }
   },
+  ERPIntegrationConfig: {
+    defaults: { is_active: true, sync_schedule: 'manual', data_mapping: {} }
+  },
+  ERPIntegrationLog: {
+    defaults: { status: 'pending', retry_count: 0, request_payload: {}, response_payload: {} }
+  },
   AttendanceRecord: {
     defaults: { status: 'checked_in' }
   },
@@ -183,6 +189,8 @@ const readRoles = {
 const writeRoles = {
   Site: 'admin',
   AdvancedReportSchedule: 'manager',
+  ERPIntegrationConfig: 'admin',
+  ERPIntegrationLog: 'manager',
   User: 'admin',
   UserGroup: 'manager',
   Production: 'manager',
