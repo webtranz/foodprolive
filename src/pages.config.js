@@ -70,6 +70,7 @@ import Menu from './pages/Menu';
 import MenuBuilder from './pages/MenuBuilder';
 import MenuPlanning from './pages/MenuPlanning';
 import ProcurementPlanning from './pages/ProcurementPlanning';
+import ProcurementModule from './pages/ProcurementModule';
 import Production from './pages/Production';
 import ProductionCalculator from './pages/ProductionCalculator';
 import ProductionTransfer from './pages/ProductionTransfer';
@@ -110,6 +111,7 @@ export const PAGES = {
     "MenuBuilder": MenuBuilder,
     "MenuPlanning": MenuPlanning,
     "ProcurementPlanning": ProcurementPlanning,
+    "ProcurementModule": ProcurementModule,
     "Production": Production,
     "ProductionCalculator": ProductionCalculator,
     "ProductionTransfer": ProductionTransfer,

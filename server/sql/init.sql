@@ -142,3 +142,178 @@ CREATE TABLE IF NOT EXISTS pos_sync_logs (
   response_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS suppliers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  contact_person TEXT,
+  email TEXT,
+  phone TEXT,
+  address TEXT,
+  city TEXT,
+  country TEXT,
+  payment_terms TEXT,
+  lead_time_days INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  rating NUMERIC(6, 2) NOT NULL DEFAULT 0,
+  categories JSONB NOT NULL DEFAULT '[]'::jsonb,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS purchase_requests (
+  id TEXT PRIMARY KEY,
+  request_number TEXT NOT NULL UNIQUE,
+  site_id TEXT,
+  site_name TEXT,
+  request_date DATE NOT NULL,
+  needed_by DATE,
+  requested_by TEXT,
+  requested_by_name TEXT,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  status TEXT NOT NULL DEFAULT 'pending',
+  approval_role TEXT NOT NULL DEFAULT 'manager',
+  approved_by TEXT,
+  approved_by_name TEXT,
+  approved_at TIMESTAMPTZ,
+  auto_generated BOOLEAN NOT NULL DEFAULT FALSE,
+  source_type TEXT NOT NULL DEFAULT 'manual',
+  notes TEXT,
+  total_estimated_cost NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS purchase_request_items (
+  id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES purchase_requests(id) ON DELETE CASCADE,
+  ingredient_id TEXT,
+  ingredient_name TEXT NOT NULL,
+  description TEXT,
+  requested_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  approved_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  ordered_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  unit TEXT,
+  estimated_unit_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  line_total NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  preferred_supplier_id TEXT,
+  preferred_supplier_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id TEXT PRIMARY KEY,
+  po_number TEXT NOT NULL UNIQUE,
+  request_id TEXT REFERENCES purchase_requests(id) ON DELETE SET NULL,
+  supplier_id TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
+  supplier_name TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  order_date DATE NOT NULL,
+  expected_delivery_date DATE,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  subtotal NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  tax_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  approved_by TEXT,
+  approved_by_name TEXT,
+  approved_at TIMESTAMPTZ,
+  created_by TEXT,
+  created_by_name TEXT,
+  received_percentage NUMERIC(8, 2) NOT NULL DEFAULT 0,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS purchase_order_items (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  request_item_id TEXT REFERENCES purchase_request_items(id) ON DELETE SET NULL,
+  ingredient_id TEXT,
+  ingredient_name TEXT NOT NULL,
+  ordered_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  received_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  unit TEXT,
+  unit_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  line_total NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS goods_receipts (
+  id TEXT PRIMARY KEY,
+  grn_number TEXT NOT NULL UNIQUE,
+  purchase_order_id TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  supplier_id TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
+  supplier_name TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  receipt_date DATE NOT NULL,
+  received_by TEXT,
+  received_by_name TEXT,
+  status TEXT NOT NULL DEFAULT 'posted',
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS goods_receipt_items (
+  id TEXT PRIMARY KEY,
+  receipt_id TEXT NOT NULL REFERENCES goods_receipts(id) ON DELETE CASCADE,
+  order_item_id TEXT REFERENCES purchase_order_items(id) ON DELETE SET NULL,
+  ingredient_id TEXT,
+  ingredient_name TEXT NOT NULL,
+  received_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  accepted_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  rejected_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  unit TEXT,
+  batch_number TEXT,
+  expiry_date DATE,
+  status TEXT NOT NULL DEFAULT 'accepted',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS supplier_invoices (
+  id TEXT PRIMARY KEY,
+  invoice_number TEXT NOT NULL UNIQUE,
+  supplier_id TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
+  supplier_name TEXT,
+  purchase_order_id TEXT REFERENCES purchase_orders(id) ON DELETE SET NULL,
+  goods_receipt_id TEXT REFERENCES goods_receipts(id) ON DELETE SET NULL,
+  invoice_date DATE NOT NULL,
+  due_date DATE,
+  subtotal NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  tax_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  entered_by TEXT,
+  entered_by_name TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS supplier_price_history (
+  id TEXT PRIMARY KEY,
+  supplier_id TEXT REFERENCES suppliers(id) ON DELETE CASCADE,
+  supplier_name TEXT,
+  ingredient_id TEXT,
+  ingredient_name TEXT NOT NULL,
+  purchase_order_item_id TEXT REFERENCES purchase_order_items(id) ON DELETE SET NULL,
+  unit_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  effective_date DATE NOT NULL,
+  lead_time_days INTEGER NOT NULL DEFAULT 0,
+  site_id TEXT,
+  site_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_requests_status ON purchase_requests(status, request_date DESC);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status, order_date DESC);
+CREATE INDEX IF NOT EXISTS idx_goods_receipts_order ON goods_receipts(purchase_order_id, receipt_date DESC);
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_supplier ON supplier_invoices(supplier_id, invoice_date DESC);
+CREATE INDEX IF NOT EXISTS idx_supplier_price_history_lookup ON supplier_price_history(ingredient_id, supplier_id, effective_date DESC);

@@ -35,6 +35,26 @@ import {
   getDailySalesSummary,
   getSalesProductionVariance
 } from './pos.js';
+import {
+  listSuppliers,
+  createSupplier,
+  updateSupplier,
+  deleteSupplier,
+  listPurchaseRequests,
+  createPurchaseRequest,
+  approvePurchaseRequest,
+  autoGeneratePurchaseRequestFromLowStock,
+  listPurchaseOrders,
+  createPurchaseOrder,
+  approvePurchaseOrder,
+  cancelPurchaseOrder,
+  listGoodsReceipts,
+  createGoodsReceipt,
+  listSupplierInvoices,
+  createSupplierInvoice,
+  listSupplierPriceComparison,
+  getSupplierPerformanceDashboard
+} from './procurement.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -660,6 +680,185 @@ app.post('/api/pos/webhooks/:sourceId', requireAuth, requireRole(['admin']), asy
       requestPayload: { sourceId: request.params.sourceId, webhook: true }
     });
     response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/suppliers', requireAuth, async (_request, response, next) => {
+  try {
+    response.json(await listSuppliers());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/suppliers', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.status(201).json(await createSupplier(request.body || {}));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/procurement/suppliers/:id', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    const updated = await updateSupplier(request.params.id, request.body || {});
+    if (!updated) {
+      return response.status(404).json({ message: 'Supplier not found' });
+    }
+    response.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/procurement/suppliers/:id', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const removed = await deleteSupplier(request.params.id);
+    if (!removed) {
+      return response.status(404).json({ message: 'Supplier not found' });
+    }
+    response.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/requests', requireAuth, async (_request, response, next) => {
+  try {
+    response.json(await listPurchaseRequests());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/requests', requireAuth, async (request, response, next) => {
+  try {
+    response.status(201).json(await createPurchaseRequest(request.body || {}, request.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/requests/auto-generate', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.status(201).json(await autoGeneratePurchaseRequestFromLowStock(request.body || {}, request.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/requests/:id/approve', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    const updated = await approvePurchaseRequest(request.params.id, { ...(request.body || {}), status: 'approved' }, request.user);
+    if (!updated) {
+      return response.status(404).json({ message: 'Purchase request not found' });
+    }
+    response.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/requests/:id/reject', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    const updated = await approvePurchaseRequest(request.params.id, { ...(request.body || {}), status: 'rejected' }, request.user);
+    if (!updated) {
+      return response.status(404).json({ message: 'Purchase request not found' });
+    }
+    response.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/orders', requireAuth, async (_request, response, next) => {
+  try {
+    response.json(await listPurchaseOrders());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/orders', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.status(201).json(await createPurchaseOrder(request.body || {}, request.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/orders/:id/approve', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    const updated = await approvePurchaseOrder(request.params.id, request.body || {}, request.user);
+    if (!updated) {
+      return response.status(404).json({ message: 'Purchase order not found' });
+    }
+    response.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/orders/:id/cancel', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const updated = await cancelPurchaseOrder(request.params.id, request.body || {}, request.user);
+    if (!updated) {
+      return response.status(404).json({ message: 'Purchase order not found' });
+    }
+    response.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/receipts', requireAuth, async (_request, response, next) => {
+  try {
+    response.json(await listGoodsReceipts());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/receipts', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.status(201).json(await createGoodsReceipt(request.body || {}, request.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/invoices', requireAuth, async (_request, response, next) => {
+  try {
+    response.json(await listSupplierInvoices());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/invoices', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.status(201).json(await createSupplierInvoice(request.body || {}, request.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/price-comparison', requireAuth, async (request, response, next) => {
+  try {
+    response.json(await listSupplierPriceComparison({
+      ingredientId: request.query.ingredient_id,
+      supplierId: request.query.supplier_id
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/performance', requireAuth, requireRole(['admin', 'manager']), async (_request, response, next) => {
+  try {
+    response.json(await getSupplierPerformanceDashboard());
   } catch (error) {
     next(error);
   }

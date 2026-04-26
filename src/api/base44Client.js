@@ -244,6 +244,100 @@ export const base44 = {
       return apiRequest(`/api/pos/variance-report${buildQueryString(filters)}`);
     }
   },
+  procurement: {
+    listSuppliers() {
+      return apiRequest('/api/procurement/suppliers');
+    },
+    createSupplier(data) {
+      return apiRequest('/api/procurement/suppliers', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    updateSupplier(id, data) {
+      return apiRequest(`/api/procurement/suppliers/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      });
+    },
+    deleteSupplier(id) {
+      return apiRequest(`/api/procurement/suppliers/${id}`, {
+        method: 'DELETE'
+      });
+    },
+    listRequests() {
+      return apiRequest('/api/procurement/requests');
+    },
+    createRequest(data) {
+      return apiRequest('/api/procurement/requests', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    autoGenerateRequest(data) {
+      return apiRequest('/api/procurement/requests/auto-generate', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    approveRequest(id, data = {}) {
+      return apiRequest(`/api/procurement/requests/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    rejectRequest(id, data = {}) {
+      return apiRequest(`/api/procurement/requests/${id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    listOrders() {
+      return apiRequest('/api/procurement/orders');
+    },
+    createOrder(data) {
+      return apiRequest('/api/procurement/orders', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    approveOrder(id, data = {}) {
+      return apiRequest(`/api/procurement/orders/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    cancelOrder(id, data = {}) {
+      return apiRequest(`/api/procurement/orders/${id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    listReceipts() {
+      return apiRequest('/api/procurement/receipts');
+    },
+    createReceipt(data) {
+      return apiRequest('/api/procurement/receipts', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    listInvoices() {
+      return apiRequest('/api/procurement/invoices');
+    },
+    createInvoice(data) {
+      return apiRequest('/api/procurement/invoices', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    getPriceComparison(filters = {}) {
+      return apiRequest(`/api/procurement/price-comparison${buildQueryString(filters)}`);
+    },
+    getPerformance() {
+      return apiRequest('/api/procurement/performance');
+    }
+  },
   integrations: {
     Core: {
       UploadFile({ file }) {
