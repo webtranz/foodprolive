@@ -55,6 +55,18 @@ import {
   listSupplierPriceComparison,
   getSupplierPerformanceDashboard
 } from './procurement.js';
+import {
+  receiveStock,
+  adjustStock,
+  transferStock,
+  completeProduction,
+  getStockOnHandReport,
+  getStockMovementReport,
+  getExpiryReport,
+  getVelocityReports,
+  getInventoryValuationReport,
+  listInventoryLots
+} from './inventory.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -859,6 +871,108 @@ app.get('/api/procurement/price-comparison', requireAuth, async (request, respon
 app.get('/api/procurement/performance', requireAuth, requireRole(['admin', 'manager']), async (_request, response, next) => {
   try {
     response.json(await getSupplierPerformanceDashboard());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/inventory/receive', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.status(201).json(await receiveStock({
+      ...(request.body || {}),
+      performed_by: request.user.email
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/inventory/adjust', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.json(await adjustStock({
+      ...(request.body || {}),
+      performed_by: request.user.email
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/inventory/transfer', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.json(await transferStock({
+      ...(request.body || {}),
+      performed_by: request.user.email
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/inventory/production/:id/complete', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    response.json(await completeProduction(request.params.id, request.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/inventory/lots', requireAuth, async (request, response, next) => {
+  try {
+    response.json(await listInventoryLots({
+      siteId: request.query.site_id,
+      ingredientId: request.query.ingredient_id,
+      includeEmpty: request.query.include_empty === 'true'
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/inventory/reports/stock-on-hand', requireAuth, async (_request, response, next) => {
+  try {
+    response.json(await getStockOnHandReport());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/inventory/reports/movements', requireAuth, async (request, response, next) => {
+  try {
+    response.json(await getStockMovementReport({
+      siteId: request.query.site_id,
+      ingredientId: request.query.ingredient_id,
+      dateFrom: request.query.date_from,
+      dateTo: request.query.date_to
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/inventory/reports/expiry', requireAuth, async (request, response, next) => {
+  try {
+    response.json(await getExpiryReport({
+      thresholdDays: request.query.threshold_days ? Number(request.query.threshold_days) : 30
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/inventory/reports/velocity', requireAuth, async (request, response, next) => {
+  try {
+    response.json(await getVelocityReports({
+      days: request.query.days ? Number(request.query.days) : 30
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/inventory/reports/valuation', requireAuth, async (_request, response, next) => {
+  try {
+    response.json(await getInventoryValuationReport());
   } catch (error) {
     next(error);
   }

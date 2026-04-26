@@ -338,6 +338,50 @@ export const base44 = {
       return apiRequest('/api/procurement/performance');
     }
   },
+  inventory: {
+    receive(data) {
+      return apiRequest('/api/inventory/receive', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    adjust(data) {
+      return apiRequest('/api/inventory/adjust', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    transfer(data) {
+      return apiRequest('/api/inventory/transfer', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    completeProduction(id) {
+      return apiRequest(`/api/inventory/production/${id}/complete`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+    },
+    listLots(filters = {}) {
+      return apiRequest(`/api/inventory/lots${buildQueryString(filters)}`);
+    },
+    getStockOnHand() {
+      return apiRequest('/api/inventory/reports/stock-on-hand');
+    },
+    getMovements(filters = {}) {
+      return apiRequest(`/api/inventory/reports/movements${buildQueryString(filters)}`);
+    },
+    getExpiryReport(filters = {}) {
+      return apiRequest(`/api/inventory/reports/expiry${buildQueryString(filters)}`);
+    },
+    getVelocity(filters = {}) {
+      return apiRequest(`/api/inventory/reports/velocity${buildQueryString(filters)}`);
+    },
+    getValuation() {
+      return apiRequest('/api/inventory/reports/valuation');
+    }
+  },
   integrations: {
     Core: {
       UploadFile({ file }) {

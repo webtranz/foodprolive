@@ -90,50 +90,12 @@ export default function Production() {
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status, production }) => {
-      const user = await base44.auth.me();
-      
-      // Update production status
-      await base44.entities.Production.update(id, { status });
-      
-      // If completing production, deduct ingredients from inventory and create transactions
-      if (status === 'completed' && production?.ingredients_used) {
-        for (const ingredient of production.ingredients_used) {
-          const inventoryItem = inventory.find(
-            item => item.site_id === production.site_id && 
-                   item.ingredient_id === ingredient.ingredient_id
-          );
-          
-          if (inventoryItem) {
-            const quantity = ingredient.planned_quantity || 0;
-            const newQuantity = Math.max(0, (inventoryItem.quantity || 0) - quantity);
-            let newStatus = 'in_stock';
-            if (newQuantity <= 0) newStatus = 'out_of_stock';
-            else if (newQuantity <= (inventoryItem.min_stock_level || 0)) newStatus = 'low_stock';
-            
-            // Update inventory
-            await base44.entities.Inventory.update(inventoryItem.id, {
-              quantity: newQuantity,
-              status: newStatus
-            });
-
-            // Create transaction record
-            await base44.entities.InventoryTransaction.create({
-              site_id: production.site_id,
-              site_name: production.site_name,
-              ingredient_id: ingredient.ingredient_id,
-              ingredient_name: ingredient.ingredient_name,
-              transaction_type: 'production_use',
-              quantity: -quantity,
-              unit: ingredient.unit,
-              transaction_date: production.production_date,
-              reference_id: production.id,
-              reference_type: 'production',
-              notes: `Used in production: ${production.recipe_name}`,
-              performed_by: user.email
-            });
-          }
-        }
+      if (status === 'completed') {
+        await base44.inventory.completeProduction(id);
+        return;
       }
+
+      await base44.entities.Production.update(id, { status });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });

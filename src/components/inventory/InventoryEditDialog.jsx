@@ -11,7 +11,8 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
   const [formData, setFormData] = useState({
     min_stock_level: '',
     max_stock_level: '',
-    expiry_date: ''
+    expiry_date: '',
+    valuation_method: 'fifo'
   });
 
   const queryClient = useQueryClient();
@@ -21,7 +22,8 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
       setFormData({
         min_stock_level: inventoryItem.min_stock_level || '',
         max_stock_level: inventoryItem.max_stock_level || '',
-        expiry_date: inventoryItem.expiry_date || ''
+        expiry_date: inventoryItem.expiry_date || '',
+        valuation_method: inventoryItem.valuation_method || 'fifo'
       });
     }
   }, [inventoryItem]);
@@ -39,7 +41,8 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
     updateMutation.mutate({
       min_stock_level: parseFloat(formData.min_stock_level) || null,
       max_stock_level: parseFloat(formData.max_stock_level) || null,
-      expiry_date: formData.expiry_date || null
+      expiry_date: formData.expiry_date || null,
+      valuation_method: formData.valuation_method || 'fifo'
     });
   };
 
@@ -91,6 +94,18 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
               onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
               className="mt-1"
             />
+          </div>
+
+          <div>
+            <Label>Valuation Method</Label>
+            <select
+              className="mt-1 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+              value={formData.valuation_method}
+              onChange={(e) => setFormData({ ...formData, valuation_method: e.target.value })}
+            >
+              <option value="fifo">FIFO</option>
+              <option value="weighted_average">Weighted Average</option>
+            </select>
           </div>
 
           <DialogFooter>

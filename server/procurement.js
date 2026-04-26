@@ -6,6 +6,7 @@ import {
   createDocument,
   updateDocument
 } from './db.js';
+import { receiveStock } from './inventory.js';
 
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const nowIso = () => new Date().toISOString();
@@ -663,48 +664,21 @@ function inventoryStatus(quantity, minimum) {
 }
 
 async function applyReceiptToInventory(order, receiptItem, actor) {
-  const inventory = await listDocuments('Inventory', {
-    filters: { site_id: order.site_id || '', ingredient_id: receiptItem.ingredient_id || '' },
-    limit: 10
-  });
-  const existing = inventory[0] || null;
-  const acceptedQuantity = toNumber(receiptItem.accepted_quantity, 0);
-  const currentQuantity = toNumber(existing?.quantity, 0);
-  const minimum = toNumber(existing?.min_stock_level, 0);
-  const nextQuantity = currentQuantity + acceptedQuantity;
-  const status = inventoryStatus(nextQuantity, minimum);
-
-  if (existing) {
-    await updateDocument('Inventory', existing.id, {
-      quantity: nextQuantity,
-      status
-    });
-  } else {
-    await createDocument('Inventory', {
-      site_id: order.site_id,
-      site_name: order.site_name,
-      ingredient_id: receiptItem.ingredient_id,
-      ingredient_name: receiptItem.ingredient_name,
-      quantity: acceptedQuantity,
-      min_stock_level: 0,
-      unit: receiptItem.unit,
-      status
-    });
-  }
-
-  await createDocument('InventoryTransaction', {
+  await receiveStock({
     site_id: order.site_id,
     site_name: order.site_name,
     ingredient_id: receiptItem.ingredient_id,
     ingredient_name: receiptItem.ingredient_name,
-    transaction_type: 'receipt',
-    quantity: acceptedQuantity,
+    quantity: toNumber(receiptItem.accepted_quantity, 0),
     unit: receiptItem.unit,
-    transaction_date: dateOnly(),
+    unit_cost: toNumber(receiptItem.unit_cost, 0),
+    batch_number: receiptItem.batch_number || null,
+    expiry_date: receiptItem.expiry_date || null,
     reference_id: order.id,
     reference_type: 'goods_receipt',
     notes: `Goods receipt for PO ${order.po_number}`,
-    performed_by: actor.email
+    performed_by: actor.email,
+    reason_code: 'procurement_receipt'
   });
 }
 
@@ -736,12 +710,13 @@ async function createGoodsReceipt(payload, actor) {
     ingredient_id: normalizeText(item.ingredient_id) || null,
     ingredient_name: normalizeText(item.ingredient_name),
     received_quantity: toNumber(item.received_quantity, 0),
-    accepted_quantity: toNumber(item.accepted_quantity, 0),
-    rejected_quantity: toNumber(item.rejected_quantity, 0),
-    unit: normalizeText(item.unit),
-    batch_number: normalizeText(item.batch_number) || null,
-    expiry_date: item.expiry_date ? dateOnly(item.expiry_date) : null,
-    status: normalizeText(item.status || 'accepted') || 'accepted'
+      accepted_quantity: toNumber(item.accepted_quantity, 0),
+      rejected_quantity: toNumber(item.rejected_quantity, 0),
+      unit: normalizeText(item.unit),
+      unit_cost: toNumber(item.unit_cost, 0),
+      batch_number: normalizeText(item.batch_number) || null,
+      expiry_date: item.expiry_date ? dateOnly(item.expiry_date) : null,
+      status: normalizeText(item.status || 'accepted') || 'accepted'
   })).filter((item) => item.ingredient_name && item.received_quantity > 0);
 
   if (!items.length) {

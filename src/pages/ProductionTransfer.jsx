@@ -70,72 +70,16 @@ export default function ProductionTransfer() {
       
       if (status === 'completed') {
         updates.received_by = user.email;
-        
-        // Update inventory for both sites
-        for (const item of transfer.items || []) {
-          // Deduct from source
-          const fromInv = inventory.find(i => 
-            i.site_id === transfer.from_site_id && 
-            i.ingredient_id === item.ingredient_id
-          );
-          if (fromInv) {
-            await base44.entities.Inventory.update(fromInv.id, {
-              quantity: Math.max(0, (fromInv.quantity || 0) - item.quantity)
-            });
-          }
-
-          // Add to destination
-          const toInv = inventory.find(i => 
-            i.site_id === transfer.to_site_id && 
-            i.ingredient_id === item.ingredient_id
-          );
-          if (toInv) {
-            await base44.entities.Inventory.update(toInv.id, {
-              quantity: (toInv.quantity || 0) + item.quantity
-            });
-          } else {
-            await base44.entities.Inventory.create({
-              site_id: transfer.to_site_id,
-              site_name: transfer.to_site_name,
-              ingredient_id: item.ingredient_id,
-              ingredient_name: item.ingredient_name,
-              quantity: item.quantity,
-              unit: item.unit,
-              status: 'in_stock'
-            });
-          }
-
-          // Create transaction records
-          await base44.entities.InventoryTransaction.create({
-            site_id: transfer.from_site_id,
-            site_name: transfer.from_site_name,
-            ingredient_id: item.ingredient_id,
-            ingredient_name: item.ingredient_name,
-            transaction_type: 'transfer',
-            quantity: -item.quantity,
-            unit: item.unit,
-            transaction_date: transfer.transfer_date,
-            reference_id: transfer.id,
-            reference_type: 'transfer_out',
-            notes: `Transferred to ${transfer.to_site_name}`,
-            performed_by: user.email
-          });
-
-          await base44.entities.InventoryTransaction.create({
-            site_id: transfer.to_site_id,
-            site_name: transfer.to_site_name,
-            ingredient_id: item.ingredient_id,
-            ingredient_name: item.ingredient_name,
-            transaction_type: 'transfer',
-            quantity: item.quantity,
-            unit: item.unit,
-            transaction_date: transfer.transfer_date,
-            reference_id: transfer.id,
-            reference_type: 'transfer_in',
-            notes: `Received from ${transfer.from_site_name}`,
-            performed_by: user.email
-          });
-        }
+        await base44.inventory.transfer({
+          from_site_id: transfer.from_site_id,
+          from_site_name: transfer.from_site_name,
+          to_site_id: transfer.to_site_id,
+          to_site_name: transfer.to_site_name,
+          items: transfer.items || [],
+          transfer_date: transfer.transfer_date,
+          reference_id: transfer.id,
+          notes: transfer.notes || `Transfer from ${transfer.from_site_name} to ${transfer.to_site_name}`
+        });
       }
 
       await base44.entities.ProductionTransfer.update(id, updates);

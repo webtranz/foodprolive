@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { pool, listDocuments, findDocument, updateDocument, createDocument } from './db.js';
+import { pool, listDocuments, findDocument } from './db.js';
+import { deductStock } from './inventory.js';
 
 const POS_STATUSES = new Set(['success', 'warning', 'error']);
 
@@ -331,47 +332,21 @@ async function applyMappedItemDeductions({ order, item, mapping, actorEmail }) {
   for (const recipeIngredient of recipe.ingredients) {
     const quantityToDeduct = toNumber(recipeIngredient.quantity) * saleMultiplier;
     if (quantityToDeduct <= 0) continue;
-
-    const inventoryRecord = await findInventoryRecord(order.site_id, recipeIngredient.ingredient_id);
-    const currentQuantity = toNumber(inventoryRecord?.quantity);
-    const minimumLevel = toNumber(inventoryRecord?.min_stock_level);
-    const newQuantity = Math.max(0, currentQuantity - quantityToDeduct);
-    const shortage = Math.max(0, quantityToDeduct - currentQuantity);
-    const status = deriveInventoryStatus(newQuantity, minimumLevel);
-
-    if (inventoryRecord) {
-      await updateDocument('Inventory', inventoryRecord.id, {
-        quantity: newQuantity,
-        status
-      });
-    } else {
-      await createDocument('Inventory', {
-        site_id: order.site_id,
-        site_name: order.site_name,
-        ingredient_id: recipeIngredient.ingredient_id,
-        ingredient_name: recipeIngredient.ingredient_name,
-        quantity: 0,
-        min_stock_level: 0,
-        unit: recipeIngredient.unit,
-        status: 'out_of_stock'
-      });
-    }
-
-    await createDocument('InventoryTransaction', {
+    await deductStock({
       site_id: order.site_id,
       site_name: order.site_name,
       ingredient_id: recipeIngredient.ingredient_id,
       ingredient_name: recipeIngredient.ingredient_name,
-      transaction_type: 'pos_sale',
-      quantity: quantityToDeduct * -1,
+      quantity: quantityToDeduct,
       unit: recipeIngredient.unit,
+      transaction_type: 'pos_sale',
       transaction_date: order.business_date,
       reference_id: order.id,
       reference_type: 'pos_sale',
-      notes: shortage > 0
-        ? `POS deduction for ${item.pos_item_name}; shortage ${shortage.toFixed(2)} ${recipeIngredient.unit}`
-        : `POS deduction for ${item.pos_item_name}`,
-      performed_by: actorEmail || 'system'
+      notes: `POS deduction for ${item.pos_item_name}`,
+      performed_by: actorEmail || 'system',
+      reason_code: 'pos_sale',
+      allow_shortage: true
     });
   }
 

@@ -51,6 +51,9 @@ export const entityRegistry = {
   Inventory: {
     defaults: { quantity: 0, status: 'in_stock' }
   },
+  InventoryLot: {
+    defaults: { remaining_quantity: 0, status: 'active' }
+  },
   InventoryTransaction: {
     defaults: { status: 'posted' }
   },
@@ -184,7 +187,8 @@ const writeRoles = {
   BranchOrder: 'manager',
   D365Master: 'manager',
   CategoryQRSession: 'manager',
-  AttendanceSession: 'manager'
+  AttendanceSession: 'manager',
+  InventoryLot: 'manager'
 };
 
 const selfWritableFields = new Set(['full_name', 'site_id', 'site_name', 'phone', 'language', 'avatar_url']);

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusCircle, MinusCircle } from 'lucide-react';
+import { PlusCircle, MinusCircle, SlidersHorizontal } from 'lucide-react';
 import { format } from 'date-fns';
 
 export default function InventoryTransactionDialog({ 
@@ -18,43 +18,43 @@ export default function InventoryTransactionDialog({
   const [formData, setFormData] = useState({
     quantity: '',
     notes: '',
-    transaction_date: format(new Date(), 'yyyy-MM-dd')
+    transaction_date: format(new Date(), 'yyyy-MM-dd'),
+    reason_code: '',
+    unit_cost: '',
+    batch_number: '',
+    expiry_date: ''
   });
 
   const queryClient = useQueryClient();
 
   const transactionMutation = useMutation({
     mutationFn: async (data) => {
-      const user = await base44.auth.me();
-      
-      // Create transaction record
-      await base44.entities.InventoryTransaction.create({
-        site_id: inventoryItem.site_id,
-        site_name: inventoryItem.site_name,
-        ingredient_id: inventoryItem.ingredient_id,
-        ingredient_name: inventoryItem.ingredient_name,
-        transaction_type: data.transaction_type,
-        quantity: data.quantity,
-        unit: inventoryItem.unit,
-        transaction_date: data.transaction_date,
+      if (data.transaction_type === 'addition') {
+        return base44.inventory.receive({
+          site_id: inventoryItem.site_id,
+          site_name: inventoryItem.site_name,
+          ingredient_id: inventoryItem.ingredient_id,
+          ingredient_name: inventoryItem.ingredient_name,
+          quantity: data.quantity,
+          unit: inventoryItem.unit,
+          unit_cost: data.unit_cost,
+          batch_number: data.batch_number,
+          expiry_date: data.expiry_date || null,
+          reference_id: inventoryItem.id,
+          reference_type: 'manual',
+          notes: data.notes,
+          reason_code: data.reason_code || 'manual_receipt'
+        });
+      }
+
+      return base44.inventory.adjust({
+        inventory_id: inventoryItem.id,
+        quantity_change: data.transaction_type === 'issuance'
+          ? Math.abs(data.quantity) * -1
+          : data.quantity,
+        reason_code: data.reason_code || (data.transaction_type === 'issuance' ? 'manual_issue' : 'manual_adjustment'),
         notes: data.notes,
-        performed_by: user.email,
-        reference_type: 'manual'
-      });
-
-      // Update inventory
-      const newQuantity = data.transaction_type === 'addition' 
-        ? (inventoryItem.quantity || 0) + Math.abs(data.quantity)
-        : Math.max(0, (inventoryItem.quantity || 0) - Math.abs(data.quantity));
-
-      let status = 'in_stock';
-      if (newQuantity <= 0) status = 'out_of_stock';
-      else if (newQuantity <= (inventoryItem.min_stock_level || 0)) status = 'low_stock';
-
-      await base44.entities.Inventory.update(inventoryItem.id, {
-        quantity: newQuantity,
-        status,
-        last_restocked: data.transaction_type === 'addition' ? data.transaction_date : inventoryItem.last_restocked
+        transaction_date: data.transaction_date
       });
     },
     onSuccess: () => {
@@ -64,7 +64,11 @@ export default function InventoryTransactionDialog({
       setFormData({
         quantity: '',
         notes: '',
-        transaction_date: format(new Date(), 'yyyy-MM-dd')
+        transaction_date: format(new Date(), 'yyyy-MM-dd'),
+        reason_code: '',
+        unit_cost: '',
+        batch_number: '',
+        expiry_date: ''
       });
     }
   });
@@ -78,7 +82,11 @@ export default function InventoryTransactionDialog({
       transaction_type: transactionType,
       quantity,
       transaction_date: formData.transaction_date,
-      notes: formData.notes
+      notes: formData.notes,
+      reason_code: formData.reason_code,
+      unit_cost: parseFloat(formData.unit_cost) || 0,
+      batch_number: formData.batch_number,
+      expiry_date: formData.expiry_date || null
     });
   };
 
@@ -93,6 +101,11 @@ export default function InventoryTransactionDialog({
               <>
                 <PlusCircle className="w-5 h-5 text-green-600" />
                 Add Stock - {inventoryItem?.ingredient_name}
+              </>
+            ) : transactionType === 'adjustment' ? (
+              <>
+                <SlidersHorizontal className="w-5 h-5 text-blue-600" />
+                Adjust Stock - {inventoryItem?.ingredient_name}
               </>
             ) : (
               <>
@@ -116,11 +129,44 @@ export default function InventoryTransactionDialog({
               min="0.01"
               value={formData.quantity}
               onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
-              placeholder={`Amount to ${isAddition ? 'add' : 'issue'} (${inventoryItem?.unit})`}
+              placeholder={`Amount to ${isAddition ? 'add' : transactionType === 'adjustment' ? 'adjust' : 'issue'} (${inventoryItem?.unit})`}
               className="mt-1"
               required
             />
           </div>
+
+          {isAddition ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <Label>Unit Cost</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.unit_cost}
+                  onChange={(e) => setFormData({ ...formData, unit_cost: e.target.value })}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label>Batch / Lot</Label>
+                <Input
+                  value={formData.batch_number}
+                  onChange={(e) => setFormData({ ...formData, batch_number: e.target.value })}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label>Expiry Date</Label>
+                <Input
+                  type="date"
+                  value={formData.expiry_date}
+                  onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+          ) : null}
 
           <div>
             <Label>Date *</Label>
@@ -130,6 +176,16 @@ export default function InventoryTransactionDialog({
               onChange={(e) => setFormData({ ...formData, transaction_date: e.target.value })}
               className="mt-1"
               required
+            />
+          </div>
+
+          <div>
+            <Label>Reason Code</Label>
+            <Input
+              value={formData.reason_code}
+              onChange={(e) => setFormData({ ...formData, reason_code: e.target.value })}
+              placeholder={isAddition ? 'manual_receipt' : 'manual_issue'}
+              className="mt-1"
             />
           </div>
 
@@ -150,10 +206,10 @@ export default function InventoryTransactionDialog({
             </Button>
             <Button 
               type="submit"
-              className={isAddition ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}
+              className={isAddition ? 'bg-green-600 hover:bg-green-700' : transactionType === 'adjustment' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'}
               disabled={transactionMutation.isPending}
             >
-              {transactionMutation.isPending ? 'Processing...' : `${isAddition ? 'Add' : 'Issue'} Stock`}
+              {transactionMutation.isPending ? 'Processing...' : `${isAddition ? 'Add' : transactionType === 'adjustment' ? 'Adjust' : 'Issue'} Stock`}
             </Button>
           </DialogFooter>
         </form>

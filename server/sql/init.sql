@@ -317,3 +317,11 @@ CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status,
 CREATE INDEX IF NOT EXISTS idx_goods_receipts_order ON goods_receipts(purchase_order_id, receipt_date DESC);
 CREATE INDEX IF NOT EXISTS idx_supplier_invoices_supplier ON supplier_invoices(supplier_id, invoice_date DESC);
 CREATE INDEX IF NOT EXISTS idx_supplier_price_history_lookup ON supplier_price_history(ingredient_id, supplier_id, effective_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lookup
+  ON entity_records ((data->>'site_id'), (data->>'ingredient_id'))
+  WHERE entity_name = 'Inventory';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_lookup
+  ON entity_records ((data->>'site_id'), (data->>'ingredient_id'), (data->>'batch_number'))
+  WHERE entity_name = 'InventoryLot';

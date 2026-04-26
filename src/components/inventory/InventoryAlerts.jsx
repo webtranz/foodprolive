@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, Package, TrendingDown, ExternalLink } from 'lucide-react';
+import { AlertTriangle, Package, TrendingDown, ExternalLink, Clock3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 
@@ -23,7 +23,11 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
     return available < need.required_quantity;
   });
 
-  if (lowStockAlerts.length === 0 && shortageAlerts.length === 0) {
+  const expiryAlerts = inventory
+    .filter((item) => (item.expired_lot_count || 0) > 0 || (item.near_expiry_count || 0) > 0)
+    .sort((left, right) => ((right.expired_lot_count || 0) + (right.near_expiry_count || 0)) - ((left.expired_lot_count || 0) + (left.near_expiry_count || 0)));
+
+  if (lowStockAlerts.length === 0 && shortageAlerts.length === 0 && expiryAlerts.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -52,7 +56,7 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
           <AlertTriangle className="w-5 h-5 text-amber-600" />
           Inventory Alerts
           <Badge variant="outline" className="ml-auto">
-            {lowStockAlerts.length + shortageAlerts.length}
+            {lowStockAlerts.length + shortageAlerts.length + expiryAlerts.length}
           </Badge>
         </CardTitle>
       </CardHeader>
@@ -79,6 +83,31 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
               </p>
             </div>
             <TrendingDown className="w-4 h-4 text-amber-600 flex-shrink-0" />
+          </div>
+        ))}
+
+        {expiryAlerts.slice(0, 4).map((item) => (
+          <div
+            key={`${item.id}-expiry`}
+            className="flex items-start justify-between p-3 bg-rose-50 rounded-lg border border-rose-100"
+          >
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                {(item.expired_lot_count || 0) > 0 ? (
+                  <Badge className="bg-rose-100 text-rose-700">Expired Lots</Badge>
+                ) : (
+                  <Badge className="bg-orange-100 text-orange-700">Near Expiry</Badge>
+                )}
+                <span className="font-medium text-sm">{item.ingredient_name}</span>
+              </div>
+              <p className="text-xs text-slate-600 mt-1">
+                {item.site_name} • Expired: {item.expired_lot_count || 0} • Near expiry: {item.near_expiry_count || 0}
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Next expiry: {item.next_expiry_date || 'Not set'}
+              </p>
+            </div>
+            <Clock3 className="w-4 h-4 text-rose-600 flex-shrink-0" />
           </div>
         ))}
 
