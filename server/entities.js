@@ -38,7 +38,13 @@ export const entityRegistry = {
     defaults: { status: 'scanned' }
   },
   FoodWaste: {
-    defaults: { status: 'logged' }
+    defaults: {
+      status: 'logged',
+      approval_status: 'approved',
+      waste_scope: 'ingredient',
+      avoidable_type: 'avoidable',
+      estimated_cost: 0
+    }
   },
   Ingredient: {
     defaults: { is_active: true, allergens: [] },
@@ -172,6 +178,9 @@ export const entityRegistry = {
   UserGroup: {
     defaults: { total_members: 0, members: [] }
   },
+  WasteTarget: {
+    defaults: { target_percentage: 0, target_cost: 0, status: 'active' }
+  },
   WasteDetectionLog: {
     defaults: { detection_method: 'camera' }
   }
@@ -211,6 +220,7 @@ const writeRoles = {
   FoodWaste: 'manager',
   QualityControl: 'manager',
   WasteDetectionLog: 'manager',
+  WasteTarget: 'manager',
   QRCode: 'manager',
   QRDelivery: 'manager',
   BranchOrder: 'manager',
