@@ -16,6 +16,12 @@ export const entityRegistry = {
   ERPIntegrationLog: {
     defaults: { status: 'pending', retry_count: 0, request_payload: {}, response_payload: {} }
   },
+  ForecastScenario: {
+    defaults: { status: 'draft', model_type: 'blended_average', forecast_horizon_days: 7, safety_buffer_percent: 10 }
+  },
+  ForecastSnapshot: {
+    defaults: { status: 'ready', forecast_rows: [], summary: {} }
+  },
   AttendanceRecord: {
     defaults: { status: 'checked_in', approval_status: 'pending', attendance_status: 'present' }
   },
@@ -216,6 +222,8 @@ const writeRoles = {
   AdvancedReportSchedule: 'manager',
   ERPIntegrationConfig: 'admin',
   ERPIntegrationLog: 'manager',
+  ForecastScenario: 'manager',
+  ForecastSnapshot: 'manager',
   User: 'admin',
   UserGroup: 'manager',
   Production: 'manager',

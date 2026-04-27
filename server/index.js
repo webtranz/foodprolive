@@ -73,6 +73,10 @@ import {
   listErpLogs
 } from './erpIntegration.js';
 import {
+  buildForecastSummary,
+  runForecastScenario
+} from './forecasting.js';
+import {
   getLocationScope,
   filterRecordsByLocation,
   assertPayloadLocationAccess,
@@ -1114,6 +1118,44 @@ app.get('/api/erp/logs', requireAuth, requireRole(['admin', 'manager']), async (
 app.post('/api/erp/logs/:id/retry', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
     response.json(await retryErpSync(request.params.id, request.user));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/forecasting/summary', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const requestedLocation = request.query.location_id || null;
+    const locationId = request.user.role === 'admin'
+      ? requestedLocation
+      : (requestedLocation
+        ? (scope.accessibleSiteIds.has(String(requestedLocation)) ? requestedLocation : ([...scope.accessibleSiteIds][0] || null))
+        : null);
+
+    response.json(await buildForecastSummary({
+      startDate: request.query.start_date || '',
+      endDate: request.query.end_date || '',
+      locationId,
+      accessibleSiteIds: request.user.role === 'admin' ? null : scope.accessibleSiteIds,
+      category: request.query.category || 'all',
+      status: request.query.status || 'all',
+      horizonDays: request.query.horizon_days ? Number(request.query.horizon_days) : 7,
+      safetyBufferPercent: request.query.safety_buffer_percent ? Number(request.query.safety_buffer_percent) : 10
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/forecasting/scenarios/:id/run', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    response.json(await runForecastScenario({
+      scenarioId: request.params.id,
+      user: request.user,
+      locationScope: scope
+    }));
   } catch (error) {
     next(error);
   }

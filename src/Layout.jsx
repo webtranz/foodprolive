@@ -69,6 +69,7 @@ function buildNavigation(t) {
       children: [
         { name: n.reports, href: 'Reports', icon: BarChart3 },
         { name: n.advancedReports, href: 'AdvancedReports', icon: FileText },
+        { name: n.forecasting, href: 'Forecasting', icon: TrendingUp },
         { name: n.productionCalculator, href: 'ProductionCalculator', icon: Factory },
         { name: n.caloriesCalculator, href: 'CaloriesCalculator', icon: Flame }
       ]

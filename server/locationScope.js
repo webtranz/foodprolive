@@ -22,6 +22,8 @@ const LOCATION_SCOPED_ENTITIES = new Set([
   'Recipe',
   'AdvancedReportSchedule',
   'ERPIntegrationLog',
+  'ForecastScenario',
+  'ForecastSnapshot',
   'WasteTarget',
   'User',
   'Site'

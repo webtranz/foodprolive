@@ -399,6 +399,17 @@ export const base44 = {
       });
     }
   },
+  forecasting: {
+    getSummary(filters = {}) {
+      return apiRequest(`/api/forecasting/summary${buildQueryString(filters)}`);
+    },
+    runScenario(id) {
+      return apiRequest(`/api/forecasting/scenarios/${id}/run`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+    }
+  },
   integrations: {
     Core: {
       UploadFile({ file }) {
