@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Plus, Calendar, Flame, Users, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Calendar, Flame, Users, ChevronLeft, ChevronRight, ShieldAlert } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { format, addDays, startOfWeek, eachDayOfInterval } from 'date-fns';
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack', 'event', 'custom'];
@@ -98,7 +99,13 @@ export default function MenuPlanning() {
       recipe_id: formData.recipe_id,
       recipe_name: recipe?.name || '',
       expected_servings: parseInt(formData.expected_servings),
-      calories_per_serving: recipe?.calories_per_serving || 0
+      calories_per_serving: recipe?.calories_per_serving || 0,
+      protein_per_serving: recipe?.protein_per_serving || 0,
+      carbs_per_serving: recipe?.carbs_per_serving || 0,
+      fat_per_serving: recipe?.fat_per_serving || 0,
+      sodium_per_serving: recipe?.sodium_per_serving || 0,
+      sugar_per_serving: recipe?.sugar_per_serving || 0,
+      allergens: Array.isArray(recipe?.allergens) ? recipe.allergens : []
     };
 
     if (existingPlan) {
@@ -237,6 +244,21 @@ export default function MenuPlanning() {
                                     </>
                                   )}
                                 </div>
+                                {Array.isArray(meal.allergens) && meal.allergens.length > 0 ? (
+                                  <div className="mt-2">
+                                    <div className="mb-1 flex items-center gap-1 text-[11px] font-medium">
+                                      <ShieldAlert className="h-3 w-3" />
+                                      Allergens
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {meal.allergens.slice(0, 3).map((allergen) => (
+                                        <Badge key={allergen} variant="outline" className="border-white/70 bg-white/70 px-1.5 py-0 text-[10px] capitalize">
+                                          {allergen}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
                             ));
                           })}

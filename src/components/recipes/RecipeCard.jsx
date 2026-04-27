@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { MoreVertical, Pencil, Trash2, Clock, Users, Flame } from 'lucide-react';
+import { MoreVertical, Pencil, Trash2, Clock, Users, Flame, ShieldAlert, Candy, Droplets } from 'lucide-react';
 
 const CATEGORY_COLORS = {
   breakfast: 'bg-amber-100 text-amber-700',
@@ -17,6 +17,7 @@ const CATEGORY_COLORS = {
 
 export default function RecipeCard({ recipe, onEdit, onDelete }) {
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
+  const allergens = Array.isArray(recipe.allergens) ? recipe.allergens : [];
 
   return (
     <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 group overflow-hidden">
@@ -87,6 +88,32 @@ export default function RecipeCard({ recipe, onEdit, onDelete }) {
             </div>
           )}
         </div>
+
+        {(recipe.protein_per_serving || recipe.carbs_per_serving || recipe.fat_per_serving || recipe.sodium_per_serving || recipe.sugar_per_serving) && (
+          <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+            <div><span className="font-semibold">Protein:</span> {recipe.protein_per_serving || 0}g</div>
+            <div><span className="font-semibold">Carbs:</span> {recipe.carbs_per_serving || 0}g</div>
+            <div><span className="font-semibold">Fat:</span> {recipe.fat_per_serving || 0}g</div>
+            <div className="flex items-center gap-1"><Droplets className="h-3 w-3 text-cyan-600" /> {recipe.sodium_per_serving || 0} mg sodium</div>
+            <div className="col-span-2 flex items-center gap-1"><Candy className="h-3 w-3 text-pink-500" /> {recipe.sugar_per_serving || 0} g sugar</div>
+          </div>
+        )}
+
+        {allergens.length > 0 && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-amber-800">
+              <ShieldAlert className="h-3.5 w-3.5" />
+              Allergen warning
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {allergens.map((allergen) => (
+                <Badge key={allergen} variant="outline" className="border-amber-300 bg-white text-amber-700">
+                  {allergen}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
 
         {recipe.ingredients && recipe.ingredients.length > 0 && (
           <div className="mt-3 pt-3 border-t border-slate-100">

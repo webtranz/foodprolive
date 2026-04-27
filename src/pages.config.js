@@ -69,6 +69,7 @@ import MaterialRequests from './pages/MaterialRequests';
 import Menu from './pages/Menu';
 import MenuBuilder from './pages/MenuBuilder';
 import MenuPlanning from './pages/MenuPlanning';
+import NutritionAllergen from './pages/NutritionAllergen';
 import ProcurementPlanning from './pages/ProcurementPlanning';
 import ProcurementModule from './pages/ProcurementModule';
 import Production from './pages/Production';
@@ -110,6 +111,7 @@ export const PAGES = {
     "Menu": Menu,
     "MenuBuilder": MenuBuilder,
     "MenuPlanning": MenuPlanning,
+    "NutritionAllergen": NutritionAllergen,
     "ProcurementPlanning": ProcurementPlanning,
     "ProcurementModule": ProcurementModule,
     "Production": Production,

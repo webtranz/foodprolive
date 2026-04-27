@@ -12,6 +12,8 @@ import { Plus, Search, Utensils, Download } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { Link } from 'react-router-dom';
+import { createPageUrl } from '@/utils';
 
 const CATEGORIES = [
   { value: 'all', label: 'All Categories' },
@@ -108,6 +110,11 @@ export default function Recipes() {
           title="Recipes" 
           description="Manage your menu recipes"
         >
+          <Link to={createPageUrl('NutritionAllergen')}>
+            <Button variant="outline">
+              Nutrition Labels
+            </Button>
+          </Link>
           <Button 
             variant="outline"
             onClick={() => downloadCSV(filteredRecipes, 'recipes')}

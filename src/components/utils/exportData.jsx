@@ -1,4 +1,5 @@
 import { format } from 'date-fns';
+import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 
 function normalizeExportRows(data) {
@@ -92,6 +93,57 @@ export function downloadExcel(data, filename, sheetName = 'Report') {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
   XLSX.writeFile(workbook, `${filename}_${format(new Date(), 'yyyy-MM-dd_HHmm')}.xlsx`);
+}
+
+export function downloadPDF({
+  title,
+  subtitle = '',
+  sections = [],
+  filename = 'report'
+}) {
+  const doc = new jsPDF();
+  let y = 18;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text(title || 'Report', 14, y);
+  y += 8;
+
+  if (subtitle) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    const lines = doc.splitTextToSize(subtitle, 180);
+    doc.text(lines, 14, y);
+    y += (lines.length * 5) + 3;
+  }
+
+  sections.forEach((section) => {
+    if (y > 260) {
+      doc.addPage();
+      y = 18;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text(section.heading || 'Section', 14, y);
+    y += 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    const bodyLines = Array.isArray(section.lines) ? section.lines : [];
+    bodyLines.forEach((line) => {
+      const lines = doc.splitTextToSize(String(line), 180);
+      if (y + (lines.length * 5) > 275) {
+        doc.addPage();
+        y = 18;
+      }
+      doc.text(lines, 14, y);
+      y += (lines.length * 5) + 1;
+    });
+    y += 4;
+  });
+
+  doc.save(`${filename}_${format(new Date(), 'yyyy-MM-dd_HHmm')}.pdf`);
 }
 
 export function exportToCSV(data, filename, customHeaders = null) {

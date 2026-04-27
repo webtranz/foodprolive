@@ -31,7 +31,8 @@ import {
   ChefHat,
   MapPin,
   LogOut,
-  Cable
+  Cable,
+  ShieldAlert
 } from 'lucide-react';
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { LanguageProvider, useLanguage } from '@/components/i18n/LanguageContext';
@@ -45,6 +46,7 @@ function buildNavigation(t) {
     { name: n.sites, href: 'Sites', icon: Building2 },
     { name: n.ingredients, href: 'Ingredients', icon: Package },
     { name: n.recipes, href: 'Recipes', icon: Utensils },
+    { name: n.nutritionAllergens, href: 'NutritionAllergen', icon: ShieldAlert },
     { name: n.attendance, href: 'Attendance', icon: QrCode },
     {
       name: n.menuPlanning,

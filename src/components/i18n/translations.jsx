@@ -8,6 +8,7 @@ export const translations = {
       sites: 'Sites',
       ingredients: 'Ingredients',
       recipes: 'Recipes',
+      nutritionAllergens: 'Nutrition & Allergen',
       attendance: 'Staff Scheduling',
       menuPlanning: 'Menu & Planning',
       menu: 'Menu',
@@ -35,7 +36,7 @@ export const translations = {
       procurement: 'Procurement',
       posIntegration: 'POS Integration',
       supplierPortal: 'Supplier Portal',
-      userRoles: 'User Roles',
+      userRoles: 'User Roles'
     },
     common: {
       save: 'Save',
@@ -72,8 +73,8 @@ export const translations = {
       helpText: 'Check our documentation for guides and tutorials.',
       allSitesAdmin: 'All Sites (Admin)',
       site: 'Site',
-      noSiteAssigned: 'No Site Assigned',
-    },
+      noSiteAssigned: 'No Site Assigned'
+    }
   },
   ar: {
     dir: 'rtl',
@@ -84,6 +85,7 @@ export const translations = {
       sites: 'المواقع',
       ingredients: 'المكونات',
       recipes: 'الوصفات',
+      nutritionAllergens: 'التغذية والحساسية',
       attendance: 'جدولة الموظفين',
       menuPlanning: 'القائمة والتخطيط',
       menu: 'القائمة',
@@ -101,9 +103,9 @@ export const translations = {
       advancedReports: 'التقارير المتقدمة',
       productionCalculator: 'حاسبة الإنتاج',
       caloriesCalculator: 'حاسبة السعرات',
-      aiRecipeGenerator: 'مولّد الوصفات بالذكاء الاصطناعي',
+      aiRecipeGenerator: 'مولد الوصفات بالذكاء الاصطناعي',
       cpuManagement: 'إدارة المطبخ المركزي',
-      batchTracking: 'تتبع الدُفعات',
+      batchTracking: 'تتبع الدفعات',
       qualityControl: 'مراقبة الجودة',
       branchOrders: 'طلبات الفروع',
       productionTransfer: 'نقل الإنتاج',
@@ -111,7 +113,7 @@ export const translations = {
       procurement: 'المشتريات',
       posIntegration: 'تكامل نقاط البيع',
       supplierPortal: 'بوابة الموردين',
-      userRoles: 'أدوار المستخدمين',
+      userRoles: 'أدوار المستخدمين'
     },
     common: {
       save: 'حفظ',
@@ -145,11 +147,11 @@ export const translations = {
       next: 'التالي',
       previous: 'السابق',
       needHelp: 'تحتاج مساعدة؟',
-      helpText: 'راجع توثيقنا للأدلة والبرامج التعليمية.',
+      helpText: 'راجع التوثيق للحصول على الأدلة والشروحات.',
       allSitesAdmin: 'جميع المواقع (مدير)',
       site: 'الموقع',
-      noSiteAssigned: 'لا يوجد موقع مُعيَّن',
-    },
+      noSiteAssigned: 'لا يوجد موقع معين'
+    }
   },
   ur: {
     dir: 'rtl',
@@ -160,6 +162,7 @@ export const translations = {
       sites: 'سائٹس',
       ingredients: 'اجزاء',
       recipes: 'ترکیبیں',
+      nutritionAllergens: 'غذائیت اور الرجن',
       attendance: 'اسٹاف شیڈولنگ',
       menuPlanning: 'مینو اور منصوبہ بندی',
       menu: 'مینو',
@@ -187,7 +190,7 @@ export const translations = {
       procurement: 'خریداری',
       posIntegration: 'POS انضمام',
       supplierPortal: 'سپلائر پورٹل',
-      userRoles: 'صارف کردار',
+      userRoles: 'صارف کردار'
     },
     common: {
       save: 'محفوظ کریں',
@@ -224,8 +227,8 @@ export const translations = {
       helpText: 'رہنمائی کے لیے ہماری دستاویزات دیکھیں۔',
       allSitesAdmin: 'تمام سائٹس (ایڈمن)',
       site: 'سائٹ',
-      noSiteAssigned: 'کوئی سائٹ نہیں',
-    },
+      noSiteAssigned: 'کوئی سائٹ نہیں'
+    }
   },
   de: {
     dir: 'ltr',
@@ -236,6 +239,7 @@ export const translations = {
       sites: 'Standorte',
       ingredients: 'Zutaten',
       recipes: 'Rezepte',
+      nutritionAllergens: 'Nährwerte & Allergene',
       attendance: 'Personaleinsatz',
       menuPlanning: 'Menü & Planung',
       menu: 'Menü',
@@ -263,7 +267,7 @@ export const translations = {
       procurement: 'Beschaffung',
       posIntegration: 'POS-Integration',
       supplierPortal: 'Lieferantenportal',
-      userRoles: 'Benutzerrollen',
+      userRoles: 'Benutzerrollen'
     },
     common: {
       save: 'Speichern',
@@ -300,7 +304,7 @@ export const translations = {
       helpText: 'Lesen Sie unsere Dokumentation für Anleitungen.',
       allSitesAdmin: 'Alle Standorte (Admin)',
       site: 'Standort',
-      noSiteAssigned: 'Kein Standort zugewiesen',
-    },
-  },
+      noSiteAssigned: 'Kein Standort zugewiesen'
+    }
+  }
 };

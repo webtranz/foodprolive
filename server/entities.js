@@ -37,6 +37,9 @@ export const entityRegistry = {
   DinerScan: {
     defaults: { status: 'scanned' }
   },
+  CustomerMealPlan: {
+    defaults: { status: 'draft', meals: [] }
+  },
   FoodWaste: {
     defaults: {
       status: 'logged',
@@ -58,6 +61,8 @@ export const entityRegistry = {
       protein_per_100g: numberOptional,
       carbs_per_100g: numberOptional,
       fat_per_100g: numberOptional,
+      sodium_per_100g: numberOptional,
+      sugar_per_100g: numberOptional,
       cooking_yield_percent: numberOptional,
       shrinkage_percent: numberOptional,
       raw_weight_per_unit: numberOptional,
@@ -118,7 +123,15 @@ export const entityRegistry = {
       protein_per_serving: numberOptional,
       carbs_per_serving: numberOptional,
       fat_per_serving: numberOptional,
+      sodium_per_serving: numberOptional,
+      sugar_per_serving: numberOptional,
       total_calories: numberOptional,
+      total_protein: numberOptional,
+      total_carbs: numberOptional,
+      total_fat: numberOptional,
+      total_sodium: numberOptional,
+      total_sugar: numberOptional,
+      allergens: arrayOptional,
       is_active: booleanOptional,
       site_scope: stringOptional,
       site_ids: arrayOptional,
@@ -224,6 +237,7 @@ const writeRoles = {
   QRCode: 'manager',
   QRDelivery: 'manager',
   BranchOrder: 'manager',
+  CustomerMealPlan: 'manager',
   D365Master: 'manager',
   CategoryQRSession: 'manager',
   AttendanceSession: 'manager',

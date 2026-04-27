@@ -27,6 +27,16 @@ const UNITS = [
   { value: 'pieces', label: 'Pieces' }
 ];
 
+const ALLERGEN_OPTIONS = [
+  'dairy',
+  'nuts',
+  'gluten',
+  'eggs',
+  'seafood',
+  'soy',
+  'sesame'
+];
+
 export default function IngredientForm({ open, onClose, onSubmit, ingredient, isLoading }) {
   const [formData, setFormData] = useState({
     name: '',
@@ -44,6 +54,9 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
     carbs_per_100g: '',
     fat_per_100g: '',
     fiber_per_100g: '',
+    sodium_per_100g: '',
+    sugar_per_100g: '',
+    allergens: [],
     cost_per_unit: '',
     supplier: '',
     is_active: true
@@ -67,6 +80,9 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
         carbs_per_100g: ingredient.carbs_per_100g || '',
         fat_per_100g: ingredient.fat_per_100g || '',
         fiber_per_100g: ingredient.fiber_per_100g || '',
+        sodium_per_100g: ingredient.sodium_per_100g || '',
+        sugar_per_100g: ingredient.sugar_per_100g || '',
+        allergens: Array.isArray(ingredient.allergens) ? ingredient.allergens : [],
         cost_per_unit: ingredient.cost_per_unit || '',
         supplier: ingredient.supplier || '',
         is_active: ingredient.is_active !== false
@@ -88,6 +104,9 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
         carbs_per_100g: '',
         fat_per_100g: '',
         fiber_per_100g: '',
+        sodium_per_100g: '',
+        sugar_per_100g: '',
+        allergens: [],
         cost_per_unit: '',
         supplier: '',
         is_active: true
@@ -125,6 +144,9 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
       carbs_per_100g: formData.carbs_per_100g ? parseFloat(formData.carbs_per_100g) : null,
       fat_per_100g: formData.fat_per_100g ? parseFloat(formData.fat_per_100g) : null,
       fiber_per_100g: formData.fiber_per_100g ? parseFloat(formData.fiber_per_100g) : null,
+      sodium_per_100g: formData.sodium_per_100g ? parseFloat(formData.sodium_per_100g) : null,
+      sugar_per_100g: formData.sugar_per_100g ? parseFloat(formData.sugar_per_100g) : null,
+      allergens: formData.allergens,
       cost_per_unit: formData.cost_per_unit ? parseFloat(formData.cost_per_unit) : null
     };
     onSubmit(submitData);
@@ -394,6 +416,56 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
                     placeholder="e.g., 0"
                     className="mt-1"
                   />
+                </div>
+
+                <div>
+                  <Label htmlFor="sodium">Sodium (mg per 100g)</Label>
+                  <Input
+                    id="sodium"
+                    type="number"
+                    step="0.1"
+                    value={formData.sodium_per_100g}
+                    onChange={(e) => setFormData({ ...formData, sodium_per_100g: e.target.value })}
+                    placeholder="e.g., 120"
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="sugar">Sugar (g per 100g)</Label>
+                  <Input
+                    id="sugar"
+                    type="number"
+                    step="0.1"
+                    value={formData.sugar_per_100g}
+                    onChange={(e) => setFormData({ ...formData, sugar_per_100g: e.target.value })}
+                    placeholder="e.g., 4.5"
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <Label>Allergen Tags</Label>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {ALLERGEN_OPTIONS.map((allergen) => {
+                    const checked = formData.allergens.includes(allergen);
+                    return (
+                      <label key={allergen} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => setFormData((current) => ({
+                            ...current,
+                            allergens: event.target.checked
+                              ? [...current.allergens, allergen]
+                              : current.allergens.filter((item) => item !== allergen)
+                          }))}
+                        />
+                        <span className="capitalize">{allergen}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             </TabsContent>

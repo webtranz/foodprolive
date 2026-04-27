@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { MoreVertical, Pencil, Trash2, Flame, Scale, TrendingDown } from 'lucide-react';
+import { MoreVertical, Pencil, Trash2, Flame, Scale, TrendingDown, Droplets, Candy, ShieldAlert } from 'lucide-react';
 
 const CATEGORY_COLORS = {
   proteins: 'bg-red-100 text-red-700',
@@ -19,6 +19,8 @@ const CATEGORY_COLORS = {
 };
 
 export default function IngredientCard({ ingredient, onEdit, onDelete }) {
+  const allergens = Array.isArray(ingredient.allergens) ? ingredient.allergens : [];
+
   return (
     <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 group">
       <CardContent className="p-4">
@@ -75,6 +77,19 @@ export default function IngredientCard({ ingredient, onEdit, onDelete }) {
               <span className="text-slate-400">per {ingredient.unit}</span>
             </div>
           )}
+
+          {(ingredient.sodium_per_100g || ingredient.sugar_per_100g) && (
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="flex items-center gap-2 text-slate-600">
+                <Droplets className="w-4 h-4 text-cyan-600" />
+                <span>{ingredient.sodium_per_100g || 0} mg sodium</span>
+              </div>
+              <div className="flex items-center gap-2 text-slate-600">
+                <Candy className="w-4 h-4 text-pink-500" />
+                <span>{ingredient.sugar_per_100g || 0} g sugar</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {(ingredient.protein_per_100g || ingredient.carbs_per_100g || ingredient.fat_per_100g) && (
@@ -83,6 +98,22 @@ export default function IngredientCard({ ingredient, onEdit, onDelete }) {
               <span>P: {ingredient.protein_per_100g || 0}g</span>
               <span>C: {ingredient.carbs_per_100g || 0}g</span>
               <span>F: {ingredient.fat_per_100g || 0}g</span>
+            </div>
+          </div>
+        )}
+
+        {allergens.length > 0 && (
+          <div className="mt-3 border-t border-slate-100 pt-3">
+            <div className="mb-2 flex items-center gap-2 text-xs font-medium text-amber-700">
+              <ShieldAlert className="h-3.5 w-3.5" />
+              Allergen tags
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {allergens.map((allergen) => (
+                <Badge key={allergen} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                  {allergen}
+                </Badge>
+              ))}
             </div>
           </div>
         )}

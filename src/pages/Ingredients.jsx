@@ -22,7 +22,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import StatCard from '@/components/ui/StatCard';
-import { Plus, Search, Package, LayoutGrid, List, Download, AlertTriangle, PlusCircle, MinusCircle, Edit, History, Flame, Beef, Droplet } from 'lucide-react';
+import { Plus, Search, Package, LayoutGrid, List, Download, AlertTriangle, PlusCircle, MinusCircle, Edit, History, Flame, Beef, Droplet, Candy, ShieldAlert } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
 import { format } from 'date-fns';
 
@@ -296,6 +296,9 @@ export default function Ingredients() {
                         <TableHead className="text-center">Protein</TableHead>
                         <TableHead className="text-center">Fat</TableHead>
                         <TableHead className="text-center">Carbs</TableHead>
+                        <TableHead className="text-center">Sodium</TableHead>
+                        <TableHead className="text-center">Sugar</TableHead>
+                        <TableHead>Allergens</TableHead>
                         <TableHead>Cost/Unit</TableHead>
                         <TableHead>Yield %</TableHead>
                         <TableHead className="w-[80px]">Actions</TableHead>
@@ -329,6 +332,33 @@ export default function Ingredients() {
                             </span>
                           </TableCell>
                           <TableCell className="text-center">{ing.carbs_per_100g != null ? `${ing.carbs_per_100g}g` : '-'}</TableCell>
+                          <TableCell className="text-center">{ing.sodium_per_100g != null ? `${ing.sodium_per_100g}mg` : '-'}</TableCell>
+                          <TableCell className="text-center">
+                            <span className="inline-flex items-center gap-1 text-pink-600">
+                              <Candy className="w-3 h-3" />{ing.sugar_per_100g != null ? `${ing.sugar_per_100g}g` : '-'}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            {Array.isArray(ing.allergens) && ing.allergens.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {ing.allergens.slice(0, 3).map((allergen) => (
+                                  <Badge key={allergen} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                                    {allergen}
+                                  </Badge>
+                                ))}
+                                {ing.allergens.length > 3 ? (
+                                  <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                                    +{ing.allergens.length - 3}
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                                <ShieldAlert className="h-3 w-3" />
+                                none
+                              </span>
+                            )}
+                          </TableCell>
                           <TableCell>{ing.cost_per_unit != null ? `$${ing.cost_per_unit}` : '-'}</TableCell>
                           <TableCell>{ing.cooking_yield_percent ? `${ing.cooking_yield_percent}%` : '-'}</TableCell>
                           <TableCell>

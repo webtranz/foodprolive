@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import PageHeader from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ChefHat, Flame, Clock, Users, Plus } from 'lucide-react';
+import { ChefHat, Flame, Clock, Users, Plus, ShieldAlert, Candy, Droplets } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Link } from 'react-router-dom';
@@ -189,6 +189,37 @@ export default function Menu() {
                               )}
                             </div>
                           )}
+                          {(recipe.sodium_per_serving || recipe.sugar_per_serving) && (
+                            <div className="flex flex-wrap gap-3 text-xs text-slate-600">
+                              {recipe.sodium_per_serving ? (
+                                <div className="flex items-center gap-1">
+                                  <Droplets className="w-3 h-3 text-cyan-600" />
+                                  {recipe.sodium_per_serving} mg sodium
+                                </div>
+                              ) : null}
+                              {recipe.sugar_per_serving ? (
+                                <div className="flex items-center gap-1">
+                                  <Candy className="w-3 h-3 text-pink-500" />
+                                  {recipe.sugar_per_serving} g sugar
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
+                          {Array.isArray(recipe.allergens) && recipe.allergens.length > 0 ? (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
+                              <div className="mb-2 flex items-center gap-1 text-xs font-semibold text-amber-800">
+                                <ShieldAlert className="w-3 h-3" />
+                                Allergen warning
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {recipe.allergens.map((allergen) => (
+                                  <Badge key={allergen} variant="outline" className="border-amber-300 bg-white text-[11px] text-amber-700">
+                                    {allergen}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                         </CardContent>
                       </Card>
                     ))}
@@ -219,7 +250,19 @@ export default function Menu() {
                             {ingredient.protein_per_100g && (
                               <div>Protein: {ingredient.protein_per_100g}g</div>
                             )}
+                            {ingredient.sodium_per_100g ? (
+                              <div>Sodium: {ingredient.sodium_per_100g}mg</div>
+                            ) : null}
                           </div>
+                          {Array.isArray(ingredient.allergens) && ingredient.allergens.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {ingredient.allergens.map((allergen) => (
+                                <Badge key={allergen} variant="outline" className="border-amber-200 bg-amber-50 text-[10px] text-amber-700">
+                                  {allergen}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : null}
                         </CardContent>
                       </Card>
                     ))}

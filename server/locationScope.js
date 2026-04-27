@@ -16,6 +16,7 @@ const LOCATION_SCOPED_ENTITIES = new Set([
   'AttendanceSession',
   'AttendanceRecord',
   'StaffShift',
+  'CustomerMealPlan',
   'DinerScan',
   'BranchOrder',
   'Recipe',
