@@ -5,6 +5,49 @@ import { Download, FileText, DollarSign, TrendingUp } from 'lucide-react';
 import { downloadCSV } from '../utils/exportData';
 import { format } from 'date-fns';
 
+function averageBy(items, selector) {
+  const values = items
+    .map(selector)
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function convertQuantityToCostUnits(quantity, recipeUnit, ingredientUnit) {
+  const numericQuantity = Number(quantity) || 0;
+  if (!numericQuantity) {
+    return 0;
+  }
+
+  if (!recipeUnit || !ingredientUnit || recipeUnit === ingredientUnit) {
+    return numericQuantity;
+  }
+
+  const weightUnits = {
+    kg: 1000,
+    g: 1
+  };
+
+  const volumeUnits = {
+    l: 1000,
+    ml: 1
+  };
+
+  if (recipeUnit in weightUnits && ingredientUnit in weightUnits) {
+    return (numericQuantity * weightUnits[recipeUnit]) / weightUnits[ingredientUnit];
+  }
+
+  if (recipeUnit in volumeUnits && ingredientUnit in volumeUnits) {
+    return (numericQuantity * volumeUnits[recipeUnit]) / volumeUnits[ingredientUnit];
+  }
+
+  return numericQuantity;
+}
+
 export default function CostReport({ ingredients = [], recipes = [] }) {
   const generateCostReport = () => {
     const reportData = ingredients.map(ing => ({
@@ -31,7 +74,11 @@ export default function CostReport({ ingredients = [], recipes = [] }) {
       recipe.ingredients?.forEach(recipeIng => {
         const ingredient = ingredients.find(i => i.id === recipeIng.ingredient_id);
         if (ingredient?.cost_per_unit) {
-          const quantity = recipeIng.quantity || 0;
+          const quantity = convertQuantityToCostUnits(
+            recipeIng.quantity,
+            recipeIng.unit || ingredient.unit,
+            ingredient.unit
+          );
           const cost = quantity * ingredient.cost_per_unit;
           totalCost += cost;
           ingredientDetails.push({
@@ -43,16 +90,19 @@ export default function CostReport({ ingredients = [], recipes = [] }) {
         }
       });
 
+      const servings = Number(recipe.servings) || 0;
+      const caloriesPerServing = Number(recipe.calories_per_serving) || 0;
+
       return {
         recipe: recipe.name,
         cuisine: recipe.cuisine_type,
         category: recipe.category,
-        servings: recipe.servings,
+        servings: servings || '',
         total_cost: totalCost.toFixed(2),
-        cost_per_serving: recipe.servings ? (totalCost / recipe.servings).toFixed(2) : 0,
-        calories_per_serving: recipe.calories_per_serving || 0,
-        cost_per_calorie: recipe.calories_per_serving 
-          ? (totalCost / recipe.servings / recipe.calories_per_serving * 100).toFixed(4)
+        cost_per_serving: servings > 0 ? (totalCost / servings).toFixed(2) : '',
+        calories_per_serving: caloriesPerServing || 0,
+        cost_per_calorie: servings > 0 && caloriesPerServing > 0
+          ? (totalCost / servings / caloriesPerServing * 100).toFixed(4)
           : 0
       };
     });
@@ -81,10 +131,7 @@ export default function CostReport({ ingredients = [], recipes = [] }) {
   };
 
   const totalInventoryValue = ingredients.reduce((sum, ing) => sum + (ing.cost_per_unit || 0), 0);
-  const avgYield = ingredients.length > 0
-    ? ingredients.filter(i => i.cooking_yield_percent).reduce((sum, ing) => sum + (ing.cooking_yield_percent || 0), 0) 
-      / ingredients.filter(i => i.cooking_yield_percent).length
-    : 0;
+  const avgYield = averageBy(ingredients, (ing) => Number(ing.cooking_yield_percent));
 
   return (
     <div className="space-y-4">

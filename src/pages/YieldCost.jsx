@@ -17,6 +17,49 @@ import YieldTemplateDownload from '../components/yield/YieldTemplateDownload';
 import YieldUpload from '../components/yield/YieldUpload';
 import CostReport from '../components/yield/CostReport';
 
+function averageBy(items, selector) {
+  const values = items
+    .map(selector)
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function convertQuantityToCostUnits(quantity, recipeUnit, ingredientUnit) {
+  const numericQuantity = Number(quantity) || 0;
+  if (!numericQuantity) {
+    return 0;
+  }
+
+  if (!recipeUnit || !ingredientUnit || recipeUnit === ingredientUnit) {
+    return numericQuantity;
+  }
+
+  const weightUnits = {
+    kg: 1000,
+    g: 1
+  };
+
+  const volumeUnits = {
+    l: 1000,
+    ml: 1
+  };
+
+  if (recipeUnit in weightUnits && ingredientUnit in weightUnits) {
+    return (numericQuantity * weightUnits[recipeUnit]) / weightUnits[ingredientUnit];
+  }
+
+  if (recipeUnit in volumeUnits && ingredientUnit in volumeUnits) {
+    return (numericQuantity * volumeUnits[recipeUnit]) / volumeUnits[ingredientUnit];
+  }
+
+  return numericQuantity;
+}
+
 export default function YieldCost() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCuisine, setSelectedCuisine] = useState('all');
@@ -45,17 +88,11 @@ export default function YieldCost() {
   });
 
   // Calculate statistics
-  const avgYield = filteredIngredients.length > 0 
-    ? (filteredIngredients.reduce((sum, ing) => sum + (ing.cooking_yield_percent || 0), 0) / filteredIngredients.filter(i => i.cooking_yield_percent).length).toFixed(1)
-    : 0;
+  const avgYield = averageBy(filteredIngredients, (ing) => Number(ing.cooking_yield_percent));
 
-  const avgShrinkage = filteredIngredients.length > 0
-    ? (filteredIngredients.reduce((sum, ing) => sum + (ing.shrinkage_percent || 0), 0) / filteredIngredients.filter(i => i.shrinkage_percent).length).toFixed(1)
-    : 0;
+  const avgShrinkage = averageBy(filteredIngredients, (ing) => Number(ing.shrinkage_percent));
 
-  const avgCost = filteredIngredients.length > 0
-    ? (filteredIngredients.reduce((sum, ing) => sum + (ing.cost_per_unit || 0), 0) / filteredIngredients.filter(i => i.cost_per_unit).length).toFixed(2)
-    : 0;
+  const avgCost = averageBy(filteredIngredients, (ing) => Number(ing.cost_per_unit));
 
   const totalInventoryValue = filteredIngredients.reduce((sum, ing) => sum + (ing.cost_per_unit || 0), 0).toFixed(2);
 
@@ -67,17 +104,23 @@ export default function YieldCost() {
     recipe.ingredients?.forEach(recipeIng => {
       const ingredient = ingredients.find(i => i.id === recipeIng.ingredient_id);
       if (ingredient?.cost_per_unit) {
-        const quantity = recipeIng.quantity || 0;
-        totalCost += (quantity * ingredient.cost_per_unit);
+        const quantityInCostUnits = convertQuantityToCostUnits(
+          recipeIng.quantity,
+          recipeIng.unit || ingredient.unit,
+          ingredient.unit
+        );
+        totalCost += (quantityInCostUnits * ingredient.cost_per_unit);
       } else {
         hasAllCosts = false;
       }
     });
 
+    const servings = Number(recipe.servings) || 0;
+
     return {
       ...recipe,
       total_cost: hasAllCosts ? totalCost : null,
-      cost_per_serving: hasAllCosts && recipe.servings ? (totalCost / recipe.servings) : null
+      cost_per_serving: hasAllCosts && servings > 0 ? (totalCost / servings) : null
     };
   }).filter(r => r.total_cost !== null);
 
@@ -101,7 +144,7 @@ export default function YieldCost() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Avg Cooking Yield"
-            value={`${avgYield}%`}
+            value={`${avgYield.toFixed(1)}%`}
             subtitle="Weight retention"
             icon={Scale}
             iconColor="text-blue-600"
@@ -109,7 +152,7 @@ export default function YieldCost() {
           />
           <StatCard
             title="Avg Shrinkage"
-            value={`${avgShrinkage}%`}
+            value={`${avgShrinkage.toFixed(1)}%`}
             subtitle="Weight loss"
             icon={TrendingDown}
             iconColor="text-red-600"
@@ -117,7 +160,7 @@ export default function YieldCost() {
           />
           <StatCard
             title="Avg Cost/Unit"
-            value={`$${avgCost}`}
+            value={`$${avgCost.toFixed(2)}`}
             subtitle="Per ingredient"
             icon={DollarSign}
             iconColor="text-green-600"
@@ -317,7 +360,7 @@ export default function YieldCost() {
                               ${recipe.total_cost.toFixed(2)}
                             </TableCell>
                             <TableCell className="text-right font-semibold">
-                              ${recipe.cost_per_serving.toFixed(2)}
+                              {recipe.cost_per_serving != null ? `$${recipe.cost_per_serving.toFixed(2)}` : '-'}
                             </TableCell>
                             <TableCell className="text-right">
                               {recipe.calories_per_serving || '-'}
