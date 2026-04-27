@@ -13,6 +13,7 @@ import {
   Factory,
   Trash2,
   Flame,
+  TrendingUp,
   BarChart3,
   Calendar,
   Boxes,
