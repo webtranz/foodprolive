@@ -6,6 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/lib/AuthContext';
+import tamimiGlobalLogo from '@/assets/tamimi-global-logo.png';
 
 export default function Login() {
   const location = useLocation();
@@ -39,7 +40,15 @@ export default function Login() {
       <div className="absolute inset-x-0 top-0 h-40 bg-[linear-gradient(90deg,rgba(251,191,36,0.08),rgba(16,185,129,0.06),rgba(59,130,246,0.05))]" />
       <Card className="relative w-full max-w-md border-stone-200 bg-white/95 shadow-2xl backdrop-blur">
         <CardHeader>
-          <CardTitle className="text-2xl text-slate-900">FoodPro Control Center</CardTitle>
+          <div className="mb-4 flex items-center gap-4">
+            <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-amber-200 bg-white shadow-sm">
+              <img src={tamimiGlobalLogo} alt="Tamimi Global logo" className="h-full w-full object-contain" />
+            </div>
+            <div>
+              <CardTitle className="text-2xl text-slate-900">Tamimi Global</CardTitle>
+              <p className="text-sm font-medium text-amber-700">Catering system</p>
+            </div>
+          </div>
           <CardDescription className="text-slate-600">
             Sign in to manage production, inventory, dining attendance, and supplier workflows.
           </CardDescription>

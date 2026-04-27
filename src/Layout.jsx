@@ -36,6 +36,7 @@ import {
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { LanguageProvider, useLanguage } from '@/components/i18n/LanguageContext';
 import { useAuth } from '@/lib/AuthContext';
+import tamimiGlobalLogo from '@/assets/tamimi-global-logo.png';
 
 function buildNavigation(t) {
   const n = t.nav;
@@ -191,12 +192,12 @@ function Sidebar({ onNavigate }) {
       {/* Logo */}
       <div className="p-6 border-b border-slate-100">
         <Link to={createPageUrl('Dashboard')} className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-            <Utensils className="w-5 h-5 text-white" />
+          <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-amber-200 bg-white shadow-sm">
+            <img src={tamimiGlobalLogo} alt="Tamimi Global logo" className="h-full w-full object-contain" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-slate-900">FoodPro</h1>
-            <p className="text-xs text-slate-500">Production Manager</p>
+            <h1 className="text-lg font-bold text-slate-900">Tamimi Global</h1>
+            <p className="text-xs text-slate-500">Catering system</p>
           </div>
         </Link>
       </div>
@@ -259,10 +260,13 @@ export default function Layout({ children }) {
       {/* Mobile Header */}
       <header className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b border-slate-100 px-4 h-16 flex items-center justify-between">
         <Link to={createPageUrl('Dashboard')} className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
-            <Utensils className="w-4 h-4 text-white" />
+          <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg border border-amber-200 bg-white shadow-sm">
+            <img src={tamimiGlobalLogo} alt="Tamimi Global logo" className="h-full w-full object-contain" />
           </div>
-          <span className="font-bold text-slate-900">FoodPro</span>
+          <div className="leading-tight">
+            <span className="block text-sm font-bold text-slate-900">Tamimi Global</span>
+            <span className="block text-[10px] text-slate-500">Catering system</span>
+          </div>
         </Link>
 
         <div className="flex items-center gap-2">
