@@ -19,6 +19,7 @@ services:
       - "3000:3000"
     environment:
       PORT: ${PORT:-3000}
+      HOST: ${HOST:-0.0.0.0}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://foodpro.example.com}
       DATABASE_URL: ${DATABASE_URL:-postgresql://foodpro:foodpro@postgres:5432/foodpro}
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}

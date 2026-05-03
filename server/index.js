@@ -87,6 +87,7 @@ import {
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST || '0.0.0.0';
 const rootDir = path.resolve(process.cwd());
 const distDir = path.join(rootDir, 'dist');
 
@@ -1187,6 +1188,6 @@ app.use((error, _request, response, _next) => {
 
 await initDatabase();
 
-app.listen(port, () => {
-  console.log(`FoodPro server listening on port ${port}`);
+app.listen(port, host, () => {
+  console.log(`FoodPro server listening on ${host}:${port}`);
 });
