@@ -306,7 +306,13 @@ async function buildD365PurchaseOrderRows({ startDate, endDate, locationId, scop
 
 async function buildD365WarehouseProjectRows({ locationId, scope }) {
   const sites = await listDocuments('Site', { sort: 'name', limit: 5000 });
-  const scopedSites = filterByLocation(filterByScope(sites, scope, ['id', 'parent_site_id']), locationId, ['id', 'parent_site_id']);
+  const scopedSites = filterByLocation(
+    scope?.unrestricted
+      ? sites
+      : sites.filter((site) => scope?.accessibleTreeIds?.has(String(site.id))),
+    locationId,
+    ['id', 'parent_site_id']
+  );
   const rows = [];
 
   scopedSites

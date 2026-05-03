@@ -1072,9 +1072,14 @@ app.get('/api/inventory/reports/expiry', requireAuth, async (request, response, 
 
 app.get('/api/inventory/reports/velocity', requireAuth, async (request, response, next) => {
   try {
-    response.json(await getVelocityReports({
+    const scope = await getLocationScope(request.user);
+    const report = await getVelocityReports({
       days: request.query.days ? Number(request.query.days) : 30
-    }));
+    });
+    response.json({
+      fast_moving: filterRowsByAccessibleSites(report.fast_moving || [], scope),
+      slow_moving: filterRowsByAccessibleSites(report.slow_moving || [], scope)
+    });
   } catch (error) {
     next(error);
   }

@@ -46,6 +46,7 @@ function buildNavigation(t) {
     { name: n.dashboard, href: 'Dashboard', icon: LayoutDashboard },
     { name: n.sites, href: 'Sites', icon: Building2 },
     { name: n.ingredients, href: 'Ingredients', icon: Package },
+    { name: n.inventory, href: 'Inventory', icon: Boxes },
     { name: n.recipes, href: 'Recipes', icon: Utensils },
     { name: n.nutritionAllergens, href: 'NutritionAllergen', icon: ShieldAlert },
     { name: n.attendance, href: 'Attendance', icon: QrCode },

@@ -18,6 +18,7 @@ import {
   Wallet
 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { usePermissions } from '@/components/auth/usePermissions';
 import PageHeader from '@/components/ui/PageHeader';
 import EmptyState from '@/components/ui/EmptyState';
 import InventoryAlerts from '@/components/inventory/InventoryAlerts';
@@ -85,6 +86,8 @@ function InventoryTransferDialog({
     }
   }, [open]);
 
+  const warehouseSites = sites.filter((site) => ['warehouse', 'store'].includes(String(site.type || '').toLowerCase()));
+  const stockSites = warehouseSites.length > 0 ? warehouseSites : sites;
   const availableInventory = inventory.filter((item) => item.site_id === formData.from_site_id && Number(item.quantity || 0) > 0);
 
   const updateItem = (index, field, value) => {
@@ -135,27 +138,27 @@ function InventoryTransferDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <Label>From Location</Label>
+              <Label>From Warehouse</Label>
               <Select value={formData.from_site_id} onValueChange={(value) => setFormData((current) => ({ ...current, from_site_id: value }))}>
                 <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select source location" />
+                  <SelectValue placeholder="Select source warehouse" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sites.map((site) => (
-                    <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
+                  {stockSites.map((site) => (
+                    <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label>To Location</Label>
+              <Label>To Warehouse</Label>
               <Select value={formData.to_site_id} onValueChange={(value) => setFormData((current) => ({ ...current, to_site_id: value }))}>
                 <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select destination location" />
+                  <SelectValue placeholder="Select destination warehouse" />
                 </SelectTrigger>
                 <SelectContent>
-                  {sites.filter((site) => site.id !== formData.from_site_id).map((site) => (
-                    <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
+                  {stockSites.filter((site) => site.id !== formData.from_site_id).map((site) => (
+                    <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -274,6 +277,7 @@ function InventoryTransferDialog({
 }
 
 export default function Inventory() {
+  const { isManager } = usePermissions();
   const [selectedSite, setSelectedSite] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -302,6 +306,11 @@ export default function Inventory() {
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
+
+  const warehouseSites = useMemo(() => (
+    sites.filter((site) => ['warehouse', 'store'].includes(String(site.type || '').toLowerCase()))
+  ), [sites]);
+  const stockSites = warehouseSites.length > 0 ? warehouseSites : sites;
 
   const { data: ingredients = [] } = useQuery({
     queryKey: ['ingredients'],
@@ -524,23 +533,28 @@ export default function Inventory() {
       <div className="mx-auto max-w-[1600px]">
         <PageHeader
           title="Inventory Control"
-          description="Enterprise stock control with lots, expiry, valuation, transfers, and movement reporting."
+          description="Warehouse-based stock control with lots, expiry, valuation, transfers, movement reporting, and site-scoped access."
         >
           <Button variant="outline" onClick={() => downloadCSV(filteredInventory, 'inventory-stock-on-hand')}>
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
-          <Button variant="outline" onClick={() => setTransferDialogOpen(true)}>
-            <ArrowRightLeft className="mr-2 h-4 w-4" />
-            Transfer Stock
-          </Button>
-          <Button onClick={() => setStockDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
-            <Plus className="mr-2 h-4 w-4" />
-            Receive Stock
-          </Button>
+          {isManager ? (
+            <>
+              <Button variant="outline" onClick={() => setTransferDialogOpen(true)}>
+                <ArrowRightLeft className="mr-2 h-4 w-4" />
+                Transfer Stock
+              </Button>
+              <Button onClick={() => setStockDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
+                <Plus className="mr-2 h-4 w-4" />
+                Receive Stock
+              </Button>
+            </>
+          ) : null}
         </PageHeader>
 
-        <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
+          <StatCard title="Warehouses" value={stockSites.length} icon={Boxes} iconBg="bg-slate-100" iconColor="text-slate-700" />
           <StatCard title="Stock On Hand" value={formatQuantity(inventorySummary.totalQuantity)} icon={Boxes} iconBg="bg-blue-50" iconColor="text-blue-600" />
           <StatCard title="Inventory Value" value={CURRENCY.format(inventorySummary.totalValue)} icon={Wallet} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
           <StatCard title="Low Stock Items" value={inventorySummary.lowStockItems} icon={TrendingDown} iconBg="bg-amber-50" iconColor="text-amber-600" />
@@ -555,7 +569,7 @@ export default function Inventory() {
 
         <Card className="mb-6 border-slate-200 shadow-sm">
           <CardContent className="p-4">
-            <div className="grid gap-4 lg:grid-cols-[1fr_220px_180px_180px]">
+            <div className="grid gap-4 lg:grid-cols-[1fr_260px_180px_180px]">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
@@ -570,9 +584,9 @@ export default function Inventory() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Locations</SelectItem>
-                  {sites.map((site) => (
-                    <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
+                  <SelectItem value="all">All Warehouses</SelectItem>
+                  {stockSites.map((site) => (
+                    <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -594,7 +608,7 @@ export default function Inventory() {
             title="No inventory records found"
             description="Receive your first stock delivery or widen the selected filters."
             actionLabel="Receive Stock"
-            onAction={() => setStockDialogOpen(true)}
+            onAction={isManager ? () => setStockDialogOpen(true) : undefined}
           />
         ) : (
           <Tabs defaultValue="stock" className="space-y-4">
@@ -953,14 +967,14 @@ export default function Inventory() {
             <form onSubmit={handleReceiveStock} className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <Label>Location</Label>
+                  <Label>Warehouse</Label>
                   <Select value={stockForm.site_id} onValueChange={(value) => setStockForm((current) => ({ ...current, site_id: value }))}>
                     <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="Select location" />
+                      <SelectValue placeholder="Select warehouse" />
                     </SelectTrigger>
                     <SelectContent>
-                      {sites.map((site) => (
-                        <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
+                      {stockSites.map((site) => (
+                        <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1052,7 +1066,7 @@ export default function Inventory() {
         <InventoryTransferDialog
           open={transferDialogOpen}
           onOpenChange={setTransferDialogOpen}
-          sites={sites}
+          sites={stockSites}
           inventory={stockOnHand}
           onSubmit={(payload) => transferStockMutation.mutateAsync(payload)}
           isPending={transferStockMutation.isPending}
