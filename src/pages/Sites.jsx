@@ -144,7 +144,7 @@ export default function Sites() {
   const stats = useMemo(() => ({
     companies: sites.filter((site) => site.type === 'company').length,
     regions: sites.filter((site) => site.type === 'region').length,
-    kitchens: sites.filter((site) => site.type === 'kitchen').length,
+    camps: sites.filter((site) => site.type === 'camp').length,
     storage: sites.filter((site) => ['store', 'warehouse'].includes(site.type)).length
   }), [sites]);
 
@@ -268,7 +268,7 @@ export default function Sites() {
         <div className="mb-6 grid gap-4 md:grid-cols-4">
           <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Companies</p><p className="mt-2 text-2xl font-semibold">{stats.companies}</p></CardContent></Card>
           <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Regions</p><p className="mt-2 text-2xl font-semibold">{stats.regions}</p></CardContent></Card>
-          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Kitchens</p><p className="mt-2 text-2xl font-semibold">{stats.kitchens}</p></CardContent></Card>
+          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Camps</p><p className="mt-2 text-2xl font-semibold">{stats.camps}</p></CardContent></Card>
           <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Stores / Warehouses</p><p className="mt-2 text-2xl font-semibold">{stats.storage}</p></CardContent></Card>
         </div>
 
