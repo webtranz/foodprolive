@@ -17,9 +17,13 @@ services:
       - postgres
     ports:
       - "3000:3000"
+    expose:
+      - "3000"
     environment:
       PORT: ${PORT:-3000}
       HOST: ${HOST:-0.0.0.0}
+      DATABASE_INIT_ATTEMPTS: ${DATABASE_INIT_ATTEMPTS:-30}
+      DATABASE_INIT_DELAY_MS: ${DATABASE_INIT_DELAY_MS:-2000}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://foodpro.example.com}
       DATABASE_URL: ${DATABASE_URL:-postgresql://foodpro:foodpro@postgres:5432/foodpro}
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
@@ -41,6 +45,12 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-}
     volumes:
       - ./uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     restart: unless-stopped
 
 volumes:

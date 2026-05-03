@@ -90,6 +90,8 @@ const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || '0.0.0.0';
 const rootDir = path.resolve(process.cwd());
 const distDir = path.join(rootDir, 'dist');
+const databaseInitAttempts = Number(process.env.DATABASE_INIT_ATTEMPTS || 30);
+const databaseInitDelayMs = Number(process.env.DATABASE_INIT_DELAY_MS || 2000);
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -105,6 +107,30 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+
+const delay = (ms) => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
+
+async function initDatabaseWithRetry() {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= databaseInitAttempts; attempt += 1) {
+    try {
+      await initDatabase();
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`Database initialization attempt ${attempt}/${databaseInitAttempts} failed: ${error.message}`);
+
+      if (attempt < databaseInitAttempts) {
+        await delay(databaseInitDelayMs);
+      }
+    }
+  }
+
+  throw lastError;
+}
 
 function getBearerToken(request) {
   const header = request.headers.authorization || '';
@@ -1186,7 +1212,7 @@ app.use((error, _request, response, _next) => {
   response.status(500).json({ message: error.message || 'Internal server error' });
 });
 
-await initDatabase();
+await initDatabaseWithRetry();
 
 app.listen(port, host, () => {
   console.log(`FoodPro server listening on ${host}:${port}`);

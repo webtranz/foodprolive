@@ -10,12 +10,14 @@ const uploadsDir = path.join(rootDir, 'uploads');
 
 await fs.mkdir(uploadsDir, { recursive: true });
 
-const connectionString = process.env.DATABASE_URL || [
-  `postgresql://${process.env.POSTGRES_USER || 'foodpro'}`,
-  `:${process.env.POSTGRES_PASSWORD || 'foodpro'}`,
-  `@${process.env.POSTGRES_HOST || '127.0.0.1'}`,
-  `:${process.env.POSTGRES_PORT || '5432'}`,
-  `/${process.env.POSTGRES_DB || 'foodpro'}`
+const envValue = (key, fallback = '') => (process.env[key] || fallback).trim();
+
+const connectionString = envValue('DATABASE_URL') || [
+  `postgresql://${encodeURIComponent(envValue('POSTGRES_USER', 'foodpro'))}`,
+  `:${encodeURIComponent(envValue('POSTGRES_PASSWORD', 'foodpro'))}`,
+  `@${envValue('POSTGRES_HOST', '127.0.0.1')}`,
+  `:${envValue('POSTGRES_PORT', '5432')}`,
+  `/${encodeURIComponent(envValue('POSTGRES_DB', 'foodpro'))}`
 ].join('');
 
 const pool = new Pool({
