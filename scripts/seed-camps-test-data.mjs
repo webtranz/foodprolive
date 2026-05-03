@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import XLSX from 'xlsx';
+import bcrypt from 'bcryptjs';
 import { pool, initDatabase } from '../server/db.js';
 
 const nowIso = () => new Date().toISOString();
@@ -39,6 +40,41 @@ const camps = [
     project_code: 'MOD',
     city: 'Dammam',
     warehouse: 'MODON CAMP WAREHOUSE'
+  }
+];
+
+const testUsers = [
+  {
+    id: 'user_abqaiq_manager',
+    email: 'abqaiq.manager@foodpro.test',
+    full_name: 'ABQAIQ Camp Manager',
+    role: 'manager',
+    site_key: 'abqaiq',
+    password: 'FoodPro@2030'
+  },
+  {
+    id: 'user_abqaiq_storekeeper',
+    email: 'abqaiq.storekeeper@foodpro.test',
+    full_name: 'ABQAIQ Storekeeper',
+    role: 'user',
+    site_key: 'abqaiq',
+    password: 'FoodPro@2030'
+  },
+  {
+    id: 'user_modon_manager',
+    email: 'modon.manager@foodpro.test',
+    full_name: 'MODON Camp Manager',
+    role: 'manager',
+    site_key: 'modon',
+    password: 'FoodPro@2030'
+  },
+  {
+    id: 'user_modon_storekeeper',
+    email: 'modon.storekeeper@foodpro.test',
+    full_name: 'MODON Storekeeper',
+    role: 'user',
+    site_key: 'modon',
+    password: 'FoodPro@2030'
   }
 ];
 
@@ -386,8 +422,38 @@ function productionRecords() {
   });
 }
 
+function userRows() {
+  const timestamp = nowIso();
+  return testUsers.map((user) => {
+    const camp = camps.find((item) => item.key === user.site_key);
+    const campId = id('site', user.site_key);
+    const warehouseId = id('site', `${user.site_key}_warehouse`);
+    return {
+      id: user.id,
+      email: user.email,
+      full_name: user.full_name,
+      role: user.role,
+      status: 'active',
+      site_id: campId,
+      site_name: camp.name,
+      password_hash: bcrypt.hashSync(user.password, 10),
+      temporary_password: null,
+      profile: {
+        allowed_site_ids: [campId, warehouseId],
+        allowed_site_names: [camp.name, camp.warehouse],
+        visibility_scope: 'subtree',
+        seeded_for: 'camp-production-testing'
+      },
+      created_at: timestamp,
+      updated_at: timestamp
+    };
+  });
+}
+
 async function clearOldData() {
   await pool.query('DELETE FROM entity_records WHERE entity_name = ANY($1)', [RESET_ENTITIES]);
+  await pool.query("DELETE FROM auth_tokens WHERE user_id IN (SELECT id FROM users WHERE role <> 'admin')");
+  await pool.query("DELETE FROM users WHERE role <> 'admin'");
 }
 
 async function insertRecords(records) {
@@ -396,6 +462,39 @@ async function insertRecords(records) {
       `INSERT INTO entity_records (id, entity_name, data, created_at, updated_at)
        VALUES ($1, $2, $3::jsonb, $4, $5)`,
       [item.id, item.entity_name, JSON.stringify(item.data), item.created_at, item.updated_at]
+    );
+  }
+}
+
+async function insertUsers(users) {
+  for (const user of users) {
+    await pool.query(
+      `INSERT INTO users (id, email, full_name, role, status, site_id, site_name, password_hash, temporary_password, profile, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12)
+       ON CONFLICT (email) DO UPDATE
+       SET full_name = EXCLUDED.full_name,
+           role = EXCLUDED.role,
+           status = EXCLUDED.status,
+           site_id = EXCLUDED.site_id,
+           site_name = EXCLUDED.site_name,
+           password_hash = EXCLUDED.password_hash,
+           temporary_password = EXCLUDED.temporary_password,
+           profile = EXCLUDED.profile,
+           updated_at = EXCLUDED.updated_at`,
+      [
+        user.id,
+        user.email,
+        user.full_name,
+        user.role,
+        user.status,
+        user.site_id,
+        user.site_name,
+        user.password_hash,
+        user.temporary_password,
+        JSON.stringify(user.profile),
+        user.created_at,
+        user.updated_at
+      ]
     );
   }
 }
@@ -431,11 +530,23 @@ function exportWorkbook(outputPath) {
     ingredient_count: item.data.ingredients.length
   }));
   const siteRows = siteRecords().map((item) => item.data);
+  const userExportRows = testUsers.map((user) => {
+    const camp = camps.find((item) => item.key === user.site_key);
+    return {
+      email: user.email,
+      full_name: user.full_name,
+      role: user.role,
+      password: user.password,
+      primary_site: camp.name,
+      allowed_sites: `${camp.name}, ${camp.warehouse}`
+    };
+  });
 
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(siteRows), 'Sites');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(ingredientRows), 'Ingredients');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(inventoryRows), 'Inventory');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(recipeRows), 'Recipes');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(userExportRows), 'Test Users');
   XLSX.writeFile(workbook, outputPath);
 }
 
@@ -451,6 +562,18 @@ async function exportJson(outputPath) {
   await fs.writeFile(outputPath, JSON.stringify({
     generated_at: nowIso(),
     reset_entities: RESET_ENTITIES,
+    test_users: testUsers.map((user) => {
+      const camp = camps.find((item) => item.key === user.site_key);
+      return {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+        password: user.password,
+        primary_site: camp.name,
+        allowed_sites: [camp.name, camp.warehouse]
+      };
+    }),
     records: records.map((item) => ({
       id: item.id,
       entity_name: item.entity_name,
@@ -460,8 +583,10 @@ async function exportJson(outputPath) {
 }
 
 async function main() {
-  const outputPath = process.argv[2] || 'outputs/test-data/foodpro-camps-ingredient-inventory.xlsx';
   const workbookOnly = process.argv.includes('--workbook-only');
+  const outputPath = process.argv
+    .slice(2)
+    .find((argument) => !argument.startsWith('--')) || 'outputs/test-data/foodpro-camps-ingredient-inventory.xlsx';
   if (workbookOnly) {
     exportWorkbook(outputPath);
     await exportJson(outputPath.replace(/\.xlsx$/i, '.json'));
@@ -471,6 +596,7 @@ async function main() {
       jsonPath: outputPath.replace(/\.xlsx$/i, '.json'),
       counts: {
         Site: siteRecords().length,
+        User: testUsers.length,
         Ingredient: ingredientRecords().length,
         Recipe: recipeRecords().length,
         Inventory: inventoryRecords().filter((item) => item.entity_name === 'Inventory').length,
@@ -491,6 +617,7 @@ async function main() {
     ...productionRecords()
   ];
   await insertRecords(records);
+  await insertUsers(userRows());
   exportWorkbook(outputPath);
   await exportJson(outputPath.replace(/\.xlsx$/i, '.json'));
 
@@ -498,10 +625,13 @@ async function main() {
     message: 'FoodPro camp test data seeded',
     outputPath,
     jsonPath: outputPath.replace(/\.xlsx$/i, '.json'),
-    counts: records.reduce((accumulator, item) => {
+    counts: {
+      ...records.reduce((accumulator, item) => {
       accumulator[item.entity_name] = (accumulator[item.entity_name] || 0) + 1;
       return accumulator;
-    }, {})
+      }, {}),
+      User: testUsers.length
+    }
   }, null, 2));
 }
 
