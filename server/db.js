@@ -319,6 +319,9 @@ async function seedDefaults() {
     is_active: true
   }) : null;
 
+  const seededSiteRecords = await listDocuments('Site', { sort: 'name', limit: 200 });
+  const warehouseLocations = seededSiteRecords.filter((site) => ['warehouse', 'store'].includes(String(site.type || '').toLowerCase()));
+
   const ingredientSeeds = [
     ['ingredient_chicken_breast', { name: 'Chicken Breast', unit: 'kg', category: 'protein', cuisine_type: 'universal', cost_per_unit: 24, calories_per_100g: 165, protein_per_100g: 31, carbs_per_100g: 0, fat_per_100g: 3.6, sodium_per_100g: 74, sugar_per_100g: 0, cooking_yield_percent: 78, shrinkage_percent: 22, raw_weight_per_unit: 1000, cooked_weight_per_unit: 780, allergens: [] }],
     ['ingredient_basmati_rice', { name: 'Basmati Rice', unit: 'kg', category: 'grain', cuisine_type: 'middle_eastern', cost_per_unit: 8.5, calories_per_100g: 365, protein_per_100g: 7.1, carbs_per_100g: 80, fat_per_100g: 0.7, sodium_per_100g: 5, sugar_per_100g: 0.1, cooking_yield_percent: 260, shrinkage_percent: 0, raw_weight_per_unit: 1000, cooked_weight_per_unit: 2600, allergens: [] }],
@@ -586,6 +589,48 @@ async function seedDefaults() {
     { site: campKitchen || primarySite, ingredientId: 'ingredient_milk', quantity: 52, minStock: 16, maxStock: 80, batchNumber: 'TR-3010-MILK', expiryDate: dateOnlyOffset(5) },
     { site: campKitchen || primarySite, ingredientId: 'ingredient_onion', quantity: 34, minStock: 10, maxStock: 50, batchNumber: 'TR-3011-ONON', expiryDate: dateOnlyOffset(14) }
   ];
+
+  const warehouseStockBlueprint = [
+    ['ingredient_chicken_breast', 90, 28, 140, 'WH-CHKN', 10],
+    ['ingredient_basmati_rice', 320, 90, 460, 'WH-RICE', 150],
+    ['ingredient_yogurt', 70, 18, 110, 'WH-YGRT', 8],
+    ['ingredient_mixed_vegetables', 85, 24, 130, 'WH-VEG', 6],
+    ['ingredient_flatbread', 520, 150, 760, 'WH-BRD', 3],
+    ['ingredient_hummus', 42, 12, 65, 'WH-HMMS', 9],
+    ['ingredient_beef_mince', 60, 18, 92, 'WH-BEEF', 6],
+    ['ingredient_potato', 170, 45, 260, 'WH-POTA', 30],
+    ['ingredient_lentils', 110, 28, 160, 'WH-LENT', 220],
+    ['ingredient_pasta_penne', 120, 32, 180, 'WH-PASTA', 180],
+    ['ingredient_tomato_sauce', 84, 22, 130, 'WH-TOMA', 90],
+    ['ingredient_salmon_fillet', 30, 10, 48, 'WH-SALM', 5],
+    ['ingredient_eggs', 760, 220, 1100, 'WH-EGGS', 9],
+    ['ingredient_milk', 120, 32, 180, 'WH-MILK', 7],
+    ['ingredient_chickpeas', 95, 24, 140, 'WH-CHKP', 60],
+    ['ingredient_onion', 120, 30, 180, 'WH-ONON', 18],
+    ['ingredient_tomato', 110, 28, 170, 'WH-TOMT', 7],
+    ['ingredient_garlic', 26, 8, 40, 'WH-GRLC', 30],
+    ['ingredient_olive_oil', 42, 12, 64, 'WH-OIL', 180],
+    ['ingredient_flour', 92, 24, 140, 'WH-FLOR', 220],
+    ['ingredient_sugar', 74, 20, 110, 'WH-SUGR', 240],
+    ['ingredient_butter', 30, 8, 44, 'WH-BUTR', 28],
+    ['ingredient_cheese', 34, 10, 52, 'WH-CHSE', 20],
+    ['ingredient_lettuce', 40, 12, 60, 'WH-LTTC', 6],
+    ['ingredient_cucumber', 44, 12, 66, 'WH-CUCM', 7]
+  ];
+
+  for (const warehouse of warehouseLocations) {
+    for (const [ingredientId, quantity, minStock, maxStock, batchPrefix, expiryDays] of warehouseStockBlueprint) {
+      inventorySeeds.push({
+        site: warehouse,
+        ingredientId,
+        quantity,
+        minStock,
+        maxStock,
+        batchNumber: `${batchPrefix}-${String(warehouse.project_code || warehouse.id || 'SITE').slice(0, 12)}`,
+        expiryDate: dateOnlyOffset(expiryDays)
+      });
+    }
+  }
 
   for (const seed of inventorySeeds) {
     await ensureInventorySeed(seed);
