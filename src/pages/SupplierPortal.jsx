@@ -13,7 +13,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { 
   Plus, 
   Building2, 
-  TrendingUp, 
   FileText, 
   Package,
   Star,
@@ -198,7 +197,7 @@ export default function SupplierPortal() {
                   <p className="text-sm text-slate-600">Avg Delivery Rate</p>
                   <p className="text-2xl font-bold text-slate-900">{stats.avgDeliveryRate.toFixed(0)}%</p>
                 </div>
-                <TrendingUp className="w-8 h-8 text-blue-600" />
+                <Star className="w-8 h-8 text-blue-600" />
               </div>
             </CardContent>
           </Card>
