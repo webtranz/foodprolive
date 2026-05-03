@@ -413,13 +413,28 @@ async function seedDefaults() {
     if (!ingredient) return;
     const inventoryId = `inventory_${site.id}_${ingredientId}`;
     const existingInventory = await findDocument('Inventory', inventoryId);
-    if (existingInventory) return;
-
     const timestamp = nowIso();
     const lotId = `lot_${site.id}_${ingredientId}`;
     const transactionId = `txn_${site.id}_${ingredientId}`;
     const totalCost = Number(quantity) * Number(ingredient.cost_per_unit || 0);
     const status = quantity <= minStock ? 'low_stock' : 'in_stock';
+
+    if (existingInventory) {
+      const nextQuantity = Math.max(Number(existingInventory.quantity || 0), Number(quantity || 0));
+      await updateDocument('Inventory', inventoryId, {
+        quantity: nextQuantity,
+        min_stock_level: Math.max(Number(existingInventory.min_stock_level || 0), Number(minStock || 0)),
+        max_stock_level: Math.max(Number(existingInventory.max_stock_level || 0), Number(maxStock || 0)),
+        average_unit_cost: Number(ingredient.cost_per_unit || existingInventory.average_unit_cost || 0),
+        total_value: nextQuantity * Number(ingredient.cost_per_unit || existingInventory.average_unit_cost || 0),
+        next_expiry_date: existingInventory.next_expiry_date || expiryDate,
+        batch_number: existingInventory.batch_number || batchNumber,
+        expiry_alert_days: Math.max(Number(existingInventory.expiry_alert_days || 0), 5),
+        status: nextQuantity <= Math.max(Number(existingInventory.min_stock_level || 0), Number(minStock || 0)) ? 'low_stock' : 'in_stock',
+        valuation_method: existingInventory.valuation_method || 'fifo'
+      });
+      return;
+    }
 
     await query(
       `INSERT INTO entity_records (id, entity_name, data, created_at, updated_at)
@@ -492,27 +507,50 @@ async function seedDefaults() {
   };
 
   const inventorySeeds = [
-    { site: warehouseSite || primarySite, ingredientId: 'ingredient_chicken_breast', quantity: 42, minStock: 12, maxStock: 75, batchNumber: 'PO-1001-CHKN', expiryDate: dateOnlyOffset(18) },
-    { site: warehouseSite || primarySite, ingredientId: 'ingredient_basmati_rice', quantity: 180, minStock: 40, maxStock: 260, batchNumber: 'PO-1002-RICE', expiryDate: dateOnlyOffset(120) },
-    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_yogurt', quantity: 24, minStock: 8, maxStock: 36, batchNumber: 'PO-1003-YGRT', expiryDate: dateOnlyOffset(7) },
-    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_mixed_vegetables', quantity: 30, minStock: 10, maxStock: 45, batchNumber: 'PO-1004-VEG', expiryDate: dateOnlyOffset(5) },
-    { site: warehouseSite || primarySite, ingredientId: 'ingredient_flatbread', quantity: 220, minStock: 80, maxStock: 320, batchNumber: 'PO-1005-BRD', expiryDate: dateOnlyOffset(3) },
-    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_hummus', quantity: 18, minStock: 6, maxStock: 24, batchNumber: 'PO-1006-HMMS', expiryDate: dateOnlyOffset(9) },
-    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_beef_mince', quantity: 26, minStock: 8, maxStock: 40, batchNumber: 'PO-1007-BEEF', expiryDate: dateOnlyOffset(6) },
-    { site: warehouseSite || primarySite, ingredientId: 'ingredient_potato', quantity: 95, minStock: 20, maxStock: 140, batchNumber: 'PO-1008-POTA', expiryDate: dateOnlyOffset(20) },
-    { site: warehouseSite || primarySite, ingredientId: 'ingredient_lentils', quantity: 55, minStock: 12, maxStock: 80, batchNumber: 'PO-1009-LENT', expiryDate: dateOnlyOffset(200) },
-    { site: warehouseSite || primarySite, ingredientId: 'ingredient_pasta_penne', quantity: 65, minStock: 18, maxStock: 90, batchNumber: 'PO-1010-PASTA', expiryDate: dateOnlyOffset(180) },
-    { site: warehouseSite || primarySite, ingredientId: 'ingredient_tomato_sauce', quantity: 38, minStock: 10, maxStock: 55, batchNumber: 'PO-1011-TOMA', expiryDate: dateOnlyOffset(90) },
-    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_salmon_fillet', quantity: 14, minStock: 6, maxStock: 20, batchNumber: 'PO-1012-SALM', expiryDate: dateOnlyOffset(4) },
-    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_eggs', quantity: 360, minStock: 120, maxStock: 520, batchNumber: 'PO-1013-EGGS', expiryDate: dateOnlyOffset(10) },
-    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_milk', quantity: 48, minStock: 12, maxStock: 72, batchNumber: 'PO-1014-MILK', expiryDate: dateOnlyOffset(8) },
-    { site: warehouseSite || primarySite, ingredientId: 'ingredient_chickpeas', quantity: 44, minStock: 10, maxStock: 60, batchNumber: 'PO-1015-CHKP', expiryDate: dateOnlyOffset(45) },
-    { site: branchKitchen || primarySite, ingredientId: 'ingredient_flatbread', quantity: 55, minStock: 20, maxStock: 80, batchNumber: 'TR-2001-BRD', expiryDate: dateOnlyOffset(2) },
-    { site: branchKitchen || primarySite, ingredientId: 'ingredient_chicken_breast', quantity: 12, minStock: 8, maxStock: 20, batchNumber: 'TR-2002-CHKN', expiryDate: dateOnlyOffset(3) },
-    { site: branchKitchen || primarySite, ingredientId: 'ingredient_yogurt', quantity: 6, minStock: 4, maxStock: 10, batchNumber: 'TR-2003-YGRT', expiryDate: dateOnlyOffset(4) },
-    { site: campKitchen || primarySite, ingredientId: 'ingredient_basmati_rice', quantity: 28, minStock: 18, maxStock: 45, batchNumber: 'TR-3001-RICE', expiryDate: dateOnlyOffset(70) },
-    { site: campKitchen || primarySite, ingredientId: 'ingredient_lentils', quantity: 16, minStock: 8, maxStock: 26, batchNumber: 'TR-3002-LENT', expiryDate: dateOnlyOffset(160) },
-    { site: campKitchen || primarySite, ingredientId: 'ingredient_eggs', quantity: 120, minStock: 90, maxStock: 180, batchNumber: 'TR-3003-EGGS', expiryDate: dateOnlyOffset(7) }
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_chicken_breast', quantity: 120, minStock: 35, maxStock: 180, batchNumber: 'PO-1001-CHKN', expiryDate: dateOnlyOffset(18) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_basmati_rice', quantity: 420, minStock: 120, maxStock: 560, batchNumber: 'PO-1002-RICE', expiryDate: dateOnlyOffset(120) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_yogurt', quantity: 90, minStock: 24, maxStock: 140, batchNumber: 'PO-1003-YGRT', expiryDate: dateOnlyOffset(7) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_mixed_vegetables', quantity: 110, minStock: 30, maxStock: 160, batchNumber: 'PO-1004-VEG', expiryDate: dateOnlyOffset(5) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_flatbread', quantity: 900, minStock: 220, maxStock: 1200, batchNumber: 'PO-1005-BRD', expiryDate: dateOnlyOffset(3) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_hummus', quantity: 65, minStock: 18, maxStock: 90, batchNumber: 'PO-1006-HMMS', expiryDate: dateOnlyOffset(9) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_beef_mince', quantity: 85, minStock: 24, maxStock: 120, batchNumber: 'PO-1007-BEEF', expiryDate: dateOnlyOffset(6) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_potato', quantity: 220, minStock: 60, maxStock: 320, batchNumber: 'PO-1008-POTA', expiryDate: dateOnlyOffset(20) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_lentils', quantity: 150, minStock: 35, maxStock: 220, batchNumber: 'PO-1009-LENT', expiryDate: dateOnlyOffset(200) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_pasta_penne', quantity: 160, minStock: 45, maxStock: 220, batchNumber: 'PO-1010-PASTA', expiryDate: dateOnlyOffset(180) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_tomato_sauce', quantity: 120, minStock: 28, maxStock: 180, batchNumber: 'PO-1011-TOMA', expiryDate: dateOnlyOffset(90) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_salmon_fillet', quantity: 48, minStock: 15, maxStock: 70, batchNumber: 'PO-1012-SALM', expiryDate: dateOnlyOffset(4) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_eggs', quantity: 1200, minStock: 320, maxStock: 1800, batchNumber: 'PO-1013-EGGS', expiryDate: dateOnlyOffset(10) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_milk', quantity: 180, minStock: 45, maxStock: 260, batchNumber: 'PO-1014-MILK', expiryDate: dateOnlyOffset(8) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_chickpeas', quantity: 135, minStock: 30, maxStock: 200, batchNumber: 'PO-1015-CHKP', expiryDate: dateOnlyOffset(45) },
+    { site: primarySite, ingredientId: 'ingredient_chicken_breast', quantity: 36, minStock: 14, maxStock: 60, batchNumber: 'KIT-1101-CHKN', expiryDate: dateOnlyOffset(3) },
+    { site: primarySite, ingredientId: 'ingredient_basmati_rice', quantity: 110, minStock: 35, maxStock: 180, batchNumber: 'KIT-1102-RICE', expiryDate: dateOnlyOffset(80) },
+    { site: primarySite, ingredientId: 'ingredient_mixed_vegetables', quantity: 42, minStock: 14, maxStock: 75, batchNumber: 'KIT-1103-VEG', expiryDate: dateOnlyOffset(4) },
+    { site: primarySite, ingredientId: 'ingredient_flatbread', quantity: 180, minStock: 60, maxStock: 260, batchNumber: 'KIT-1104-BRD', expiryDate: dateOnlyOffset(2) },
+    { site: primarySite, ingredientId: 'ingredient_yogurt', quantity: 22, minStock: 8, maxStock: 36, batchNumber: 'KIT-1105-YGRT', expiryDate: dateOnlyOffset(4) },
+    { site: primarySite, ingredientId: 'ingredient_lentils', quantity: 32, minStock: 12, maxStock: 55, batchNumber: 'KIT-1106-LENT', expiryDate: dateOnlyOffset(120) },
+    { site: primarySite, ingredientId: 'ingredient_pasta_penne', quantity: 30, minStock: 10, maxStock: 48, batchNumber: 'KIT-1107-PASTA', expiryDate: dateOnlyOffset(90) },
+    { site: primarySite, ingredientId: 'ingredient_tomato_sauce', quantity: 20, minStock: 8, maxStock: 36, batchNumber: 'KIT-1108-TOMA', expiryDate: dateOnlyOffset(40) },
+    { site: primarySite, ingredientId: 'ingredient_eggs', quantity: 260, minStock: 100, maxStock: 420, batchNumber: 'KIT-1109-EGGS', expiryDate: dateOnlyOffset(6) },
+    { site: primarySite, ingredientId: 'ingredient_milk', quantity: 38, minStock: 12, maxStock: 60, batchNumber: 'KIT-1110-MILK', expiryDate: dateOnlyOffset(5) },
+    { site: primarySite, ingredientId: 'ingredient_salmon_fillet', quantity: 18, minStock: 8, maxStock: 28, batchNumber: 'KIT-1111-SALM', expiryDate: dateOnlyOffset(3) },
+    { site: primarySite, ingredientId: 'ingredient_beef_mince', quantity: 24, minStock: 10, maxStock: 40, batchNumber: 'KIT-1112-BEEF', expiryDate: dateOnlyOffset(4) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_flatbread', quantity: 160, minStock: 40, maxStock: 240, batchNumber: 'TR-2001-BRD', expiryDate: dateOnlyOffset(2) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_chicken_breast', quantity: 34, minStock: 12, maxStock: 55, batchNumber: 'TR-2002-CHKN', expiryDate: dateOnlyOffset(3) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_yogurt', quantity: 20, minStock: 6, maxStock: 30, batchNumber: 'TR-2003-YGRT', expiryDate: dateOnlyOffset(4) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_pasta_penne', quantity: 34, minStock: 10, maxStock: 48, batchNumber: 'TR-2004-PASTA', expiryDate: dateOnlyOffset(90) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_tomato_sauce', quantity: 22, minStock: 6, maxStock: 30, batchNumber: 'TR-2005-TOMA', expiryDate: dateOnlyOffset(40) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_beef_mince', quantity: 24, minStock: 8, maxStock: 36, batchNumber: 'TR-2006-BEEF', expiryDate: dateOnlyOffset(4) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_lentils', quantity: 26, minStock: 8, maxStock: 40, batchNumber: 'TR-2007-LENT', expiryDate: dateOnlyOffset(140) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_eggs', quantity: 180, minStock: 70, maxStock: 260, batchNumber: 'TR-2008-EGGS', expiryDate: dateOnlyOffset(6) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_milk', quantity: 28, minStock: 10, maxStock: 42, batchNumber: 'TR-2009-MILK', expiryDate: dateOnlyOffset(5) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_basmati_rice', quantity: 160, minStock: 50, maxStock: 240, batchNumber: 'TR-3001-RICE', expiryDate: dateOnlyOffset(70) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_lentils', quantity: 90, minStock: 28, maxStock: 140, batchNumber: 'TR-3002-LENT', expiryDate: dateOnlyOffset(160) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_eggs', quantity: 420, minStock: 140, maxStock: 620, batchNumber: 'TR-3003-EGGS', expiryDate: dateOnlyOffset(7) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_chicken_breast', quantity: 65, minStock: 24, maxStock: 100, batchNumber: 'TR-3004-CHKN', expiryDate: dateOnlyOffset(4) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_mixed_vegetables', quantity: 58, minStock: 20, maxStock: 90, batchNumber: 'TR-3005-VEG', expiryDate: dateOnlyOffset(4) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_pasta_penne', quantity: 72, minStock: 20, maxStock: 110, batchNumber: 'TR-3006-PASTA', expiryDate: dateOnlyOffset(120) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_tomato_sauce', quantity: 34, minStock: 10, maxStock: 48, batchNumber: 'TR-3007-TOMA', expiryDate: dateOnlyOffset(45) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_beef_mince', quantity: 52, minStock: 18, maxStock: 78, batchNumber: 'TR-3008-BEEF', expiryDate: dateOnlyOffset(4) }
   ];
 
   for (const seed of inventorySeeds) {
