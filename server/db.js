@@ -238,397 +238,285 @@ async function seedDefaults() {
     );
   }
 
-  const siteRecords = await listDocuments('Site', { sort: 'name', limit: 50 });
+  const ensureSeedDocument = async (entity, id, payload) => {
+    const existing = await findDocument(entity, id);
+    if (existing) return existing;
+    return createDocument(entity, { id, ...payload });
+  };
+
+  const siteRecords = await listDocuments('Site', { sort: 'name', limit: 100 });
   const primarySite = siteRecords[0] || null;
-  let warehouseSite = siteRecords.find((site) => ['warehouse', 'store'].includes(String(site.type || '').toLowerCase())) || null;
 
-  if (!warehouseSite && primarySite) {
-    warehouseSite = await createDocument('Site', {
-      name: 'Central Dry Store',
-      project_code: 'STORE-01',
-      type: 'warehouse',
-      hierarchy_level: 'store',
-      parent_site_id: primarySite.id,
-      parent_site_name: primarySite.name,
-      hierarchy_path: `${primarySite.name} / Central Dry Store`,
-      company_name: primarySite.company_name || 'Tamimi Global',
-      region_name: primarySite.region_name || 'Central Region',
-      location_name: primarySite.location_name || 'Riyadh',
-      kitchen_name: primarySite.kitchen_name || primarySite.name,
-      storage_name: 'Central Dry Store',
-      city: primarySite.city || 'Riyadh',
-      country: primarySite.country || 'Saudi Arabia',
-      is_active: true
-    });
+  const branchKitchen = primarySite ? await ensureSeedDocument('Site', 'site_demo_branch_kitchen', {
+    name: 'Airport Branch Kitchen',
+    project_code: 'BRN-01',
+    type: 'kitchen',
+    hierarchy_level: 'kitchen',
+    parent_site_id: primarySite.id,
+    parent_site_name: primarySite.name,
+    hierarchy_path: `${primarySite.name} / Airport Branch Kitchen`,
+    company_name: primarySite.company_name || 'Tamimi Global',
+    region_name: primarySite.region_name || 'Central Region',
+    location_name: 'Riyadh Airport',
+    kitchen_name: 'Airport Branch Kitchen',
+    city: 'Riyadh',
+    country: 'Saudi Arabia',
+    capacity: 650,
+    is_active: true
+  }) : null;
+
+  const campKitchen = primarySite ? await ensureSeedDocument('Site', 'site_demo_camp_kitchen', {
+    name: 'North Camp Kitchen',
+    project_code: 'CMP-01',
+    type: 'camp',
+    hierarchy_level: 'location',
+    parent_site_id: primarySite.id,
+    parent_site_name: primarySite.name,
+    hierarchy_path: `${primarySite.name} / North Camp Kitchen`,
+    company_name: primarySite.company_name || 'Tamimi Global',
+    region_name: primarySite.region_name || 'Central Region',
+    location_name: 'North Camp',
+    kitchen_name: 'North Camp Kitchen',
+    city: 'Riyadh',
+    country: 'Saudi Arabia',
+    capacity: 900,
+    is_active: true
+  }) : null;
+
+  const warehouseSite = primarySite ? await ensureSeedDocument('Site', 'site_demo_central_warehouse', {
+    name: 'Central Dry Store',
+    project_code: 'STORE-01',
+    type: 'warehouse',
+    hierarchy_level: 'store',
+    parent_site_id: primarySite.id,
+    parent_site_name: primarySite.name,
+    hierarchy_path: `${primarySite.name} / Central Dry Store`,
+    company_name: primarySite.company_name || 'Tamimi Global',
+    region_name: primarySite.region_name || 'Central Region',
+    location_name: primarySite.location_name || 'Riyadh',
+    kitchen_name: primarySite.kitchen_name || primarySite.name,
+    storage_name: 'Central Dry Store',
+    city: primarySite.city || 'Riyadh',
+    country: primarySite.country || 'Saudi Arabia',
+    is_active: true
+  }) : null;
+
+  const coldStore = primarySite ? await ensureSeedDocument('Site', 'site_demo_cold_store', {
+    name: 'Central Cold Store',
+    project_code: 'COLD-01',
+    type: 'warehouse',
+    hierarchy_level: 'store',
+    parent_site_id: primarySite.id,
+    parent_site_name: primarySite.name,
+    hierarchy_path: `${primarySite.name} / Central Cold Store`,
+    company_name: primarySite.company_name || 'Tamimi Global',
+    region_name: primarySite.region_name || 'Central Region',
+    location_name: primarySite.location_name || 'Riyadh',
+    kitchen_name: primarySite.kitchen_name || primarySite.name,
+    storage_name: 'Central Cold Store',
+    city: primarySite.city || 'Riyadh',
+    country: primarySite.country || 'Saudi Arabia',
+    is_active: true
+  }) : null;
+
+  const ingredientSeeds = [
+    ['ingredient_chicken_breast', { name: 'Chicken Breast', unit: 'kg', category: 'protein', cuisine_type: 'universal', cost_per_unit: 24, calories_per_100g: 165, protein_per_100g: 31, carbs_per_100g: 0, fat_per_100g: 3.6, sodium_per_100g: 74, sugar_per_100g: 0, cooking_yield_percent: 78, shrinkage_percent: 22, raw_weight_per_unit: 1000, cooked_weight_per_unit: 780, allergens: [] }],
+    ['ingredient_basmati_rice', { name: 'Basmati Rice', unit: 'kg', category: 'grain', cuisine_type: 'middle_eastern', cost_per_unit: 8.5, calories_per_100g: 365, protein_per_100g: 7.1, carbs_per_100g: 80, fat_per_100g: 0.7, sodium_per_100g: 5, sugar_per_100g: 0.1, cooking_yield_percent: 260, shrinkage_percent: 0, raw_weight_per_unit: 1000, cooked_weight_per_unit: 2600, allergens: [] }],
+    ['ingredient_yogurt', { name: 'Plain Yogurt', unit: 'kg', category: 'dairy', cuisine_type: 'middle_eastern', cost_per_unit: 7, calories_per_100g: 61, protein_per_100g: 3.5, carbs_per_100g: 4.7, fat_per_100g: 3.3, sodium_per_100g: 46, sugar_per_100g: 4.7, cooking_yield_percent: 100, shrinkage_percent: 0, raw_weight_per_unit: 1000, cooked_weight_per_unit: 1000, allergens: ['dairy'] }],
+    ['ingredient_mixed_vegetables', { name: 'Mixed Vegetables', unit: 'kg', category: 'vegetable', cuisine_type: 'universal', cost_per_unit: 9.75, calories_per_100g: 45, protein_per_100g: 2.2, carbs_per_100g: 8.8, fat_per_100g: 0.4, sodium_per_100g: 48, sugar_per_100g: 3.6, cooking_yield_percent: 92, shrinkage_percent: 8, raw_weight_per_unit: 1000, cooked_weight_per_unit: 920, allergens: [] }],
+    ['ingredient_flatbread', { name: 'Arabic Flatbread', unit: 'pieces', category: 'bakery', cuisine_type: 'middle_eastern', cost_per_unit: 1.2, calories_per_100g: 275, protein_per_100g: 9, carbs_per_100g: 55, fat_per_100g: 1.2, sodium_per_100g: 510, sugar_per_100g: 2.5, cooking_yield_percent: 100, shrinkage_percent: 0, raw_weight_per_unit: 90, cooked_weight_per_unit: 90, allergens: ['gluten'] }],
+    ['ingredient_hummus', { name: 'Hummus', unit: 'kg', category: 'dip', cuisine_type: 'middle_eastern', cost_per_unit: 12.5, calories_per_100g: 166, protein_per_100g: 7.9, carbs_per_100g: 14.3, fat_per_100g: 9.6, sodium_per_100g: 240, sugar_per_100g: 0.3, cooking_yield_percent: 100, shrinkage_percent: 0, raw_weight_per_unit: 1000, cooked_weight_per_unit: 1000, allergens: ['sesame'] }],
+    ['ingredient_beef_mince', { name: 'Beef Mince', unit: 'kg', category: 'protein', cuisine_type: 'middle_eastern', cost_per_unit: 32, calories_per_100g: 250, protein_per_100g: 26, carbs_per_100g: 0, fat_per_100g: 15, sodium_per_100g: 72, sugar_per_100g: 0, cooking_yield_percent: 80, shrinkage_percent: 20, raw_weight_per_unit: 1000, cooked_weight_per_unit: 800, allergens: [] }],
+    ['ingredient_potato', { name: 'Potato', unit: 'kg', category: 'vegetable', cuisine_type: 'universal', cost_per_unit: 4.25, calories_per_100g: 77, protein_per_100g: 2, carbs_per_100g: 17, fat_per_100g: 0.1, sodium_per_100g: 6, sugar_per_100g: 0.8, cooking_yield_percent: 88, shrinkage_percent: 12, raw_weight_per_unit: 1000, cooked_weight_per_unit: 880, allergens: [] }],
+    ['ingredient_lentils', { name: 'Red Lentils', unit: 'kg', category: 'legume', cuisine_type: 'middle_eastern', cost_per_unit: 6.8, calories_per_100g: 352, protein_per_100g: 24, carbs_per_100g: 63, fat_per_100g: 1.1, sodium_per_100g: 6, sugar_per_100g: 2, cooking_yield_percent: 240, shrinkage_percent: 0, raw_weight_per_unit: 1000, cooked_weight_per_unit: 2400, allergens: [] }],
+    ['ingredient_pasta_penne', { name: 'Penne Pasta', unit: 'kg', category: 'grain', cuisine_type: 'italian', cost_per_unit: 7.2, calories_per_100g: 371, protein_per_100g: 13, carbs_per_100g: 75, fat_per_100g: 1.5, sodium_per_100g: 6, sugar_per_100g: 2.7, cooking_yield_percent: 220, shrinkage_percent: 0, raw_weight_per_unit: 1000, cooked_weight_per_unit: 2200, allergens: ['gluten'] }],
+    ['ingredient_tomato_sauce', { name: 'Tomato Sauce', unit: 'kg', category: 'sauce', cuisine_type: 'italian', cost_per_unit: 5.5, calories_per_100g: 50, protein_per_100g: 1.7, carbs_per_100g: 10, fat_per_100g: 0.2, sodium_per_100g: 427, sugar_per_100g: 7.5, cooking_yield_percent: 100, shrinkage_percent: 0, raw_weight_per_unit: 1000, cooked_weight_per_unit: 1000, allergens: [] }],
+    ['ingredient_salmon_fillet', { name: 'Salmon Fillet', unit: 'kg', category: 'seafood', cuisine_type: 'mediterranean', cost_per_unit: 48, calories_per_100g: 208, protein_per_100g: 20, carbs_per_100g: 0, fat_per_100g: 13, sodium_per_100g: 59, sugar_per_100g: 0, cooking_yield_percent: 84, shrinkage_percent: 16, raw_weight_per_unit: 1000, cooked_weight_per_unit: 840, allergens: ['seafood'] }],
+    ['ingredient_eggs', { name: 'Eggs', unit: 'pieces', category: 'protein', cuisine_type: 'breakfast', cost_per_unit: 0.55, calories_per_100g: 155, protein_per_100g: 13, carbs_per_100g: 1.1, fat_per_100g: 11, sodium_per_100g: 124, sugar_per_100g: 1.1, cooking_yield_percent: 100, shrinkage_percent: 0, raw_weight_per_unit: 50, cooked_weight_per_unit: 50, allergens: ['eggs'] }],
+    ['ingredient_milk', { name: 'Fresh Milk', unit: 'l', category: 'dairy', cuisine_type: 'breakfast', cost_per_unit: 4.1, calories_per_100g: 42, protein_per_100g: 3.4, carbs_per_100g: 5, fat_per_100g: 1, sodium_per_100g: 44, sugar_per_100g: 5, cooking_yield_percent: 100, shrinkage_percent: 0, raw_weight_per_unit: 1000, cooked_weight_per_unit: 1000, allergens: ['dairy'] }],
+    ['ingredient_chickpeas', { name: 'Boiled Chickpeas', unit: 'kg', category: 'legume', cuisine_type: 'middle_eastern', cost_per_unit: 6.2, calories_per_100g: 164, protein_per_100g: 8.9, carbs_per_100g: 27.4, fat_per_100g: 2.6, sodium_per_100g: 24, sugar_per_100g: 4.8, cooking_yield_percent: 100, shrinkage_percent: 0, raw_weight_per_unit: 1000, cooked_weight_per_unit: 1000, allergens: [] }]
+  ];
+
+  for (const [id, payload] of ingredientSeeds) {
+    await ensureSeedDocument('Ingredient', id, payload);
   }
 
-  const existingIngredients = await listDocuments('Ingredient', { limit: 10 });
-  if (existingIngredients.length === 0) {
-    await Promise.all([
-      createDocument('Ingredient', {
-        id: 'ingredient_chicken_breast',
-        name: 'Chicken Breast',
-        unit: 'kg',
-        category: 'protein',
-        cuisine_type: 'universal',
-        cost_per_unit: 24,
-        calories_per_100g: 165,
-        protein_per_100g: 31,
-        carbs_per_100g: 0,
-        fat_per_100g: 3.6,
-        sodium_per_100g: 74,
-        sugar_per_100g: 0,
-        cooking_yield_percent: 78,
-        shrinkage_percent: 22,
-        raw_weight_per_unit: 1000,
-        cooked_weight_per_unit: 780,
-        allergens: []
-      }),
-      createDocument('Ingredient', {
-        id: 'ingredient_basmati_rice',
-        name: 'Basmati Rice',
-        unit: 'kg',
-        category: 'grain',
-        cuisine_type: 'middle_eastern',
-        cost_per_unit: 8.5,
-        calories_per_100g: 365,
-        protein_per_100g: 7.1,
-        carbs_per_100g: 80,
-        fat_per_100g: 0.7,
-        sodium_per_100g: 5,
-        sugar_per_100g: 0.1,
-        cooking_yield_percent: 260,
-        shrinkage_percent: 0,
-        raw_weight_per_unit: 1000,
-        cooked_weight_per_unit: 2600,
-        allergens: []
-      }),
-      createDocument('Ingredient', {
-        id: 'ingredient_yogurt',
-        name: 'Plain Yogurt',
-        unit: 'kg',
-        category: 'dairy',
-        cuisine_type: 'middle_eastern',
-        cost_per_unit: 7,
-        calories_per_100g: 61,
-        protein_per_100g: 3.5,
-        carbs_per_100g: 4.7,
-        fat_per_100g: 3.3,
-        sodium_per_100g: 46,
-        sugar_per_100g: 4.7,
-        cooking_yield_percent: 100,
-        shrinkage_percent: 0,
-        raw_weight_per_unit: 1000,
-        cooked_weight_per_unit: 1000,
-        allergens: ['dairy']
-      }),
-      createDocument('Ingredient', {
-        id: 'ingredient_mixed_vegetables',
-        name: 'Mixed Vegetables',
-        unit: 'kg',
-        category: 'vegetable',
-        cuisine_type: 'universal',
-        cost_per_unit: 9.75,
-        calories_per_100g: 45,
-        protein_per_100g: 2.2,
-        carbs_per_100g: 8.8,
-        fat_per_100g: 0.4,
-        sodium_per_100g: 48,
-        sugar_per_100g: 3.6,
-        cooking_yield_percent: 92,
-        shrinkage_percent: 8,
-        raw_weight_per_unit: 1000,
-        cooked_weight_per_unit: 920,
-        allergens: []
-      }),
-      createDocument('Ingredient', {
-        id: 'ingredient_flatbread',
-        name: 'Arabic Flatbread',
-        unit: 'pieces',
-        category: 'bakery',
-        cuisine_type: 'middle_eastern',
-        cost_per_unit: 1.2,
-        calories_per_100g: 275,
-        protein_per_100g: 9,
-        carbs_per_100g: 55,
-        fat_per_100g: 1.2,
-        sodium_per_100g: 510,
-        sugar_per_100g: 2.5,
-        cooking_yield_percent: 100,
-        shrinkage_percent: 0,
-        raw_weight_per_unit: 90,
-        cooked_weight_per_unit: 90,
-        allergens: ['gluten']
-      }),
-      createDocument('Ingredient', {
-        id: 'ingredient_hummus',
-        name: 'Hummus',
-        unit: 'kg',
-        category: 'dip',
-        cuisine_type: 'middle_eastern',
-        cost_per_unit: 12.5,
-        calories_per_100g: 166,
-        protein_per_100g: 7.9,
-        carbs_per_100g: 14.3,
-        fat_per_100g: 9.6,
-        sodium_per_100g: 240,
-        sugar_per_100g: 0.3,
-        cooking_yield_percent: 100,
-        shrinkage_percent: 0,
-        raw_weight_per_unit: 1000,
-        cooked_weight_per_unit: 1000,
-        allergens: ['sesame']
-      })
-    ]);
+  const availableIngredients = await listDocuments('Ingredient', { sort: 'name', limit: 200 });
+
+  const recipeSeeds = [
+    ['recipe_chicken_kabsa', { name: 'Chicken Kabsa', recipe_code: 'RCP-001', recipe_type: 'full', category: 'lunch', cuisine_type: 'middle_eastern', description: 'Saudi-style spiced rice with roasted chicken and vegetables.', prep_time_minutes: 40, cook_time_minutes: 65, servings: 25, instructions: 'Marinate chicken, roast until tender, cook rice with stock and spices, and portion with vegetables.', ingredients: [{ ingredient_id: 'ingredient_chicken_breast', ingredient_name: 'Chicken Breast', quantity: 6, unit: 'kg' }, { ingredient_id: 'ingredient_basmati_rice', ingredient_name: 'Basmati Rice', quantity: 4.5, unit: 'kg' }, { ingredient_id: 'ingredient_mixed_vegetables', ingredient_name: 'Mixed Vegetables', quantity: 1.5, unit: 'kg' }], site_scope: 'global', site_ids: primarySite ? [primarySite.id] : [], site_names: primarySite ? [primarySite.name] : [] }],
+    ['recipe_chicken_shawarma_wrap', { name: 'Chicken Shawarma Wrap', recipe_code: 'RCP-002', recipe_type: 'full', category: 'dinner', cuisine_type: 'middle_eastern', description: 'Grilled chicken wrapped in Arabic bread with yogurt sauce.', prep_time_minutes: 30, cook_time_minutes: 20, servings: 20, instructions: 'Season chicken, grill in batches, assemble wraps with sauce and garnish.', ingredients: [{ ingredient_id: 'ingredient_chicken_breast', ingredient_name: 'Chicken Breast', quantity: 4, unit: 'kg' }, { ingredient_id: 'ingredient_flatbread', ingredient_name: 'Arabic Flatbread', quantity: 20, unit: 'pieces' }, { ingredient_id: 'ingredient_yogurt', ingredient_name: 'Plain Yogurt', quantity: 1.2, unit: 'kg' }], site_scope: 'global', site_ids: primarySite ? [primarySite.id] : [], site_names: primarySite ? [primarySite.name] : [] }],
+    ['recipe_hummus_platter', { name: 'Hummus Mezze Platter', recipe_code: 'RCP-003', recipe_type: 'full', category: 'snack', cuisine_type: 'middle_eastern', description: 'Shared platter with hummus, flatbread, and fresh vegetables.', prep_time_minutes: 15, cook_time_minutes: 0, servings: 12, instructions: 'Plate hummus, cut flatbread, and garnish with vegetables.', ingredients: [{ ingredient_id: 'ingredient_hummus', ingredient_name: 'Hummus', quantity: 1.5, unit: 'kg' }, { ingredient_id: 'ingredient_flatbread', ingredient_name: 'Arabic Flatbread', quantity: 10, unit: 'pieces' }, { ingredient_id: 'ingredient_mixed_vegetables', ingredient_name: 'Mixed Vegetables', quantity: 0.8, unit: 'kg' }], site_scope: 'global', site_ids: primarySite ? [primarySite.id] : [], site_names: primarySite ? [primarySite.name] : [] }],
+    ['recipe_beef_kofta_rice_bowl', { name: 'Beef Kofta Rice Bowl', recipe_code: 'RCP-004', recipe_type: 'full', category: 'lunch', cuisine_type: 'middle_eastern', description: 'Grilled kofta over rice with vegetables.', prep_time_minutes: 45, cook_time_minutes: 30, servings: 22, instructions: 'Shape kofta, grill until cooked, cook rice and serve with vegetables.', ingredients: [{ ingredient_id: 'ingredient_beef_mince', ingredient_name: 'Beef Mince', quantity: 5.2, unit: 'kg' }, { ingredient_id: 'ingredient_basmati_rice', ingredient_name: 'Basmati Rice', quantity: 4, unit: 'kg' }, { ingredient_id: 'ingredient_mixed_vegetables', ingredient_name: 'Mixed Vegetables', quantity: 1.4, unit: 'kg' }], site_scope: 'global', site_ids: primarySite ? [primarySite.id] : [], site_names: primarySite ? [primarySite.name] : [] }],
+    ['recipe_lentil_soup', { name: 'Red Lentil Soup', recipe_code: 'RCP-005', recipe_type: 'full', category: 'dinner', cuisine_type: 'middle_eastern', description: 'Comforting lentil soup for camps and staff meals.', prep_time_minutes: 20, cook_time_minutes: 35, servings: 30, instructions: 'Simmer lentils with vegetables until tender and blend lightly.', ingredients: [{ ingredient_id: 'ingredient_lentils', ingredient_name: 'Red Lentils', quantity: 3.5, unit: 'kg' }, { ingredient_id: 'ingredient_mixed_vegetables', ingredient_name: 'Mixed Vegetables', quantity: 1.2, unit: 'kg' }, { ingredient_id: 'ingredient_tomato_sauce', ingredient_name: 'Tomato Sauce', quantity: 1.1, unit: 'kg' }], site_scope: 'global', site_ids: primarySite ? [primarySite.id] : [], site_names: primarySite ? [primarySite.name] : [] }],
+    ['recipe_salmon_tray_bake', { name: 'Herb Salmon Tray Bake', recipe_code: 'RCP-006', recipe_type: 'full', category: 'dinner', cuisine_type: 'mediterranean', description: 'Premium salmon with potatoes and vegetables.', prep_time_minutes: 25, cook_time_minutes: 30, servings: 18, instructions: 'Season salmon, tray bake with potatoes and vegetables, and portion hot.', ingredients: [{ ingredient_id: 'ingredient_salmon_fillet', ingredient_name: 'Salmon Fillet', quantity: 4.5, unit: 'kg' }, { ingredient_id: 'ingredient_potato', ingredient_name: 'Potato', quantity: 3.8, unit: 'kg' }, { ingredient_id: 'ingredient_mixed_vegetables', ingredient_name: 'Mixed Vegetables', quantity: 1.6, unit: 'kg' }], site_scope: 'global', site_ids: primarySite ? [primarySite.id] : [], site_names: primarySite ? [primarySite.name] : [] }],
+    ['recipe_pasta_bake', { name: 'Vegetable Pasta Bake', recipe_code: 'RCP-007', recipe_type: 'full', category: 'lunch', cuisine_type: 'italian', description: 'Hearty baked pasta for bulk catering service.', prep_time_minutes: 35, cook_time_minutes: 40, servings: 28, instructions: 'Boil pasta, combine with sauce and vegetables, bake until set.', ingredients: [{ ingredient_id: 'ingredient_pasta_penne', ingredient_name: 'Penne Pasta', quantity: 4.2, unit: 'kg' }, { ingredient_id: 'ingredient_tomato_sauce', ingredient_name: 'Tomato Sauce', quantity: 2.5, unit: 'kg' }, { ingredient_id: 'ingredient_mixed_vegetables', ingredient_name: 'Mixed Vegetables', quantity: 2, unit: 'kg' }], site_scope: 'global', site_ids: primarySite ? [primarySite.id] : [], site_names: primarySite ? [primarySite.name] : [] }],
+    ['recipe_scrambled_eggs_breakfast', { name: 'Scrambled Eggs Breakfast Tray', recipe_code: 'RCP-008', recipe_type: 'full', category: 'breakfast', cuisine_type: 'breakfast', description: 'Breakfast tray with eggs, flatbread, and milk.', prep_time_minutes: 15, cook_time_minutes: 12, servings: 24, instructions: 'Whisk eggs with milk, cook in trays, and serve with flatbread.', ingredients: [{ ingredient_id: 'ingredient_eggs', ingredient_name: 'Eggs', quantity: 48, unit: 'pieces' }, { ingredient_id: 'ingredient_milk', ingredient_name: 'Fresh Milk', quantity: 2.4, unit: 'l' }, { ingredient_id: 'ingredient_flatbread', ingredient_name: 'Arabic Flatbread', quantity: 24, unit: 'pieces' }], site_scope: 'global', site_ids: primarySite ? [primarySite.id] : [], site_names: primarySite ? [primarySite.name] : [] }]
+  ];
+
+  for (const [id, payload] of recipeSeeds) {
+    await ensureSeedDocument('Recipe', id, payload);
   }
 
-  const availableIngredients = await listDocuments('Ingredient', { sort: 'name', limit: 100 });
+  const availableRecipes = await listDocuments('Recipe', { sort: 'name', limit: 200 });
+  const recipeMap = new Map(availableRecipes.map((recipe) => [recipe.id, recipe]));
 
-  const existingRecipes = await listDocuments('Recipe', { limit: 10 });
-  if (existingRecipes.length === 0) {
-    await Promise.all([
-      createDocument('Recipe', {
-        id: 'recipe_chicken_kabsa',
-        name: 'Chicken Kabsa',
-        recipe_code: 'RCP-001',
-        recipe_type: 'full',
-        category: 'lunch',
-        cuisine_type: 'middle_eastern',
-        description: 'Saudi-style spiced rice with roasted chicken and vegetables.',
-        prep_time_minutes: 40,
-        cook_time_minutes: 65,
-        servings: 25,
-        instructions: 'Marinate chicken, roast until tender, cook rice with stock and spices, and portion with vegetables.',
-        ingredients: [
-          { ingredient_id: 'ingredient_chicken_breast', ingredient_name: 'Chicken Breast', quantity: 6, unit: 'kg' },
-          { ingredient_id: 'ingredient_basmati_rice', ingredient_name: 'Basmati Rice', quantity: 4.5, unit: 'kg' },
-          { ingredient_id: 'ingredient_mixed_vegetables', ingredient_name: 'Mixed Vegetables', quantity: 1.5, unit: 'kg' }
-        ],
-        site_scope: 'global',
-        site_ids: primarySite ? [primarySite.id] : [],
-        site_names: primarySite ? [primarySite.name] : []
-      }),
-      createDocument('Recipe', {
-        id: 'recipe_chicken_shawarma_wrap',
-        name: 'Chicken Shawarma Wrap',
-        recipe_code: 'RCP-002',
-        recipe_type: 'full',
-        category: 'dinner',
-        cuisine_type: 'middle_eastern',
-        description: 'Grilled chicken wrapped in Arabic bread with yogurt sauce.',
-        prep_time_minutes: 30,
-        cook_time_minutes: 20,
-        servings: 20,
-        instructions: 'Season chicken, grill in batches, assemble wraps with sauce and garnish.',
-        ingredients: [
-          { ingredient_id: 'ingredient_chicken_breast', ingredient_name: 'Chicken Breast', quantity: 4, unit: 'kg' },
-          { ingredient_id: 'ingredient_flatbread', ingredient_name: 'Arabic Flatbread', quantity: 20, unit: 'pieces' },
-          { ingredient_id: 'ingredient_yogurt', ingredient_name: 'Plain Yogurt', quantity: 1.2, unit: 'kg' }
-        ],
-        site_scope: 'global',
-        site_ids: primarySite ? [primarySite.id] : [],
-        site_names: primarySite ? [primarySite.name] : []
-      }),
-      createDocument('Recipe', {
-        id: 'recipe_hummus_platter',
-        name: 'Hummus Mezze Platter',
-        recipe_code: 'RCP-003',
-        recipe_type: 'full',
-        category: 'snack',
-        cuisine_type: 'middle_eastern',
-        description: 'Shared platter with hummus, flatbread, and fresh vegetables.',
-        prep_time_minutes: 15,
-        cook_time_minutes: 0,
-        servings: 12,
-        instructions: 'Plate hummus, cut flatbread, and garnish with vegetables.',
-        ingredients: [
-          { ingredient_id: 'ingredient_hummus', ingredient_name: 'Hummus', quantity: 1.5, unit: 'kg' },
-          { ingredient_id: 'ingredient_flatbread', ingredient_name: 'Arabic Flatbread', quantity: 10, unit: 'pieces' },
-          { ingredient_id: 'ingredient_mixed_vegetables', ingredient_name: 'Mixed Vegetables', quantity: 0.8, unit: 'kg' }
-        ],
-        site_scope: 'global',
-        site_ids: primarySite ? [primarySite.id] : [],
-        site_names: primarySite ? [primarySite.name] : []
-      })
-    ]);
+  const buildMeal = (recipeId, mealType, servings) => {
+    const recipe = recipeMap.get(recipeId);
+    return {
+      meal_type: mealType,
+      recipe_id: recipeId,
+      recipe_name: recipe?.name || '',
+      expected_servings: servings,
+      calories_per_serving: recipe?.calories_per_serving || 0,
+      protein_per_serving: recipe?.protein_per_serving || 0,
+      carbs_per_serving: recipe?.carbs_per_serving || 0,
+      fat_per_serving: recipe?.fat_per_serving || 0,
+      sodium_per_serving: recipe?.sodium_per_serving || 0,
+      sugar_per_serving: recipe?.sugar_per_serving || 0,
+      allergens: recipe?.allergens || []
+    };
+  };
+
+  const menuPlanSeeds = [];
+  if (primarySite) {
+    menuPlanSeeds.push(
+      ['menuplan_demo_main_0', { site_id: primarySite.id, site_name: primarySite.name, plan_date: dateOnlyOffset(0), status: 'planned', meals: [buildMeal('recipe_scrambled_eggs_breakfast', 'breakfast', 80), buildMeal('recipe_chicken_kabsa', 'lunch', 120), buildMeal('recipe_chicken_shawarma_wrap', 'dinner', 90)] }],
+      ['menuplan_demo_main_1', { site_id: primarySite.id, site_name: primarySite.name, plan_date: dateOnlyOffset(1), status: 'draft', meals: [buildMeal('recipe_hummus_platter', 'snack', 60), buildMeal('recipe_beef_kofta_rice_bowl', 'lunch', 110), buildMeal('recipe_lentil_soup', 'dinner', 100)] }],
+      ['menuplan_demo_main_2', { site_id: primarySite.id, site_name: primarySite.name, plan_date: dateOnlyOffset(2), status: 'planned', meals: [buildMeal('recipe_scrambled_eggs_breakfast', 'breakfast', 75), buildMeal('recipe_pasta_bake', 'lunch', 95), buildMeal('recipe_salmon_tray_bake', 'dinner', 70)] }],
+      ['menuplan_demo_main_3', { site_id: primarySite.id, site_name: primarySite.name, plan_date: dateOnlyOffset(3), status: 'planned', meals: [buildMeal('recipe_hummus_platter', 'snack', 55), buildMeal('recipe_chicken_kabsa', 'lunch', 115), buildMeal('recipe_lentil_soup', 'dinner', 95)] }]
+    );
+  }
+  if (branchKitchen) {
+    menuPlanSeeds.push(
+      ['menuplan_demo_branch_0', { site_id: branchKitchen.id, site_name: branchKitchen.name, plan_date: dateOnlyOffset(0), status: 'planned', meals: [buildMeal('recipe_scrambled_eggs_breakfast', 'breakfast', 45), buildMeal('recipe_chicken_shawarma_wrap', 'lunch', 85), buildMeal('recipe_pasta_bake', 'dinner', 70)] }],
+      ['menuplan_demo_branch_1', { site_id: branchKitchen.id, site_name: branchKitchen.name, plan_date: dateOnlyOffset(1), status: 'planned', meals: [buildMeal('recipe_hummus_platter', 'snack', 35), buildMeal('recipe_beef_kofta_rice_bowl', 'lunch', 80), buildMeal('recipe_lentil_soup', 'dinner', 60)] }]
+    );
+  }
+  if (campKitchen) {
+    menuPlanSeeds.push(
+      ['menuplan_demo_camp_0', { site_id: campKitchen.id, site_name: campKitchen.name, plan_date: dateOnlyOffset(0), status: 'planned', meals: [buildMeal('recipe_scrambled_eggs_breakfast', 'breakfast', 140), buildMeal('recipe_chicken_kabsa', 'lunch', 220), buildMeal('recipe_lentil_soup', 'dinner', 180)] }],
+      ['menuplan_demo_camp_1', { site_id: campKitchen.id, site_name: campKitchen.name, plan_date: dateOnlyOffset(1), status: 'draft', meals: [buildMeal('recipe_scrambled_eggs_breakfast', 'breakfast', 130), buildMeal('recipe_pasta_bake', 'lunch', 170), buildMeal('recipe_beef_kofta_rice_bowl', 'dinner', 160)] }]
+    );
   }
 
-  const availableRecipes = await listDocuments('Recipe', { sort: 'name', limit: 100 });
-
-  const existingMenuPlans = await listDocuments('MenuPlan', { limit: 10 });
-  if (existingMenuPlans.length === 0 && primarySite && availableRecipes.length > 0) {
-    const kabsa = availableRecipes.find((recipe) => recipe.id === 'recipe_chicken_kabsa');
-    const shawarma = availableRecipes.find((recipe) => recipe.id === 'recipe_chicken_shawarma_wrap');
-    const hummus = availableRecipes.find((recipe) => recipe.id === 'recipe_hummus_platter');
-
-    await Promise.all([
-      createDocument('MenuPlan', {
-        site_id: primarySite.id,
-        site_name: primarySite.name,
-        plan_date: dateOnlyOffset(0),
-        meals: [
-          {
-            meal_type: 'lunch',
-            recipe_id: kabsa?.id || '',
-            recipe_name: kabsa?.name || 'Chicken Kabsa',
-            expected_servings: 120,
-            calories_per_serving: kabsa?.calories_per_serving || 0,
-            protein_per_serving: kabsa?.protein_per_serving || 0,
-            carbs_per_serving: kabsa?.carbs_per_serving || 0,
-            fat_per_serving: kabsa?.fat_per_serving || 0,
-            sodium_per_serving: kabsa?.sodium_per_serving || 0,
-            sugar_per_serving: kabsa?.sugar_per_serving || 0,
-            allergens: kabsa?.allergens || []
-          },
-          {
-            meal_type: 'dinner',
-            recipe_id: shawarma?.id || '',
-            recipe_name: shawarma?.name || 'Chicken Shawarma Wrap',
-            expected_servings: 90,
-            calories_per_serving: shawarma?.calories_per_serving || 0,
-            protein_per_serving: shawarma?.protein_per_serving || 0,
-            carbs_per_serving: shawarma?.carbs_per_serving || 0,
-            fat_per_serving: shawarma?.fat_per_serving || 0,
-            sodium_per_serving: shawarma?.sodium_per_serving || 0,
-            sugar_per_serving: shawarma?.sugar_per_serving || 0,
-            allergens: shawarma?.allergens || []
-          }
-        ],
-        total_expected_servings: 210,
-        status: 'planned'
-      }),
-      createDocument('MenuPlan', {
-        site_id: primarySite.id,
-        site_name: primarySite.name,
-        plan_date: dateOnlyOffset(1),
-        meals: [
-          {
-            meal_type: 'snack',
-            recipe_id: hummus?.id || '',
-            recipe_name: hummus?.name || 'Hummus Mezze Platter',
-            expected_servings: 60,
-            calories_per_serving: hummus?.calories_per_serving || 0,
-            protein_per_serving: hummus?.protein_per_serving || 0,
-            carbs_per_serving: hummus?.carbs_per_serving || 0,
-            fat_per_serving: hummus?.fat_per_serving || 0,
-            sodium_per_serving: hummus?.sodium_per_serving || 0,
-            sugar_per_serving: hummus?.sugar_per_serving || 0,
-            allergens: hummus?.allergens || []
-          },
-          {
-            meal_type: 'lunch',
-            recipe_id: kabsa?.id || '',
-            recipe_name: kabsa?.name || 'Chicken Kabsa',
-            expected_servings: 100,
-            calories_per_serving: kabsa?.calories_per_serving || 0,
-            protein_per_serving: kabsa?.protein_per_serving || 0,
-            carbs_per_serving: kabsa?.carbs_per_serving || 0,
-            fat_per_serving: kabsa?.fat_per_serving || 0,
-            sodium_per_serving: kabsa?.sodium_per_serving || 0,
-            sugar_per_serving: kabsa?.sugar_per_serving || 0,
-            allergens: kabsa?.allergens || []
-          }
-        ],
-        total_expected_servings: 160,
-        status: 'draft'
-      })
-    ]);
+  for (const [id, payload] of menuPlanSeeds) {
+    const totalExpectedServings = payload.meals.reduce((sum, meal) => sum + (meal.expected_servings || 0), 0);
+    const totalCalories = payload.meals.reduce((sum, meal) => sum + ((meal.expected_servings || 0) * (meal.calories_per_serving || 0)), 0);
+    await ensureSeedDocument('MenuPlan', id, { ...payload, total_expected_servings: totalExpectedServings, total_calories: totalCalories });
   }
 
-  const existingInventory = await listDocuments('Inventory', { limit: 10 });
-  if (existingInventory.length === 0) {
-    const stockSite = warehouseSite || primarySite;
-    const ingredientMap = new Map(availableIngredients.map((ingredient) => [ingredient.id, ingredient]));
-    if (stockSite) {
-      const inventorySeed = [
-        ['ingredient_chicken_breast', 42, 12, 75, 'PO-1001-CHKN', dateOnlyOffset(18)],
-        ['ingredient_basmati_rice', 180, 40, 260, 'PO-1002-RICE', dateOnlyOffset(120)],
-        ['ingredient_yogurt', 24, 8, 36, 'PO-1003-YGRT', dateOnlyOffset(7)],
-        ['ingredient_mixed_vegetables', 30, 10, 45, 'PO-1004-VEG', dateOnlyOffset(5)],
-        ['ingredient_flatbread', 220, 80, 320, 'PO-1005-BRD', dateOnlyOffset(3)],
-        ['ingredient_hummus', 18, 6, 24, 'PO-1006-HMMS', dateOnlyOffset(9)]
-      ];
+  const ingredientMap = new Map(availableIngredients.map((ingredient) => [ingredient.id, ingredient]));
+  const ensureInventorySeed = async ({ site, ingredientId, quantity, minStock, maxStock, batchNumber, expiryDate }) => {
+    if (!site) return;
+    const ingredient = ingredientMap.get(ingredientId);
+    if (!ingredient) return;
+    const inventoryId = `inventory_${site.id}_${ingredientId}`;
+    const existingInventory = await findDocument('Inventory', inventoryId);
+    if (existingInventory) return;
 
-      for (const [ingredientId, quantity, minStock, maxStock, batchNumber, expiryDate] of inventorySeed) {
-        const ingredient = ingredientMap.get(ingredientId);
-        if (!ingredient) continue;
-        const timestamp = nowIso();
-        const inventoryId = `inventory_${stockSite.id}_${ingredientId}`;
-        const lotId = `lot_${stockSite.id}_${ingredientId}`;
-        const transactionId = `txn_${stockSite.id}_${ingredientId}`;
-        const totalCost = Number(quantity) * Number(ingredient.cost_per_unit || 0);
-        const status = quantity <= minStock ? 'low_stock' : 'in_stock';
+    const timestamp = nowIso();
+    const lotId = `lot_${site.id}_${ingredientId}`;
+    const transactionId = `txn_${site.id}_${ingredientId}`;
+    const totalCost = Number(quantity) * Number(ingredient.cost_per_unit || 0);
+    const status = quantity <= minStock ? 'low_stock' : 'in_stock';
 
-        await query(
-          `INSERT INTO entity_records (id, entity_name, data, created_at, updated_at)
-           VALUES
-           ($1, 'Inventory', $2::jsonb, $3, $3),
-           ($4, 'InventoryLot', $5::jsonb, $3, $3),
-           ($6, 'InventoryTransaction', $7::jsonb, $3, $3)`,
-          [
-            inventoryId,
-            JSON.stringify({
-              id: inventoryId,
-              site_id: stockSite.id,
-              site_name: stockSite.name,
-              ingredient_id: ingredient.id,
-              ingredient_name: ingredient.name,
-              quantity,
-              unit: ingredient.unit || 'kg',
-              min_stock_level: minStock,
-              max_stock_level: maxStock,
-              average_unit_cost: Number(ingredient.cost_per_unit || 0),
-              total_value: totalCost,
-              next_expiry_date: expiryDate,
-              expiry_alert_days: 5,
-              batch_number: batchNumber,
-              status,
-              valuation_method: 'fifo',
-              created_date: timestamp,
-              updated_date: timestamp
-            }),
-            lotId,
-            JSON.stringify({
-              id: lotId,
-              site_id: stockSite.id,
-              site_name: stockSite.name,
-              ingredient_id: ingredient.id,
-              ingredient_name: ingredient.name,
-              quantity_received: quantity,
-              remaining_quantity: quantity,
-              unit: ingredient.unit || 'kg',
-              batch_number: batchNumber,
-              lot_number: batchNumber,
-              expiry_date: expiryDate,
-              unit_cost: Number(ingredient.cost_per_unit || 0),
-              total_cost: totalCost,
-              status: 'active',
-              created_date: timestamp,
-              updated_date: timestamp
-            }),
-            transactionId,
-            JSON.stringify({
-              id: transactionId,
-              site_id: stockSite.id,
-              site_name: stockSite.name,
-              ingredient_id: ingredient.id,
-              ingredient_name: ingredient.name,
-              transaction_type: 'receipt',
-              quantity,
-              unit: ingredient.unit || 'kg',
-              unit_cost: Number(ingredient.cost_per_unit || 0),
-              total_cost: totalCost,
-              batch_number: batchNumber,
-              expiry_date: expiryDate,
-              notes: 'System demo opening stock',
-              status: 'posted',
-              created_date: timestamp,
-              updated_date: timestamp
-            })
-          ]
-        );
-      }
-    }
+    await query(
+      `INSERT INTO entity_records (id, entity_name, data, created_at, updated_at)
+       VALUES
+       ($1, 'Inventory', $2::jsonb, $3, $3),
+       ($4, 'InventoryLot', $5::jsonb, $3, $3),
+       ($6, 'InventoryTransaction', $7::jsonb, $3, $3)`,
+      [
+        inventoryId,
+        JSON.stringify({
+          id: inventoryId,
+          site_id: site.id,
+          site_name: site.name,
+          ingredient_id: ingredient.id,
+          ingredient_name: ingredient.name,
+          quantity,
+          unit: ingredient.unit || 'kg',
+          min_stock_level: minStock,
+          max_stock_level: maxStock,
+          average_unit_cost: Number(ingredient.cost_per_unit || 0),
+          total_value: totalCost,
+          next_expiry_date: expiryDate,
+          expiry_alert_days: 5,
+          batch_number: batchNumber,
+          status,
+          valuation_method: 'fifo',
+          created_date: timestamp,
+          updated_date: timestamp
+        }),
+        lotId,
+        JSON.stringify({
+          id: lotId,
+          site_id: site.id,
+          site_name: site.name,
+          ingredient_id: ingredient.id,
+          ingredient_name: ingredient.name,
+          quantity_received: quantity,
+          remaining_quantity: quantity,
+          unit: ingredient.unit || 'kg',
+          batch_number: batchNumber,
+          lot_number: batchNumber,
+          expiry_date: expiryDate,
+          unit_cost: Number(ingredient.cost_per_unit || 0),
+          total_cost: totalCost,
+          status: 'active',
+          created_date: timestamp,
+          updated_date: timestamp
+        }),
+        transactionId,
+        JSON.stringify({
+          id: transactionId,
+          site_id: site.id,
+          site_name: site.name,
+          ingredient_id: ingredient.id,
+          ingredient_name: ingredient.name,
+          transaction_type: 'receipt',
+          quantity,
+          unit: ingredient.unit || 'kg',
+          unit_cost: Number(ingredient.cost_per_unit || 0),
+          total_cost: totalCost,
+          batch_number: batchNumber,
+          expiry_date: expiryDate,
+          notes: 'System demo opening stock',
+          status: 'posted',
+          created_date: timestamp,
+          updated_date: timestamp
+        })
+      ]
+    );
+  };
+
+  const inventorySeeds = [
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_chicken_breast', quantity: 42, minStock: 12, maxStock: 75, batchNumber: 'PO-1001-CHKN', expiryDate: dateOnlyOffset(18) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_basmati_rice', quantity: 180, minStock: 40, maxStock: 260, batchNumber: 'PO-1002-RICE', expiryDate: dateOnlyOffset(120) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_yogurt', quantity: 24, minStock: 8, maxStock: 36, batchNumber: 'PO-1003-YGRT', expiryDate: dateOnlyOffset(7) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_mixed_vegetables', quantity: 30, minStock: 10, maxStock: 45, batchNumber: 'PO-1004-VEG', expiryDate: dateOnlyOffset(5) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_flatbread', quantity: 220, minStock: 80, maxStock: 320, batchNumber: 'PO-1005-BRD', expiryDate: dateOnlyOffset(3) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_hummus', quantity: 18, minStock: 6, maxStock: 24, batchNumber: 'PO-1006-HMMS', expiryDate: dateOnlyOffset(9) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_beef_mince', quantity: 26, minStock: 8, maxStock: 40, batchNumber: 'PO-1007-BEEF', expiryDate: dateOnlyOffset(6) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_potato', quantity: 95, minStock: 20, maxStock: 140, batchNumber: 'PO-1008-POTA', expiryDate: dateOnlyOffset(20) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_lentils', quantity: 55, minStock: 12, maxStock: 80, batchNumber: 'PO-1009-LENT', expiryDate: dateOnlyOffset(200) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_pasta_penne', quantity: 65, minStock: 18, maxStock: 90, batchNumber: 'PO-1010-PASTA', expiryDate: dateOnlyOffset(180) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_tomato_sauce', quantity: 38, minStock: 10, maxStock: 55, batchNumber: 'PO-1011-TOMA', expiryDate: dateOnlyOffset(90) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_salmon_fillet', quantity: 14, minStock: 6, maxStock: 20, batchNumber: 'PO-1012-SALM', expiryDate: dateOnlyOffset(4) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_eggs', quantity: 360, minStock: 120, maxStock: 520, batchNumber: 'PO-1013-EGGS', expiryDate: dateOnlyOffset(10) },
+    { site: coldStore || warehouseSite || primarySite, ingredientId: 'ingredient_milk', quantity: 48, minStock: 12, maxStock: 72, batchNumber: 'PO-1014-MILK', expiryDate: dateOnlyOffset(8) },
+    { site: warehouseSite || primarySite, ingredientId: 'ingredient_chickpeas', quantity: 44, minStock: 10, maxStock: 60, batchNumber: 'PO-1015-CHKP', expiryDate: dateOnlyOffset(45) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_flatbread', quantity: 55, minStock: 20, maxStock: 80, batchNumber: 'TR-2001-BRD', expiryDate: dateOnlyOffset(2) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_chicken_breast', quantity: 12, minStock: 8, maxStock: 20, batchNumber: 'TR-2002-CHKN', expiryDate: dateOnlyOffset(3) },
+    { site: branchKitchen || primarySite, ingredientId: 'ingredient_yogurt', quantity: 6, minStock: 4, maxStock: 10, batchNumber: 'TR-2003-YGRT', expiryDate: dateOnlyOffset(4) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_basmati_rice', quantity: 28, minStock: 18, maxStock: 45, batchNumber: 'TR-3001-RICE', expiryDate: dateOnlyOffset(70) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_lentils', quantity: 16, minStock: 8, maxStock: 26, batchNumber: 'TR-3002-LENT', expiryDate: dateOnlyOffset(160) },
+    { site: campKitchen || primarySite, ingredientId: 'ingredient_eggs', quantity: 120, minStock: 90, maxStock: 180, batchNumber: 'TR-3003-EGGS', expiryDate: dateOnlyOffset(7) }
+  ];
+
+  for (const seed of inventorySeeds) {
+    await ensureInventorySeed(seed);
   }
 
   const passwordHash = bcrypt.hashSync(adminPassword, 10);
