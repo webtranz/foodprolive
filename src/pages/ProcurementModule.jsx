@@ -14,13 +14,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import {
   AlertTriangle,
-  BarChart3,
   Building2,
-  CheckCircle2,
   ClipboardList,
   DollarSign,
-  FileText,
-  Package,
   Plus,
   ShoppingCart,
   Truck

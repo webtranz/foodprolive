@@ -22,7 +22,6 @@ import {
   Download,
   FileSpreadsheet,
   FileText,
-  RefreshCw,
   RotateCcw,
   Settings,
   ShieldAlert
@@ -30,30 +29,158 @@ import {
 import { downloadCSV, downloadExcel } from '@/components/utils/exportData';
 
 const moduleDefinitions = [
-  { key: 'purchase_orders', label: 'Purchase Orders', description: 'Export approved and open purchase orders to ERP procurement.' },
-  { key: 'supplier_invoices', label: 'Supplier Invoices', description: 'Send supplier invoices into the accounting payable workflow.' },
-  { key: 'inventory_valuation', label: 'Inventory Valuation', description: 'Share FIFO and weighted-average inventory valuation snapshots.' },
-  { key: 'food_cost_summary', label: 'Food Cost Summary', description: 'Publish production and cost-per-serving summaries for finance.' },
-  { key: 'waste_cost_summary', label: 'Waste Cost Summary', description: 'Push waste-value rollups into operational and finance tools.' }
+  {
+    key: 'po_api',
+    label: 'PO API',
+    direction: 'D365 -> App',
+    method: 'GET',
+    entities: 'PurchTable, PurchLine, LogisticsPostalAddressBaseEntity, VendPackingSlipJour, InventDim, ReleasedProduct',
+    description: 'Fetch updated and confirmed purchase orders by PO date and optional PurchID.',
+    trigger: 'Date parameters pull PO header, line, delivery, and item details from D365.'
+  },
+  {
+    key: 'warehouse_project_api',
+    label: 'Warehouse and Project API',
+    direction: 'D365 -> App',
+    method: 'GET',
+    entities: 'InventLocation, ProjTable',
+    description: 'Synchronize activated warehouses and projects into FoodPro master data.',
+    trigger: 'Runs as a scheduled batch job at a configured interval.'
+  },
+  {
+    key: 'movement_api',
+    label: 'Movement / Issuance API',
+    direction: 'App -> D365',
+    method: 'POST',
+    entities: 'InventJournalTable, InventJournalTrans',
+    description: 'Post movement and issuance transactions so D365 can create inventory journals.',
+    trigger: 'Sent when FoodPro finalizes movement, issuance, production consumption, or transfer activity.'
+  },
+  {
+    key: 'inventory_sync_api',
+    label: 'Inventory Sync API',
+    direction: 'D365 -> App',
+    method: 'GET',
+    entities: 'InventSum / InventOnHand',
+    description: 'Keep available, ordered, and reserved inventory figures aligned.',
+    trigger: 'Triggered by D365 inventory updates and before FoodPro transactional posting.'
+  },
+  {
+    key: 'uom_api',
+    label: 'Unit of Measure API',
+    direction: 'D365 -> App',
+    method: 'GET',
+    entities: 'UnitOfMeasureConversionStandard',
+    description: 'Synchronize D365 item-level unit conversion factors.',
+    trigger: 'Triggered whenever D365 UOM conversion data changes.'
+  }
 ];
 
+const fieldSpecs = {
+  po_api: [
+    ['Input', 'Date (PO Date)', 'PurchTable.TransDate', 'Date', 'Yes'],
+    ['Input', 'PurchID (PO Number)', 'PurchTable.PurchId', 'String', 'Optional'],
+    ['Header', 'PO Number', 'PurchTable.PurchId', 'String', 'Yes'],
+    ['Header', 'Vendor Account', 'PurchTable.OrderAccount', 'String', 'Yes'],
+    ['Header', 'PO Created DateTime', 'PurchTable.CreatedDateTime', 'DateTime', 'Yes'],
+    ['Header', 'PO Modified DateTime', 'PurchTable.ModifiedDateTime', 'DateTime', 'Yes'],
+    ['Header', 'PO Status', 'enum2Str(PurchTable.DocumentState)', 'Enum -> String', 'Yes'],
+    ['Line', 'Inventory Dimension ID', 'PurchLine.InventDimId', 'String', 'Yes'],
+    ['Line', 'Item ID', 'PurchLine.ItemId', 'String', 'Yes'],
+    ['Line', 'Delivery Date', 'PurchLine.DeliveryDate', 'Date', 'Yes'],
+    ['Line', 'Purchase Unit', 'PurchLine.PurchUnit', 'String', 'Yes'],
+    ['Line', 'Quantity Ordered', 'PurchLine.QtyOrdered', 'Decimal', 'Yes'],
+    ['Line', 'Item Name', 'PurchLine.Name', 'String', 'Yes']
+  ],
+  warehouse_project_api: [
+    ['Warehouse', 'Site ID', 'InventLocation.InventSiteId', 'String', 'Yes'],
+    ['Warehouse', 'Warehouse ID', 'InventLocation.InventLocationId', 'String', 'Yes'],
+    ['Warehouse', 'Warehouse Name', 'InventLocation.Name', 'String', 'Yes'],
+    ['Project', 'Project ID', 'ProjTable.ProjID', 'String', 'Yes'],
+    ['Project', 'Project Name', 'ProjTable.Name', 'String', 'Yes']
+  ],
+  movement_api: [
+    ['Common', 'Date & Time', 'InventJournalTrans.TransDate', 'DateTime', 'Yes'],
+    ['Common', 'Item ID', 'InventJournalTrans.ItemId', 'String', 'Yes'],
+    ['Common', 'Quantity', 'InventJournalTrans.Qty', 'Decimal', 'Yes'],
+    ['Common', 'Unit', 'InventJournalTrans.UnitId', 'String', 'Yes'],
+    ['Common', 'Originating Warehouse', 'InventDim.InventLocationId', 'String', 'Yes'],
+    ['Common', 'D365 Project Code', 'InventJournalTrans.ProjId', 'String', 'Yes'],
+    ['Common', 'Activity', 'InventJournalTrans.ActivityNumber', 'Enum/String', 'Yes'],
+    ['Movement Only', 'Destination Warehouse', 'InventDim.InventLocationId (To)', 'String', 'Yes'],
+    ['Response', 'Confirmation / Error', 'D365 response', 'String', 'Always']
+  ],
+  inventory_sync_api: [
+    ['Required', 'Item ID', 'InventSum.ItemId', 'String', 'Yes'],
+    ['Required', 'Item Name', 'InventTable.NameAlias / ItemName', 'String', 'Yes'],
+    ['Required', 'Available Quantity', 'InventSum.AvailPhysical', 'Decimal', 'Yes'],
+    ['Required', 'Unit', 'InventTableModule.UnitId', 'String', 'Yes'],
+    ['Optional', 'Ordered in Total', 'InventSum.Ordered', 'Decimal', 'Optional'],
+    ['Optional', 'On Order (Reserved)', 'InventSum.OnOrder', 'Decimal', 'Optional']
+  ],
+  uom_api: [
+    ['Required', 'Item ID', 'Item', 'String', 'Yes'],
+    ['Required', 'Unit1', 'From unit', 'String', 'Yes'],
+    ['Required', 'Unit2', 'To unit', 'String', 'Yes'],
+    ['Required', 'Factor', 'Conversion factor', 'Decimal', 'Yes'],
+    ['Required', 'Numerator', 'Initial unit figure', 'Decimal', 'Yes'],
+    ['Required', 'Denominator', 'Second unit figure', 'Decimal', 'Yes']
+  ]
+};
+
 const emptyConfig = {
-  provider_name: '',
+  provider_name: 'Dynamics 365 Finance & Operations',
   api_endpoint: '',
   api_key: '',
   sync_schedule: 'manual',
   data_mapping: JSON.stringify({
-    purchase_orders: {
-      external_po_number: 'po_number',
-      supplierName: 'supplier_name',
-      totalValue: 'total_amount',
-      siteCode: 'site_name'
+    po_api: {
+      'PO Number': 'po_number',
+      'Vendor Account': 'vendor_account',
+      'PO Created DateTime': 'po_created_datetime',
+      'PO Modified DateTime': 'po_modified_datetime',
+      'PO Status': 'po_status',
+      'Inventory Dimension ID': 'inventory_dimension_id',
+      'Item ID': 'item_id',
+      'Delivery Date': 'delivery_date',
+      'Purchase Unit': 'purchase_unit',
+      'Quantity Ordered': 'quantity_ordered',
+      'Item Name': 'item_name'
     },
-    supplier_invoices: {
-      invoiceNo: 'invoice_number',
-      vendorName: 'supplier_name',
-      amount: 'total_amount',
-      invoiceDate: 'invoice_date'
+    warehouse_project_api: {
+      'Record Type': 'record_type',
+      'Site ID': 'site_id',
+      'Warehouse ID': 'warehouse_id',
+      'Warehouse Name': 'warehouse_name',
+      'Project ID': 'project_id',
+      'Project Name': 'project_name'
+    },
+    movement_api: {
+      'Date & Time': 'date_time',
+      'Item ID': 'item_id',
+      Quantity: 'quantity',
+      Unit: 'unit',
+      'Originating Warehouse': 'originating_warehouse',
+      'D365 Project Code': 'd365_project_code',
+      Activity: 'activity',
+      'Destination Warehouse': 'destination_warehouse',
+      'Confirmation / Error': 'confirmation_or_error'
+    },
+    inventory_sync_api: {
+      'Item ID': 'item_id',
+      'Item Name': 'item_name',
+      'Available Quantity': 'available_quantity',
+      Unit: 'unit',
+      'Ordered in Total': 'ordered_in_total',
+      'On Order (Reserved)': 'on_order_reserved'
+    },
+    uom_api: {
+      'Item ID': 'item_id',
+      Unit1: 'unit1',
+      Unit2: 'unit2',
+      Factor: 'factor',
+      Numerator: 'numerator',
+      Denominator: 'denominator'
     }
   }, null, 2),
   error_notes: '',
@@ -109,6 +236,10 @@ export default function D365Integration() {
   const activeConfig = useMemo(() => configs.find((config) => config.is_active !== false) || configs[0] || null, [configs]);
   const categories = useMemo(() => [...new Set(recipes.map((recipe) => recipe.category).filter(Boolean))].sort(), [recipes]);
   const failedLogs = useMemo(() => logs.filter((log) => log.status === 'failed').slice(0, 5), [logs]);
+  const effectiveMapping = useMemo(() => ({
+    ...JSON.parse(emptyConfig.data_mapping),
+    ...(activeConfig?.data_mapping || {})
+  }), [activeConfig]);
 
   const configMutation = useMutation({
     mutationFn: async (payload) => {
@@ -177,7 +308,7 @@ export default function D365Integration() {
         api_endpoint: activeConfig.api_endpoint || '',
         api_key: activeConfig.api_key || '',
         sync_schedule: activeConfig.sync_schedule || 'manual',
-        data_mapping: JSON.stringify(activeConfig.data_mapping || {}, null, 2),
+        data_mapping: JSON.stringify(effectiveMapping, null, 2),
         error_notes: activeConfig.error_notes || '',
         is_active: activeConfig.is_active !== false
       });
@@ -226,8 +357,8 @@ export default function D365Integration() {
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-[1600px] mx-auto space-y-6">
         <PageHeader
-          title="ERP & Accounting Integration"
-          description="Sync purchase orders, invoices, inventory valuation, food cost, and waste summaries to external ERP and accounting platforms"
+          title="D365 Integration"
+          description="Map FoodPro data to the Dynamics 365 Finance & Operations APIs for purchase orders, warehouses, projects, movement journals, inventory, and units of measure"
         >
           {isAdmin ? (
             <Button onClick={openSettings} className="bg-indigo-600 hover:bg-indigo-700">
@@ -238,7 +369,7 @@ export default function D365Integration() {
         </PageHeader>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card><CardContent className="pt-6"><div className="flex items-center justify-between"><div><p className="text-sm text-slate-600">Provider</p><p className="text-lg font-semibold text-slate-900">{activeConfig?.provider_name || 'Not set'}</p></div><Database className="w-8 h-8 text-indigo-600" /></div></CardContent></Card>
+          <Card><CardContent className="pt-6"><div className="flex items-center justify-between"><div><p className="text-sm text-slate-600">Provider</p><p className="text-lg font-semibold text-slate-900">{activeConfig?.provider_name || 'Dynamics 365 F&O'}</p></div><Database className="w-8 h-8 text-indigo-600" /></div></CardContent></Card>
           <Card><CardContent className="pt-6"><div className="flex items-center justify-between"><div><p className="text-sm text-slate-600">Status</p><p className="text-lg font-semibold text-slate-900">{stats.configured}</p></div><CheckCircle2 className="w-8 h-8 text-emerald-600" /></div></CardContent></Card>
           <Card><CardContent className="pt-6"><div className="flex items-center justify-between"><div><p className="text-sm text-slate-600">Integration Logs</p><p className="text-lg font-semibold text-slate-900">{stats.logs}</p></div><Cable className="w-8 h-8 text-blue-600" /></div></CardContent></Card>
           <Card><CardContent className="pt-6"><div className="flex items-center justify-between"><div><p className="text-sm text-slate-600">Failed Syncs</p><p className="text-lg font-semibold text-slate-900">{stats.failed}</p></div><AlertTriangle className="w-8 h-8 text-amber-600" /></div></CardContent></Card>
@@ -252,7 +383,7 @@ export default function D365Integration() {
 
         <Card className="border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Export Filters</CardTitle>
+            <CardTitle>D365 Sync Filters</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -304,10 +435,44 @@ export default function D365Integration() {
               {moduleDefinitions.map((module) => (
                 <Card key={module.key} className="border-slate-200 shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">{module.label}</CardTitle>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <CardTitle className="text-base">{module.label}</CardTitle>
+                      <div className="flex gap-2">
+                        <Badge className="bg-blue-100 text-blue-700">{module.method}</Badge>
+                        <Badge className={module.direction.startsWith('D365') ? 'bg-emerald-100 text-emerald-700' : 'bg-violet-100 text-violet-700'}>
+                          {module.direction}
+                        </Badge>
+                      </div>
+                    </div>
                     <p className="text-sm text-slate-500">{module.description}</p>
                   </CardHeader>
                   <CardContent className="space-y-3">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                      <p><span className="font-medium text-slate-800">D365 entities:</span> {module.entities}</p>
+                      <p className="mt-1"><span className="font-medium text-slate-800">Workflow:</span> {module.trigger}</p>
+                    </div>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Group</TableHead>
+                            <TableHead>Column</TableHead>
+                            <TableHead>D365 Field</TableHead>
+                            <TableHead>Required</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(fieldSpecs[module.key] || []).map(([group, column, path, , required]) => (
+                            <TableRow key={`${module.key}-${group}-${column}`}>
+                              <TableCell className="text-xs">{group}</TableCell>
+                              <TableCell className="text-xs font-medium">{column}</TableCell>
+                              <TableCell className="text-xs text-slate-600">{path}</TableCell>
+                              <TableCell className="text-xs">{required}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="outline" size="sm" onClick={() => triggerExport(module.key, 'preview')} disabled={exportMutation.isPending}>
                         <FileText className="w-4 h-4 mr-2" />
@@ -327,7 +492,7 @@ export default function D365Integration() {
                       </Button>
                     </div>
                     <div className="text-xs text-slate-500">
-                      Mapping applied from active configuration. Sync schedule: <span className="font-medium text-slate-700">{stats.schedule}</span>
+                      Workbook mapping applied from active configuration. Sync schedule: <span className="font-medium text-slate-700">{stats.schedule}</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -422,7 +587,7 @@ export default function D365Integration() {
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <p className="text-sm text-slate-500">Data Mapping</p>
                   <pre className="mt-2 overflow-x-auto text-xs text-slate-700 whitespace-pre-wrap">
-                    {JSON.stringify(activeConfig?.data_mapping || {}, null, 2)}
+                    {JSON.stringify(effectiveMapping, null, 2)}
                   </pre>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">

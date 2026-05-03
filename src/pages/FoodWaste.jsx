@@ -35,7 +35,6 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Download,
-  Factory,
   Plus,
   Target,
   Trash2,

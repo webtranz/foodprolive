@@ -1,18 +1,117 @@
 import { createDocument, findDocument, listDocuments, updateDocument } from './db.js';
 import { listPurchaseOrders, listSupplierInvoices } from './procurement.js';
-import { getInventoryValuationReport } from './inventory.js';
+import {
+  getInventoryValuationReport,
+  getStockMovementReport,
+  getStockOnHandReport
+} from './inventory.js';
 import { getLocationScope } from './locationScope.js';
 
 const nowIso = () => new Date().toISOString();
 const ROW_EXPORT_TRANSPORTS = new Set(['csv', 'excel', 'preview']);
 
-function safeNumber(value) {
+const D365_MODULE_CONTRACTS = {
+  po_api: {
+    apiName: 'PO API',
+    direction: 'D365 -> App',
+    method: 'GET',
+    entities: ['PurchTable', 'PurchLine', 'LogisticsPostalAddressBaseEntity', 'VendPackingSlipJour', 'InventDim', 'ReleasedProduct'],
+    trigger: 'Date and optional PurchID filters retrieve updated and confirmed purchase orders from D365.'
+  },
+  warehouse_project_api: {
+    apiName: 'Warehouse and Project API',
+    direction: 'D365 -> App',
+    method: 'GET',
+    entities: ['InventLocation', 'ProjTable'],
+    trigger: 'Scheduled batch job keeps activated warehouses and project master data synchronized.'
+  },
+  movement_api: {
+    apiName: 'Movement / Issuance Information API',
+    direction: 'App -> D365',
+    method: 'POST',
+    entities: ['InventJournalTable', 'InventJournalTrans'],
+    trigger: 'Application posts movement and issuance journals so D365 updates inventory.'
+  },
+  inventory_sync_api: {
+    apiName: 'Inventory Sync API',
+    direction: 'D365 -> App',
+    method: 'GET',
+    entities: ['InventSum', 'InventOnHand'],
+    trigger: 'Triggered on D365 inventory changes and before application-side transactional posting.'
+  },
+  uom_api: {
+    apiName: 'Unit of Measure API',
+    direction: 'D365 -> App',
+    method: 'GET',
+    entities: ['UnitOfMeasureConversionStandard'],
+    trigger: 'Triggered automatically whenever unit-of-measure conversion figures are updated in D365.'
+  }
+};
+
+const D365_DEFAULT_MAPPING = {
+  po_api: {
+    'PO Number': 'po_number',
+    'Vendor Account': 'vendor_account',
+    'PO Created DateTime': 'po_created_datetime',
+    'PO Modified DateTime': 'po_modified_datetime',
+    'PO Status': 'po_status',
+    'Inventory Dimension ID': 'inventory_dimension_id',
+    'Item ID': 'item_id',
+    'Delivery Date': 'delivery_date',
+    'Purchase Unit': 'purchase_unit',
+    'Quantity Ordered': 'quantity_ordered',
+    'Item Name': 'item_name'
+  },
+  warehouse_project_api: {
+    'Record Type': 'record_type',
+    'Site ID': 'site_id',
+    'Warehouse ID': 'warehouse_id',
+    'Warehouse Name': 'warehouse_name',
+    'Project ID': 'project_id',
+    'Project Name': 'project_name'
+  },
+  movement_api: {
+    'Date & Time': 'date_time',
+    'Item ID': 'item_id',
+    Quantity: 'quantity',
+    Unit: 'unit',
+    'Originating Warehouse': 'originating_warehouse',
+    'D365 Project Code': 'd365_project_code',
+    Activity: 'activity',
+    'Destination Warehouse': 'destination_warehouse',
+    'Confirmation / Error': 'confirmation_or_error'
+  },
+  inventory_sync_api: {
+    'Item ID': 'item_id',
+    'Item Name': 'item_name',
+    'Available Quantity': 'available_quantity',
+    Unit: 'unit',
+    'Ordered in Total': 'ordered_in_total',
+    'On Order (Reserved)': 'on_order_reserved'
+  },
+  uom_api: {
+    'Item ID': 'item_id',
+    Unit1: 'unit1',
+    Unit2: 'unit2',
+    Factor: 'factor',
+    Numerator: 'numerator',
+    Denominator: 'denominator'
+  }
+};
+
+function safeNumber(value, fallback = 0) {
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : 0;
+  return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 function normalizeArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
+}
+
+function normalizeDateTime(value) {
+  if (!value) return nowIso();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
 }
 
 function matchesDate(value, startDate, endDate) {
@@ -50,6 +149,10 @@ function mapFields(row, mapping = {}) {
     accumulator[externalField] = row?.[foodProField] ?? null;
     return accumulator;
   }, {});
+}
+
+function mappingForModule(config, moduleKey) {
+  return config?.data_mapping?.[moduleKey] || D365_DEFAULT_MAPPING[moduleKey] || {};
 }
 
 async function getActiveConfig(configId = null) {
@@ -155,6 +258,147 @@ async function buildPurchaseOrderRows({ startDate, endDate, locationId, scope })
   );
 }
 
+async function buildD365PurchaseOrderRows({ startDate, endDate, locationId, scope }) {
+  const orders = await listPurchaseOrders();
+  const scopedOrders = filterByLocation(
+    filterByScope(
+      orders.filter((order) => matchesDate(order.order_date, startDate, endDate)),
+      scope
+    ),
+    locationId
+  );
+
+  return scopedOrders.flatMap((order) => {
+    const items = normalizeArray(order.items);
+    const baseRow = {
+      po_number: order.po_number,
+      vendor_account: order.vendor_account || order.supplier_id || order.supplier_name || '',
+      po_created_datetime: normalizeDateTime(order.created_at || order.order_date),
+      po_modified_datetime: normalizeDateTime(order.updated_at || order.approved_at || order.order_date),
+      po_status: order.status || '',
+      site_id: order.site_id || '',
+      site_name: order.site_name || ''
+    };
+
+    if (items.length === 0) {
+      return [{
+        ...baseRow,
+        inventory_dimension_id: order.inventory_dimension_id || '',
+        item_id: '',
+        delivery_date: order.expected_delivery_date || '',
+        purchase_unit: '',
+        quantity_ordered: 0,
+        item_name: ''
+      }];
+    }
+
+    return items.map((item) => ({
+      ...baseRow,
+      inventory_dimension_id: item.inventory_dimension_id || item.invent_dim_id || '',
+      item_id: item.d365_item_id || item.ingredient_id || '',
+      delivery_date: item.delivery_date || order.expected_delivery_date || '',
+      purchase_unit: item.unit || '',
+      quantity_ordered: Number(safeNumber(item.ordered_quantity || item.quantity).toFixed(3)),
+      item_name: item.ingredient_name || item.item_name || ''
+    }));
+  });
+}
+
+async function buildD365WarehouseProjectRows({ locationId, scope }) {
+  const sites = await listDocuments('Site', { sort: 'name', limit: 5000 });
+  const scopedSites = filterByLocation(filterByScope(sites, scope, ['id', 'parent_site_id']), locationId, ['id', 'parent_site_id']);
+  const rows = [];
+
+  scopedSites
+    .filter((site) => site.type === 'warehouse' || site.type === 'store')
+    .forEach((site) => {
+      rows.push({
+        record_type: 'Warehouse',
+        site_id: site.parent_site_id || site.project_code || site.id,
+        warehouse_id: site.project_code || site.id,
+        warehouse_name: site.name,
+        project_id: '',
+        project_name: ''
+      });
+    });
+
+  scopedSites
+    .filter((site) => site.project_code)
+    .forEach((site) => {
+      rows.push({
+        record_type: 'Project',
+        site_id: site.id,
+        warehouse_id: '',
+        warehouse_name: '',
+        project_id: site.project_code,
+        project_name: site.name
+      });
+    });
+
+  return rows;
+}
+
+async function buildD365MovementRows({ startDate, endDate, locationId, scope }) {
+  const movements = await getStockMovementReport({ siteId: locationId, dateFrom: startDate, dateTo: endDate });
+  return filterByScope(movements, scope)
+    .filter((movement) => ['issuance', 'transfer_out', 'production_use', 'adjustment', 'waste'].includes(String(movement.transaction_type || '')))
+    .map((movement) => ({
+      date_time: normalizeDateTime(movement.transaction_date || movement.created_date),
+      item_id: movement.d365_item_id || movement.ingredient_id || '',
+      quantity: Number(Math.abs(safeNumber(movement.quantity)).toFixed(3)),
+      unit: movement.unit || '',
+      originating_warehouse: movement.from_site_id || movement.site_id || '',
+      d365_project_code: movement.project_code || movement.site_project_code || '',
+      activity: movement.reason_code || movement.transaction_type || '',
+      destination_warehouse: movement.to_site_id || '',
+      confirmation_or_error: movement.d365_response || movement.status || 'Pending'
+    }));
+}
+
+async function buildD365InventoryRows({ locationId, category, scope }) {
+  const rows = await getStockOnHandReport();
+  return filterByCategory(
+    filterByLocation(
+      filterByScope(rows, scope),
+      locationId
+    ),
+    category
+  ).map((item) => ({
+    item_id: item.d365_item_id || item.ingredient_id || item.id || '',
+    item_name: item.ingredient_name || item.name || '',
+    available_quantity: Number(safeNumber(item.available_quantity ?? item.quantity).toFixed(3)),
+    unit: item.unit || '',
+    ordered_in_total: Number(safeNumber(item.ordered_quantity || item.ordered_in_total).toFixed(3)),
+    on_order_reserved: Number(safeNumber(item.reserved_quantity || item.on_order_reserved).toFixed(3))
+  }));
+}
+
+async function buildD365UomRows({ category }) {
+  const ingredients = await listDocuments('Ingredient', { sort: 'name', limit: 5000 });
+  return filterByCategory(ingredients, category).flatMap((ingredient) => {
+    const conversions = normalizeArray(ingredient.uom_conversions || ingredient.unit_conversions);
+    if (conversions.length === 0) {
+      return [{
+        item_id: ingredient.d365_item_id || ingredient.id,
+        unit1: ingredient.unit || '',
+        unit2: ingredient.unit || '',
+        factor: 1,
+        numerator: 1,
+        denominator: 1
+      }];
+    }
+
+    return conversions.map((conversion) => ({
+      item_id: ingredient.d365_item_id || ingredient.id,
+      unit1: conversion.unit1 || conversion.from_unit || ingredient.unit || '',
+      unit2: conversion.unit2 || conversion.to_unit || '',
+      factor: Number(safeNumber(conversion.factor, 1).toFixed(6)),
+      numerator: Number(safeNumber(conversion.numerator, 1).toFixed(6)),
+      denominator: Number(safeNumber(conversion.denominator, 1).toFixed(6))
+    }));
+  });
+}
+
 async function buildSupplierInvoiceRows({ startDate, endDate, locationId, scope }) {
   const invoices = await listSupplierInvoices();
   return filterByLocation(
@@ -213,6 +457,16 @@ async function getExportRows({ moduleKey, startDate, endDate, locationId, catego
       return buildFoodCostRows({ startDate, endDate, locationId, category, scope });
     case 'waste_cost_summary':
       return buildWasteCostRows({ startDate, endDate, locationId, category, scope });
+    case 'po_api':
+      return buildD365PurchaseOrderRows({ startDate, endDate, locationId, scope });
+    case 'warehouse_project_api':
+      return buildD365WarehouseProjectRows({ locationId, scope });
+    case 'movement_api':
+      return buildD365MovementRows({ startDate, endDate, locationId, scope });
+    case 'inventory_sync_api':
+      return buildD365InventoryRows({ locationId, category, scope });
+    case 'uom_api':
+      return buildD365UomRows({ category });
     default: {
       const error = new Error('Unsupported ERP export module');
       error.status = 400;
@@ -265,9 +519,19 @@ async function exportToErp({
   const scope = await getLocationScope(user);
   const config = await getActiveConfig(configId);
   const rows = await getExportRows({ moduleKey, startDate, endDate, locationId, category, scope });
-  const mapping = config?.data_mapping?.[moduleKey] || {};
+  const contract = D365_MODULE_CONTRACTS[moduleKey] || null;
+  const mapping = mappingForModule(config, moduleKey);
   const mappedRows = rows.map((row) => mapFields(row, mapping));
-  const requestPayload = { moduleKey, transport, startDate, endDate, locationId, category, configId: config?.id || null };
+  const requestPayload = {
+    moduleKey,
+    transport,
+    startDate,
+    endDate,
+    locationId,
+    category,
+    configId: config?.id || null,
+    contract
+  };
 
   if (ROW_EXPORT_TRANSPORTS.has(transport)) {
     const log = await logIntegrationAttempt({
@@ -318,6 +582,10 @@ async function exportToErp({
       },
       body: JSON.stringify({
         provider: config.provider_name,
+        api_name: contract?.apiName || moduleKey,
+        direction: contract?.direction || 'App -> ERP',
+        method: contract?.method || 'POST',
+        d365_entities: contract?.entities || [],
         module: moduleKey,
         records: mappedRows
       })
