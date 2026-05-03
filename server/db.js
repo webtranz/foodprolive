@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { Pool } from 'pg';
+import { Client, Pool } from 'pg';
 import { entityRegistry, ensureKnownEntity, validateEntityPayload } from './entities.js';
 
 const rootDir = path.resolve(process.cwd());
@@ -22,6 +22,60 @@ const pool = new Pool({
   connectionString,
   ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false
 });
+
+function getConnectionUrl() {
+  try {
+    return new URL(connectionString);
+  } catch {
+    return null;
+  }
+}
+
+function getTargetDatabaseName() {
+  const url = getConnectionUrl();
+  if (!url) return null;
+  const databaseName = decodeURIComponent(url.pathname.replace(/^\//, '')).trim();
+  return databaseName || null;
+}
+
+function quoteIdentifier(identifier) {
+  return `"${String(identifier).replace(/"/g, '""')}"`;
+}
+
+async function ensureDatabaseExists() {
+  if (process.env.POSTGRES_AUTO_CREATE_DB === 'false') {
+    return;
+  }
+
+  const url = getConnectionUrl();
+  const databaseName = getTargetDatabaseName();
+
+  if (!url || !databaseName || databaseName === 'postgres') {
+    return;
+  }
+
+  const maintenanceUrl = new URL(url);
+  maintenanceUrl.pathname = '/postgres';
+
+  const client = new Client({
+    connectionString: maintenanceUrl.toString(),
+    ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false
+  });
+
+  try {
+    await client.connect();
+    const existing = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [databaseName]);
+    if (existing.rowCount === 0) {
+      await client.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
+    }
+  } catch (error) {
+    if (error?.code !== '3D000') {
+      console.warn(`Unable to ensure PostgreSQL database "${databaseName}" exists: ${error.message}`);
+    }
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
 
 const nowIso = () => new Date().toISOString();
 const randomId = (prefix = 'doc') => `${prefix}_${crypto.randomUUID()}`;
@@ -144,6 +198,7 @@ async function query(text, params = []) {
 }
 
 async function initDatabase() {
+  await ensureDatabaseExists();
   const sqlPath = path.join(rootDir, 'server', 'sql', 'init.sql');
   const sql = await fs.readFile(sqlPath, 'utf8');
   await query(sql);
