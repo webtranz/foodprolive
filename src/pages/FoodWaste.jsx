@@ -29,12 +29,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
-import { downloadCSV } from '@/components/utils/exportData';
+import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/exportData';
 import {
   AlertTriangle,
+  Brain,
   CheckCircle2,
   CircleDollarSign,
   Download,
+  PackageCheck,
   Plus,
   Target,
   Trash2,
@@ -105,6 +107,12 @@ function sumRecipeIngredientCost(recipe, ingredientMap) {
     const ingredient = ingredientMap.get(item.ingredient_id);
     return total + (safeNumber(ingredient?.cost_per_unit) * safeNumber(item.quantity));
   }, 0);
+}
+
+function titleCase(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 export default function FoodWaste() {
@@ -407,6 +415,157 @@ export default function FoodWaste() {
 
   const pendingApprovalWaste = filteredWaste.filter((item) => item.approval_status === 'pending');
 
+  const wasteReductionInsights = useMemo(() => {
+    const productionRecipeStats = new Map();
+    filteredProductions.forEach((production) => {
+      const key = `${production.site_id || 'unknown'}::${production.recipe_id || 'unknown'}::${production.meal_type || 'unspecified'}`;
+      if (!productionRecipeStats.has(key)) {
+        productionRecipeStats.set(key, {
+          key,
+          site_id: production.site_id,
+          site_name: production.site_name || 'Unknown',
+          recipe_id: production.recipe_id,
+          recipe_name: production.recipe_name || 'Unknown recipe',
+          meal_type: production.meal_type || 'unspecified',
+          produced_servings: 0,
+          production_batches: 0,
+          production_cost: 0,
+          waste_servings: 0,
+          waste_cost: 0,
+          avoidable_cost: 0,
+          shortage_count: 0
+        });
+      }
+      const row = productionRecipeStats.get(key);
+      const servings = safeNumber(production.actual_servings || production.target_servings);
+      row.produced_servings += servings;
+      row.production_batches += 1;
+      row.production_cost += safeNumber(production.total_cost || production.estimated_total_cost);
+    });
+
+    filteredWaste.forEach((entry) => {
+      const linkedProduction = entry.production_id ? productionMap.get(entry.production_id) : null;
+      const recipeId = entry.recipe_id || linkedProduction?.recipe_id;
+      const recipeName = entry.recipe_name || linkedProduction?.recipe_name || recipeMap.get(recipeId)?.name || 'Unknown recipe';
+      const siteId = entry.site_id || linkedProduction?.site_id || 'unknown';
+      const siteName = entry.site_name || linkedProduction?.site_name || siteMap.get(siteId)?.name || 'Unknown';
+      const mealType = linkedProduction?.meal_type || 'unspecified';
+      const key = `${siteId}::${recipeId || 'unknown'}::${mealType}`;
+      if (!productionRecipeStats.has(key)) {
+        productionRecipeStats.set(key, {
+          key,
+          site_id: siteId,
+          site_name: siteName,
+          recipe_id: recipeId,
+          recipe_name: recipeName,
+          meal_type: mealType,
+          produced_servings: 0,
+          production_batches: 0,
+          production_cost: 0,
+          waste_servings: 0,
+          waste_cost: 0,
+          avoidable_cost: 0,
+          shortage_count: 0
+        });
+      }
+      const row = productionRecipeStats.get(key);
+      row.waste_servings += safeNumber(entry.quantity);
+      row.waste_cost += safeNumber(entry.estimated_cost);
+      if (entry.avoidable_type === 'avoidable' || entry.preventable) {
+        row.avoidable_cost += safeNumber(entry.estimated_cost);
+      }
+      if (['poor_forecast', 'overproduction'].includes(entry.reason_code)) {
+        row.shortage_count += 1;
+      }
+    });
+
+    const recipeActions = [...productionRecipeStats.values()]
+      .map((item) => {
+        const wasteRate = item.produced_servings > 0 ? (item.waste_servings / item.produced_servings) * 100 : 0;
+        const costPerServing = item.produced_servings > 0 ? item.production_cost / item.produced_servings : 0;
+        let action = 'Monitor';
+        let suggestedChange = 0;
+        let rationale = 'Waste and production are within the expected range.';
+        if (wasteRate >= 12 || item.avoidable_cost >= 75) {
+          action = 'Reduce production';
+          suggestedChange = -Math.min(25, Math.max(10, Math.round(wasteRate)));
+          rationale = `Avoidable waste is ${wasteRate.toFixed(1)}% of produced servings with ${formatCurrency(item.avoidable_cost)} avoidable cost.`;
+        } else if (item.produced_servings >= 50 && wasteRate <= 2 && item.waste_cost <= 15) {
+          action = 'Increase production';
+          suggestedChange = 5;
+          rationale = `This recipe is moving cleanly with only ${wasteRate.toFixed(1)}% waste and ${formatCurrency(item.waste_cost)} waste cost.`;
+        }
+        return {
+          ...item,
+          waste_rate: Number(wasteRate.toFixed(2)),
+          cost_per_serving: Number(costPerServing.toFixed(2)),
+          suggested_change_percent: suggestedChange,
+          action,
+          rationale
+        };
+      })
+      .filter((item) => item.production_batches > 0 || item.waste_cost > 0)
+      .sort((left, right) => {
+        const weight = { 'Reduce production': 3, Monitor: 2, 'Increase production': 1 };
+        return (weight[right.action] - weight[left.action]) || (right.waste_cost - left.waste_cost);
+      });
+
+    const ingredientActions = topWastedIngredients.slice(0, 8).map((item) => {
+      const averageCostPerRecord = item.waste_count > 0 ? item.estimated_cost / item.waste_count : 0;
+      const action = averageCostPerRecord > 20 || item.estimated_cost > 100 ? 'Reduce purchasing / MR' : 'Monitor usage';
+      return {
+        item_name: item.item_name,
+        waste_count: item.waste_count,
+        quantity: item.quantity,
+        estimated_cost: item.estimated_cost,
+        action,
+        recommendation: action === 'Reduce purchasing / MR'
+          ? `Trim material requests and replenish in smaller batches for ${item.item_name}.`
+          : `Keep ${item.item_name} under watch and confirm issue/portion discipline.`
+      };
+    });
+
+    const materialRequestActions = ingredientActions
+      .filter((item) => item.action === 'Reduce purchasing / MR')
+      .map((item) => ({
+        item_name: item.item_name,
+        recommendation: `Lower MR quantity or increase transfer use for ${item.item_name} until waste stabilizes.`,
+        waste_cost: item.estimated_cost
+      }));
+
+    const mealTypeCostRows = Object.values(filteredProductions.reduce((accumulator, production) => {
+      const key = production.meal_type || 'unspecified';
+      if (!accumulator[key]) {
+        accumulator[key] = {
+          meal_type: key,
+          servings: 0,
+          production_cost: 0,
+          waste_cost: 0
+        };
+      }
+      accumulator[key].servings += safeNumber(production.actual_servings || production.target_servings);
+      accumulator[key].production_cost += safeNumber(production.total_cost || production.estimated_total_cost);
+      return accumulator;
+    }, {})).map((entry) => {
+      const relatedWasteCost = filteredWaste.reduce((sum, wasteRow) => {
+        const linkedProduction = wasteRow.production_id ? productionMap.get(wasteRow.production_id) : null;
+        return linkedProduction?.meal_type === entry.meal_type ? sum + safeNumber(wasteRow.estimated_cost) : sum;
+      }, 0);
+      return {
+        ...entry,
+        waste_cost: Number(relatedWasteCost.toFixed(2)),
+        cost_per_serving: Number((entry.servings > 0 ? entry.production_cost / entry.servings : 0).toFixed(2))
+      };
+    }).sort((left, right) => right.waste_cost - left.waste_cost);
+
+    return {
+      recipeActions,
+      ingredientActions,
+      materialRequestActions,
+      mealTypeCostRows
+    };
+  }, [filteredProductions, filteredWaste, productionMap, recipeMap, siteMap, topWastedIngredients]);
+
   const handleAutoCostPreview = () => {
     const quantity = safeNumber(formData.quantity);
     if (!quantity) return 0;
@@ -471,8 +630,8 @@ export default function FoodWaste() {
     });
   };
 
-  const exportWastePackage = () => {
-    const rows = filteredWaste.map((item) => ({
+  const exportWastePackage = (type = 'csv') => {
+    const wasteRows = filteredWaste.map((item) => ({
       waste_date: item.waste_date,
       site_name: item.site_name,
       waste_category: item.waste_category,
@@ -486,6 +645,54 @@ export default function FoodWaste() {
       estimated_cost: item.estimated_cost,
       approval_status: item.approval_status
     }));
+    const recommendationRows = wasteReductionInsights.recipeActions.map((item) => ({
+      site_name: item.site_name,
+      meal_type: titleCase(item.meal_type),
+      recipe_name: item.recipe_name,
+      produced_servings: Number(item.produced_servings.toFixed(2)),
+      waste_rate_percent: item.waste_rate,
+      waste_cost: Number(item.waste_cost.toFixed(2)),
+      action: item.action,
+      suggested_change_percent: item.suggested_change_percent,
+      rationale: item.rationale
+    }));
+    const rows = [...wasteRows, ...recommendationRows];
+
+    if (type === 'excel') {
+      downloadExcel(rows, 'food_waste_analytics', 'Waste Analytics');
+      return;
+    }
+    if (type === 'pdf') {
+      downloadPDF({
+        title: 'Food Waste Analytics',
+        subtitle: `Date: ${filters.startDate} to ${filters.endDate} | Location: ${filters.locationId === 'all' ? 'All Locations' : (siteMap.get(filters.locationId)?.name || filters.locationId)}`,
+        sections: [
+          {
+            heading: 'Waste Summary',
+            lines: [
+              `Total waste quantity: ${totalWasteQuantity.toFixed(2)} kg`,
+              `Total waste cost: ${formatCurrency(totalWasteCost)}`,
+              `Avoidable waste cost: ${formatCurrency(avoidableCost)}`,
+              `Waste vs production: ${wastePercentVsProduction}%`
+            ]
+          },
+          {
+            heading: 'Recipe Reduction Recommendations',
+            lines: wasteReductionInsights.recipeActions.slice(0, 8).map((item) => (
+              `${item.site_name} | ${titleCase(item.meal_type)} | ${item.recipe_name}: ${item.action} ${item.suggested_change_percent ? `(${item.suggested_change_percent}%)` : ''} - ${item.rationale}`
+            ))
+          },
+          {
+            heading: 'Material Request Actions',
+            lines: wasteReductionInsights.materialRequestActions.length
+              ? wasteReductionInsights.materialRequestActions.map((item) => `${item.item_name}: ${item.recommendation} (${formatCurrency(item.waste_cost)} waste cost)`)
+              : ['No MR reduction actions identified in the selected range.']
+          }
+        ],
+        filename: 'food_waste_analytics'
+      });
+      return;
+    }
     downloadCSV(rows, 'food_waste_analytics');
   };
 
@@ -496,9 +703,17 @@ export default function FoodWaste() {
           title="Food Waste Management"
           description="Track waste by ingredient, recipe, batch, and location with approval control, reduction targets, and operational waste reporting"
         >
-          <Button variant="outline" onClick={exportWastePackage}>
+          <Button variant="outline" onClick={() => exportWastePackage('csv')}>
             <Download className="w-4 h-4 mr-2" />
-            Export Reports
+            CSV
+          </Button>
+          <Button variant="outline" onClick={() => exportWastePackage('excel')}>
+            <Download className="w-4 h-4 mr-2" />
+            Excel
+          </Button>
+          <Button variant="outline" onClick={() => exportWastePackage('pdf')}>
+            <Download className="w-4 h-4 mr-2" />
+            PDF
           </Button>
           {isManager ? (
             <Button variant="outline" onClick={() => setTargetDialogOpen(true)}>
@@ -582,6 +797,131 @@ export default function FoodWaste() {
           <StatCard title="Waste vs Production" value={`${wastePercentVsProduction}%`} subtitle={`${totalProductionOutput.toFixed(0)} production output`} icon={TrendingDown} iconBg="bg-purple-50" iconColor="text-purple-600" />
           <StatCard title="Pending Approvals" value={pendingApprovalWaste.length} subtitle={`Threshold ${formatCurrency(APPROVAL_THRESHOLD)}`} icon={CheckCircle2} iconBg="bg-blue-50" iconColor="text-blue-600" />
         </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Brain className="w-5 h-5 text-amber-600" />
+                Waste Reduction Intelligence
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {wasteReductionInsights.recipeActions.length === 0 ? (
+                <p className="py-12 text-center text-sm text-slate-500">Not enough production and waste history yet to generate recipe guidance.</p>
+              ) : wasteReductionInsights.recipeActions.slice(0, 6).map((item) => (
+                <div key={item.key} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-slate-900">{item.recipe_name}</p>
+                      <p className="text-xs text-slate-500">{item.site_name} • {titleCase(item.meal_type)}</p>
+                    </div>
+                    <Badge className={
+                      item.action === 'Reduce production'
+                        ? 'bg-red-100 text-red-700'
+                        : item.action === 'Increase production'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-slate-100 text-slate-700'
+                    }>
+                      {item.action}
+                    </Badge>
+                  </div>
+                  <div className="mt-3 grid gap-2 md:grid-cols-4">
+                    <div className="rounded-lg bg-white px-3 py-2">
+                      <p className="text-xs text-slate-500">Produced</p>
+                      <p className="font-semibold text-slate-900">{item.produced_servings.toFixed(0)} servings</p>
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-2">
+                      <p className="text-xs text-slate-500">Waste Rate</p>
+                      <p className="font-semibold text-slate-900">{item.waste_rate}%</p>
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-2">
+                      <p className="text-xs text-slate-500">Waste Cost</p>
+                      <p className="font-semibold text-slate-900">{formatCurrency(item.waste_cost)}</p>
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-2">
+                      <p className="text-xs text-slate-500">Cost / Serving</p>
+                      <p className="font-semibold text-slate-900">{formatCurrency(item.cost_per_serving)}</p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm text-slate-600">{item.rationale}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <PackageCheck className="w-5 h-5 text-blue-600" />
+                Recipe, Ingredient, MR Actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <p className="text-sm font-medium text-slate-900">Material Request Guidance</p>
+                <div className="mt-2 space-y-2">
+                  {wasteReductionInsights.materialRequestActions.length === 0 ? (
+                    <p className="text-sm text-slate-500">No MR reduction actions identified.</p>
+                  ) : wasteReductionInsights.materialRequestActions.slice(0, 4).map((item) => (
+                    <div key={item.item_name} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+                      <p className="font-medium text-slate-900">{item.item_name}</p>
+                      <p>{item.recommendation}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-900">Ingredient Focus</p>
+                <div className="mt-2 space-y-2">
+                  {wasteReductionInsights.ingredientActions.slice(0, 4).map((item) => (
+                    <div key={item.item_name} className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium text-slate-900">{item.item_name}</span>
+                        <Badge variant="outline">{item.action}</Badge>
+                      </div>
+                      <p className="mt-1 text-slate-600">{item.recommendation}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-lg">Food Cost Impact by Meal Type</CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Meal Type</TableHead>
+                  <TableHead>Produced Servings</TableHead>
+                  <TableHead>Production Cost</TableHead>
+                  <TableHead>Waste Cost</TableHead>
+                  <TableHead>Cost / Serving</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {wasteReductionInsights.mealTypeCostRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-10 text-center text-slate-500">No food cost impact rows available for this range.</TableCell>
+                  </TableRow>
+                ) : wasteReductionInsights.mealTypeCostRows.map((item) => (
+                  <TableRow key={item.meal_type}>
+                    <TableCell className="font-medium">{titleCase(item.meal_type)}</TableCell>
+                    <TableCell>{item.servings.toFixed(0)}</TableCell>
+                    <TableCell>{formatCurrency(item.production_cost)}</TableCell>
+                    <TableCell>{formatCurrency(item.waste_cost)}</TableCell>
+                    <TableCell>{formatCurrency(item.cost_per_serving)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
 
         <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
           <Card className="border-slate-200 shadow-sm">

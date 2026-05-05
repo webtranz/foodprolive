@@ -129,7 +129,9 @@ export default function AdvancedReports() {
     startDate: format(subDays(new Date(), 30), 'yyyy-MM-dd'),
     endDate: format(new Date(), 'yyyy-MM-dd'),
     locationId: 'all',
-    category: 'all'
+    category: 'all',
+    mealType: 'all',
+    foodCostView: 'detail'
   });
   const [activeReport, setActiveReport] = useState('food_cost');
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -205,9 +207,14 @@ export default function AdvancedReports() {
     const matchesLocation = (siteId) => filters.locationId === 'all' || siteId === filters.locationId;
     const matchesCategory = (category) => filters.category === 'all' || category === filters.category;
 
+    const matchesMealType = (mealType) => filters.mealType === 'all' || (mealType || 'unspecified') === filters.mealType;
+
     const filteredProductions = productions.filter((production) => {
       const recipe = recipes.find((item) => item.id === production.recipe_id);
-      return matchesDate(production.production_date) && matchesLocation(production.site_id) && matchesCategory(production.menu_category || recipe?.category);
+      return matchesDate(production.production_date)
+        && matchesLocation(production.site_id)
+        && matchesCategory(production.menu_category || recipe?.category)
+        && matchesMealType(production.meal_type);
     });
 
     const filteredWaste = waste.filter((entry) => matchesDate(entry.waste_date) && matchesLocation(entry.site_id) && matchesCategory(entry.category || ingredientMap[entry.ingredient_id]?.category));
@@ -238,12 +245,60 @@ export default function AdvancedReports() {
         date: production.production_date,
         location: production.site_name,
         recipe: production.recipe_name,
+        meal_type: production.meal_type || 'unspecified',
         category: production.menu_category || recipes.find((item) => item.id === production.recipe_id)?.category || '-',
         servings,
         total_cost: Number(totalCost.toFixed(2)),
         cost_per_serving: Number((servings > 0 ? totalCost / servings : 0).toFixed(2))
       };
     });
+
+    let foodCostRows = productionCostRows;
+    if (filters.foodCostView === 'daily') {
+      foodCostRows = Object.values(productionCostRows.reduce((accumulator, row) => {
+        const key = `${row.date}::${row.location}`;
+        if (!accumulator[key]) {
+          accumulator[key] = {
+            date: row.date,
+            location: row.location,
+            meal_type: filters.mealType === 'all' ? 'all' : filters.mealType,
+            total_servings: 0,
+            total_cost: 0
+          };
+        }
+        accumulator[key].total_servings += row.servings;
+        accumulator[key].total_cost += row.total_cost;
+        return accumulator;
+      }, {})).map((row) => ({
+        date: row.date,
+        location: row.location,
+        meal_type: row.meal_type,
+        total_servings: row.total_servings,
+        total_cost: Number(row.total_cost.toFixed(2)),
+        cost_per_serving: Number((row.total_servings > 0 ? row.total_cost / row.total_servings : 0).toFixed(2))
+      }));
+    } else if (filters.foodCostView === 'meal_type') {
+      foodCostRows = Object.values(productionCostRows.reduce((accumulator, row) => {
+        const key = `${row.meal_type}::${row.location}`;
+        if (!accumulator[key]) {
+          accumulator[key] = {
+            meal_type: row.meal_type,
+            location: row.location,
+            total_servings: 0,
+            total_cost: 0
+          };
+        }
+        accumulator[key].total_servings += row.servings;
+        accumulator[key].total_cost += row.total_cost;
+        return accumulator;
+      }, {})).map((row) => ({
+        meal_type: row.meal_type,
+        location: row.location,
+        total_servings: row.total_servings,
+        total_cost: Number(row.total_cost.toFixed(2)),
+        cost_per_serving: Number((row.total_servings > 0 ? row.total_cost / row.total_servings : 0).toFixed(2))
+      }));
+    }
 
     const groupedRecipeCosts = Object.values(productionCostRows.reduce((accumulator, row) => {
       const key = row.recipe;
@@ -458,7 +513,7 @@ export default function AdvancedReports() {
     });
 
     return {
-      food_cost: productionCostRows,
+      food_cost: foodCostRows,
       recipe_profitability: groupedRecipeCosts,
       menu_engineering: menuEngineeringRows,
       waste_cost: wasteCostRows,
@@ -470,7 +525,7 @@ export default function AdvancedReports() {
       sales_vs_production: salesVsProductionRows,
       forecasted_demand: forecastDemandRows
     };
-  }, [filteredData, ingredientMap, recipes]);
+  }, [filteredData, filters.foodCostView, filters.mealType, ingredientMap, recipes]);
 
   const currentRows = reportRows[activeReport] || [];
   const currentReport = reportDefinitions.find((report) => report.key === activeReport);
@@ -563,7 +618,7 @@ export default function AdvancedReports() {
             <CardTitle>Report Filters</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
               <div>
                 <Label>Start Date</Label>
                 <Input type="date" className="mt-1" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} />
@@ -589,6 +644,31 @@ export default function AdvancedReports() {
                   <SelectContent>
                     <SelectItem value="all">All Categories</SelectItem>
                     {categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Meal Type</Label>
+                <Select value={filters.mealType} onValueChange={(value) => setFilters((current) => ({ ...current, mealType: value }))}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Meal Types</SelectItem>
+                    <SelectItem value="breakfast">Breakfast</SelectItem>
+                    <SelectItem value="lunch">Lunch</SelectItem>
+                    <SelectItem value="dinner">Dinner</SelectItem>
+                    <SelectItem value="snack">Snack</SelectItem>
+                    <SelectItem value="unspecified">Unspecified</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Food Cost View</Label>
+                <Select value={filters.foodCostView} onValueChange={(value) => setFilters((current) => ({ ...current, foodCostView: value }))}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="detail">Detailed</SelectItem>
+                    <SelectItem value="daily">Daily Wise</SelectItem>
+                    <SelectItem value="meal_type">Type Wise</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
