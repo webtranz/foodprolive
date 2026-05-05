@@ -477,6 +477,7 @@ async function seedDefaults() {
           created_date: timestamp,
           updated_date: timestamp
         }),
+        timestamp,
         lotId,
         JSON.stringify({
           id: lotId,
