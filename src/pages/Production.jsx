@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Factory, AlertCircle, Download, CheckCircle2, XCircle } from 'lucide-react';
+import { Plus, Factory, AlertCircle, Download, CheckCircle2, XCircle, Brain } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
 import { Skeleton } from '@/components/ui/skeleton';
 import { format } from 'date-fns';
@@ -41,6 +41,12 @@ const STATUS_COLORS = {
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function titleCase(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 export default function Production() {
@@ -92,6 +98,11 @@ export default function Production() {
   const { data: materialRequests = [] } = useQuery({
     queryKey: ['materialRequestsWorkflow'],
     queryFn: () => base44.materialRequests.list()
+  });
+
+  const { data: foodWaste = [] } = useQuery({
+    queryKey: ['foodWasteForProduction'],
+    queryFn: () => base44.entities.FoodWaste.list('-waste_date', 1000)
   });
 
   const createMutation = useMutation({
@@ -234,6 +245,84 @@ export default function Production() {
     }
     return map;
   }, {});
+
+  const recipeWasteInsights = useMemo(() => {
+    const insights = new Map();
+
+    productions.forEach((production) => {
+      const key = `${production.site_id || 'unknown'}::${production.recipe_id || 'unknown'}::${production.meal_type || 'unspecified'}`;
+      if (!insights.has(key)) {
+        insights.set(key, {
+          key,
+          recipe_id: production.recipe_id,
+          recipe_name: production.recipe_name || 'Unknown recipe',
+          site_id: production.site_id,
+          meal_type: production.meal_type || 'unspecified',
+          produced_servings: 0,
+          waste_servings: 0,
+          waste_cost: 0,
+          avoidable_cost: 0
+        });
+      }
+      const row = insights.get(key);
+      row.produced_servings += toNumber(production.actual_servings || production.target_servings);
+    });
+
+    foodWaste.forEach((waste) => {
+      const relatedProduction = waste.production_id ? productions.find((production) => production.id === waste.production_id) : null;
+      const siteId = waste.site_id || relatedProduction?.site_id || 'unknown';
+      const recipeId = waste.recipe_id || relatedProduction?.recipe_id || 'unknown';
+      const mealType = relatedProduction?.meal_type || 'unspecified';
+      const key = `${siteId}::${recipeId}::${mealType}`;
+      if (!insights.has(key)) {
+        insights.set(key, {
+          key,
+          recipe_id: recipeId,
+          recipe_name: waste.recipe_name || relatedProduction?.recipe_name || 'Unknown recipe',
+          site_id: siteId,
+          meal_type: mealType,
+          produced_servings: 0,
+          waste_servings: 0,
+          waste_cost: 0,
+          avoidable_cost: 0
+        });
+      }
+      const row = insights.get(key);
+      row.waste_servings += toNumber(waste.quantity);
+      row.waste_cost += toNumber(waste.estimated_cost);
+      if (waste.avoidable_type === 'avoidable' || waste.preventable) {
+        row.avoidable_cost += toNumber(waste.estimated_cost);
+      }
+    });
+
+    return insights;
+  }, [foodWaste, productions]);
+
+  const selectedRecipeInsight = useMemo(() => {
+    if (!formData.recipe_id || !formData.site_id) return null;
+    const key = `${formData.site_id}::${formData.recipe_id}::${formData.meal_type || 'unspecified'}`;
+    const row = recipeWasteInsights.get(key);
+    if (!row) return null;
+    const wasteRate = row.produced_servings > 0 ? (row.waste_servings / row.produced_servings) * 100 : 0;
+    let recommendation = 'Stable output. Maintain current production level.';
+    let actionTone = 'bg-emerald-50 border-emerald-200 text-emerald-800';
+    if (wasteRate >= 12 || row.avoidable_cost >= 75) {
+      recommendation = `Reduce planned servings by 10-20% or split production into smaller batches. Historical waste is ${wasteRate.toFixed(1)}% with $${row.waste_cost.toFixed(2)} waste cost.`;
+      actionTone = 'bg-red-50 border-red-200 text-red-800';
+    } else if (row.produced_servings >= 50 && wasteRate <= 2 && row.waste_cost <= 15) {
+      recommendation = `This recipe is running cleanly. Consider a small increase if demand is rising. Historical waste is only ${wasteRate.toFixed(1)}%.`;
+      actionTone = 'bg-emerald-50 border-emerald-200 text-emerald-800';
+    } else {
+      recommendation = `Monitor this recipe closely. Historical waste is ${wasteRate.toFixed(1)}% with $${row.waste_cost.toFixed(2)} waste cost.`;
+      actionTone = 'bg-amber-50 border-amber-200 text-amber-800';
+    }
+    return {
+      ...row,
+      wasteRate: Number(wasteRate.toFixed(2)),
+      recommendation,
+      actionTone
+    };
+  }, [formData.meal_type, formData.recipe_id, formData.site_id, recipeWasteInsights]);
 
   const getProductionShortages = (production) => {
     const siteInventory = inventory.filter((item) => item.site_id === production.site_id);
@@ -456,6 +545,12 @@ export default function Production() {
                       totalCost / servings
                     );
 
+                    const wasteInsightKey = `${production.site_id || 'unknown'}::${production.recipe_id || 'unknown'}::${production.meal_type || 'unspecified'}`;
+                    const wasteInsight = recipeWasteInsights.get(wasteInsightKey);
+                    const historicalWasteRate = wasteInsight?.produced_servings > 0
+                      ? (wasteInsight.waste_servings / wasteInsight.produced_servings) * 100
+                      : 0;
+
                     return (
                       <>
                   <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -588,6 +683,17 @@ export default function Production() {
                         <p className="mt-2 text-sm text-slate-600">
                           Review Notes: {production.review_notes}
                         </p>
+                      ) : null}
+                      {wasteInsight ? (
+                        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                          <div className="flex items-center gap-2 text-sm font-medium text-amber-900">
+                            <Brain className="w-4 h-4" />
+                            Historical Waste Signal
+                          </div>
+                          <p className="mt-1 text-sm text-amber-800">
+                            Historical waste for this recipe is {historicalWasteRate.toFixed(1)}% with {wasteInsight.waste_servings.toFixed(1)} wasted servings and ${wasteInsight.waste_cost.toFixed(2)} waste cost.
+                          </p>
+                        </div>
                       ) : null}
                     </div>
                   )}
@@ -740,6 +846,29 @@ export default function Production() {
                       </p>
                     </div>
                   )}
+                  {selectedRecipeInsight ? (
+                    <div className={`mt-4 rounded-lg border px-4 py-3 ${selectedRecipeInsight.actionTone}`}>
+                      <div className="flex items-center gap-2">
+                        <Brain className="w-4 h-4" />
+                        <p className="font-medium">Waste Reduction Intelligence</p>
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-3">
+                        <div className="rounded-lg bg-white/80 px-3 py-2">
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Historical Waste Rate</p>
+                          <p className="mt-1 text-lg font-semibold text-slate-900">{selectedRecipeInsight.wasteRate}%</p>
+                        </div>
+                        <div className="rounded-lg bg-white/80 px-3 py-2">
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Wasted Servings</p>
+                          <p className="mt-1 text-lg font-semibold text-slate-900">{selectedRecipeInsight.waste_servings.toFixed(1)}</p>
+                        </div>
+                        <div className="rounded-lg bg-white/80 px-3 py-2">
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Waste Cost</p>
+                          <p className="mt-1 text-lg font-semibold text-slate-900">${selectedRecipeInsight.waste_cost.toFixed(2)}</p>
+                        </div>
+                      </div>
+                      <p className="mt-3 text-sm">{selectedRecipeInsight.recommendation}</p>
+                    </div>
+                  ) : null}
                 </div>
               )}
 

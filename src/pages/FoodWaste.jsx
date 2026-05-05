@@ -117,7 +117,7 @@ function titleCase(value) {
 
 export default function FoodWaste() {
   const queryClient = useQueryClient();
-  const { isAdmin, isManager } = usePermissions();
+  const { can } = usePermissions();
   const [formOpen, setFormOpen] = useState(false);
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
   const [message, setMessage] = useState('');
@@ -715,13 +715,13 @@ export default function FoodWaste() {
             <Download className="w-4 h-4 mr-2" />
             PDF
           </Button>
-          {isManager ? (
+          {can('manage_waste') ? (
             <Button variant="outline" onClick={() => setTargetDialogOpen(true)}>
               <Target className="w-4 h-4 mr-2" />
               Waste Targets
             </Button>
           ) : null}
-          {isManager ? (
+          {can('manage_waste') ? (
             <Button onClick={() => setFormOpen(true)} className="bg-red-600 hover:bg-red-700">
               <Plus className="w-4 h-4 mr-2" />
               Record Waste
