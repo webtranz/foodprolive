@@ -254,6 +254,104 @@ function buildInventoryShortages(production = {}, inventoryRows = [], ingredient
     .filter((item) => item.ingredient_id && item.shortage_quantity > 0);
 }
 
+async function syncMaterialRequestForProduction(user, production, mode = 'draft') {
+  if (!production?.id) {
+    return null;
+  }
+
+  const normalizedMode = String(mode || 'draft').toLowerCase();
+  const isDraftMode = normalizedMode === 'draft';
+
+  if (!isDraftMode && String(production.status || '') !== 'approved') {
+    const error = new Error('Material requests can only be activated for approved production requests.');
+    error.status = 400;
+    throw error;
+  }
+
+  const existingRequests = await listDocuments('MaterialRequest', {
+    filters: { source_production_id: production.id },
+    sort: '-request_date',
+    limit: 20
+  });
+
+  const [inventoryRows, ingredients] = await Promise.all([
+    listDocuments('Inventory', {
+      filters: { site_id: production.site_id },
+      limit: 2000
+    }),
+    listDocuments('Ingredient', { limit: 2000 })
+  ]);
+
+  const productionItems = (Array.isArray(production.ingredients_used) ? production.ingredients_used : []).map((item) => {
+    const inventoryItem = inventoryRows.find((inventoryRow) => inventoryRow.ingredient_id === item.ingredient_id);
+    const ingredientMaster = ingredients.find((ingredient) => ingredient.id === item.ingredient_id);
+    const requiredQuantity = numericMatch(
+      item.planned_quantity ?? item.adjusted_quantity ?? item.required_quantity,
+      0
+    );
+    const currentStock = numericMatch(inventoryItem?.quantity, 0);
+    const unitCost = numericMatch(
+      item.unit_cost ?? inventoryItem?.average_unit_cost ?? ingredientMaster?.cost_per_unit,
+      0
+    );
+
+    return {
+      ingredient_id: item.ingredient_id,
+      ingredient_name: item.ingredient_name,
+      required_quantity: requiredQuantity,
+      current_stock: currentStock,
+      shortage_quantity: Math.max(0, requiredQuantity - currentStock),
+      request_quantity: requiredQuantity,
+      unit: item.unit,
+      estimated_cost: Number((requiredQuantity * unitCost).toFixed(2))
+    };
+  });
+
+  if (!productionItems.length) {
+    return null;
+  }
+
+  const targetStatus = isDraftMode ? 'awaiting_production_approval' : 'pending_procurement_ack';
+  const existingRequest = existingRequests.find((item) => !['cancelled', 'rejected'].includes(String(item.status || '').toLowerCase()));
+  const payload = {
+    site_id: production.site_id || null,
+    site_name: production.site_name || null,
+    request_date: new Date().toISOString().slice(0, 10),
+    period_start: production.production_date || null,
+    period_end: production.production_date || null,
+    items: productionItems,
+    total_estimated_cost: productionItems.reduce((sum, item) => sum + item.estimated_cost, 0),
+    status: targetStatus,
+    source_type: 'production',
+    source_production_id: production.id,
+    source_production_name: production.recipe_name || null,
+    created_by: user?.email || production.created_by || null,
+    created_by_name: user?.full_name || user?.email || production.created_by_name || production.created_by || null,
+    notes: `Requested from production batch ${production.recipe_name || production.id}`
+  };
+
+  const materialRequest = existingRequest
+    ? await updateDocument('MaterialRequest', existingRequest.id, {
+        ...payload,
+        request_number: existingRequest.request_number || `MR-PROD-${Date.now()}`,
+        status: !isDraftMode && String(existingRequest.status || '') === 'acknowledged'
+          ? 'acknowledged'
+          : targetStatus
+      })
+    : await createDocument('MaterialRequest', {
+        request_number: `MR-PROD-${Date.now()}`,
+        ...payload
+      });
+
+  await updateDocument('Production', production.id, {
+    linked_material_request_id: materialRequest.id,
+    linked_material_request_number: materialRequest.request_number,
+    material_request_status: materialRequest.status
+  });
+
+  return materialRequest;
+}
+
 async function getScopedProduction(request, productionId) {
   const scope = await getLocationScope(request.user);
   const production = await findDocument('Production', productionId);
@@ -592,7 +690,13 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
     ensureKnownEntity(entity);
     authorizeEntityAction(request.user, entity, 'create', request.body || {});
     const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {});
-    const record = await createDocument(entity, preparedPayload);
+    let record = await createDocument(entity, preparedPayload);
+
+    if (entity === 'Production' && ['draft', 'pending_approval', 'changes_requested'].includes(String(record.status || ''))) {
+      await syncMaterialRequestForProduction(request.user, record, 'draft');
+      record = await findDocument(entity, record.id);
+    }
+
     response.status(201).json(record);
   } catch (error) {
     next(error);
@@ -613,7 +717,19 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
     }
     authorizeEntityAction(request.user, entity, 'update', request.body || {}, existing);
     const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {}, existing);
-    const updated = await updateDocument(entity, request.params.id, preparedPayload);
+    let updated = await updateDocument(entity, request.params.id, preparedPayload);
+
+    if (entity === 'Production') {
+      const status = String(updated?.status || '');
+      if (['draft', 'pending_approval', 'changes_requested'].includes(status)) {
+        await syncMaterialRequestForProduction(request.user, updated, 'draft');
+        updated = await findDocument(entity, request.params.id);
+      } else if (status === 'approved') {
+        await syncMaterialRequestForProduction(request.user, updated, 'activate');
+        updated = await findDocument(entity, request.params.id);
+      }
+    }
+
     return response.json(updated);
   } catch (error) {
     next(error);
@@ -906,101 +1022,16 @@ app.get('/api/material-requests', requireAuth, requireAnyPermission(['view_mater
 
 app.post('/api/material-requests/from-production/:id', requireAuth, requirePermission('create_material_request'), async (request, response, next) => {
   try {
-    const { scope, production } = await getScopedProduction(request, request.params.id);
+    const { production } = await getScopedProduction(request, request.params.id);
     if (!production) {
       return response.status(404).json({ message: 'Production record not found' });
     }
-
     const mode = String(request.body?.mode || 'activate').toLowerCase();
-    const isDraftMode = mode === 'draft';
-
-    if (!isDraftMode && String(production.status || '') !== 'approved') {
-      return response.status(400).json({ message: 'Material requests can only be activated for approved production requests.' });
-    }
-
-    const existingRequests = await listDocuments('MaterialRequest', {
-      filters: { source_production_id: production.id },
-      sort: '-request_date',
-      limit: 20
-    });
-    const scopedRequests = filterRowsByAccessibleSites(existingRequests, scope);
-    const [inventoryRows, ingredients] = await Promise.all([
-      listDocuments('Inventory', {
-        filters: { site_id: production.site_id },
-        limit: 2000
-      }),
-      listDocuments('Ingredient', { limit: 2000 })
-    ]);
-
-    const productionItems = (Array.isArray(production.ingredients_used) ? production.ingredients_used : []).map((item) => {
-      const inventoryItem = inventoryRows.find((inventoryRow) => inventoryRow.ingredient_id === item.ingredient_id);
-      const ingredientMaster = ingredients.find((ingredient) => ingredient.id === item.ingredient_id);
-      const requiredQuantity = numericMatch(
-        item.planned_quantity ?? item.adjusted_quantity ?? item.required_quantity,
-        0
-      );
-      const currentStock = numericMatch(inventoryItem?.quantity, 0);
-      const unitCost = numericMatch(
-        item.unit_cost ?? inventoryItem?.average_unit_cost ?? ingredientMaster?.cost_per_unit,
-        0
-      );
-      const shortageQuantity = Math.max(0, requiredQuantity - currentStock);
-
-      return {
-        ingredient_id: item.ingredient_id,
-        ingredient_name: item.ingredient_name,
-        required_quantity: requiredQuantity,
-        current_stock: currentStock,
-        shortage_quantity: shortageQuantity,
-        request_quantity: requiredQuantity,
-        unit: item.unit,
-        estimated_cost: Number((requiredQuantity * unitCost).toFixed(2))
-      };
-    });
-
-    if (!productionItems.length) {
+    const materialRequest = await syncMaterialRequestForProduction(request.user, production, mode);
+    if (!materialRequest) {
       return response.status(400).json({ message: 'Production request has no ingredients to build a material request.' });
     }
-
-    const targetStatus = isDraftMode ? 'awaiting_production_approval' : 'pending_procurement_ack';
-    const existingRequest = scopedRequests.find((item) => !['cancelled', 'rejected'].includes(String(item.status || '').toLowerCase()));
-    const payload = {
-      site_id: production.site_id || null,
-      site_name: production.site_name || null,
-      request_date: new Date().toISOString().slice(0, 10),
-      period_start: production.production_date || null,
-      period_end: production.production_date || null,
-      items: productionItems,
-      total_estimated_cost: productionItems.reduce((sum, item) => sum + item.estimated_cost, 0),
-      status: targetStatus,
-      source_type: 'production',
-      source_production_id: production.id,
-      source_production_name: production.recipe_name || null,
-      created_by: request.user.email,
-      created_by_name: request.user.full_name || request.user.email,
-      notes: request.body?.notes || `Requested from production batch ${production.recipe_name || production.id}`
-    };
-
-    const materialRequest = existingRequest
-      ? await updateDocument('MaterialRequest', existingRequest.id, {
-          ...payload,
-          request_number: existingRequest.request_number || `MR-PROD-${Date.now()}`,
-          status: !isDraftMode && String(existingRequest.status || '') === 'acknowledged'
-            ? 'acknowledged'
-            : targetStatus
-        })
-      : await createDocument('MaterialRequest', {
-          request_number: `MR-PROD-${Date.now()}`,
-          ...payload
-        });
-
-    await updateDocument('Production', production.id, {
-      linked_material_request_id: materialRequest.id,
-      linked_material_request_number: materialRequest.request_number,
-      material_request_status: materialRequest.status
-    });
-
-    response.status(existingRequest ? 200 : 201).json(materialRequest);
+    response.status(201).json(materialRequest);
   } catch (error) {
     next(error);
   }

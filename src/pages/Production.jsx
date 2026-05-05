@@ -100,8 +100,7 @@ export default function Production() {
         ? base44.entities.Production.update(editingProduction.id, data)
         : base44.entities.Production.create(data)
     ),
-    onSuccess: async (record) => {
-      await base44.materialRequests.createFromProduction(record.id, { mode: 'draft' });
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       setFormOpen(false);
@@ -294,7 +293,6 @@ export default function Production() {
         review_notes: reviewNotes || null,
         reviewed_at: new Date().toISOString()
       });
-      await base44.materialRequests.createFromProduction(selectedProduction.id, { mode: 'activate' });
     } else if (action === 'request_changes') {
       await base44.entities.Production.update(selectedProduction.id, {
         status: 'changes_requested',
