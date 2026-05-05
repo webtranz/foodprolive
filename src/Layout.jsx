@@ -46,7 +46,7 @@ function buildNavigation(t) {
     { name: n.dashboard, href: 'Dashboard', icon: LayoutDashboard },
     { name: n.sites, href: 'Sites', icon: Building2 },
     { name: n.production, href: 'Production', icon: Factory },
-    { name: n.foodCost, href: 'FoodCost', icon: CircleDollarSign },
+    { name: n.foodCost || 'Food Cost', href: 'FoodCost', icon: CircleDollarSign },
     { name: n.ingredients, href: 'Ingredients', icon: Package },
     { name: n.inventory, href: 'Inventory', icon: Boxes },
     { name: n.recipes, href: 'Recipes', icon: Utensils },

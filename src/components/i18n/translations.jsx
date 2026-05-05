@@ -314,3 +314,11 @@ export const translations = {
     }
   }
 };
+
+if (!translations.ar.nav.foodCost) {
+  translations.ar.nav.foodCost = 'تكلفة الطعام';
+}
+
+if (!translations.ur.nav.foodCost) {
+  translations.ur.nav.foodCost = 'فوڈ کاسٹ';
+}
