@@ -353,7 +353,7 @@ async function deductStock({
     reference_type,
     notes: remainingToDeduct > 0 ? `${notes} (shortage ${remainingToDeduct.toFixed(2)} ${unit})` : notes,
     performed_by,
-    total_cost,
+    total_cost: totalCost,
     unit_cost: qty > 0 ? totalCost / qty : 0,
     reason_code,
     movement_layers: movementLayers

@@ -36,6 +36,11 @@ const STATUS_COLORS = {
   cancelled: 'bg-red-100 text-red-700'
 };
 
+function toNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 export default function Production() {
   const { can } = usePermissions();
   const [formOpen, setFormOpen] = useState(false);
@@ -54,6 +59,8 @@ export default function Production() {
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [selectedProduction, setSelectedProduction] = useState(null);
   const [actionError, setActionError] = useState('');
+  const [estimatedBatchCost, setEstimatedBatchCost] = useState(0);
+  const [estimatedCostPerServing, setEstimatedCostPerServing] = useState(0);
 
   const queryClient = useQueryClient();
 
@@ -146,6 +153,8 @@ export default function Production() {
           const invItem = siteInventory.find(i => i.ingredient_id === ing.ingredient_id);
           const currentStock = invItem?.quantity || 0;
           const shortage = Math.max(0, adjustedQty - currentStock);
+          const unitCost = toNumber(ingredientData?.cost_per_unit, 0);
+          const estimatedCost = adjustedQty * unitCost;
           
           return {
             ingredient_id: ing.ingredient_id,
@@ -156,15 +165,23 @@ export default function Production() {
             shortage: Math.round(shortage * 100) / 100,
             unit: ing.unit,
             shrinkage_percent: shrinkage,
-            sufficient: currentStock >= adjustedQty
+            sufficient: currentStock >= adjustedQty,
+            unit_cost: Number(unitCost.toFixed(2)),
+            estimated_cost: Number(estimatedCost.toFixed(2))
           };
         });
         setCalculatedIngredients(calculated);
         setInventoryCheck(calculated);
+        const totalCost = calculated.reduce((sum, ingredient) => sum + toNumber(ingredient.estimated_cost, 0), 0);
+        const servings = Math.max(1, toNumber(formData.target_servings, 0));
+        setEstimatedBatchCost(Number(totalCost.toFixed(2)));
+        setEstimatedCostPerServing(Number((totalCost / servings).toFixed(2)));
       }
     } else {
       setCalculatedIngredients([]);
       setInventoryCheck([]);
+      setEstimatedBatchCost(0);
+      setEstimatedCostPerServing(0);
     }
   }, [formData.recipe_id, formData.target_servings, formData.site_id, recipes, ingredients, inventory]);
 
@@ -189,11 +206,15 @@ export default function Production() {
         ingredient_name: ing.ingredient_name,
         planned_quantity: ing.adjusted_quantity,
         actual_quantity: null,
-        unit: ing.unit
+        unit: ing.unit,
+        unit_cost: ing.unit_cost,
+        estimated_cost: ing.estimated_cost
       })),
       total_calories: recipe?.calories_per_serving 
         ? recipe.calories_per_serving * parseInt(formData.target_servings)
         : 0,
+      estimated_batch_cost: estimatedBatchCost,
+      estimated_cost_per_serving: estimatedCostPerServing,
       status: 'pending_approval'
     };
 
@@ -353,6 +374,21 @@ export default function Production() {
             {filteredProductions.map(production => (
               <Card key={production.id} className="border-slate-100 shadow-sm">
                 <CardContent className="p-6">
+                  {(() => {
+                    const totalCost = toNumber(
+                      production.production_cost_total
+                      ?? production.ingredient_cost_total
+                      ?? production.estimated_batch_cost,
+                      (production.ingredients_used || []).reduce((sum, ingredient) => sum + toNumber(ingredient.estimated_cost, 0), 0)
+                    );
+                    const servings = Math.max(1, toNumber(production.target_servings, 0));
+                    const costPerServing = toNumber(
+                      production.cost_per_serving ?? production.estimated_cost_per_serving,
+                      totalCost / servings
+                    );
+
+                    return (
+                      <>
                   <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div className="flex items-start gap-4">
                       <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center">
@@ -375,6 +411,14 @@ export default function Production() {
                       <div className="text-center">
                         <p className="text-2xl font-bold text-slate-900">{production.target_servings}</p>
                         <p className="text-xs text-slate-500">Target</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold text-emerald-700">${totalCost.toFixed(2)}</p>
+                        <p className="text-xs text-slate-500">{production.status === 'completed' ? 'Production Cost' : 'Est. Batch Cost'}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold text-slate-900">${costPerServing.toFixed(2)}</p>
+                        <p className="text-xs text-slate-500">Cost / Serving</p>
                       </div>
                       {production.total_calories > 0 && (
                         <div className="text-center">
@@ -429,12 +473,15 @@ export default function Production() {
                       <div className="flex flex-wrap gap-2">
                         {production.ingredients_used.map((ing, idx) => (
                           <Badge key={idx} variant="outline" className="font-normal">
-                            {ing.ingredient_name}: {ing.planned_quantity} {ing.unit}
+                            {ing.ingredient_name}: {ing.planned_quantity} {ing.unit} {toNumber(ing.estimated_cost, 0) > 0 ? `• $${toNumber(ing.estimated_cost, 0).toFixed(2)}` : ''}
                           </Badge>
                         ))}
                       </div>
                     </div>
                   )}
+                      </>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             ))}
@@ -534,11 +581,23 @@ export default function Production() {
                     <AlertCircle className="w-5 h-5 text-blue-600" />
                     <h4 className="font-medium text-blue-900">Required Ingredients & Inventory Check</h4>
                   </div>
+                  <div className="mb-4 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-lg bg-white px-4 py-3 border border-blue-100">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Batch Cost</p>
+                      <p className="mt-1 text-2xl font-bold text-emerald-700">${estimatedBatchCost.toFixed(2)}</p>
+                    </div>
+                    <div className="rounded-lg bg-white px-4 py-3 border border-blue-100">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Cost / Serving</p>
+                      <p className="mt-1 text-2xl font-bold text-slate-900">${estimatedCostPerServing.toFixed(2)}</p>
+                    </div>
+                  </div>
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Ingredient</TableHead>
                         <TableHead>Required</TableHead>
+                        <TableHead>Unit Cost</TableHead>
+                        <TableHead>Est. Cost</TableHead>
                         <TableHead>In Stock</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
@@ -548,6 +607,8 @@ export default function Production() {
                         <TableRow key={idx}>
                           <TableCell>{ing.ingredient_name}</TableCell>
                           <TableCell className="font-medium">{ing.adjusted_quantity} {ing.unit}</TableCell>
+                          <TableCell>${toNumber(ing.unit_cost, 0).toFixed(2)}</TableCell>
+                          <TableCell>${toNumber(ing.estimated_cost, 0).toFixed(2)}</TableCell>
                           <TableCell>{ing.current_stock} {ing.unit}</TableCell>
                           <TableCell>
                             {ing.sufficient ? (
