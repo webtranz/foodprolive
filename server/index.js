@@ -93,6 +93,7 @@ const distDir = path.join(rootDir, 'dist');
 const databaseInitAttempts = Number(process.env.DATABASE_INIT_ATTEMPTS || 30);
 const databaseInitDelayMs = Number(process.env.DATABASE_INIT_DELAY_MS || 2000);
 
+app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(uploadsDir));
@@ -201,6 +202,33 @@ function filterRowsByAccessibleSites(rows = [], scope, fields = ['site_id']) {
 function numericMatch(input, fallback = 0) {
   const value = Number(input);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeBaseUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function isPubliclyUsableBaseUrl(value) {
+  return value && !/localhost|127\.0\.0\.1/i.test(value);
+}
+
+function resolvePublicBaseUrl(request) {
+  const configured = normalizeBaseUrl(process.env.PUBLIC_APP_URL);
+  if (isPubliclyUsableBaseUrl(configured)) {
+    return configured;
+  }
+
+  const forwardedProto = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const forwardedHost = String(request.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const requestHost = String(request.headers.host || '').trim();
+  const protocol = forwardedProto || request.protocol || 'http';
+  const hostValue = forwardedHost || requestHost;
+
+  if (hostValue) {
+    return `${protocol}://${hostValue}`;
+  }
+
+  return configured || `http://localhost:${port}`;
 }
 
 function parseAvailableIngredients(prompt = '') {
@@ -345,7 +373,7 @@ function invokeFallbackLLM(prompt, schema) {
   );
 }
 
-async function invokeOpenAI(payload) {
+async function invokeOpenAI(payload, publicBaseUrl) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return invokeFallbackLLM(payload.prompt, payload.response_json_schema);
@@ -366,7 +394,7 @@ async function invokeOpenAI(payload) {
             { type: 'input_text', text: payload.prompt || 'Return a valid JSON object.' },
             ...((payload.file_urls || []).map((url) => ({
               type: 'input_image',
-              image_url: url.startsWith('http') ? url : `${process.env.PUBLIC_APP_URL || `http://localhost:${port}`}${url}`
+              image_url: url.startsWith('http') ? url : `${publicBaseUrl}${url}`
             })))
           ]
         }
@@ -555,7 +583,11 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
 });
 
 app.post('/api/integrations/upload', requireAuth, upload.single('file'), (request, response) => {
-  response.json({ file_url: `/uploads/${request.file.filename}` });
+  const fileUrl = `/uploads/${request.file.filename}`;
+  response.json({
+    file_url: fileUrl,
+    public_file_url: `${resolvePublicBaseUrl(request)}${fileUrl}`
+  });
 });
 
 app.post('/api/integrations/send-email', requireAuth, async (request, response) => {
@@ -590,7 +622,7 @@ app.post('/api/integrations/send-email', requireAuth, async (request, response) 
 
 app.post('/api/integrations/invoke-llm', requireAuth, async (request, response, next) => {
   try {
-    const output = await invokeOpenAI(request.body || {});
+    const output = await invokeOpenAI(request.body || {}, resolvePublicBaseUrl(request));
     response.json(output);
   } catch (error) {
     next(error);
