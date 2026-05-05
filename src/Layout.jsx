@@ -45,6 +45,7 @@ function buildNavigation(t) {
   return [
     { name: n.dashboard, href: 'Dashboard', icon: LayoutDashboard },
     { name: n.sites, href: 'Sites', icon: Building2 },
+    { name: n.production, href: 'Production', icon: Factory },
     { name: n.ingredients, href: 'Ingredients', icon: Package },
     { name: n.inventory, href: 'Inventory', icon: Boxes },
     { name: n.recipes, href: 'Recipes', icon: Utensils },
@@ -61,7 +62,6 @@ function buildNavigation(t) {
         { name: n.autoSchedule, href: 'AutoSchedule', icon: Zap },
       ]
     },
-    { name: n.production, href: 'Production', icon: Factory },
     { name: n.materialRequests, href: 'MaterialRequests', icon: FileText },
     { name: n.foodWaste, href: 'FoodWaste', icon: Trash2 },
     { name: n.yieldCost, href: 'YieldCost', icon: DollarSign },

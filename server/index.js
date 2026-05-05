@@ -911,8 +911,11 @@ app.post('/api/material-requests/from-production/:id', requireAuth, requirePermi
       return response.status(404).json({ message: 'Production record not found' });
     }
 
-    if (String(production.status || '') !== 'approved') {
-      return response.status(400).json({ message: 'Material requests can only be created for approved production requests.' });
+    const mode = String(request.body?.mode || 'activate').toLowerCase();
+    const isDraftMode = mode === 'draft';
+
+    if (!isDraftMode && String(production.status || '') !== 'approved') {
+      return response.status(400).json({ message: 'Material requests can only be activated for approved production requests.' });
     }
 
     const existingRequests = await listDocuments('MaterialRequest', {
@@ -921,11 +924,6 @@ app.post('/api/material-requests/from-production/:id', requireAuth, requirePermi
       limit: 20
     });
     const scopedRequests = filterRowsByAccessibleSites(existingRequests, scope);
-    const activeRequest = scopedRequests.find((item) => !['cancelled', 'rejected'].includes(String(item.status || '').toLowerCase()));
-    if (activeRequest) {
-      return response.status(400).json({ message: 'A material request already exists for this production batch.' });
-    }
-
     const [inventoryRows, ingredients] = await Promise.all([
       listDocuments('Inventory', {
         filters: { site_id: production.site_id },
@@ -934,29 +932,47 @@ app.post('/api/material-requests/from-production/:id', requireAuth, requirePermi
       listDocuments('Ingredient', { limit: 2000 })
     ]);
 
-    const shortages = buildInventoryShortages(production, inventoryRows, ingredients);
-    if (!shortages.length) {
-      return response.status(400).json({ message: 'No shortages found. Material request is not required for this production batch.' });
+    const productionItems = (Array.isArray(production.ingredients_used) ? production.ingredients_used : []).map((item) => {
+      const inventoryItem = inventoryRows.find((inventoryRow) => inventoryRow.ingredient_id === item.ingredient_id);
+      const ingredientMaster = ingredients.find((ingredient) => ingredient.id === item.ingredient_id);
+      const requiredQuantity = numericMatch(
+        item.planned_quantity ?? item.adjusted_quantity ?? item.required_quantity,
+        0
+      );
+      const currentStock = numericMatch(inventoryItem?.quantity, 0);
+      const unitCost = numericMatch(
+        item.unit_cost ?? inventoryItem?.average_unit_cost ?? ingredientMaster?.cost_per_unit,
+        0
+      );
+      const shortageQuantity = Math.max(0, requiredQuantity - currentStock);
+
+      return {
+        ingredient_id: item.ingredient_id,
+        ingredient_name: item.ingredient_name,
+        required_quantity: requiredQuantity,
+        current_stock: currentStock,
+        shortage_quantity: shortageQuantity,
+        request_quantity: requiredQuantity,
+        unit: item.unit,
+        estimated_cost: Number((requiredQuantity * unitCost).toFixed(2))
+      };
+    });
+
+    if (!productionItems.length) {
+      return response.status(400).json({ message: 'Production request has no ingredients to build a material request.' });
     }
 
+    const targetStatus = isDraftMode ? 'awaiting_production_approval' : 'pending_procurement_ack';
+    const existingRequest = scopedRequests.find((item) => !['cancelled', 'rejected'].includes(String(item.status || '').toLowerCase()));
     const payload = {
-      request_number: `MR-PROD-${Date.now()}`,
       site_id: production.site_id || null,
       site_name: production.site_name || null,
       request_date: new Date().toISOString().slice(0, 10),
       period_start: production.production_date || null,
       period_end: production.production_date || null,
-      items: shortages.map((item) => ({
-        ingredient_id: item.ingredient_id,
-        ingredient_name: item.ingredient_name,
-        required_quantity: item.required_quantity,
-        current_stock: item.current_stock,
-        request_quantity: item.shortage_quantity,
-        unit: item.unit,
-        estimated_cost: item.estimated_cost
-      })),
-      total_estimated_cost: shortages.reduce((sum, item) => sum + item.estimated_cost, 0),
-      status: 'pending_procurement_ack',
+      items: productionItems,
+      total_estimated_cost: productionItems.reduce((sum, item) => sum + item.estimated_cost, 0),
+      status: targetStatus,
       source_type: 'production',
       source_production_id: production.id,
       source_production_name: production.recipe_name || null,
@@ -965,14 +981,26 @@ app.post('/api/material-requests/from-production/:id', requireAuth, requirePermi
       notes: request.body?.notes || `Requested from production batch ${production.recipe_name || production.id}`
     };
 
-    const created = await createDocument('MaterialRequest', payload);
+    const materialRequest = existingRequest
+      ? await updateDocument('MaterialRequest', existingRequest.id, {
+          ...payload,
+          request_number: existingRequest.request_number || `MR-PROD-${Date.now()}`,
+          status: !isDraftMode && String(existingRequest.status || '') === 'acknowledged'
+            ? 'acknowledged'
+            : targetStatus
+        })
+      : await createDocument('MaterialRequest', {
+          request_number: `MR-PROD-${Date.now()}`,
+          ...payload
+        });
+
     await updateDocument('Production', production.id, {
-      linked_material_request_id: created.id,
-      linked_material_request_number: created.request_number,
-      material_request_status: created.status
+      linked_material_request_id: materialRequest.id,
+      linked_material_request_number: materialRequest.request_number,
+      material_request_status: materialRequest.status
     });
 
-    response.status(201).json(created);
+    response.status(existingRequest ? 200 : 201).json(materialRequest);
   } catch (error) {
     next(error);
   }

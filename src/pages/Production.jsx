@@ -17,6 +17,7 @@ import { downloadCSV } from '../components/utils/exportData';
 import { Skeleton } from '@/components/ui/skeleton';
 import { format } from 'date-fns';
 import { usePermissions } from '@/components/auth/usePermissions';
+import { useSiteContext } from '@/components/auth/useSiteContext';
 
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -44,6 +45,7 @@ function toNumber(value, fallback = 0) {
 
 export default function Production() {
   const { can } = usePermissions();
+  const { allowedSiteIds, isAdmin, siteId: assignedSiteId } = useSiteContext();
   const [formOpen, setFormOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState('all');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -98,8 +100,10 @@ export default function Production() {
         ? base44.entities.Production.update(editingProduction.id, data)
         : base44.entities.Production.create(data)
     ),
-    onSuccess: () => {
+    onSuccess: async (record) => {
+      await base44.materialRequests.createFromProduction(record.id, { mode: 'draft' });
       queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       setFormOpen(false);
       setEditingProduction(null);
       setActionError('');
@@ -114,6 +118,23 @@ export default function Production() {
     queryKey: ['inventory'],
     queryFn: () => base44.entities.Inventory.list()
   });
+
+  const visibleSites = isAdmin
+    ? sites
+    : sites.filter((site) => allowedSiteIds.includes(site.id));
+
+  useEffect(() => {
+    if (isAdmin) {
+      return;
+    }
+
+    const fallbackSiteId = assignedSiteId || visibleSites[0]?.id || '';
+    setSelectedSite((current) => (current === 'all' || !current ? fallbackSiteId : current));
+    setFormData((current) => ({
+      ...current,
+      site_id: current.site_id || fallbackSiteId
+    }));
+  }, [isAdmin, assignedSiteId, visibleSites]);
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status, production }) => {
@@ -135,21 +156,9 @@ export default function Production() {
     }
   });
 
-  const createMaterialRequestMutation = useMutation({
-    mutationFn: (productionId) => base44.materialRequests.createFromProduction(productionId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
-      setActionError('');
-    },
-    onError: (error) => {
-      setActionError(error.message || 'Unable to create material request');
-    }
-  });
-
   const resetForm = () => {
     setFormData({
-      site_id: '',
+      site_id: isAdmin ? '' : (assignedSiteId || visibleSites[0]?.id || ''),
       production_date: format(new Date(), 'yyyy-MM-dd'),
       meal_type: 'lunch',
       recipe_id: '',
@@ -245,7 +254,7 @@ export default function Production() {
   };
 
   const buildSubmitData = (status) => {
-    const site = sites.find(s => s.id === formData.site_id);
+    const site = visibleSites.find((s) => s.id === formData.site_id) || sites.find((s) => s.id === formData.site_id);
     const recipe = recipes.find(r => r.id === formData.recipe_id);
 
     return {
@@ -285,6 +294,7 @@ export default function Production() {
         review_notes: reviewNotes || null,
         reviewed_at: new Date().toISOString()
       });
+      await base44.materialRequests.createFromProduction(selectedProduction.id, { mode: 'activate' });
     } else if (action === 'request_changes') {
       await base44.entities.Production.update(selectedProduction.id, {
         status: 'changes_requested',
@@ -344,6 +354,11 @@ export default function Production() {
     setFormOpen(true);
   };
 
+  const canStartWithMaterialRequest = (linkedMaterialRequest) => {
+    if (!linkedMaterialRequest) return false;
+    return String(linkedMaterialRequest.status || '').toLowerCase() === 'acknowledged';
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-[1600px] mx-auto">
@@ -384,14 +399,14 @@ export default function Production() {
               />
             </div>
             <div>
-              <Label className="mb-1 block text-sm">Site</Label>
+              <Label className="mb-1 block text-sm">Project / Site</Label>
               <Select value={selectedSite} onValueChange={setSelectedSite}>
                 <SelectTrigger className="w-[180px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Sites</SelectItem>
-                  {sites.map(site => (
+                  {isAdmin ? <SelectItem value="all">All Sites</SelectItem> : null}
+                  {visibleSites.map(site => (
                     <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
                   ))}
                 </SelectContent>
@@ -429,8 +444,8 @@ export default function Production() {
                   {(() => {
                     const linkedMaterialRequest = materialRequestMap[production.id] || null;
                     const shortages = getProductionShortages(production);
-                    const requiresMaterialRequest = shortages.length > 0;
-                    const canStartProduction = !requiresMaterialRequest || Boolean(linkedMaterialRequest);
+                    const requiresMaterialRequest = true;
+                    const canStartProduction = canStartWithMaterialRequest(linkedMaterialRequest);
                     const totalCost = toNumber(
                       production.production_cost_total
                       ?? production.ingredient_cost_total
@@ -519,16 +534,6 @@ export default function Production() {
                             Review Request
                           </Button>
                         )}
-                        {production.status === 'approved' && can('create_material_request') && requiresMaterialRequest && !linkedMaterialRequest && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => createMaterialRequestMutation.mutate(production.id)}
-                            disabled={createMaterialRequestMutation.isPending}
-                          >
-                            {createMaterialRequestMutation.isPending ? 'Creating MR...' : 'Create MR'}
-                          </Button>
-                        )}
                         {production.status === 'approved' && can('start_production') && (
                           <Button 
                             size="sm" 
@@ -571,14 +576,14 @@ export default function Production() {
                           </Badge>
                         ))}
                       </div>
-                      {requiresMaterialRequest && !linkedMaterialRequest ? (
-                        <p className="mt-3 text-sm text-amber-700">
-                          {shortages.length} ingredient shortage(s) detected. Chef must create a material request before starting production.
-                        </p>
-                      ) : null}
                       {linkedMaterialRequest ? (
                         <p className="mt-3 text-sm text-indigo-700">
                           Linked material request: {linkedMaterialRequest.request_number} ({String(linkedMaterialRequest.status || '').replace(/_/g, ' ')})
+                        </p>
+                      ) : null}
+                      {production.status === 'approved' && linkedMaterialRequest && String(linkedMaterialRequest.status || '').toLowerCase() !== 'acknowledged' ? (
+                        <p className="mt-3 text-sm text-amber-700">
+                          Procurement must acknowledge the material request before production can start.
                         </p>
                       ) : null}
                       {production.review_notes ? (
@@ -606,7 +611,7 @@ export default function Production() {
             <form onSubmit={(event) => handleSubmit(event, editingProduction ? editingProduction.status || 'draft' : 'draft')} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="site">Site *</Label>
+                  <Label htmlFor="site">Project / Site *</Label>
                   <Select
                     value={formData.site_id}
                     onValueChange={(value) => setFormData({ ...formData, site_id: value })}
@@ -615,7 +620,7 @@ export default function Production() {
                       <SelectValue placeholder="Select site" />
                     </SelectTrigger>
                     <SelectContent>
-                      {sites.map(site => (
+                      {visibleSites.map(site => (
                         <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
                       ))}
                     </SelectContent>
@@ -733,7 +738,7 @@ export default function Production() {
                   {calculatedIngredients.some(ing => !ing.sufficient) && (
                     <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
                       <p className="text-sm text-amber-800">
-                        <strong>Note:</strong> Material request can be created only after production approval for insufficient items
+                        <strong>Note:</strong> A linked material request will be created with this production request and released to procurement after approval.
                       </p>
                     </div>
                   )}
@@ -831,7 +836,7 @@ export default function Production() {
                     <div>
                       <p className="font-medium text-amber-900">Material Request Required After Approval</p>
                       <p className="text-sm text-amber-700 mt-1">
-                        Once the manager approves this production request, the chef can create a material request for {inventoryCheck.filter(ing => !ing.sufficient).length} shortage item(s) and then start production.
+                        Once the manager approves this production request, the linked material request moves to procurement for acknowledgement. After procurement acknowledges it, the chef can start production.
                       </p>
                     </div>
                   </div>

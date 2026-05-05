@@ -144,9 +144,11 @@ async function getLocationScope(user) {
   }
 
   const assignedRootIds = getAssignedRootIds(user);
-  const scopedIds = user?.visibility_scope === 'assigned_only'
-    ? assignedRootIds
-    : collectDescendantIds(assignedRootIds, graph);
+  const explicitAllowedIds = normalizeArray(user?.allowed_site_ids);
+  const visibilityScope = String(user?.visibility_scope || '').toLowerCase();
+  const scopedIds = ['assigned', 'assigned_only', 'custom'].includes(visibilityScope)
+    ? (explicitAllowedIds.length ? explicitAllowedIds : assignedRootIds)
+    : collectDescendantIds(explicitAllowedIds.length ? explicitAllowedIds : assignedRootIds, graph);
   const accessibleIds = new Set(scopedIds);
   const ancestorIds = new Set(collectAncestorIds(assignedRootIds, graph));
   const accessibleTreeIds = new Set([...accessibleIds, ...ancestorIds]);
@@ -164,6 +166,10 @@ async function getLocationScope(user) {
 function filterRecordsByLocation(user, entity, records = [], scope) {
   if (user?.role === 'admin' || !LOCATION_SCOPED_ENTITIES.has(entity)) {
     return records;
+  }
+
+  if (entity === 'Site') {
+    return records.filter((record) => scope.accessibleSiteIds.has(String(record.id)));
   }
 
   return records.filter((record) =>

@@ -342,10 +342,10 @@ export const base44 = {
     list() {
       return apiRequest('/api/material-requests');
     },
-    createFromProduction(productionId) {
+    createFromProduction(productionId, data = {}) {
       return apiRequest(`/api/material-requests/from-production/${productionId}`, {
         method: 'POST',
-        body: JSON.stringify({})
+        body: JSON.stringify(data)
       });
     },
     acknowledge(id, data = {}) {

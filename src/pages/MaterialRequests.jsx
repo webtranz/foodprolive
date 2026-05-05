@@ -12,6 +12,7 @@ import { CheckCircle2, ClipboardList, FileText, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 
 const STATUS_CONFIG = {
+  awaiting_production_approval: { color: 'bg-slate-100 text-slate-700', label: 'Awaiting Production Approval' },
   pending_procurement_ack: { color: 'bg-amber-100 text-amber-700', label: 'Pending Procurement Acknowledgement' },
   acknowledged: { color: 'bg-emerald-100 text-emerald-700', label: 'Acknowledged' },
   cancelled: { color: 'bg-red-100 text-red-700', label: 'Cancelled' },
@@ -28,6 +29,10 @@ export default function MaterialRequests() {
     queryKey: ['materialRequestsWorkflow'],
     queryFn: () => base44.materialRequests.list()
   });
+
+  const visibleRequests = materialRequests.filter((request) =>
+    String(request.status || '').toLowerCase() !== 'awaiting_production_approval'
+  );
 
   const acknowledgeMutation = useMutation({
     mutationFn: ({ id, notes: procurementNotes }) => base44.materialRequests.acknowledge(id, { notes: procurementNotes }),
@@ -47,19 +52,19 @@ export default function MaterialRequests() {
           description="Track production-related material requests from chef submission through procurement acknowledgement."
         />
 
-        {materialRequests.length === 0 ? (
+        {visibleRequests.length === 0 ? (
           <Card className="border-dashed border-slate-300 bg-white">
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <ClipboardList className="mb-4 h-10 w-10 text-slate-400" />
               <h3 className="text-lg font-semibold text-slate-900">No material requests yet</h3>
               <p className="mt-2 max-w-xl text-sm text-slate-500">
-                Approved production batches with shortages will appear here after the chef creates the material request.
+                Approved production requests will appear here once the linked material request is released to procurement for acknowledgement.
               </p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid gap-4">
-            {materialRequests.map((request) => {
+            {visibleRequests.map((request) => {
               const statusConfig = STATUS_CONFIG[request.status] || { color: 'bg-slate-100 text-slate-700', label: request.status || 'Unknown' };
               const totalItems = Array.isArray(request.items) ? request.items.length : 0;
               return (

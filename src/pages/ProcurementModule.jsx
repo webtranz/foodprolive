@@ -207,6 +207,10 @@ export default function ProcurementModule() {
     queryClient.invalidateQueries({ queryKey: ['inventory'] });
   };
 
+  const visibleMaterialRequests = materialRequests.filter((request) =>
+    String(request.status || '').toLowerCase() !== 'awaiting_production_approval'
+  );
+
   const supplierMutation = useMutation({
     mutationFn: (payload) => {
       const body = {
@@ -485,7 +489,7 @@ export default function ProcurementModule() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {materialRequests.map((request) => (
+                    {visibleMaterialRequests.map((request) => (
                       <TableRow key={request.id}>
                         <TableCell className="font-medium">{request.request_number}</TableCell>
                         <TableCell>{request.site_name || '-'}</TableCell>
@@ -515,7 +519,7 @@ export default function ProcurementModule() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {materialRequests.length === 0 ? (
+                    {visibleMaterialRequests.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={8} className="py-10 text-center text-sm text-slate-500">
                           No production material requests are waiting for procurement.
