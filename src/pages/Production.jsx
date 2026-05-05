@@ -84,6 +84,11 @@ export default function Production() {
     queryFn: () => base44.entities.Production.list('-production_date', 100)
   });
 
+  const { data: materialRequests = [] } = useQuery({
+    queryKey: ['materialRequestsWorkflow'],
+    queryFn: () => base44.materialRequests.list()
+  });
+
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.Production.create(data),
     onSuccess: () => {
@@ -119,6 +124,18 @@ export default function Production() {
     },
     onError: (error) => {
       setActionError(error.message || 'Unable to update production status');
+    }
+  });
+
+  const createMaterialRequestMutation = useMutation({
+    mutationFn: (productionId) => base44.materialRequests.createFromProduction(productionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      setActionError('');
+    },
+    onError: (error) => {
+      setActionError(error.message || 'Unable to create material request');
     }
   });
 
@@ -191,6 +208,30 @@ export default function Production() {
     return matchesSite && matchesDate;
   });
 
+  const materialRequestMap = materialRequests.reduce((map, request) => {
+    if (request?.source_production_id && !map[request.source_production_id]) {
+      map[request.source_production_id] = request;
+    }
+    return map;
+  }, {});
+
+  const getProductionShortages = (production) => {
+    const siteInventory = inventory.filter((item) => item.site_id === production.site_id);
+    return (production.ingredients_used || []).map((ingredient) => {
+      const stockItem = siteInventory.find((item) => item.ingredient_id === ingredient.ingredient_id);
+      const requiredQuantity = toNumber(ingredient.planned_quantity ?? ingredient.adjusted_quantity, 0);
+      const currentStock = toNumber(stockItem?.quantity, 0);
+      const shortage = Math.max(0, requiredQuantity - currentStock);
+
+      return {
+        ...ingredient,
+        current_stock: Number(currentStock.toFixed(2)),
+        shortage: Number(shortage.toFixed(2)),
+        sufficient: shortage <= 0
+      };
+    }).filter((ingredient) => ingredient.shortage > 0);
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     const site = sites.find(s => s.id === formData.site_id);
@@ -225,49 +266,17 @@ export default function Production() {
     if (!selectedProduction) return;
 
     if (approve) {
-      // Approve production
       await base44.entities.Production.update(selectedProduction.id, {
         status: 'approved'
       });
-
-      // Check for shortages and create material request
-      const shortages = inventoryCheck.filter(ing => !ing.sufficient);
-      if (shortages.length > 0) {
-        const site = sites.find(s => s.id === selectedProduction.site_id);
-        
-        const materialRequest = {
-          request_number: `MR-PROD-${Date.now()}`,
-          site_id: selectedProduction.site_id,
-          site_name: site?.name,
-          request_date: format(new Date(), 'yyyy-MM-dd'),
-          period_start: selectedProduction.production_date,
-          period_end: selectedProduction.production_date,
-          items: shortages.map(ing => ({
-            ingredient_id: ing.ingredient_id,
-            ingredient_name: ing.ingredient_name,
-            required_quantity: ing.adjusted_quantity,
-            current_stock: ing.current_stock,
-            request_quantity: ing.shortage,
-            unit: ing.unit,
-            estimated_cost: 0,
-            d365_item_code: `ITEM-${ing.ingredient_id?.substring(0, 8)}`
-          })),
-          total_estimated_cost: 0,
-          status: 'pending_chef_approval',
-          notes: `Auto-generated from production: ${selectedProduction.recipe_name}`
-        };
-
-        await base44.entities.MaterialRequest.create(materialRequest);
-      }
     } else {
-      // Reject production
       await base44.entities.Production.update(selectedProduction.id, {
         status: 'rejected'
       });
     }
 
     queryClient.invalidateQueries({ queryKey: ['productions'] });
-    queryClient.invalidateQueries({ queryKey: ['materialRequests'] });
+    queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
     setShowApprovalDialog(false);
     setSelectedProduction(null);
   };
@@ -375,6 +384,10 @@ export default function Production() {
               <Card key={production.id} className="border-slate-100 shadow-sm">
                 <CardContent className="p-6">
                   {(() => {
+                    const linkedMaterialRequest = materialRequestMap[production.id] || null;
+                    const shortages = getProductionShortages(production);
+                    const requiresMaterialRequest = shortages.length > 0;
+                    const canStartProduction = !requiresMaterialRequest || Boolean(linkedMaterialRequest);
                     const totalCost = toNumber(
                       production.production_cost_total
                       ?? production.ingredient_cost_total
@@ -400,6 +413,11 @@ export default function Production() {
                           <Badge className={STATUS_COLORS[production.status]}>
                             {production.status?.replace(/_/g, ' ')}
                           </Badge>
+                          {linkedMaterialRequest ? (
+                            <Badge variant="outline" className="border-indigo-200 text-indigo-700">
+                              MR {linkedMaterialRequest.request_number} • {String(linkedMaterialRequest.status || '').replace(/_/g, ' ')}
+                            </Badge>
+                          ) : null}
                           <span className="text-sm text-slate-500">{production.site_name}</span>
                           <span className="text-sm text-slate-500">•</span>
                           <span className="text-sm text-slate-500 capitalize">{production.meal_type}</span>
@@ -436,6 +454,16 @@ export default function Production() {
                             Review & Approve
                           </Button>
                         )}
+                        {production.status === 'approved' && can('manage_production') && requiresMaterialRequest && !linkedMaterialRequest && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => createMaterialRequestMutation.mutate(production.id)}
+                            disabled={createMaterialRequestMutation.isPending}
+                          >
+                            {createMaterialRequestMutation.isPending ? 'Creating MR...' : 'Create MR'}
+                          </Button>
+                        )}
                         {production.status === 'approved' && can('manage_production') && (
                           <Button 
                             size="sm" 
@@ -445,11 +473,12 @@ export default function Production() {
                               status: 'in_progress',
                               production 
                             })}
+                            disabled={!canStartProduction || updateStatusMutation.isPending}
                           >
                             Start Production
                           </Button>
                         )}
-                        {['approved', 'in_progress'].includes(production.status) && can('complete_production') && (
+                        {production.status === 'in_progress' && can('complete_production') && (
                           <Button 
                             size="sm" 
                             className="bg-emerald-600 hover:bg-emerald-700"
@@ -460,7 +489,7 @@ export default function Production() {
                             })}
                             disabled={updateStatusMutation.isPending}
                           >
-                            {updateStatusMutation.isPending ? 'Completing...' : production.status === 'approved' ? 'Complete Batch' : 'Complete'}
+                            {updateStatusMutation.isPending ? 'Completing...' : 'Complete'}
                           </Button>
                         )}
                       </div>
@@ -477,6 +506,16 @@ export default function Production() {
                           </Badge>
                         ))}
                       </div>
+                      {requiresMaterialRequest && !linkedMaterialRequest ? (
+                        <p className="mt-3 text-sm text-amber-700">
+                          {shortages.length} ingredient shortage(s) detected. Chef must create a material request before starting production.
+                        </p>
+                      ) : null}
+                      {linkedMaterialRequest ? (
+                        <p className="mt-3 text-sm text-indigo-700">
+                          Linked material request: {linkedMaterialRequest.request_number} ({String(linkedMaterialRequest.status || '').replace(/_/g, ' ')})
+                        </p>
+                      ) : null}
                     </div>
                   )}
                       </>
@@ -710,9 +749,9 @@ export default function Production() {
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5" />
                     <div>
-                      <p className="font-medium text-amber-900">Material Request Required</p>
+                      <p className="font-medium text-amber-900">Material Request Required After Approval</p>
                       <p className="text-sm text-amber-700 mt-1">
-                        Upon approval, a material request will be automatically created for {inventoryCheck.filter(ing => !ing.sufficient).length} ingredient(s) and sent for procurement.
+                        Once the manager approves this production request, the chef can create a material request for {inventoryCheck.filter(ing => !ing.sufficient).length} shortage item(s) and then start production.
                       </p>
                     </div>
                   </div>
@@ -733,7 +772,7 @@ export default function Production() {
                   className="bg-green-600 hover:bg-green-700"
                 >
                   <CheckCircle2 className="w-4 h-4 mr-2" />
-                  Approve & Create MR
+                  Approve Request
                 </Button>
               </DialogFooter>
             </div>

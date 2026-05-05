@@ -338,6 +338,23 @@ export const base44 = {
       return apiRequest('/api/procurement/performance');
     }
   },
+  materialRequests: {
+    list() {
+      return apiRequest('/api/material-requests');
+    },
+    createFromProduction(productionId) {
+      return apiRequest(`/api/material-requests/from-production/${productionId}`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+    },
+    acknowledge(id, data = {}) {
+      return apiRequest(`/api/material-requests/${id}/acknowledge`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    }
+  },
   inventory: {
     receive(data) {
       return apiRequest('/api/inventory/receive', {

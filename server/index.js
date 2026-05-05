@@ -171,6 +171,15 @@ function requirePermission(permission) {
   };
 }
 
+function requireAnyPermission(permissions) {
+  return (request, response, next) => {
+    if (!request.user || !permissions.some((permission) => hasPermission(request.user, permission))) {
+      return response.status(403).json({ message: 'You do not have permission to access this resource' });
+    }
+    return next();
+  };
+}
+
 async function prepareEntityPayload(user, entity, payload = {}, existing = null) {
   const scope = await getLocationScope(user);
   assertPayloadLocationAccess(user, entity, payload, scope);
@@ -213,6 +222,47 @@ function filterRowsByAccessibleSites(rows = [], scope, fields = ['site_id']) {
 function numericMatch(input, fallback = 0) {
   const value = Number(input);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function buildInventoryShortages(production = {}, inventoryRows = [], ingredients = []) {
+  return (Array.isArray(production.ingredients_used) ? production.ingredients_used : [])
+    .map((ingredientLine) => {
+      const requiredQuantity = numericMatch(
+        ingredientLine.planned_quantity ?? ingredientLine.adjusted_quantity ?? ingredientLine.required_quantity,
+        0
+      );
+      const inventoryItem = inventoryRows.find((item) => item.ingredient_id === ingredientLine.ingredient_id);
+      const ingredientMaster = ingredients.find((item) => item.id === ingredientLine.ingredient_id);
+      const currentStock = numericMatch(inventoryItem?.quantity, 0);
+      const shortageQuantity = Math.max(0, requiredQuantity - currentStock);
+      const unitCost = numericMatch(
+        ingredientLine.unit_cost ?? inventoryItem?.average_cost ?? ingredientMaster?.cost_per_unit,
+        0
+      );
+
+      return {
+        ingredient_id: ingredientLine.ingredient_id,
+        ingredient_name: ingredientLine.ingredient_name,
+        unit: ingredientLine.unit || ingredientMaster?.unit || inventoryItem?.unit || 'unit',
+        required_quantity: Number(requiredQuantity.toFixed(2)),
+        current_stock: Number(currentStock.toFixed(2)),
+        shortage_quantity: Number(shortageQuantity.toFixed(2)),
+        estimated_unit_cost: Number(unitCost.toFixed(2)),
+        estimated_cost: Number((shortageQuantity * unitCost).toFixed(2))
+      };
+    })
+    .filter((item) => item.ingredient_id && item.shortage_quantity > 0);
+}
+
+async function getScopedProduction(request, productionId) {
+  const scope = await getLocationScope(request.user);
+  const production = await findDocument('Production', productionId);
+  if (!production) {
+    return { scope, production: null };
+  }
+
+  const scopedProduction = filterRowsByAccessibleSites([production], scope).length ? production : null;
+  return { scope, production: scopedProduction };
 }
 
 function normalizeBaseUrl(value) {
@@ -836,6 +886,121 @@ app.post('/api/pos/webhooks/:sourceId', requireAuth, requireRole(['admin']), asy
       requestPayload: { sourceId: request.params.sourceId, webhook: true }
     });
     response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/material-requests', requireAuth, requireAnyPermission(['manage_production', 'manage_procurement', 'approve_procurement']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const records = await listDocuments('MaterialRequest', {
+      sort: '-request_date',
+      limit: 200
+    });
+    response.json(filterRowsByAccessibleSites(records, scope));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/material-requests/from-production/:id', requireAuth, requirePermission('manage_production'), async (request, response, next) => {
+  try {
+    const { scope, production } = await getScopedProduction(request, request.params.id);
+    if (!production) {
+      return response.status(404).json({ message: 'Production record not found' });
+    }
+
+    if (!['approved', 'in_progress'].includes(String(production.status || ''))) {
+      return response.status(400).json({ message: 'Material requests can only be created after production approval.' });
+    }
+
+    const existingRequests = await listDocuments('MaterialRequest', {
+      filters: { source_production_id: production.id },
+      sort: '-request_date',
+      limit: 20
+    });
+    const scopedRequests = filterRowsByAccessibleSites(existingRequests, scope);
+    const activeRequest = scopedRequests.find((item) => !['cancelled', 'rejected'].includes(String(item.status || '').toLowerCase()));
+    if (activeRequest) {
+      return response.status(400).json({ message: 'A material request already exists for this production batch.' });
+    }
+
+    const [inventoryRows, ingredients] = await Promise.all([
+      listDocuments('Inventory', {
+        filters: { site_id: production.site_id },
+        limit: 2000
+      }),
+      listDocuments('Ingredient', { limit: 2000 })
+    ]);
+
+    const shortages = buildInventoryShortages(production, inventoryRows, ingredients);
+    if (!shortages.length) {
+      return response.status(400).json({ message: 'No shortages found. Material request is not required for this production batch.' });
+    }
+
+    const payload = {
+      request_number: `MR-PROD-${Date.now()}`,
+      site_id: production.site_id || null,
+      site_name: production.site_name || null,
+      request_date: new Date().toISOString().slice(0, 10),
+      period_start: production.production_date || null,
+      period_end: production.production_date || null,
+      items: shortages.map((item) => ({
+        ingredient_id: item.ingredient_id,
+        ingredient_name: item.ingredient_name,
+        required_quantity: item.required_quantity,
+        current_stock: item.current_stock,
+        request_quantity: item.shortage_quantity,
+        unit: item.unit,
+        estimated_cost: item.estimated_cost
+      })),
+      total_estimated_cost: shortages.reduce((sum, item) => sum + item.estimated_cost, 0),
+      status: 'pending_procurement_ack',
+      source_type: 'production',
+      source_production_id: production.id,
+      source_production_name: production.recipe_name || null,
+      created_by: request.user.email,
+      created_by_name: request.user.full_name || request.user.email,
+      notes: request.body?.notes || `Requested from production batch ${production.recipe_name || production.id}`
+    };
+
+    const created = await createDocument('MaterialRequest', payload);
+    await updateDocument('Production', production.id, {
+      linked_material_request_id: created.id,
+      linked_material_request_number: created.request_number,
+      material_request_status: created.status
+    });
+
+    response.status(201).json(created);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/material-requests/:id/acknowledge', requireAuth, requireAnyPermission(['manage_procurement', 'approve_procurement']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const materialRequest = await findDocument('MaterialRequest', request.params.id);
+    if (!materialRequest || !filterRowsByAccessibleSites([materialRequest], scope).length) {
+      return response.status(404).json({ message: 'Material request not found' });
+    }
+
+    const updated = await updateDocument('MaterialRequest', request.params.id, {
+      status: 'acknowledged',
+      acknowledged_by: request.user.email,
+      acknowledged_by_name: request.user.full_name || request.user.email,
+      acknowledged_at: new Date().toISOString(),
+      procurement_notes: request.body?.notes || materialRequest.procurement_notes || null
+    });
+
+    if (materialRequest.source_production_id) {
+      await updateDocument('Production', materialRequest.source_production_id, {
+        material_request_status: 'acknowledged'
+      });
+    }
+
+    response.json(updated);
   } catch (error) {
     next(error);
   }

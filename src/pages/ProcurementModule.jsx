@@ -146,6 +146,12 @@ export default function ProcurementModule() {
     queryFn: () => base44.procurement.listRequests()
   });
 
+  const { data: materialRequests = [] } = useQuery({
+    queryKey: ['materialRequestsWorkflow'],
+    queryFn: () => base44.materialRequests.list(),
+    enabled: can('manage_procurement') || can('approve_procurement')
+  });
+
   const { data: orders = [] } = useQuery({
     queryKey: ['procurementOrders'],
     queryFn: () => base44.procurement.listOrders()
@@ -190,6 +196,7 @@ export default function ProcurementModule() {
   });
 
   const refreshProcurement = () => {
+    queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
     queryClient.invalidateQueries({ queryKey: ['procurementSuppliers'] });
     queryClient.invalidateQueries({ queryKey: ['procurementRequests'] });
     queryClient.invalidateQueries({ queryKey: ['procurementOrders'] });
@@ -252,6 +259,14 @@ export default function ProcurementModule() {
     onSuccess: () => refreshProcurement()
   });
 
+  const acknowledgeMaterialRequestMutation = useMutation({
+    mutationFn: ({ id, notes }) => base44.materialRequests.acknowledge(id, { notes }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+    }
+  });
+
   const createOrderMutation = useMutation({
     mutationFn: (payload) => base44.procurement.createOrder(payload),
     onSuccess: () => {
@@ -311,12 +326,13 @@ export default function ProcurementModule() {
 
   const procurementStats = useMemo(() => ({
     supplierCount: suppliers.length,
+    pendingMaterialRequests: materialRequests.filter((entry) => entry.status === 'pending_procurement_ack').length,
     pendingRequests: requests.filter((entry) => entry.status === 'pending').length,
     approvedOrders: orders.filter((entry) => entry.status === 'approved').length,
     receivedOrders: orders.filter((entry) => entry.status === 'received').length,
     pendingInvoices: invoices.filter((entry) => ['pending', 'draft'].includes(String(entry.status || '').toLowerCase())).length,
     lowStockCount: lowStockItems.length
-  }), [suppliers.length, requests, orders, invoices, lowStockItems.length]);
+  }), [suppliers.length, materialRequests, requests, orders, invoices, lowStockItems.length]);
 
   const openEditSupplier = (supplier) => {
     setEditingSupplier(supplier);
@@ -429,6 +445,7 @@ export default function ProcurementModule() {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
           <KPI title="Suppliers" value={procurementStats.supplierCount} subtitle="Configured vendor accounts" icon={Building2} tone="bg-blue-100 text-blue-700" />
+          <KPI title="MR To Acknowledge" value={procurementStats.pendingMaterialRequests} subtitle="Chef-raised production requests" icon={ClipboardList} tone="bg-violet-100 text-violet-700" />
           <KPI title="Pending Requests" value={procurementStats.pendingRequests} subtitle="Awaiting approval" icon={ClipboardList} tone="bg-amber-100 text-amber-700" />
           <KPI title="Approved Orders" value={procurementStats.approvedOrders} subtitle="Ready for delivery" icon={ShoppingCart} tone="bg-indigo-100 text-indigo-700" />
           <KPI title="Received Orders" value={procurementStats.receivedOrders} subtitle="Fully delivered" icon={Truck} tone="bg-emerald-100 text-emerald-700" />
@@ -438,6 +455,7 @@ export default function ProcurementModule() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="h-auto w-full flex-wrap justify-start gap-2 bg-transparent p-0">
+            <TabsTrigger value="material-requests">Material Requests</TabsTrigger>
             <TabsTrigger value="requests">Purchase Requests</TabsTrigger>
             <TabsTrigger value="orders">Purchase Orders</TabsTrigger>
             <TabsTrigger value="receipts">Goods Receipts</TabsTrigger>
@@ -446,6 +464,69 @@ export default function ProcurementModule() {
             <TabsTrigger value="price">Price Comparison</TabsTrigger>
             <TabsTrigger value="performance">Performance</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="material-requests" className="space-y-4">
+            <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
+              <CardHeader>
+                <CardTitle>Chef Material Requests</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Request #</TableHead>
+                      <TableHead>Project</TableHead>
+                      <TableHead>Production</TableHead>
+                      <TableHead>Created By</TableHead>
+                      <TableHead>Items</TableHead>
+                      <TableHead>Est. Cost</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {materialRequests.map((request) => (
+                      <TableRow key={request.id}>
+                        <TableCell className="font-medium">{request.request_number}</TableCell>
+                        <TableCell>{request.site_name || '-'}</TableCell>
+                        <TableCell>{request.source_production_name || '-'}</TableCell>
+                        <TableCell>{request.created_by_name || request.created_by || '-'}</TableCell>
+                        <TableCell>{request.items?.length || 0}</TableCell>
+                        <TableCell>{formatCurrency(request.total_estimated_cost)}</TableCell>
+                        <TableCell>
+                          <Badge className={statusBadgeClass(request.status)}>{String(request.status || '').replace(/_/g, ' ')}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          {request.status === 'pending_procurement_ack' && can('manage_procurement') ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => acknowledgeMaterialRequestMutation.mutate({
+                                id: request.id,
+                                notes: 'Procurement team acknowledged and will source the shortage items.'
+                              })}
+                              disabled={acknowledgeMaterialRequestMutation.isPending}
+                            >
+                              Acknowledge
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-slate-400">{request.acknowledged_by_name ? `Ack by ${request.acknowledged_by_name}` : 'Tracked'}</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {materialRequests.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="py-10 text-center text-sm text-slate-500">
+                          No production material requests are waiting for procurement.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="requests" className="space-y-4">
             <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">

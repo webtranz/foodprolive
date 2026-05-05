@@ -72,7 +72,7 @@ export const systemRoleDefinitions = {
     description: 'Kitchen leadership role focused on recipes, menus, production, and food quality.',
     permissions: [
       'view_dashboard', 'view_reports', 'manage_ingredients', 'manage_recipes',
-      'manage_menu_planning', 'manage_production', 'approve_production',
+      'manage_menu_planning', 'manage_production',
       'complete_production', 'manage_waste', 'approve_waste', 'manage_quality'
     ]
   },
@@ -242,7 +242,7 @@ export const entityRegistry = {
     defaults: { status: 'posted' }
   },
   MaterialRequest: {
-    defaults: { status: 'pending' }
+    defaults: { status: 'pending_procurement_ack', source_type: 'manual' }
   },
   MenuPlan: {
     defaults: { status: 'planned' }
