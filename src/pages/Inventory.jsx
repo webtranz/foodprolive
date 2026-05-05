@@ -13,7 +13,9 @@ import {
   History,
   Package,
   Plus,
+  PlusCircle,
   Search,
+  SlidersHorizontal,
   TrendingDown,
   Upload,
   Wallet
