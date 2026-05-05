@@ -20,6 +20,7 @@ import {
   createEmailLog
 } from './db.js';
 import { authorizeEntityAction, ensureKnownEntity } from './entities.js';
+import { getUserEffectiveRole, hasPermission } from './entities.js';
 import {
   getPosSources,
   createPosSource,
@@ -153,7 +154,17 @@ async function requireAuth(request, response, next) {
 
 function requireRole(roles) {
   return (request, response, next) => {
-    if (!request.user || !roles.includes(request.user.role)) {
+    const effectiveRole = getUserEffectiveRole(request.user);
+    if (!request.user || !roles.includes(effectiveRole)) {
+      return response.status(403).json({ message: 'You do not have permission to access this resource' });
+    }
+    return next();
+  };
+}
+
+function requirePermission(permission) {
+  return (request, response, next) => {
+    if (!request.user || !hasPermission(request.user, permission)) {
       return response.status(403).json({ message: 'You do not have permission to access this resource' });
     }
     return next();
@@ -1066,7 +1077,7 @@ app.post('/api/inventory/transfer', requireAuth, requireRole(['admin', 'manager'
   }
 });
 
-app.post('/api/inventory/production/:id/complete', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/inventory/production/:id/complete', requireAuth, requirePermission('complete_production'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     const production = await findDocument('Production', request.params.id);

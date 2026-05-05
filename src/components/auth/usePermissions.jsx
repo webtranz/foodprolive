@@ -1,46 +1,83 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 
-/**
- * Role Permission Matrix:
- * admin   — full access to everything
- * manager — can create sessions, view reports, manage groups; cannot manage users
- * user    — can only scan QR codes and view attendance dashboard
- */
-const PERMISSIONS = {
-  admin: [
-    'scan_qr', 'view_dashboard', 'view_reports', 'create_session',
-    'manage_sessions', 'manage_groups', 'manage_users', 'delete_records',
-    'export_data', 'view_ai_waste', 'camera_detection',
-  ],
-  manager: [
-    'scan_qr', 'view_dashboard', 'view_reports', 'create_session',
-    'manage_sessions', 'manage_groups', 'export_data', 'view_ai_waste', 'camera_detection',
-  ],
-  user: [
-    'scan_qr', 'view_dashboard',
-  ],
+const SYSTEM_ROLES = {
+  admin: {
+    access_level: 'admin',
+    permissions: [
+      'scan_qr', 'view_dashboard', 'view_reports', 'export_data', 'create_session',
+      'manage_sessions', 'manage_groups', 'manage_users', 'manage_roles', 'delete_records',
+      'view_ai_waste', 'camera_detection', 'manage_projects', 'manage_ingredients',
+      'manage_inventory', 'transfer_inventory', 'manage_recipes', 'manage_menu_planning',
+      'manage_production', 'approve_production', 'complete_production', 'manage_procurement',
+      'approve_procurement', 'manage_suppliers', 'manage_waste', 'approve_waste',
+      'manage_pos', 'manage_erp', 'manage_forecasting', 'manage_attendance',
+      'approve_attendance', 'manage_quality'
+    ]
+  },
+  manager: {
+    access_level: 'manager',
+    permissions: [
+      'scan_qr', 'view_dashboard', 'view_reports', 'export_data', 'create_session',
+      'manage_sessions', 'manage_groups', 'view_ai_waste', 'camera_detection',
+      'manage_projects', 'manage_ingredients', 'manage_inventory', 'transfer_inventory',
+      'manage_recipes', 'manage_menu_planning', 'manage_production', 'approve_production',
+      'complete_production', 'manage_procurement', 'approve_procurement', 'manage_suppliers',
+      'manage_waste', 'approve_waste', 'manage_pos', 'manage_forecasting',
+      'manage_attendance', 'approve_attendance', 'manage_quality'
+    ]
+  },
+  user: {
+    access_level: 'user',
+    permissions: ['scan_qr', 'view_dashboard']
+  }
 };
 
 export function usePermissions() {
   const [currentUser, setCurrentUser] = useState(null);
+  const [roleProfiles, setRoleProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    base44.auth.me()
-      .then(u => { setCurrentUser(u); setLoading(false); })
+    Promise.all([
+      base44.auth.me(),
+      base44.entities.RoleProfile.list().catch(() => [])
+    ])
+      .then(([user, profiles]) => {
+        setCurrentUser(user);
+        setRoleProfiles(Array.isArray(profiles) ? profiles : []);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, []);
 
   const role = currentUser?.role || 'user';
-  const permissions = PERMISSIONS[role] || PERMISSIONS.user;
+  const roleProfile = roleProfiles.find((profile) => profile.role_key === role) || SYSTEM_ROLES[role] || null;
+  const accessLevel = currentUser?.role_access_level || roleProfile?.access_level || (['admin', 'manager', 'user'].includes(role) ? role : 'user');
+  const permissions = Array.from(new Set([
+    ...(SYSTEM_ROLES[accessLevel]?.permissions || []),
+    ...(roleProfile?.permissions || currentUser?.role_permissions || [])
+  ]));
+
   const can = (permission) => permissions.includes(permission);
-  const isAdmin = role === 'admin';
-  const isManager = role === 'manager' || role === 'admin';
+  const isAdmin = accessLevel === 'admin';
+  const isManager = accessLevel === 'manager' || accessLevel === 'admin';
   const allowedSiteIds = Array.isArray(currentUser?.allowed_site_ids)
     ? currentUser.allowed_site_ids
     : (currentUser?.site_id ? [currentUser.site_id] : []);
   const visibilityScope = currentUser?.visibility_scope || (isAdmin ? 'all_locations' : 'subtree');
 
-  return { currentUser, role, can, isAdmin, isManager, allowedSiteIds, visibilityScope, loading };
+  return {
+    currentUser,
+    role,
+    accessLevel,
+    roleProfile,
+    permissions,
+    can,
+    isAdmin,
+    isManager,
+    allowedSiteIds,
+    visibilityScope,
+    loading
+  };
 }

@@ -6,6 +6,153 @@ const booleanOptional = z.coerce.boolean().optional().nullable();
 const arrayOptional = z.array(z.any()).optional().nullable();
 const objectOptional = z.record(z.any()).optional().nullable();
 
+export const permissionCatalog = [
+  { key: 'view_dashboard', label: 'View Dashboard' },
+  { key: 'view_reports', label: 'View Reports' },
+  { key: 'export_data', label: 'Export Data' },
+  { key: 'manage_projects', label: 'Manage Projects' },
+  { key: 'manage_ingredients', label: 'Manage Ingredients' },
+  { key: 'manage_inventory', label: 'Manage Inventory' },
+  { key: 'transfer_inventory', label: 'Transfer Inventory' },
+  { key: 'manage_recipes', label: 'Manage Recipes' },
+  { key: 'manage_menu_planning', label: 'Manage Menu Planning' },
+  { key: 'manage_production', label: 'Manage Production Plans' },
+  { key: 'approve_production', label: 'Approve Production' },
+  { key: 'complete_production', label: 'Complete Production' },
+  { key: 'manage_procurement', label: 'Manage Procurement' },
+  { key: 'approve_procurement', label: 'Approve Procurement' },
+  { key: 'manage_suppliers', label: 'Manage Suppliers' },
+  { key: 'manage_waste', label: 'Manage Food Waste' },
+  { key: 'approve_waste', label: 'Approve High-Value Waste' },
+  { key: 'manage_pos', label: 'Manage POS Integration' },
+  { key: 'manage_erp', label: 'Manage ERP & Accounting Integration' },
+  { key: 'manage_forecasting', label: 'Manage Forecasting' },
+  { key: 'manage_attendance', label: 'Manage Attendance & Scheduling' },
+  { key: 'approve_attendance', label: 'Approve Attendance' },
+  { key: 'manage_quality', label: 'Manage Quality Control' },
+  { key: 'manage_users', label: 'Manage Users' },
+  { key: 'manage_roles', label: 'Manage Roles & Permissions' }
+];
+
+export const allPermissionKeys = permissionCatalog.map((permission) => permission.key);
+
+export const systemRoleDefinitions = {
+  admin: {
+    role_key: 'admin',
+    name: 'Administrator',
+    access_level: 'admin',
+    description: 'Central administration with unrestricted access across all modules and locations.',
+    permissions: [...allPermissionKeys]
+  },
+  manager: {
+    role_key: 'manager',
+    name: 'Operations Manager',
+    access_level: 'manager',
+    description: 'Cross-functional operational management for assigned projects and kitchens.',
+    permissions: [
+      'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
+      'manage_ingredients', 'manage_inventory', 'transfer_inventory', 'manage_recipes',
+      'manage_menu_planning', 'manage_production', 'approve_production', 'complete_production',
+      'manage_procurement', 'approve_procurement', 'manage_suppliers', 'manage_waste',
+      'approve_waste', 'manage_pos', 'manage_forecasting', 'manage_attendance',
+      'approve_attendance', 'manage_quality'
+    ]
+  },
+  user: {
+    role_key: 'user',
+    name: 'General User',
+    access_level: 'user',
+    description: 'Basic operational visibility for assigned projects.',
+    permissions: ['view_dashboard']
+  },
+  chef: {
+    role_key: 'chef',
+    name: 'Chef',
+    access_level: 'manager',
+    description: 'Kitchen leadership role focused on recipes, menus, production, and food quality.',
+    permissions: [
+      'view_dashboard', 'view_reports', 'manage_ingredients', 'manage_recipes',
+      'manage_menu_planning', 'manage_production', 'approve_production',
+      'complete_production', 'manage_waste', 'approve_waste', 'manage_quality'
+    ]
+  },
+  storekeeper: {
+    role_key: 'storekeeper',
+    name: 'Storekeeper',
+    access_level: 'manager',
+    description: 'Warehouse and stock control role for receiving, adjustments, and transfers.',
+    permissions: [
+      'view_dashboard', 'view_reports', 'export_data', 'manage_inventory',
+      'transfer_inventory', 'manage_ingredients'
+    ]
+  },
+  procurement_officer: {
+    role_key: 'procurement_officer',
+    name: 'Procurement Officer',
+    access_level: 'manager',
+    description: 'Procurement role for supplier management, requests, purchase orders, and invoices.',
+    permissions: [
+      'view_dashboard', 'view_reports', 'export_data', 'manage_procurement',
+      'approve_procurement', 'manage_suppliers'
+    ]
+  },
+  production_supervisor: {
+    role_key: 'production_supervisor',
+    name: 'Production Supervisor',
+    access_level: 'manager',
+    description: 'Supervises planning, approvals, batch completion, and kitchen execution.',
+    permissions: [
+      'view_dashboard', 'view_reports', 'manage_production',
+      'approve_production', 'complete_production', 'manage_menu_planning',
+      'manage_quality', 'manage_waste'
+    ]
+  },
+  quality_controller: {
+    role_key: 'quality_controller',
+    name: 'Quality Controller',
+    access_level: 'manager',
+    description: 'Monitors quality, compliance, and food waste control with approval authority.',
+    permissions: [
+      'view_dashboard', 'view_reports', 'manage_quality',
+      'manage_waste', 'approve_waste'
+    ]
+  },
+  finance_controller: {
+    role_key: 'finance_controller',
+    name: 'Finance Controller',
+    access_level: 'manager',
+    description: 'Reviews costs, exports, reports, and ERP/accounting integrations.',
+    permissions: [
+      'view_dashboard', 'view_reports', 'export_data',
+      'manage_erp', 'manage_forecasting'
+    ]
+  }
+};
+
+export function getSystemRoleDefinition(roleKey) {
+  return systemRoleDefinitions[roleKey] || null;
+}
+
+export function getUserEffectiveRole(user) {
+  const role = user?.role_access_level || user?.role || 'user';
+  return ['admin', 'manager', 'user'].includes(role) ? role : 'user';
+}
+
+export function getUserPermissions(user) {
+  const effectiveRole = getUserEffectiveRole(user);
+  const builtInFromCurrentRole = getSystemRoleDefinition(user?.role);
+  const builtInFromAccessLevel = getSystemRoleDefinition(effectiveRole);
+  return Array.from(new Set([
+    ...(builtInFromAccessLevel?.permissions || []),
+    ...(builtInFromCurrentRole?.permissions || []),
+    ...((Array.isArray(user?.role_permissions) ? user.role_permissions : []).filter(Boolean))
+  ]));
+}
+
+export function hasPermission(user, permission) {
+  return getUserPermissions(user).includes(permission);
+}
+
 export const entityRegistry = {
   AdvancedReportSchedule: {
     defaults: { status: 'active', frequency: 'weekly' }
@@ -115,6 +262,22 @@ export const entityRegistry = {
   QRCode: {
     defaults: { status: 'active' }
   },
+  RoleProfile: {
+    defaults: { is_active: true, is_system: false, access_level: 'user', permissions: [] },
+    unique: [
+      { fields: ['role_key'], label: 'role key', ignoreEmpty: true },
+      { fields: ['name'], label: 'role name' }
+    ],
+    schema: z.object({
+      role_key: z.string().trim().min(1, 'Role key is required'),
+      name: z.string().trim().min(1, 'Role name is required'),
+      description: stringOptional,
+      access_level: z.enum(['admin', 'manager', 'user']).optional().nullable(),
+      permissions: arrayOptional,
+      is_active: booleanOptional,
+      is_system: booleanOptional
+    }).passthrough()
+  },
   QRDelivery: {
     defaults: { status: 'pending' }
   },
@@ -199,13 +362,16 @@ export const entityRegistry = {
     schema: z.object({
       email: z.string().trim().email('A valid email address is required'),
       full_name: stringOptional,
-      role: z.enum(['admin', 'manager', 'user']).optional().nullable(),
+      role: stringOptional,
       status: stringOptional,
       site_id: stringOptional,
       site_name: stringOptional,
       allowed_site_ids: arrayOptional,
       allowed_site_names: arrayOptional,
       visibility_scope: stringOptional,
+      role_access_level: stringOptional,
+      role_permissions: arrayOptional,
+      is_custom_role: booleanOptional,
       password: stringOptional,
       temporary_password: stringOptional,
       phone: stringOptional,
@@ -241,6 +407,7 @@ const readRoles = {
 
 const writeRoles = {
   Site: 'admin',
+  RoleProfile: 'admin',
   AdvancedReportSchedule: 'manager',
   ERPIntegrationConfig: 'admin',
   ERPIntegrationLog: 'manager',
@@ -275,6 +442,38 @@ const writeRoles = {
   InventoryLot: 'manager'
 };
 
+const entityPermissions = {
+  Site: { read: 'manage_projects', write: 'manage_projects' },
+  RoleProfile: { read: 'manage_roles', write: 'manage_roles' },
+  User: { read: 'manage_users', write: 'manage_users' },
+  Ingredient: { read: 'manage_ingredients', write: 'manage_ingredients' },
+  Inventory: { read: 'manage_inventory', write: 'manage_inventory' },
+  InventoryTransaction: { read: 'manage_inventory', write: 'manage_inventory' },
+  InventoryLot: { read: 'manage_inventory', write: 'manage_inventory' },
+  Recipe: { read: 'manage_recipes', write: 'manage_recipes' },
+  MenuPlan: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
+  Production: { read: 'manage_production', write: 'manage_production' },
+  ProductionBatch: { read: 'manage_production', write: 'manage_production' },
+  ProductionTransfer: { read: 'transfer_inventory', write: 'transfer_inventory' },
+  MaterialRequest: { read: 'manage_procurement', write: 'manage_procurement' },
+  Supplier: { read: 'manage_suppliers', write: 'manage_suppliers' },
+  PurchaseOrder: { read: 'manage_procurement', write: 'manage_procurement' },
+  RFQ: { read: 'manage_procurement', write: 'manage_procurement' },
+  FoodWaste: { read: 'manage_waste', write: 'manage_waste' },
+  WasteTarget: { read: 'manage_waste', write: 'manage_waste' },
+  WasteDetectionLog: { read: 'manage_waste', write: 'manage_waste' },
+  QualityControl: { read: 'manage_quality', write: 'manage_quality' },
+  CustomerMealPlan: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
+  AttendanceSession: { read: 'manage_attendance', write: 'manage_attendance' },
+  AttendanceRecord: { read: 'manage_attendance', write: 'manage_attendance' },
+  StaffShift: { read: 'manage_attendance', write: 'manage_attendance' },
+  AdvancedReportSchedule: { read: 'view_reports', write: 'view_reports' },
+  ERPIntegrationConfig: { read: 'manage_erp', write: 'manage_erp' },
+  ERPIntegrationLog: { read: 'manage_erp', write: 'manage_erp' },
+  ForecastScenario: { read: 'manage_forecasting', write: 'manage_forecasting' },
+  ForecastSnapshot: { read: 'manage_forecasting', write: 'manage_forecasting' }
+};
+
 const selfWritableFields = new Set(['full_name', 'site_id', 'site_name', 'phone', 'language', 'avatar_url']);
 
 export function ensureKnownEntity(entity) {
@@ -305,11 +504,17 @@ export function validateEntityPayload(entity, payload = {}) {
 export function authorizeEntityAction(user, entity, action, payload = null, resource = null) {
   ensureKnownEntity(entity);
   const role = user?.role || 'user';
-  const currentRank = roleRank[role] || 0;
+  const effectiveRole = getUserEffectiveRole(user);
+  const currentRank = roleRank[effectiveRole] || 0;
+  const isCustomRole = Boolean(user?.is_custom_role);
   const requiresReadRole = readRoles[entity];
   const requiresWriteRole = writeRoles[entity];
+  const permissionRequirements = entityPermissions[entity] || {};
 
   if (action === 'list' || action === 'filter' || action === 'read') {
+    if (permissionRequirements.read && hasPermission(user, permissionRequirements.read)) {
+      return true;
+    }
     if (!requiresReadRole) {
       return true;
     }
@@ -318,6 +523,11 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     }
     if (entity === 'User' && resource?.id === user.id) {
       return true;
+    }
+    if (isCustomRole && permissionRequirements.read) {
+      const error = new Error('You do not have permission to view this resource');
+      error.status = 403;
+      throw error;
     }
     const error = new Error('You do not have permission to view this resource');
     error.status = 403;
@@ -329,6 +539,19 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     if (invalidFields.length === 0) {
       return true;
     }
+  }
+
+  if (permissionRequirements.write && hasPermission(user, permissionRequirements.write)) {
+    return true;
+  }
+
+  if (isCustomRole && permissionRequirements.write) {
+    if (action === 'create' && (entity === 'AttendanceRecord' || entity === 'DinerScan')) {
+      return true;
+    }
+    const error = new Error('You do not have permission to modify this resource');
+    error.status = 403;
+    throw error;
   }
 
   if (!requiresWriteRole || currentRank >= roleRank[requiresWriteRole]) {

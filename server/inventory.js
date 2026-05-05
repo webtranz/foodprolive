@@ -505,8 +505,24 @@ async function completeProduction(productionId, actor) {
     throw error;
   }
 
+  if (production.status === 'completed') {
+    return production;
+  }
+
+  if (!['approved', 'in_progress'].includes(String(production.status || ''))) {
+    const error = new Error('Production can only be completed after approval or while in progress');
+    error.status = 400;
+    throw error;
+  }
+
+  const ingredientCatalog = await listDocuments('Ingredient', { limit: 5000 });
+  const ingredientMap = new Map(ingredientCatalog.map((ingredient) => [ingredient.id, ingredient]));
+  const consumptionSummary = [];
+  let totalProductionCost = 0;
+  let totalShortageQuantity = 0;
+
   for (const ingredient of production.ingredients_used || []) {
-    await deductStock({
+    const movement = await deductStock({
       site_id: production.site_id,
       site_name: production.site_name,
       ingredient_id: ingredient.ingredient_id,
@@ -522,9 +538,37 @@ async function completeProduction(productionId, actor) {
       reason_code: 'production_consumption',
       allow_shortage: true
     });
+
+    const ingredientData = ingredientMap.get(ingredient.ingredient_id);
+    const fallbackUnitCost = toNumber(ingredientData?.cost_per_unit, 0);
+    const fallbackShortageCost = movement.shortage_quantity * fallbackUnitCost;
+    const movementCost = toNumber(movement.total_cost, 0);
+
+    totalProductionCost += movementCost + fallbackShortageCost;
+    totalShortageQuantity += toNumber(movement.shortage_quantity, 0);
+    consumptionSummary.push({
+      ingredient_id: ingredient.ingredient_id,
+      ingredient_name: ingredient.ingredient_name,
+      unit: ingredient.unit,
+      planned_quantity: toNumber(ingredient.planned_quantity || ingredient.actual_quantity, 0),
+      shortage_quantity: toNumber(movement.shortage_quantity, 0),
+      posted_cost: Number(movementCost.toFixed(2)),
+      estimated_shortage_cost: Number(fallbackShortageCost.toFixed(2)),
+      movement_layers: movement.movement_layers || []
+    });
   }
 
-  return updateDocument('Production', productionId, { status: 'completed' });
+  const servings = Math.max(1, toNumber(production.target_servings, 0));
+  return updateDocument('Production', productionId, {
+    status: 'completed',
+    completed_date: nowIso(),
+    completed_by: actor.email,
+    ingredient_cost_total: Number(totalProductionCost.toFixed(2)),
+    production_cost_total: Number(totalProductionCost.toFixed(2)),
+    cost_per_serving: Number((totalProductionCost / servings).toFixed(2)),
+    total_shortage_quantity: Number(totalShortageQuantity.toFixed(3)),
+    completion_lines: consumptionSummary
+  });
 }
 
 async function getStockOnHandReport() {

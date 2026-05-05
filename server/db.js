@@ -3,7 +3,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { Client, Pool } from 'pg';
-import { entityRegistry, ensureKnownEntity, validateEntityPayload } from './entities.js';
+import {
+  entityRegistry,
+  ensureKnownEntity,
+  validateEntityPayload,
+  getSystemRoleDefinition
+} from './entities.js';
 
 const rootDir = path.resolve(process.cwd());
 const uploadsDir = path.join(rootDir, 'uploads');
@@ -155,6 +160,54 @@ function normalizeRecord(entity, payload, existing = null) {
   };
 }
 
+async function findRoleProfileByKey(roleKey) {
+  const normalized = String(roleKey || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const result = await query(
+    `SELECT data
+     FROM entity_records
+     WHERE entity_name = 'RoleProfile'
+       AND LOWER(COALESCE(data->>'role_key', '')) = $1
+     LIMIT 1`,
+    [normalized]
+  );
+
+  if (result.rowCount) {
+    return result.rows[0].data;
+  }
+
+  const builtIn = getSystemRoleDefinition(normalized);
+  if (!builtIn) {
+    return null;
+  }
+
+  return {
+    id: `role_${builtIn.role_key}`,
+    ...builtIn,
+    is_system: true,
+    is_active: true
+  };
+}
+
+async function hydrateUserRole(user) {
+  if (!user) return null;
+
+  const roleProfile = await findRoleProfileByKey(user.role || 'user');
+  const accessLevel = roleProfile?.access_level || (['admin', 'manager', 'user'].includes(user.role) ? user.role : 'user');
+  const rolePermissions = Array.isArray(roleProfile?.permissions) ? roleProfile.permissions : [];
+
+  return {
+    ...user,
+    role_name: roleProfile?.name || user.role || 'User',
+    role_access_level: accessLevel,
+    role_permissions: rolePermissions,
+    is_custom_role: !['admin', 'manager', 'user'].includes(String(user.role || '').toLowerCase())
+  };
+}
+
 function normalizeUniqueValue(value) {
   if (value === null || typeof value === 'undefined') return '';
   if (typeof value === 'string') return value.trim().toLowerCase();
@@ -285,6 +338,108 @@ async function seedDefaults() {
     if (existing) return existing;
     return createDocument(entity, { id, ...payload });
   };
+
+  const roleSeeds = [
+    {
+      id: 'role_profile_admin',
+      role_key: 'admin',
+      name: 'Administrator',
+      description: 'Central administration with unrestricted access across all modules and locations.',
+      access_level: 'admin',
+      permissions: getSystemRoleDefinition('admin')?.permissions || [],
+      is_system: true,
+      is_active: true
+    },
+    {
+      id: 'role_profile_manager',
+      role_key: 'manager',
+      name: 'Operations Manager',
+      description: 'Cross-functional operational management for assigned projects and kitchens.',
+      access_level: 'manager',
+      permissions: getSystemRoleDefinition('manager')?.permissions || [],
+      is_system: true,
+      is_active: true
+    },
+    {
+      id: 'role_profile_user',
+      role_key: 'user',
+      name: 'General User',
+      description: 'Basic operational visibility for assigned projects.',
+      access_level: 'user',
+      permissions: getSystemRoleDefinition('user')?.permissions || [],
+      is_system: true,
+      is_active: true
+    },
+    {
+      id: 'role_profile_chef',
+      role_key: 'chef',
+      name: 'Chef',
+      description: 'Kitchen leadership role focused on recipes, menus, production, and food quality.',
+      access_level: 'manager',
+      permissions: getSystemRoleDefinition('chef')?.permissions || [],
+      is_system: true,
+      is_active: true
+    },
+    {
+      id: 'role_profile_storekeeper',
+      role_key: 'storekeeper',
+      name: 'Storekeeper',
+      description: 'Warehouse and stock control role for receiving, adjustments, and transfers.',
+      access_level: 'manager',
+      permissions: getSystemRoleDefinition('storekeeper')?.permissions || [],
+      is_system: true,
+      is_active: true
+    },
+    {
+      id: 'role_profile_procurement_officer',
+      role_key: 'procurement_officer',
+      name: 'Procurement Officer',
+      description: 'Procurement role for suppliers, requests, orders, and invoices.',
+      access_level: 'manager',
+      permissions: getSystemRoleDefinition('procurement_officer')?.permissions || [],
+      is_system: true,
+      is_active: true
+    },
+    {
+      id: 'role_profile_production_supervisor',
+      role_key: 'production_supervisor',
+      name: 'Production Supervisor',
+      description: 'Supervises planning, approvals, batch completion, and kitchen execution.',
+      access_level: 'manager',
+      permissions: getSystemRoleDefinition('production_supervisor')?.permissions || [],
+      is_system: true,
+      is_active: true
+    },
+    {
+      id: 'role_profile_quality_controller',
+      role_key: 'quality_controller',
+      name: 'Quality Controller',
+      description: 'Monitors quality, compliance, and food waste control with approval authority.',
+      access_level: 'manager',
+      permissions: getSystemRoleDefinition('quality_controller')?.permissions || [],
+      is_system: true,
+      is_active: true
+    },
+    {
+      id: 'role_profile_finance_controller',
+      role_key: 'finance_controller',
+      name: 'Finance Controller',
+      description: 'Reviews costs, exports, and ERP/accounting integrations.',
+      access_level: 'manager',
+      permissions: getSystemRoleDefinition('finance_controller')?.permissions || [],
+      is_system: true,
+      is_active: true
+    }
+  ];
+
+  for (const roleSeed of roleSeeds) {
+    const existingRole = await findDocument('RoleProfile', roleSeed.id);
+    if (existingRole) {
+      await updateDocument('RoleProfile', roleSeed.id, roleSeed);
+    } else {
+      await createDocument('RoleProfile', roleSeed);
+    }
+  }
 
   const siteRecords = await listDocuments('Site', { sort: 'name', limit: 100 });
   const primarySite = siteRecords[0] || null;
@@ -718,17 +873,17 @@ async function seedDefaults() {
 
 async function listUsers() {
   const result = await query('SELECT * FROM users ORDER BY updated_at DESC');
-  return result.rows.map((row) => sanitizeUser(toUserRecord(row)));
+  return Promise.all(result.rows.map(async (row) => sanitizeUser(await hydrateUserRole(toUserRecord(row)))));
 }
 
 async function findUserById(id) {
   const result = await query('SELECT * FROM users WHERE id = $1 LIMIT 1', [id]);
-  return result.rowCount ? toUserRecord(result.rows[0]) : null;
+  return result.rowCount ? hydrateUserRole(toUserRecord(result.rows[0])) : null;
 }
 
 async function findUserByEmail(email) {
   const result = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
-  return result.rowCount ? toUserRecord(result.rows[0]) : null;
+  return result.rowCount ? hydrateUserRole(toUserRecord(result.rows[0])) : null;
 }
 
 async function createUser(data) {
@@ -949,7 +1104,7 @@ async function getUserByToken(token) {
      LIMIT 1`,
     [token]
   );
-  return result.rowCount ? sanitizeUser(toUserRecord(result.rows[0])) : null;
+  return result.rowCount ? sanitizeUser(await hydrateUserRole(toUserRecord(result.rows[0]))) : null;
 }
 
 async function revokeToken(token) {

@@ -16,6 +16,7 @@ import { Plus, Factory, AlertCircle, Download, CheckCircle2, XCircle } from 'luc
 import { downloadCSV } from '../components/utils/exportData';
 import { Skeleton } from '@/components/ui/skeleton';
 import { format } from 'date-fns';
+import { usePermissions } from '@/components/auth/usePermissions';
 
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -36,6 +37,7 @@ const STATUS_COLORS = {
 };
 
 export default function Production() {
+  const { can } = usePermissions();
   const [formOpen, setFormOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState('all');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -51,6 +53,7 @@ export default function Production() {
   const [inventoryCheck, setInventoryCheck] = useState([]);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [selectedProduction, setSelectedProduction] = useState(null);
+  const [actionError, setActionError] = useState('');
 
   const queryClient = useQueryClient();
 
@@ -79,7 +82,11 @@ export default function Production() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       setFormOpen(false);
+      setActionError('');
       resetForm();
+    },
+    onError: (error) => {
+      setActionError(error.message || 'Unable to create production plan');
     }
   });
 
@@ -101,6 +108,10 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
+      setActionError('');
+    },
+    onError: (error) => {
+      setActionError(error.message || 'Unable to update production status');
     }
   });
 
@@ -317,6 +328,12 @@ export default function Production() {
         </div>
 
         {/* Content */}
+        {actionError ? (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {actionError}
+          </div>
+        ) : null}
+
         {isLoading ? (
           <div className="space-y-4">
             {[...Array(3)].map((_, i) => (
@@ -366,7 +383,7 @@ export default function Production() {
                         </div>
                       )}
                       <div className="flex gap-2">
-                        {production.status === 'pending_approval' && (
+                        {production.status === 'pending_approval' && can('approve_production') && (
                           <Button 
                             size="sm" 
                             className="bg-green-600 hover:bg-green-700"
@@ -375,7 +392,7 @@ export default function Production() {
                             Review & Approve
                           </Button>
                         )}
-                        {production.status === 'approved' && (
+                        {production.status === 'approved' && can('manage_production') && (
                           <Button 
                             size="sm" 
                             variant="outline"
@@ -388,7 +405,7 @@ export default function Production() {
                             Start Production
                           </Button>
                         )}
-                        {production.status === 'in_progress' && (
+                        {['approved', 'in_progress'].includes(production.status) && can('complete_production') && (
                           <Button 
                             size="sm" 
                             className="bg-emerald-600 hover:bg-emerald-700"
@@ -399,7 +416,7 @@ export default function Production() {
                             })}
                             disabled={updateStatusMutation.isPending}
                           >
-                            {updateStatusMutation.isPending ? 'Completing...' : 'Complete'}
+                            {updateStatusMutation.isPending ? 'Completing...' : production.status === 'approved' ? 'Complete Batch' : 'Complete'}
                           </Button>
                         )}
                       </div>
