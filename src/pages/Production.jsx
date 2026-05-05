@@ -300,9 +300,23 @@ export default function Production() {
 
   const selectedRecipeInsight = useMemo(() => {
     if (!formData.recipe_id || !formData.site_id) return null;
+    const selectedRecipe = recipes.find((recipe) => recipe.id === formData.recipe_id);
     const key = `${formData.site_id}::${formData.recipe_id}::${formData.meal_type || 'unspecified'}`;
     const row = recipeWasteInsights.get(key);
-    if (!row) return null;
+    if (!row) {
+      return {
+        key,
+        recipe_id: formData.recipe_id,
+        recipe_name: selectedRecipe?.name || 'Selected recipe',
+        site_id: formData.site_id,
+        meal_type: formData.meal_type || 'unspecified',
+        waste_servings: 0,
+        waste_cost: 0,
+        wasteRate: 0,
+        recommendation: 'No waste history exists for this recipe at this project yet. Start with the planned serving count, monitor returns closely, and post waste after service so the system can build future reduction guidance.',
+        actionTone: 'bg-sky-50 border-sky-200 text-sky-800'
+      };
+    }
     const wasteRate = row.produced_servings > 0 ? (row.waste_servings / row.produced_servings) * 100 : 0;
     let recommendation = 'Stable output. Maintain current production level.';
     let actionTone = 'bg-emerald-50 border-emerald-200 text-emerald-800';
@@ -322,7 +336,7 @@ export default function Production() {
       recommendation,
       actionTone
     };
-  }, [formData.meal_type, formData.recipe_id, formData.site_id, recipeWasteInsights]);
+  }, [formData.meal_type, formData.recipe_id, formData.site_id, recipeWasteInsights, recipes]);
 
   const getProductionShortages = (production) => {
     const siteInventory = inventory.filter((item) => item.site_id === production.site_id);
@@ -792,6 +806,30 @@ export default function Production() {
                 </div>
               </div>
 
+              {selectedRecipeInsight ? (
+                <div className={`rounded-lg border px-4 py-3 ${selectedRecipeInsight.actionTone}`}>
+                  <div className="flex items-center gap-2">
+                    <Brain className="w-4 h-4" />
+                    <p className="font-medium">Waste Reduction Intelligence</p>
+                  </div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    <div className="rounded-lg bg-white/80 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Historical Waste Rate</p>
+                      <p className="mt-1 text-lg font-semibold text-slate-900">{selectedRecipeInsight.wasteRate}%</p>
+                    </div>
+                    <div className="rounded-lg bg-white/80 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Wasted Servings</p>
+                      <p className="mt-1 text-lg font-semibold text-slate-900">{selectedRecipeInsight.waste_servings.toFixed(1)}</p>
+                    </div>
+                    <div className="rounded-lg bg-white/80 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Waste Cost</p>
+                      <p className="mt-1 text-lg font-semibold text-slate-900">${selectedRecipeInsight.waste_cost.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm">{selectedRecipeInsight.recommendation}</p>
+                </div>
+              ) : null}
+
               {/* Calculated Ingredients with Inventory Check */}
               {calculatedIngredients.length > 0 && (
                 <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
@@ -846,29 +884,6 @@ export default function Production() {
                       </p>
                     </div>
                   )}
-                  {selectedRecipeInsight ? (
-                    <div className={`mt-4 rounded-lg border px-4 py-3 ${selectedRecipeInsight.actionTone}`}>
-                      <div className="flex items-center gap-2">
-                        <Brain className="w-4 h-4" />
-                        <p className="font-medium">Waste Reduction Intelligence</p>
-                      </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-3">
-                        <div className="rounded-lg bg-white/80 px-3 py-2">
-                          <p className="text-xs uppercase tracking-wide text-slate-500">Historical Waste Rate</p>
-                          <p className="mt-1 text-lg font-semibold text-slate-900">{selectedRecipeInsight.wasteRate}%</p>
-                        </div>
-                        <div className="rounded-lg bg-white/80 px-3 py-2">
-                          <p className="text-xs uppercase tracking-wide text-slate-500">Wasted Servings</p>
-                          <p className="mt-1 text-lg font-semibold text-slate-900">{selectedRecipeInsight.waste_servings.toFixed(1)}</p>
-                        </div>
-                        <div className="rounded-lg bg-white/80 px-3 py-2">
-                          <p className="text-xs uppercase tracking-wide text-slate-500">Waste Cost</p>
-                          <p className="mt-1 text-lg font-semibold text-slate-900">${selectedRecipeInsight.waste_cost.toFixed(2)}</p>
-                        </div>
-                      </div>
-                      <p className="mt-3 text-sm">{selectedRecipeInsight.recommendation}</p>
-                    </div>
-                  ) : null}
                 </div>
               )}
 
