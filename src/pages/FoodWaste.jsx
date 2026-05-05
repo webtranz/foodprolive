@@ -1164,7 +1164,7 @@ export default function FoodWaste() {
                     </div>
                     <Badge className={APPROVAL_TONES.pending}>pending</Badge>
                   </div>
-                  {isManager ? (
+                  {can('approve_waste') ? (
                     <div className="mt-3 flex gap-2">
                       <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => approvalMutation.mutate({ id: item.id, approval_status: 'approved' })}>
                         <CheckCircle2 className="w-4 h-4 mr-2" />
