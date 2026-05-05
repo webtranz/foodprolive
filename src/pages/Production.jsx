@@ -29,6 +29,7 @@ const STATUS_COLORS = {
   draft: 'bg-slate-100 text-slate-700',
   pending_approval: 'bg-amber-100 text-amber-700',
   approved: 'bg-green-100 text-green-700',
+  changes_requested: 'bg-orange-100 text-orange-700',
   rejected: 'bg-red-100 text-red-700',
   planned: 'bg-blue-100 text-blue-700',
   in_progress: 'bg-purple-100 text-purple-700',
@@ -58,9 +59,11 @@ export default function Production() {
   const [inventoryCheck, setInventoryCheck] = useState([]);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [selectedProduction, setSelectedProduction] = useState(null);
+  const [editingProduction, setEditingProduction] = useState(null);
   const [actionError, setActionError] = useState('');
   const [estimatedBatchCost, setEstimatedBatchCost] = useState(0);
   const [estimatedCostPerServing, setEstimatedCostPerServing] = useState(0);
+  const [reviewNotes, setReviewNotes] = useState('');
 
   const queryClient = useQueryClient();
 
@@ -90,10 +93,15 @@ export default function Production() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.Production.create(data),
+    mutationFn: (data) => (
+      editingProduction
+        ? base44.entities.Production.update(editingProduction.id, data)
+        : base44.entities.Production.create(data)
+    ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       setFormOpen(false);
+      setEditingProduction(null);
       setActionError('');
       resetForm();
     },
@@ -148,7 +156,11 @@ export default function Production() {
       target_servings: '',
       notes: ''
     });
+    setEditingProduction(null);
     setCalculatedIngredients([]);
+    setInventoryCheck([]);
+    setEstimatedBatchCost(0);
+    setEstimatedCostPerServing(0);
   };
 
   // Calculate required ingredients and check inventory when recipe or servings change
@@ -232,12 +244,11 @@ export default function Production() {
     }).filter((ingredient) => ingredient.shortage > 0);
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const buildSubmitData = (status) => {
     const site = sites.find(s => s.id === formData.site_id);
     const recipe = recipes.find(r => r.id === formData.recipe_id);
-    
-    const submitData = {
+
+    return {
       ...formData,
       site_name: site?.name || '',
       recipe_name: recipe?.name || '',
@@ -256,22 +267,35 @@ export default function Production() {
         : 0,
       estimated_batch_cost: estimatedBatchCost,
       estimated_cost_per_serving: estimatedCostPerServing,
-      status: 'pending_approval'
+      status
     };
-
-    createMutation.mutate(submitData);
   };
 
-  const handleApproval = async (approve) => {
+  const handleSubmit = (e, status = 'draft') => {
+    e.preventDefault();
+    createMutation.mutate(buildSubmitData(status));
+  };
+
+  const handleReview = async (action) => {
     if (!selectedProduction) return;
 
-    if (approve) {
+    if (action === 'approve') {
       await base44.entities.Production.update(selectedProduction.id, {
-        status: 'approved'
+        status: 'approved',
+        review_notes: reviewNotes || null,
+        reviewed_at: new Date().toISOString()
+      });
+    } else if (action === 'request_changes') {
+      await base44.entities.Production.update(selectedProduction.id, {
+        status: 'changes_requested',
+        review_notes: reviewNotes || null,
+        reviewed_at: new Date().toISOString()
       });
     } else {
       await base44.entities.Production.update(selectedProduction.id, {
-        status: 'rejected'
+        status: 'rejected',
+        review_notes: reviewNotes || null,
+        reviewed_at: new Date().toISOString()
       });
     }
 
@@ -279,6 +303,7 @@ export default function Production() {
     queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
     setShowApprovalDialog(false);
     setSelectedProduction(null);
+    setReviewNotes('');
   };
 
   const openApprovalDialog = (production) => {
@@ -302,7 +327,21 @@ export default function Production() {
     
     setInventoryCheck(check);
     setSelectedProduction(production);
+    setReviewNotes(production.review_notes || '');
     setShowApprovalDialog(true);
+  };
+
+  const openEditDialog = (production) => {
+    setEditingProduction(production);
+    setFormData({
+      site_id: production.site_id || '',
+      production_date: production.production_date || format(new Date(), 'yyyy-MM-dd'),
+      meal_type: production.meal_type || 'lunch',
+      recipe_id: production.recipe_id || '',
+      target_servings: String(production.target_servings || ''),
+      notes: production.notes || ''
+    });
+    setFormOpen(true);
   };
 
   return (
@@ -320,8 +359,12 @@ export default function Production() {
             Export
           </Button>
           <Button 
-            onClick={() => setFormOpen(true)}
+            onClick={() => {
+              resetForm();
+              setFormOpen(true);
+            }}
             className="bg-emerald-600 hover:bg-emerald-700"
+            disabled={!can('create_production_request')}
           >
             <Plus className="w-4 h-4 mr-2" />
             New Production
@@ -445,16 +488,38 @@ export default function Production() {
                         </div>
                       )}
                       <div className="flex gap-2">
-                        {production.status === 'pending_approval' && can('approve_production') && (
+                        {['draft', 'changes_requested'].includes(production.status) && can('edit_production_request') && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openEditDialog(production)}
+                          >
+                            Edit Request
+                          </Button>
+                        )}
+                        {['draft', 'changes_requested'].includes(production.status) && can('submit_production_request') && (
+                          <Button
+                            size="sm"
+                            className="bg-amber-600 hover:bg-amber-700"
+                            onClick={() => updateStatusMutation.mutate({
+                              id: production.id,
+                              status: 'pending_approval',
+                              production
+                            })}
+                          >
+                            Submit for Approval
+                          </Button>
+                        )}
+                        {production.status === 'pending_approval' && can('review_production_request') && (
                           <Button 
                             size="sm" 
                             className="bg-green-600 hover:bg-green-700"
                             onClick={() => openApprovalDialog(production)}
                           >
-                            Review & Approve
+                            Review Request
                           </Button>
                         )}
-                        {production.status === 'approved' && can('manage_production') && requiresMaterialRequest && !linkedMaterialRequest && (
+                        {production.status === 'approved' && can('create_material_request') && requiresMaterialRequest && !linkedMaterialRequest && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -464,7 +529,7 @@ export default function Production() {
                             {createMaterialRequestMutation.isPending ? 'Creating MR...' : 'Create MR'}
                           </Button>
                         )}
-                        {production.status === 'approved' && can('manage_production') && (
+                        {production.status === 'approved' && can('start_production') && (
                           <Button 
                             size="sm" 
                             variant="outline"
@@ -516,6 +581,11 @@ export default function Production() {
                           Linked material request: {linkedMaterialRequest.request_number} ({String(linkedMaterialRequest.status || '').replace(/_/g, ' ')})
                         </p>
                       ) : null}
+                      {production.review_notes ? (
+                        <p className="mt-2 text-sm text-slate-600">
+                          Review Notes: {production.review_notes}
+                        </p>
+                      ) : null}
                     </div>
                   )}
                       </>
@@ -531,9 +601,9 @@ export default function Production() {
         <Dialog open={formOpen} onOpenChange={setFormOpen}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Plan New Production</DialogTitle>
+              <DialogTitle>{editingProduction ? 'Edit Production Request' : 'Plan New Production'}</DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={(event) => handleSubmit(event, editingProduction ? editingProduction.status || 'draft' : 'draft')} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="site">Site *</Label>
@@ -663,7 +733,7 @@ export default function Production() {
                   {calculatedIngredients.some(ing => !ing.sufficient) && (
                     <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
                       <p className="text-sm text-amber-800">
-                        <strong>Note:</strong> Material request will be auto-generated after approval for insufficient items
+                        <strong>Note:</strong> Material request can be created only after production approval for insufficient items
                       </p>
                     </div>
                   )}
@@ -685,12 +755,22 @@ export default function Production() {
                 <Button type="button" variant="outline" onClick={() => { setFormOpen(false); resetForm(); }}>
                   Cancel
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-slate-300"
+                  disabled={createMutation.isPending}
+                  onClick={(event) => handleSubmit(event, 'draft')}
+                >
+                  {createMutation.isPending ? 'Saving...' : editingProduction ? 'Save Draft' : 'Create Draft'}
+                </Button>
                 <Button 
-                  type="submit" 
+                  type="button" 
                   className="bg-emerald-600 hover:bg-emerald-700"
                   disabled={createMutation.isPending}
+                  onClick={(event) => handleSubmit(event, 'pending_approval')}
                 >
-                  {createMutation.isPending ? 'Creating...' : 'Create Production'}
+                  {createMutation.isPending ? 'Submitting...' : editingProduction ? 'Save & Submit' : 'Create & Submit'}
                 </Button>
               </DialogFooter>
             </form>
@@ -701,7 +781,7 @@ export default function Production() {
         <Dialog open={showApprovalDialog} onOpenChange={setShowApprovalDialog}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Approve Production Plan</DialogTitle>
+              <DialogTitle>Review Production Request</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div className="bg-slate-50 rounded-lg p-4">
@@ -758,17 +838,37 @@ export default function Production() {
                 </div>
               )}
 
+              <div>
+                <Label htmlFor="reviewNotes">Review Notes</Label>
+                <Textarea
+                  id="reviewNotes"
+                  value={reviewNotes}
+                  onChange={(event) => setReviewNotes(event.target.value)}
+                  placeholder="Add approval notes, rejection reasons, or requested changes..."
+                  className="mt-1"
+                  rows={3}
+                />
+              </div>
+
               <DialogFooter>
                 <Button 
                   variant="outline" 
-                  onClick={() => handleApproval(false)}
+                  onClick={() => handleReview('request_changes')}
+                  className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                >
+                  <AlertCircle className="w-4 h-4 mr-2" />
+                  Request Changes
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => handleReview('reject')}
                   className="border-red-300 text-red-700 hover:bg-red-50"
                 >
                   <XCircle className="w-4 h-4 mr-2" />
                   Reject
                 </Button>
                 <Button 
-                  onClick={() => handleApproval(true)}
+                  onClick={() => handleReview('approve')}
                   className="bg-green-600 hover:bg-green-700"
                 >
                   <CheckCircle2 className="w-4 h-4 mr-2" />

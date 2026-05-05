@@ -9,7 +9,11 @@ const SYSTEM_ROLES = {
       'manage_sessions', 'manage_groups', 'manage_users', 'manage_roles', 'delete_records',
       'view_ai_waste', 'camera_detection', 'manage_projects', 'manage_ingredients',
       'manage_inventory', 'transfer_inventory', 'manage_recipes', 'manage_menu_planning',
-      'manage_production', 'approve_production', 'complete_production', 'manage_procurement',
+      'manage_production', 'create_production_request', 'edit_production_request',
+      'submit_production_request', 'review_production_request', 'approve_production_request',
+      'reject_production_request', 'request_changes_production', 'approve_production',
+      'start_production', 'complete_production', 'create_material_request', 'view_material_request',
+      'acknowledge_material_request', 'manage_procurement',
       'approve_procurement', 'manage_suppliers', 'manage_waste', 'approve_waste',
       'manage_pos', 'manage_erp', 'manage_forecasting', 'manage_attendance',
       'approve_attendance', 'manage_quality'
@@ -21,10 +25,41 @@ const SYSTEM_ROLES = {
       'scan_qr', 'view_dashboard', 'view_reports', 'export_data', 'create_session',
       'manage_sessions', 'manage_groups', 'view_ai_waste', 'camera_detection',
       'manage_projects', 'manage_ingredients', 'manage_inventory', 'transfer_inventory',
-      'manage_recipes', 'manage_menu_planning', 'manage_production', 'approve_production',
-      'complete_production', 'manage_procurement', 'approve_procurement', 'manage_suppliers',
+      'manage_recipes', 'manage_menu_planning', 'manage_production', 'create_production_request',
+      'edit_production_request', 'submit_production_request', 'review_production_request',
+      'approve_production_request', 'reject_production_request', 'request_changes_production',
+      'approve_production', 'start_production', 'complete_production', 'create_material_request',
+      'view_material_request', 'acknowledge_material_request', 'manage_procurement', 'approve_procurement', 'manage_suppliers',
       'manage_waste', 'approve_waste', 'manage_pos', 'manage_forecasting',
       'manage_attendance', 'approve_attendance', 'manage_quality'
+    ]
+  },
+  project_manager: {
+    access_level: 'manager',
+    permissions: [
+      'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
+      'manage_inventory', 'manage_menu_planning', 'manage_production',
+      'review_production_request', 'approve_production_request', 'reject_production_request',
+      'request_changes_production', 'approve_production', 'view_material_request',
+      'manage_waste', 'approve_waste'
+    ]
+  },
+  chef: {
+    access_level: 'user',
+    permissions: [
+      'view_dashboard', 'view_reports', 'manage_ingredients', 'manage_recipes',
+      'manage_menu_planning', 'manage_production', 'create_production_request',
+      'edit_production_request', 'submit_production_request', 'start_production',
+      'complete_production', 'create_material_request', 'view_material_request',
+      'manage_waste', 'approve_waste', 'manage_quality'
+    ]
+  },
+  procurement_officer: {
+    access_level: 'manager',
+    permissions: [
+      'view_dashboard', 'view_reports', 'export_data', 'manage_procurement',
+      'approve_procurement', 'manage_suppliers', 'view_material_request',
+      'acknowledge_material_request'
     ]
   },
   user: {

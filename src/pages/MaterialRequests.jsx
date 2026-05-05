@@ -139,7 +139,7 @@ export default function MaterialRequests() {
                     ) : null}
 
                     <div className="flex flex-wrap gap-2">
-                      {request.status === 'pending_procurement_ack' && can('manage_procurement') ? (
+                      {request.status === 'pending_procurement_ack' && can('acknowledge_material_request') ? (
                         <Button
                           className="bg-emerald-600 hover:bg-emerald-700"
                           onClick={() => {

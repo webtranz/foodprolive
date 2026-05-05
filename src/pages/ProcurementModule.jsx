@@ -149,7 +149,7 @@ export default function ProcurementModule() {
   const { data: materialRequests = [] } = useQuery({
     queryKey: ['materialRequestsWorkflow'],
     queryFn: () => base44.materialRequests.list(),
-    enabled: can('manage_procurement') || can('approve_procurement')
+    enabled: can('view_material_request') || can('acknowledge_material_request') || can('manage_procurement') || can('approve_procurement')
   });
 
   const { data: orders = [] } = useQuery({
@@ -497,7 +497,7 @@ export default function ProcurementModule() {
                           <Badge className={statusBadgeClass(request.status)}>{String(request.status || '').replace(/_/g, ' ')}</Badge>
                         </TableCell>
                         <TableCell>
-                          {request.status === 'pending_procurement_ack' && can('manage_procurement') ? (
+                          {request.status === 'pending_procurement_ack' && can('acknowledge_material_request') ? (
                             <Button
                               size="sm"
                               variant="outline"

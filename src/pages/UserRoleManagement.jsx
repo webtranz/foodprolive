@@ -39,7 +39,13 @@ const PERMISSION_GROUPS = [
   },
   {
     title: 'Operations',
-    permissions: ['manage_inventory', 'transfer_inventory', 'manage_production', 'approve_production', 'complete_production']
+    permissions: [
+      'manage_inventory', 'transfer_inventory', 'manage_production',
+      'create_production_request', 'edit_production_request', 'submit_production_request',
+      'review_production_request', 'approve_production_request', 'reject_production_request',
+      'request_changes_production', 'approve_production', 'start_production', 'complete_production',
+      'create_material_request', 'view_material_request', 'acknowledge_material_request'
+    ]
   },
   {
     title: 'Supply Chain',
@@ -62,8 +68,19 @@ const PERMISSION_LABELS = {
   manage_recipes: 'Manage recipes',
   manage_menu_planning: 'Manage menu planning',
   manage_production: 'Manage production plans',
+  create_production_request: 'Create production requests',
+  edit_production_request: 'Edit production requests',
+  submit_production_request: 'Submit production requests for approval',
+  review_production_request: 'Review production requests',
+  approve_production_request: 'Approve production requests',
+  reject_production_request: 'Reject production requests',
+  request_changes_production: 'Request changes on production requests',
   approve_production: 'Approve production plans',
+  start_production: 'Start approved production',
   complete_production: 'Complete production batches',
+  create_material_request: 'Create material requests',
+  view_material_request: 'View material requests',
+  acknowledge_material_request: 'Acknowledge material requests',
   manage_procurement: 'Manage procurement',
   approve_procurement: 'Approve procurement',
   manage_suppliers: 'Manage suppliers',
@@ -84,6 +101,7 @@ const ROLE_STYLE_MAP = {
   manager: { color: 'bg-amber-100 text-amber-800 border-amber-200', icon: Briefcase },
   user: { color: 'bg-blue-100 text-blue-800 border-blue-200', icon: User },
   chef: { color: 'bg-orange-100 text-orange-800 border-orange-200', icon: Briefcase },
+  project_manager: { color: 'bg-teal-100 text-teal-800 border-teal-200', icon: Briefcase },
   storekeeper: { color: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: Building2 },
   procurement_officer: { color: 'bg-cyan-100 text-cyan-800 border-cyan-200', icon: Briefcase },
   production_supervisor: { color: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200', icon: Users2 },

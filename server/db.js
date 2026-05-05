@@ -375,8 +375,18 @@ async function seedDefaults() {
       role_key: 'chef',
       name: 'Chef',
       description: 'Kitchen leadership role focused on recipes, menus, production, and food quality.',
-      access_level: 'manager',
+      access_level: 'user',
       permissions: getSystemRoleDefinition('chef')?.permissions || [],
+      is_system: true,
+      is_active: true
+    },
+    {
+      id: 'role_profile_project_manager',
+      role_key: 'project_manager',
+      name: 'Project Manager',
+      description: 'Reviews, approves, rejects, or requests changes on production requests for assigned projects.',
+      access_level: 'manager',
+      permissions: getSystemRoleDefinition('project_manager')?.permissions || [],
       is_system: true,
       is_active: true
     },
@@ -515,6 +525,78 @@ async function seedDefaults() {
     country: primarySite.country || 'Saudi Arabia',
     is_active: true
   }) : null;
+
+  const abqaiqCamp = await ensureSeedDocument('Site', 'site_project_abqaiq_camp', {
+    name: 'ABQAIQ CAMP',
+    project_code: 'ABQ-CAMP',
+    type: 'camp',
+    hierarchy_level: 'location',
+    parent_site_id: primarySite?.id || null,
+    parent_site_name: primarySite?.name || null,
+    hierarchy_path: primarySite ? `${primarySite.name} / ABQAIQ CAMP` : 'ABQAIQ CAMP',
+    company_name: primarySite?.company_name || 'Tamimi Global',
+    region_name: 'Eastern Region',
+    location_name: 'Abqaiq',
+    kitchen_name: 'ABQAIQ CAMP',
+    city: 'Abqaiq',
+    country: 'Saudi Arabia',
+    capacity: 1400,
+    is_active: true
+  });
+
+  const abqaiqWarehouse = await ensureSeedDocument('Site', 'site_project_abqaiq_warehouse', {
+    name: 'ABQAIQ WAREHOUSE',
+    project_code: 'ABQ-WH',
+    type: 'warehouse',
+    hierarchy_level: 'store',
+    parent_site_id: abqaiqCamp.id,
+    parent_site_name: abqaiqCamp.name,
+    hierarchy_path: `${abqaiqCamp.name} / ABQAIQ WAREHOUSE`,
+    company_name: abqaiqCamp.company_name || 'Tamimi Global',
+    region_name: abqaiqCamp.region_name || 'Eastern Region',
+    location_name: abqaiqCamp.location_name || 'Abqaiq',
+    kitchen_name: abqaiqCamp.kitchen_name || abqaiqCamp.name,
+    storage_name: 'ABQAIQ WAREHOUSE',
+    city: abqaiqCamp.city || 'Abqaiq',
+    country: abqaiqCamp.country || 'Saudi Arabia',
+    is_active: true
+  });
+
+  const modonCamp = await ensureSeedDocument('Site', 'site_project_modon_camp', {
+    name: 'MODON CAMP',
+    project_code: 'MOD-CAMP',
+    type: 'camp',
+    hierarchy_level: 'location',
+    parent_site_id: primarySite?.id || null,
+    parent_site_name: primarySite?.name || null,
+    hierarchy_path: primarySite ? `${primarySite.name} / MODON CAMP` : 'MODON CAMP',
+    company_name: primarySite?.company_name || 'Tamimi Global',
+    region_name: 'Central Region',
+    location_name: 'Modon',
+    kitchen_name: 'MODON CAMP',
+    city: 'Riyadh',
+    country: 'Saudi Arabia',
+    capacity: 1250,
+    is_active: true
+  });
+
+  const modonWarehouse = await ensureSeedDocument('Site', 'site_project_modon_warehouse', {
+    name: 'MODON WAREHOUSE',
+    project_code: 'MOD-WH',
+    type: 'warehouse',
+    hierarchy_level: 'store',
+    parent_site_id: modonCamp.id,
+    parent_site_name: modonCamp.name,
+    hierarchy_path: `${modonCamp.name} / MODON WAREHOUSE`,
+    company_name: modonCamp.company_name || 'Tamimi Global',
+    region_name: modonCamp.region_name || 'Central Region',
+    location_name: modonCamp.location_name || 'Modon',
+    kitchen_name: modonCamp.kitchen_name || modonCamp.name,
+    storage_name: 'MODON WAREHOUSE',
+    city: modonCamp.city || 'Riyadh',
+    country: modonCamp.country || 'Saudi Arabia',
+    is_active: true
+  });
 
   const seededSiteRecords = await listDocuments('Site', { sort: 'name', limit: 200 });
   const warehouseLocations = seededSiteRecords.filter((site) => ['warehouse', 'store'].includes(String(site.type || '').toLowerCase()));
@@ -834,6 +916,14 @@ async function seedDefaults() {
     await ensureInventorySeed(seed);
   }
 
+  const ensureSeedUser = async (userSeed) => {
+    const existingUserRecord = await findUserByEmail(userSeed.email);
+    if (existingUserRecord) {
+      return updateUser(existingUserRecord.id, userSeed);
+    }
+    return createUser(userSeed);
+  };
+
   const passwordHash = bcrypt.hashSync(adminPassword, 10);
   const existingUser = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [adminEmail]);
   if (existingUser.rowCount === 0) {
@@ -868,6 +958,97 @@ async function seedDefaults() {
        WHERE email = $1`,
       [adminEmail, adminName, passwordHash]
     );
+  }
+
+  const workflowUsers = [
+    {
+      email: 'chef.abqaiq@tamimiglobal.local',
+      full_name: 'ABQAIQ Camp Chef',
+      role: 'chef',
+      status: 'active',
+      site_id: abqaiqCamp.id,
+      site_name: abqaiqCamp.name,
+      allowed_site_ids: [abqaiqCamp.id, abqaiqWarehouse.id],
+      allowed_site_names: [abqaiqCamp.name, abqaiqWarehouse.name],
+      visibility_scope: 'subtree',
+      password: adminPassword
+    },
+    {
+      email: 'pm.abqaiq@tamimiglobal.local',
+      full_name: 'ABQAIQ Project Manager',
+      role: 'project_manager',
+      status: 'active',
+      site_id: abqaiqCamp.id,
+      site_name: abqaiqCamp.name,
+      allowed_site_ids: [abqaiqCamp.id, abqaiqWarehouse.id],
+      allowed_site_names: [abqaiqCamp.name, abqaiqWarehouse.name],
+      visibility_scope: 'subtree',
+      password: adminPassword
+    },
+    {
+      email: 'storekeeper.abqaiq@tamimiglobal.local',
+      full_name: 'ABQAIQ Storekeeper',
+      role: 'storekeeper',
+      status: 'active',
+      site_id: abqaiqWarehouse.id,
+      site_name: abqaiqWarehouse.name,
+      allowed_site_ids: [abqaiqWarehouse.id],
+      allowed_site_names: [abqaiqWarehouse.name],
+      visibility_scope: 'assigned',
+      password: adminPassword
+    },
+    {
+      email: 'chef.modon@tamimiglobal.local',
+      full_name: 'MODON Camp Chef',
+      role: 'chef',
+      status: 'active',
+      site_id: modonCamp.id,
+      site_name: modonCamp.name,
+      allowed_site_ids: [modonCamp.id, modonWarehouse.id],
+      allowed_site_names: [modonCamp.name, modonWarehouse.name],
+      visibility_scope: 'subtree',
+      password: adminPassword
+    },
+    {
+      email: 'pm.modon@tamimiglobal.local',
+      full_name: 'MODON Project Manager',
+      role: 'project_manager',
+      status: 'active',
+      site_id: modonCamp.id,
+      site_name: modonCamp.name,
+      allowed_site_ids: [modonCamp.id, modonWarehouse.id],
+      allowed_site_names: [modonCamp.name, modonWarehouse.name],
+      visibility_scope: 'subtree',
+      password: adminPassword
+    },
+    {
+      email: 'storekeeper.modon@tamimiglobal.local',
+      full_name: 'MODON Storekeeper',
+      role: 'storekeeper',
+      status: 'active',
+      site_id: modonWarehouse.id,
+      site_name: modonWarehouse.name,
+      allowed_site_ids: [modonWarehouse.id],
+      allowed_site_names: [modonWarehouse.name],
+      visibility_scope: 'assigned',
+      password: adminPassword
+    },
+    {
+      email: 'procurement.officer@tamimiglobal.local',
+      full_name: 'Central Procurement Officer',
+      role: 'procurement_officer',
+      status: 'active',
+      site_id: warehouseSite?.id || abqaiqWarehouse.id,
+      site_name: warehouseSite?.name || abqaiqWarehouse.name,
+      allowed_site_ids: [abqaiqWarehouse.id, modonWarehouse.id, warehouseSite?.id].filter(Boolean),
+      allowed_site_names: [abqaiqWarehouse.name, modonWarehouse.name, warehouseSite?.name].filter(Boolean),
+      visibility_scope: 'custom',
+      password: adminPassword
+    }
+  ];
+
+  for (const workflowUser of workflowUsers) {
+    await ensureSeedUser(workflowUser);
   }
 }
 

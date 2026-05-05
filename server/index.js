@@ -891,7 +891,7 @@ app.post('/api/pos/webhooks/:sourceId', requireAuth, requireRole(['admin']), asy
   }
 });
 
-app.get('/api/material-requests', requireAuth, requireAnyPermission(['manage_production', 'manage_procurement', 'approve_procurement']), async (request, response, next) => {
+app.get('/api/material-requests', requireAuth, requireAnyPermission(['view_material_request', 'create_material_request', 'acknowledge_material_request', 'manage_procurement', 'approve_procurement']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     const records = await listDocuments('MaterialRequest', {
@@ -904,15 +904,15 @@ app.get('/api/material-requests', requireAuth, requireAnyPermission(['manage_pro
   }
 });
 
-app.post('/api/material-requests/from-production/:id', requireAuth, requirePermission('manage_production'), async (request, response, next) => {
+app.post('/api/material-requests/from-production/:id', requireAuth, requirePermission('create_material_request'), async (request, response, next) => {
   try {
     const { scope, production } = await getScopedProduction(request, request.params.id);
     if (!production) {
       return response.status(404).json({ message: 'Production record not found' });
     }
 
-    if (!['approved', 'in_progress'].includes(String(production.status || ''))) {
-      return response.status(400).json({ message: 'Material requests can only be created after production approval.' });
+    if (String(production.status || '') !== 'approved') {
+      return response.status(400).json({ message: 'Material requests can only be created for approved production requests.' });
     }
 
     const existingRequests = await listDocuments('MaterialRequest', {
@@ -978,7 +978,7 @@ app.post('/api/material-requests/from-production/:id', requireAuth, requirePermi
   }
 });
 
-app.post('/api/material-requests/:id/acknowledge', requireAuth, requireAnyPermission(['manage_procurement', 'approve_procurement']), async (request, response, next) => {
+app.post('/api/material-requests/:id/acknowledge', requireAuth, requireAnyPermission(['acknowledge_material_request', 'manage_procurement', 'approve_procurement']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     const materialRequest = await findDocument('MaterialRequest', request.params.id);
