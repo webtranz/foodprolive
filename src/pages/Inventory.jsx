@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import * as XLSX from 'xlsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import {
@@ -8,13 +9,13 @@ import {
   CalendarClock,
   Download,
   Edit,
+  FileSpreadsheet,
   History,
   Package,
   Plus,
-  PlusCircle,
   Search,
-  SlidersHorizontal,
   TrendingDown,
+  Upload,
   Wallet
 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
@@ -56,6 +57,185 @@ function formatQuantity(value) {
   return Number(value || 0).toLocaleString(undefined, {
     maximumFractionDigits: 2
   });
+}
+
+function normalizeLookup(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function toSafeNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeHeader(value) {
+  return normalizeLookup(value).replace(/[^a-z0-9]+/g, '_');
+}
+
+function pickValue(row, aliases) {
+  for (const alias of aliases) {
+    const aliasKey = normalizeHeader(alias);
+    const matchKey = Object.keys(row).find((key) => normalizeHeader(key) === aliasKey);
+    if (matchKey && row[matchKey] !== '' && row[matchKey] !== null && typeof row[matchKey] !== 'undefined') {
+      return row[matchKey];
+    }
+  }
+  return '';
+}
+
+function excelDateToDateOnly(value) {
+  if (typeof value === 'number') {
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const parsed = new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1000);
+    return parsed.toISOString().slice(0, 10);
+  }
+  if (!value) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+}
+
+const STARTER_STOCK_BLUEPRINT = [
+  ['Chicken Breast', 32, 5.8, 'fifo', 4],
+  ['Basmati Rice', 90, 2.2, 'fifo', 90],
+  ['Mixed Vegetables', 28, 1.9, 'fifo', 5],
+  ['Arabic Flatbread', 180, 0.45, 'fifo', 3],
+  ['Plain Yogurt', 18, 2.1, 'fifo', 6],
+  ['Eggs', 240, 0.22, 'fifo', 8],
+  ['Fresh Milk', 35, 1.4, 'fifo', 6],
+  ['Tomato Sauce', 24, 1.8, 'weighted_average', 40],
+  ['Penne Pasta', 30, 1.7, 'fifo', 120],
+  ['Beef Mince', 20, 6.6, 'fifo', 4]
+];
+
+function resolveSiteByValue(sites, value, defaultSiteId = '') {
+  const normalizedValue = normalizeLookup(value);
+  const defaultSite = sites.find((site) => site.id === defaultSiteId) || null;
+  if (!normalizedValue) return defaultSite;
+
+  return sites.find((site) => (
+    normalizeLookup(site.id) === normalizedValue ||
+    normalizeLookup(site.name) === normalizedValue ||
+    normalizeLookup(site.project_code) === normalizedValue ||
+    normalizeLookup(site.hierarchy_path) === normalizedValue
+  )) || defaultSite;
+}
+
+function resolveIngredientByValue(ingredients, value) {
+  const normalizedValue = normalizeLookup(value);
+  if (!normalizedValue) return null;
+
+  return ingredients.find((ingredient) => (
+    normalizeLookup(ingredient.id) === normalizedValue ||
+    normalizeLookup(ingredient.name) === normalizedValue ||
+    normalizeLookup(ingredient.ingredient_code) === normalizedValue ||
+    normalizeLookup(ingredient.sku) === normalizedValue
+  )) || null;
+}
+
+function buildBulkInventoryRows(rows, sites, ingredients, defaultSiteId = '') {
+  const errors = [];
+  const items = [];
+  const previewRows = [];
+
+  rows.forEach((row, index) => {
+    const site = resolveSiteByValue(
+      sites,
+      pickValue(row, ['site_id', 'site_name', 'project', 'project_name', 'project_code', 'location', 'location_name', 'warehouse']),
+      defaultSiteId
+    );
+    const ingredient = resolveIngredientByValue(
+      ingredients,
+      pickValue(row, ['ingredient_id', 'ingredient_name', 'ingredient', 'item_name', 'ingredient_code', 'sku'])
+    );
+    const quantity = toSafeNumber(pickValue(row, ['quantity', 'qty', 'opening_stock', 'stock_qty']), 0);
+    const unitCost = toSafeNumber(pickValue(row, ['unit_cost', 'cost', 'avg_cost', 'cost_per_unit']), 0);
+    const minStock = toSafeNumber(pickValue(row, ['min_stock_level', 'min_stock', 'minimum_level']), 0);
+    const maxStockRaw = pickValue(row, ['max_stock_level', 'max_stock', 'maximum_level']);
+    const maxStock = maxStockRaw === '' ? null : toSafeNumber(maxStockRaw, null);
+    const valuationMethod = String(pickValue(row, ['valuation_method', 'cost_method']) || 'fifo').trim() || 'fifo';
+    const batchNumber = String(pickValue(row, ['batch_number', 'batch', 'lot_number', 'lot']) || '').trim();
+    const expiryDate = excelDateToDateOnly(pickValue(row, ['expiry_date', 'expiry', 'expiry_dt']));
+    const notes = String(pickValue(row, ['notes', 'remarks', 'comment']) || '').trim();
+
+    previewRows.push({
+      row: index + 2,
+      project: site?.name || '',
+      ingredient: ingredient?.name || '',
+      quantity,
+      unit_cost: unitCost,
+      status: !site
+        ? 'Project not found'
+        : !ingredient
+          ? 'Ingredient not found'
+          : quantity <= 0
+            ? 'Quantity must be greater than 0'
+            : 'Ready'
+    });
+
+    if (!site) {
+      errors.push(`Row ${index + 2}: project / site was not matched`);
+      return;
+    }
+
+    if (!ingredient) {
+      errors.push(`Row ${index + 2}: ingredient was not matched`);
+      return;
+    }
+
+    if (quantity <= 0) {
+      errors.push(`Row ${index + 2}: quantity must be greater than 0`);
+      return;
+    }
+
+    items.push({
+      site_id: site.id,
+      site_name: site.name,
+      ingredient_id: ingredient.id,
+      ingredient_name: ingredient.name,
+      quantity,
+      unit: ingredient.unit || 'kg',
+      unit_cost: unitCost,
+      batch_number: batchNumber || `BULK-${Date.now()}-${index + 1}`,
+      expiry_date: expiryDate || null,
+      min_stock_level: minStock,
+      max_stock_level: typeof maxStock === 'number' ? maxStock : null,
+      valuation_method: valuationMethod === 'weighted_average' ? 'weighted_average' : 'fifo',
+      notes,
+      reason_code: 'bulk_upload'
+    });
+  });
+
+  return { items, errors, previewRows };
+}
+
+function buildStarterStockRows(site, ingredients) {
+  if (!site) return [];
+
+  return STARTER_STOCK_BLUEPRINT
+    .map(([name, quantity, unitCost, valuationMethod, expiryDays], index) => {
+      const ingredient = ingredients.find((entry) => normalizeLookup(entry.name) === normalizeLookup(name));
+      if (!ingredient) return null;
+      const expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + expiryDays);
+
+      return {
+        site_id: site.id,
+        site_name: site.name,
+        ingredient_id: ingredient.id,
+        ingredient_name: ingredient.name,
+        quantity,
+        unit: ingredient.unit || 'kg',
+        unit_cost: unitCost,
+        batch_number: `START-${String(site.project_code || site.name || 'SITE').replace(/[^A-Za-z0-9]/g, '').slice(0, 10).toUpperCase()}-${String(index + 1).padStart(2, '0')}`,
+        expiry_date: expiryDate.toISOString().slice(0, 10),
+        min_stock_level: Math.max(1, Math.round(quantity * 0.25)),
+        max_stock_level: Math.round(quantity * 1.8),
+        valuation_method: valuationMethod,
+        notes: 'Starter stock populated from Inventory module',
+        reason_code: 'manual_receipt'
+      };
+    })
+    .filter(Boolean);
 }
 
 function InventoryTransferDialog({
@@ -133,15 +313,15 @@ function InventoryTransferDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl">
         <DialogHeader>
-          <DialogTitle>Transfer Stock Between Locations</DialogTitle>
+          <DialogTitle>Transfer Stock Between Projects / Locations</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <Label>From Warehouse</Label>
+              <Label>From Project / Location</Label>
               <Select value={formData.from_site_id} onValueChange={(value) => setFormData((current) => ({ ...current, from_site_id: value }))}>
                 <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select source warehouse" />
+                  <SelectValue placeholder="Select source project or location" />
                 </SelectTrigger>
                 <SelectContent>
                   {stockSites.map((site) => (
@@ -151,10 +331,10 @@ function InventoryTransferDialog({
               </Select>
             </div>
             <div>
-              <Label>To Warehouse</Label>
+              <Label>To Project / Location</Label>
               <Select value={formData.to_site_id} onValueChange={(value) => setFormData((current) => ({ ...current, to_site_id: value }))}>
                 <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select destination warehouse" />
+                  <SelectValue placeholder="Select destination project or location" />
                 </SelectTrigger>
                 <SelectContent>
                   {stockSites.filter((site) => site.id !== formData.from_site_id).map((site) => (
@@ -283,10 +463,16 @@ export default function Inventory() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [stockDialogOpen, setStockDialogOpen] = useState(false);
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [transactionDialog, setTransactionDialog] = useState({ open: false, item: null, type: 'addition' });
   const [editDialog, setEditDialog] = useState({ open: false, item: null });
   const [historyDialog, setHistoryDialog] = useState({ open: false, item: null });
+  const [bulkSiteId, setBulkSiteId] = useState('');
+  const [bulkRows, setBulkRows] = useState([]);
+  const [bulkFileName, setBulkFileName] = useState('');
+  const [bulkError, setBulkError] = useState('');
+  const [bulkSummary, setBulkSummary] = useState(null);
   const [stockForm, setStockForm] = useState({
     site_id: '',
     ingredient_id: '',
@@ -307,10 +493,7 @@ export default function Inventory() {
     queryFn: () => base44.entities.Site.list()
   });
 
-  const warehouseSites = useMemo(() => (
-    sites.filter((site) => ['warehouse', 'store'].includes(String(site.type || '').toLowerCase()))
-  ), [sites]);
-  const stockSites = warehouseSites.length > 0 ? warehouseSites : sites;
+  const stockSites = sites;
 
   const { data: ingredients = [] } = useQuery({
     queryKey: ['ingredients'],
@@ -474,6 +657,40 @@ export default function Inventory() {
     }
   });
 
+  const bulkReceiveMutation = useMutation({
+    mutationFn: async (payloads) => {
+      let imported = 0;
+      const failures = [];
+
+      for (const payload of payloads) {
+        try {
+          await base44.inventory.receive(payload);
+          imported += 1;
+        } catch (error) {
+          failures.push(`${payload.ingredient_name} @ ${payload.site_name}: ${error.message || 'Import failed'}`);
+        }
+      }
+
+      return {
+        imported,
+        failed: failures.length,
+        failures
+      };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setBulkSummary(result);
+      setBulkError(result.failed ? result.failures.slice(0, 5).join(' | ') : '');
+      if (!result.failed) {
+        setBulkRows([]);
+        setBulkFileName('');
+      }
+    },
+    onError: (error) => {
+      setBulkError(error.message || 'Bulk upload failed');
+    }
+  });
+
   const transferStockMutation = useMutation({
     mutationFn: (payload) => base44.inventory.transfer(payload),
     onSuccess: () => {
@@ -483,6 +700,10 @@ export default function Inventory() {
   });
 
   const selectedIngredient = ingredients.find((ingredient) => ingredient.id === stockForm.ingredient_id);
+  const parsedBulkImport = useMemo(
+    () => buildBulkInventoryRows(bulkRows, stockSites, ingredients, bulkSiteId),
+    [bulkRows, stockSites, ingredients, bulkSiteId]
+  );
 
   const handleReceiveStock = (event) => {
     event.preventDefault();
@@ -506,6 +727,79 @@ export default function Inventory() {
       notes: stockForm.notes,
       reason_code: 'manual_receipt'
     });
+  };
+
+  const handleBulkFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      setBulkRows(rows);
+      setBulkFileName(file.name);
+      setBulkError('');
+      setBulkSummary(null);
+    } catch (error) {
+      setBulkRows([]);
+      setBulkFileName('');
+      setBulkSummary(null);
+      setBulkError(error.message || 'Could not read the inventory upload file');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const handleDownloadInventoryTemplate = () => {
+    const worksheet = XLSX.utils.json_to_sheet([
+      {
+        project_code: 'PROJ-001',
+        ingredient_name: 'Chicken Breast',
+        quantity: 25,
+        unit_cost: 5.8,
+        batch_number: 'BATCH-001',
+        expiry_date: format(new Date(), 'yyyy-MM-dd'),
+        min_stock_level: 8,
+        max_stock_level: 40,
+        valuation_method: 'fifo',
+        notes: 'Opening stock'
+      }
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventory Upload');
+    XLSX.writeFile(workbook, 'inventory_bulk_template.xlsx');
+  };
+
+  const handleSubmitBulkImport = () => {
+    if (!parsedBulkImport.items.length) {
+      setBulkError('Upload a valid CSV/Excel file before importing');
+      return;
+    }
+    bulkReceiveMutation.mutate(parsedBulkImport.items);
+  };
+
+  const handlePopulateStarterStock = () => {
+    const targetSite = stockSites.find((site) => site.id === bulkSiteId)
+      || stockSites.find((site) => site.id === stockForm.site_id)
+      || stockSites.find((site) => site.id === selectedSite)
+      || stockSites[0];
+
+    if (!targetSite) {
+      setBulkError('Create a project or location before populating starter stock');
+      return;
+    }
+
+    const starterRows = buildStarterStockRows(targetSite, ingredients);
+    if (!starterRows.length) {
+      setBulkError('Starter stock could not be prepared because matching ingredients were not found');
+      return;
+    }
+
+    setBulkSiteId(targetSite.id);
+    bulkReceiveMutation.mutate(starterRows);
   };
 
   const movementSummary = useMemo(() => {
@@ -533,7 +827,7 @@ export default function Inventory() {
       <div className="mx-auto max-w-[1600px]">
         <PageHeader
           title="Inventory Control"
-          description="Warehouse-based stock control with lots, expiry, valuation, transfers, movement reporting, and site-scoped access."
+          description="Manage project, kitchen, warehouse, and store inventory with manual entry, bulk upload, lots, expiry, valuation, and movement tracking."
         >
           <Button variant="outline" onClick={() => downloadCSV(filteredInventory, 'inventory-stock-on-hand')}>
             <Download className="mr-2 h-4 w-4" />
@@ -541,20 +835,24 @@ export default function Inventory() {
           </Button>
           {isManager ? (
             <>
+              <Button variant="outline" onClick={() => setBulkDialogOpen(true)}>
+                <Upload className="mr-2 h-4 w-4" />
+                Bulk Upload
+              </Button>
               <Button variant="outline" onClick={() => setTransferDialogOpen(true)}>
                 <ArrowRightLeft className="mr-2 h-4 w-4" />
                 Transfer Stock
               </Button>
               <Button onClick={() => setStockDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
                 <Plus className="mr-2 h-4 w-4" />
-                Receive Stock
+                Add Inventory
               </Button>
             </>
           ) : null}
         </PageHeader>
 
         <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
-          <StatCard title="Warehouses" value={stockSites.length} icon={Boxes} iconBg="bg-slate-100" iconColor="text-slate-700" />
+          <StatCard title="Projects / Locations" value={stockSites.length} icon={Boxes} iconBg="bg-slate-100" iconColor="text-slate-700" />
           <StatCard title="Stock On Hand" value={formatQuantity(inventorySummary.totalQuantity)} icon={Boxes} iconBg="bg-blue-50" iconColor="text-blue-600" />
           <StatCard title="Inventory Value" value={CURRENCY.format(inventorySummary.totalValue)} icon={Wallet} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
           <StatCard title="Low Stock Items" value={inventorySummary.lowStockItems} icon={TrendingDown} iconBg="bg-amber-50" iconColor="text-amber-600" />
@@ -574,7 +872,7 @@ export default function Inventory() {
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
                   className="pl-10"
-                  placeholder="Search ingredient, location, or batch"
+                  placeholder="Search ingredient, project, location, or batch"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                 />
@@ -584,7 +882,7 @@ export default function Inventory() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Warehouses</SelectItem>
+                  <SelectItem value="all">All Projects / Locations</SelectItem>
                   {stockSites.map((site) => (
                     <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
                   ))}
@@ -962,15 +1260,15 @@ export default function Inventory() {
         <Dialog open={stockDialogOpen} onOpenChange={setStockDialogOpen}>
           <DialogContent className="max-w-3xl">
             <DialogHeader>
-              <DialogTitle>Receive Inventory Stock</DialogTitle>
+              <DialogTitle>Add Inventory Manually</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleReceiveStock} className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <Label>Warehouse</Label>
+                  <Label>Project / Location</Label>
                   <Select value={stockForm.site_id} onValueChange={(value) => setStockForm((current) => ({ ...current, site_id: value }))}>
                     <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="Select warehouse" />
+                      <SelectValue placeholder="Select project or location" />
                     </SelectTrigger>
                     <SelectContent>
                       {stockSites.map((site) => (
@@ -1056,10 +1354,156 @@ export default function Inventory() {
                   Cancel
                 </Button>
                 <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={receiveStockMutation.isPending}>
-                  {receiveStockMutation.isPending ? 'Receiving...' : 'Receive Stock'}
+                  {receiveStockMutation.isPending ? 'Saving...' : 'Add Inventory'}
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={bulkDialogOpen}
+          onOpenChange={(open) => {
+            setBulkDialogOpen(open);
+            if (!open) {
+              setBulkError('');
+              setBulkSummary(null);
+            }
+          }}
+        >
+          <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Bulk Upload Inventory</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-5">
+              <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+                <Card className="border-slate-200 shadow-none">
+                  <CardHeader className="border-b border-slate-100">
+                    <CardTitle className="text-base">Upload CSV / Excel</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4 p-4">
+                    <div>
+                      <Label>Default Project / Location</Label>
+                      <Select value={bulkSiteId || 'none'} onValueChange={(value) => setBulkSiteId(value === 'none' ? '' : value)}>
+                        <SelectTrigger className="mt-1">
+                          <SelectValue placeholder="Use row values or choose a default project" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Use project from uploaded rows</SelectItem>
+                          {stockSites.map((site) => (
+                            <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Upload file</Label>
+                      <Input className="mt-1" type="file" accept=".csv,.xlsx,.xls" onChange={handleBulkFile} />
+                      <p className="mt-2 text-xs text-slate-500">
+                        Supported columns: project_code or site_name, ingredient_name, quantity, unit_cost, batch_number, expiry_date, min_stock_level, max_stock_level, valuation_method, notes.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <Button type="button" variant="outline" onClick={handleDownloadInventoryTemplate}>
+                        <FileSpreadsheet className="mr-2 h-4 w-4" />
+                        Download Template
+                      </Button>
+                      <Button type="button" variant="outline" onClick={handlePopulateStarterStock} disabled={bulkReceiveMutation.isPending || stockSites.length === 0}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        Populate Starter Stock
+                      </Button>
+                    </div>
+                    {bulkFileName ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        Loaded file: <span className="font-medium text-slate-900">{bulkFileName}</span>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+
+                <Card className="border-slate-200 shadow-none">
+                  <CardHeader className="border-b border-slate-100">
+                    <CardTitle className="text-base">Import Summary</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3 p-4 text-sm">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-slate-500">Ready rows</p>
+                      <p className="mt-2 text-2xl font-semibold text-slate-900">{parsedBulkImport.items.length}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-slate-500">Row issues</p>
+                      <p className="mt-2 text-2xl font-semibold text-amber-700">{parsedBulkImport.errors.length}</p>
+                    </div>
+                    {bulkSummary ? (
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                        <p className="font-medium text-emerald-900">Last import result</p>
+                        <p className="mt-2 text-sm text-emerald-800">
+                          Imported {bulkSummary.imported} row{bulkSummary.imported === 1 ? '' : 's'}
+                          {bulkSummary.failed ? `, failed ${bulkSummary.failed}` : ''}.
+                        </p>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </div>
+
+              {bulkError ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {bulkError}
+                </div>
+              ) : null}
+
+              <Card className="border-slate-200 shadow-none">
+                <CardHeader className="border-b border-slate-100">
+                  <CardTitle className="text-base">Preview</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Row</TableHead>
+                        <TableHead>Project / Location</TableHead>
+                        <TableHead>Ingredient</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Unit Cost</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {parsedBulkImport.previewRows.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={6} className="py-8 text-center text-slate-500">
+                            Upload a file to preview bulk inventory rows.
+                          </TableCell>
+                        </TableRow>
+                      ) : parsedBulkImport.previewRows.slice(0, 12).map((row) => (
+                        <TableRow key={`preview-${row.row}`}>
+                          <TableCell>{row.row}</TableCell>
+                          <TableCell>{row.project || '-'}</TableCell>
+                          <TableCell>{row.ingredient || '-'}</TableCell>
+                          <TableCell>{formatQuantity(row.quantity)}</TableCell>
+                          <TableCell>{CURRENCY.format(Number(row.unit_cost || 0))}</TableCell>
+                          <TableCell>
+                            <Badge className={row.status === 'Ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
+                              {row.status}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setBulkDialogOpen(false)}>
+                  Close
+                </Button>
+                <Button type="button" className="bg-emerald-600 hover:bg-emerald-700" disabled={bulkReceiveMutation.isPending} onClick={handleSubmitBulkImport}>
+                  {bulkReceiveMutation.isPending ? 'Importing...' : 'Import Inventory'}
+                </Button>
+              </DialogFooter>
+            </div>
           </DialogContent>
         </Dialog>
 

@@ -205,6 +205,7 @@ export default function Sites() {
                     <h3 className="font-semibold text-slate-900">{site.name}</h3>
                     <Badge className={TYPE_COLORS[site.type] || 'bg-slate-100 text-slate-700'}>{site.type}</Badge>
                     {!site.is_active ? <Badge variant="outline">Inactive</Badge> : null}
+                    {site.project_code ? <Badge variant="outline">Project Code: {site.project_code}</Badge> : null}
                   </div>
                   <p className="mt-1 text-xs text-slate-500">{site.hierarchy_path || site.name}</p>
                   <div className="mt-3 grid gap-2 text-sm text-slate-600 md:grid-cols-2 xl:grid-cols-4">
@@ -252,16 +253,16 @@ export default function Sites() {
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-[1600px] mx-auto">
         <PageHeader
-          title="Multi-Location Management"
-          description="Manage company, region, location, kitchen, store, and warehouse hierarchy from one central view"
+          title="Project Management"
+          description="Manage company, region, project, kitchen, store, and warehouse hierarchy from one central view"
         >
-          <Button variant="outline" onClick={() => downloadCSV(sites, 'location_hierarchy')}>
+          <Button variant="outline" onClick={() => downloadCSV(sites, 'project_hierarchy')}>
             <Download className="w-4 h-4 mr-2" />
             Export
           </Button>
           <Button onClick={() => openCreate()} className="bg-emerald-600 hover:bg-emerald-700">
             <Plus className="w-4 h-4 mr-2" />
-            Add Node
+            Add Project
           </Button>
         </PageHeader>
 
@@ -291,9 +292,9 @@ export default function Sites() {
         ) : roots.length === 0 ? (
           <EmptyState
             icon={Network}
-            title="No locations found"
-            description="Create your first company, region, or operating location to build the hierarchy"
-            actionLabel="Add Node"
+            title="No projects found"
+            description="Create your first company, region, or operating project to build the hierarchy"
+            actionLabel="Add Project"
             onAction={() => openCreate()}
           />
         ) : (
@@ -305,17 +306,17 @@ export default function Sites() {
         <Dialog open={formOpen} onOpenChange={setFormOpen}>
           <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editingSite ? 'Edit Hierarchy Node' : 'Create Hierarchy Node'}</DialogTitle>
+              <DialogTitle>{editingSite ? 'Edit Project' : 'Create Project'}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <Label>Name</Label>
+                  <Label>Project Name</Label>
                   <Input className="mt-1" value={formData.name} onChange={(event) => setFormData((current) => ({ ...current, name: event.target.value }))} required />
                 </div>
                 <div>
-                  <Label>Code</Label>
-                  <Input className="mt-1" value={formData.project_code} onChange={(event) => setFormData((current) => ({ ...current, project_code: event.target.value }))} />
+                  <Label>Project Code</Label>
+                  <Input className="mt-1" value={formData.project_code} onChange={(event) => setFormData((current) => ({ ...current, project_code: event.target.value }))} placeholder="e.g. PROJ-001" required />
                 </div>
               </div>
 
@@ -330,7 +331,7 @@ export default function Sites() {
                   </Select>
                 </div>
                 <div>
-                  <Label>Parent Node</Label>
+                  <Label>Parent Project</Label>
                   <Select value={formData.parent_site_id || 'none'} onValueChange={(value) => setFormData((current) => ({ ...current, parent_site_id: value === 'none' ? '' : value }))}>
                     <SelectTrigger className="mt-1"><SelectValue placeholder="None" /></SelectTrigger>
                     <SelectContent>
@@ -389,7 +390,7 @@ export default function Sites() {
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button>
                 <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={createMutation.isPending || updateMutation.isPending}>
-                  {createMutation.isPending || updateMutation.isPending ? 'Saving...' : (editingSite ? 'Update Node' : 'Create Node')}
+                  {createMutation.isPending || updateMutation.isPending ? 'Saving...' : (editingSite ? 'Update Project' : 'Create Project')}
                 </Button>
               </DialogFooter>
             </form>

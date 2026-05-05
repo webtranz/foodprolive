@@ -5,7 +5,7 @@ export const translations = {
     label: 'English',
     nav: {
       dashboard: 'Dashboard',
-      sites: 'Sites',
+      sites: 'Projects',
       ingredients: 'Ingredients',
       recipes: 'Recipes',
       nutritionAllergens: 'Nutrition & Allergen',
@@ -72,9 +72,9 @@ export const translations = {
       previous: 'Previous',
       needHelp: 'Need Help?',
       helpText: 'Check our documentation for guides and tutorials.',
-      allSitesAdmin: 'All Sites (Admin)',
-      site: 'Site',
-      noSiteAssigned: 'No Site Assigned'
+      allSitesAdmin: 'All Projects (Admin)',
+      site: 'Project',
+      noSiteAssigned: 'No Project Assigned'
     }
   },
   ar: {
