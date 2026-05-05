@@ -684,6 +684,25 @@ app.post('/api/entities/:entity/filter', requireAuth, async (request, response, 
   }
 });
 
+app.get('/api/entities/:entity/:id', requireAuth, async (request, response, next) => {
+  try {
+    const entity = request.params.entity;
+    ensureKnownEntity(entity);
+    authorizeEntityAction(request.user, entity, 'read');
+    const record = await findDocument(entity, request.params.id);
+    if (!record) {
+      return response.status(404).json({ message: 'Record not found' });
+    }
+    const scopedRecord = (await scopeEntityRecords(request.user, entity, [record]))[0];
+    if (!scopedRecord) {
+      return response.status(403).json({ message: 'You do not have access to this record' });
+    }
+    response.json(scopedRecord);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/entities/:entity', requireAuth, async (request, response, next) => {
   try {
     const entity = request.params.entity;

@@ -1038,10 +1038,22 @@ async function seedDefaults() {
       full_name: 'Central Procurement Officer',
       role: 'procurement_officer',
       status: 'active',
-      site_id: warehouseSite?.id || abqaiqWarehouse.id,
-      site_name: warehouseSite?.name || abqaiqWarehouse.name,
-      allowed_site_ids: [abqaiqWarehouse.id, modonWarehouse.id, warehouseSite?.id].filter(Boolean),
-      allowed_site_names: [abqaiqWarehouse.name, modonWarehouse.name, warehouseSite?.name].filter(Boolean),
+      site_id: abqaiqCamp.id,
+      site_name: abqaiqCamp.name,
+      allowed_site_ids: [
+        abqaiqCamp.id,
+        abqaiqWarehouse.id,
+        modonCamp.id,
+        modonWarehouse.id,
+        warehouseSite?.id
+      ].filter(Boolean),
+      allowed_site_names: [
+        abqaiqCamp.name,
+        abqaiqWarehouse.name,
+        modonCamp.name,
+        modonWarehouse.name,
+        warehouseSite?.name
+      ].filter(Boolean),
       visibility_scope: 'custom',
       password: adminPassword
     }
