@@ -57,6 +57,11 @@ export const entityRegistry = {
   },
   Ingredient: {
     defaults: { is_active: true, allergens: [] },
+    unique: [
+      { fields: ['name'], label: 'ingredient name' },
+      { fields: ['ingredient_code'], label: 'ingredient code', ignoreEmpty: true },
+      { fields: ['sku'], label: 'ingredient SKU', ignoreEmpty: true }
+    ],
     schema: z.object({
       name: z.string().trim().min(1, 'Ingredient name is required'),
       unit: stringOptional,
@@ -78,7 +83,10 @@ export const entityRegistry = {
     }).passthrough()
   },
   Inventory: {
-    defaults: { quantity: 0, status: 'in_stock' }
+    defaults: { quantity: 0, status: 'in_stock' },
+    unique: [
+      { fields: ['site_id', 'ingredient_id'], label: 'inventory item for this location' }
+    ]
   },
   InventoryLot: {
     defaults: { remaining_quantity: 0, status: 'active' }
@@ -115,6 +123,10 @@ export const entityRegistry = {
   },
   Recipe: {
     defaults: { is_active: true, ingredients: [] },
+    unique: [
+      { fields: ['name'], label: 'recipe name' },
+      { fields: ['recipe_code'], label: 'recipe code', ignoreEmpty: true }
+    ],
     schema: z.object({
       name: z.string().trim().min(1, 'Recipe name is required'),
       description: stringOptional,
@@ -149,6 +161,10 @@ export const entityRegistry = {
   },
   Site: {
     defaults: { is_active: true, type: 'location', hierarchy_level: 'location' },
+    unique: [
+      { fields: ['name'], label: 'project name' },
+      { fields: ['project_code'], label: 'project code', ignoreEmpty: true }
+    ],
     schema: z.object({
       name: z.string().trim().min(1, 'Site name is required'),
       project_code: stringOptional,
@@ -177,6 +193,9 @@ export const entityRegistry = {
   },
   User: {
     defaults: { role: 'user', status: 'active' },
+    unique: [
+      { fields: ['email'], label: 'user email' }
+    ],
     schema: z.object({
       email: z.string().trim().email('A valid email address is required'),
       full_name: stringOptional,
@@ -195,7 +214,10 @@ export const entityRegistry = {
     }).passthrough()
   },
   UserGroup: {
-    defaults: { total_members: 0, members: [] }
+    defaults: { total_members: 0, members: [] },
+    unique: [
+      { fields: ['name'], label: 'group name' }
+    ]
   },
   WasteTarget: {
     defaults: { target_percentage: 0, target_cost: 0, status: 'active' }

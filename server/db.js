@@ -155,6 +155,48 @@ function normalizeRecord(entity, payload, existing = null) {
   };
 }
 
+function normalizeUniqueValue(value) {
+  if (value === null || typeof value === 'undefined') return '';
+  if (typeof value === 'string') return value.trim().toLowerCase();
+  return String(value).trim().toLowerCase();
+}
+
+function valuesMatchForUnique(left, right) {
+  return normalizeUniqueValue(left) === normalizeUniqueValue(right);
+}
+
+async function ensureEntityUniqueness(entity, record, currentId = null) {
+  const config = entityRegistry[entity];
+  const uniqueRules = config?.unique || [];
+  if (!uniqueRules.length) {
+    return;
+  }
+
+  const records = await listDocuments(entity, { limit: 10000 });
+  for (const rule of uniqueRules) {
+    const fields = Array.isArray(rule.fields) ? rule.fields : [];
+    if (!fields.length) continue;
+
+    const candidateValues = fields.map((field) => record[field]);
+    if (rule.ignoreEmpty && candidateValues.some((value) => normalizeUniqueValue(value) === '')) {
+      continue;
+    }
+
+    const duplicate = records.find((existing) => {
+      if (currentId && existing.id === currentId) {
+        return false;
+      }
+      return fields.every((field) => valuesMatchForUnique(existing[field], record[field]));
+    });
+
+    if (duplicate) {
+      const error = new Error(`${rule.label || fields.join(' + ')} already exists`);
+      error.status = 409;
+      throw error;
+    }
+  }
+}
+
 function matchesFilter(record, filters = {}) {
   return Object.entries(filters).every(([key, expected]) => {
     const actual = record[key];
@@ -744,6 +786,15 @@ async function updateUser(id, patch) {
   const existing = await findUserById(id);
   if (!existing) return null;
 
+  if (patch.email && normalizeUniqueValue(patch.email) !== normalizeUniqueValue(existing.email)) {
+    const duplicate = await findUserByEmail(patch.email);
+    if (duplicate && duplicate.id !== id) {
+      const error = new Error('User email already exists');
+      error.status = 409;
+      throw error;
+    }
+  }
+
   const credentials = resolvePasswordFields(patch, existing);
   const merged = {
     ...existing,
@@ -835,6 +886,7 @@ async function createDocument(entity, payload) {
 
   const validated = validateEntityPayload(entity, payload);
   const record = normalizeRecord(entity, validated);
+  await ensureEntityUniqueness(entity, record);
 
   await query(
     `INSERT INTO entity_records (id, entity_name, data, created_at, updated_at)
@@ -856,6 +908,7 @@ async function updateDocument(entity, id, patch) {
 
   const validated = validateEntityPayload(entity, { ...existing, ...patch });
   const record = normalizeRecord(entity, validated, existing);
+  await ensureEntityUniqueness(entity, record, id);
 
   await query(
     `UPDATE entity_records
