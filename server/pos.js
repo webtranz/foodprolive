@@ -528,7 +528,9 @@ async function getDailySalesSummary({ startDate, endDate, locationId }) {
   const result = await query(
     `SELECT
        o.business_date,
-       COALESCE(o.site_name, o.location_name, 'Unknown') AS location_name,
+       COALESCE(o.site_id, i.site_id) AS site_id,
+       COALESCE(o.site_name, i.site_name, o.location_name, 'Unknown') AS site_name,
+       COALESCE(o.site_name, i.site_name, o.location_name, 'Unknown') AS location_name,
        i.pos_item_name,
        SUM(i.quantity) AS total_quantity,
        SUM(i.total_price) AS total_value
@@ -536,8 +538,12 @@ async function getDailySalesSummary({ startDate, endDate, locationId }) {
      JOIN pos_sales_items i ON i.order_id = o.id
      WHERE ($1::date IS NULL OR o.business_date >= $1::date)
        AND ($2::date IS NULL OR o.business_date <= $2::date)
-       AND ($3::text IS NULL OR o.site_id = $3::text)
-     GROUP BY o.business_date, location_name, i.pos_item_name
+       AND ($3::text IS NULL OR COALESCE(o.site_id, i.site_id) = $3::text)
+     GROUP BY
+       o.business_date,
+       COALESCE(o.site_id, i.site_id),
+       COALESCE(o.site_name, i.site_name, o.location_name, 'Unknown'),
+       i.pos_item_name
      ORDER BY o.business_date DESC, location_name ASC, total_quantity DESC`,
     [startDate || null, endDate || null, locationId || null]
   );
@@ -562,7 +568,12 @@ async function getSalesProductionVariance({ startDate, endDate, locationId }) {
      WHERE ($1::date IS NULL OR o.business_date >= $1::date)
        AND ($2::date IS NULL OR o.business_date <= $2::date)
        AND ($3::text IS NULL OR COALESCE(o.site_id, i.site_id) = $3::text)
-     GROUP BY o.business_date, site_id, site_name, item_key, item_name`,
+     GROUP BY
+       o.business_date,
+       COALESCE(o.site_id, i.site_id),
+       COALESCE(o.site_name, i.site_name, o.location_name, 'Unknown'),
+       COALESCE(i.recipe_id, i.pos_item_name),
+       COALESCE(i.recipe_name, i.pos_item_name)`,
     [startDate || null, endDate || null, locationId || null]
   );
 
