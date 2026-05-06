@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { usePermissions } from '@/components/auth/usePermissions';
@@ -8,6 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CheckCircle2, ClipboardList, FileText, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
@@ -25,15 +28,38 @@ export default function MaterialRequests() {
   const { can } = usePermissions();
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [notes, setNotes] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
+  const [projectFilter, setProjectFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   const { data: materialRequests = [] } = useQuery({
     queryKey: ['materialRequestsWorkflow'],
     queryFn: () => base44.materialRequests.list()
   });
 
-  const visibleRequests = materialRequests.filter((request) =>
+  const filteredBaseRequests = materialRequests.filter((request) =>
     String(request.status || '').toLowerCase() !== 'awaiting_production_approval'
   );
+
+  const projectOptions = useMemo(() => {
+    const uniqueProjects = new Map();
+    filteredBaseRequests.forEach((request) => {
+      if (request.site_id && request.site_name && !uniqueProjects.has(request.site_id)) {
+        uniqueProjects.set(request.site_id, request.site_name);
+      }
+    });
+    return Array.from(uniqueProjects, ([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [filteredBaseRequests]);
+
+  const visibleRequests = useMemo(() => {
+    return filteredBaseRequests.filter((request) => {
+      const matchesDate = !dateFilter || String(request.request_date || '').slice(0, 10) === dateFilter;
+      const matchesProject = projectFilter === 'all' || request.site_id === projectFilter;
+      const matchesStatus = statusFilter === 'all' || request.status === statusFilter;
+      return matchesDate && matchesProject && matchesStatus;
+    });
+  }, [dateFilter, filteredBaseRequests, projectFilter, statusFilter]);
 
   const acknowledgeMutation = useMutation({
     mutationFn: ({ id, notes: procurementNotes }) => base44.materialRequests.acknowledge(id, { notes: procurementNotes }),
@@ -52,6 +78,48 @@ export default function MaterialRequests() {
           title="Material Requests"
           description="Track production-related material requests from chef submission through procurement acknowledgement."
         />
+
+        <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
+          <CardContent className="grid gap-4 p-4 md:grid-cols-3">
+            <div>
+              <Label>Request Date</Label>
+              <Input
+                type="date"
+                className="mt-1"
+                value={dateFilter}
+                onChange={(event) => setDateFilter(event.target.value)}
+              />
+            </div>
+            <div>
+              <Label>Project</Label>
+              <Select value={projectFilter} onValueChange={setProjectFilter}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="All projects" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Projects</SelectItem>
+                  {projectOptions.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Status</Label>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  {Object.entries(STATUS_CONFIG).map(([statusKey, config]) => (
+                    <SelectItem key={statusKey} value={statusKey}>{config.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
 
         {visibleRequests.length === 0 ? (
           <Card className="border-dashed border-slate-300 bg-white">
