@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Textarea } from '@/components/ui/textarea';
 import { CheckCircle2, ClipboardList, FileText, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatCurrency } from '@/lib/currency';
 
 const STATUS_CONFIG = {
   awaiting_production_approval: { color: 'bg-slate-100 text-slate-700', label: 'Awaiting Production Approval' },
@@ -90,7 +91,7 @@ export default function MaterialRequests() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-2xl font-bold text-slate-900">${Number(request.total_estimated_cost || 0).toFixed(2)}</p>
+                        <p className="text-2xl font-bold text-slate-900">{formatCurrency(Number(request.total_estimated_cost || 0))}</p>
                         <p className="text-xs text-slate-500">{totalItems} item(s)</p>
                       </div>
                     </div>

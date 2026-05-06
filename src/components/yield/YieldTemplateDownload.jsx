@@ -23,9 +23,9 @@ export default function YieldTemplateDownload({ onUpload }) {
       d365: {
         headers: ['d365_item_code', 'item_name', 'item_type', 'unit_of_measure', 'quantity', 'unit_price', 'total_amount', 'site_id', 'warehouse_id', 'purchase_requisition_ref', 'purchase_order_ref', 'vendor_account', 'delivery_date', 'cost_center', 'project_code', 'currency', 'notes'],
         sample: [
-          ['FOOD-001', 'Chicken Breast', 'Item', 'kg', '100', '8.50', '850.00', 'SITE-001', 'WH-MAIN', 'PR-2026-001', 'PO-2026-001', 'VENDOR-001', '2026-03-10', 'CC-KITCHEN', 'PROJ-001', 'USD', 'Bulk purchase for weekly production'],
-          ['FOOD-002', 'Basmati Rice', 'Item', 'kg', '200', '3.50', '700.00', 'SITE-001', 'WH-MAIN', 'PR-2026-002', 'PO-2026-002', 'VENDOR-002', '2026-03-10', 'CC-KITCHEN', 'PROJ-001', 'USD', 'Weekly rice stock'],
-          ['FOOD-003', 'Olive Oil', 'Item', 'l', '50', '12.00', '600.00', 'SITE-002', 'WH-STORE', 'PR-2026-003', '', 'VENDOR-003', '2026-03-12', 'CC-KITCHEN', 'PROJ-002', 'USD', 'Monthly supply']
+          ['FOOD-001', 'Chicken Breast', 'Item', 'kg', '100', '8.50', '850.00', 'SITE-001', 'WH-MAIN', 'PR-2026-001', 'PO-2026-001', 'VENDOR-001', '2026-03-10', 'CC-KITCHEN', 'PROJ-001', 'SAR', 'Bulk purchase for weekly production'],
+          ['FOOD-002', 'Basmati Rice', 'Item', 'kg', '200', '3.50', '700.00', 'SITE-001', 'WH-MAIN', 'PR-2026-002', 'PO-2026-002', 'VENDOR-002', '2026-03-10', 'CC-KITCHEN', 'PROJ-001', 'SAR', 'Weekly rice stock'],
+          ['FOOD-003', 'Olive Oil', 'Item', 'l', '50', '12.00', '600.00', 'SITE-002', 'WH-STORE', 'PR-2026-003', '', 'VENDOR-003', '2026-03-12', 'CC-KITCHEN', 'PROJ-002', 'SAR', 'Monthly supply']
         ]
       },
       juice: {

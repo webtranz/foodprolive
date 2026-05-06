@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { DollarSign } from 'lucide-react';
+import { formatCurrency, SAR_SYMBOL } from '@/lib/currency';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
@@ -55,7 +56,7 @@ export default function CostBreakdownChart({ recipes, ingredients, filters }) {
       <CardContent>
         <div className="bg-green-50 rounded-lg p-4 mb-6">
           <p className="text-sm text-slate-600">Total Inventory Value</p>
-          <p className="text-2xl font-bold text-green-700">${totalInventoryValue.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-green-700">{formatCurrency(totalInventoryValue)}</p>
         </div>
 
         <h4 className="font-medium mb-4">Top 10 Most Expensive Recipes</h4>
@@ -64,10 +65,10 @@ export default function CostBreakdownChart({ recipes, ingredients, filters }) {
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
             <YAxis />
-            <Tooltip />
+            <Tooltip formatter={(value) => formatCurrency(value)} />
             <Legend />
-            <Bar dataKey="cost" fill="#10b981" name="Total Cost ($)" />
-            <Bar dataKey="costPerServing" fill="#3b82f6" name="Cost per Serving ($)" />
+            <Bar dataKey="cost" fill="#10b981" name={`Total Cost (${SAR_SYMBOL})`} />
+            <Bar dataKey="costPerServing" fill="#3b82f6" name={`Cost per Serving (${SAR_SYMBOL})`} />
           </BarChart>
         </ResponsiveContainer>
 
@@ -87,7 +88,7 @@ export default function CostBreakdownChart({ recipes, ingredients, filters }) {
                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip />
+            <Tooltip formatter={(value) => formatCurrency(value)} />
           </PieChart>
         </ResponsiveContainer>
       </CardContent>

@@ -13,6 +13,7 @@ import { Download, FileText, TrendingUp, Package, Trash2, Building2 } from 'luci
 import StatCard from '@/components/ui/StatCard';
 import { format, subDays } from 'date-fns';
 import { downloadCSV } from '../components/utils/exportData';
+import { formatCurrency } from '@/lib/currency';
 
 export default function Reports() {
   const [selectedSite, setSelectedSite] = useState('all');
@@ -236,7 +237,7 @@ export default function Reports() {
           />
           <StatCard
             title="Waste Cost"
-            value={`$${totalWasteCost.toFixed(2)}`}
+            value={formatCurrency(totalWasteCost)}
             icon={Package}
             iconBg="bg-amber-50"
             iconColor="text-amber-600"
@@ -313,7 +314,7 @@ export default function Reports() {
                         <TableRow key={idx}>
                           <TableCell className="font-medium capitalize">{cat.label}</TableCell>
                           <TableCell>{cat.quantity} kg</TableCell>
-                          <TableCell>${cat.cost.toFixed(2)}</TableCell>
+                          <TableCell>{formatCurrency(cat.cost)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

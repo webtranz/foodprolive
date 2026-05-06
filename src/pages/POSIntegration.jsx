@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import { formatCurrency, SAR_CODE, SAR_NAME } from '@/lib/currency';
 import {
   ArrowUpDown,
   Cable,
@@ -144,7 +145,7 @@ function buildManualOrders(rows, sites = []) {
         location_name: locationName || siteName || site?.name || '',
         business_date: businessDate,
         sold_at: soldAt,
-        currency: String(pickValue(row, ['currency']) || 'USD').trim() || 'USD',
+        currency: String(pickValue(row, ['currency']) || SAR_CODE).trim() || SAR_CODE,
         total_amount: 0,
         items: []
       });
@@ -810,7 +811,7 @@ export default function POSIntegration() {
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
                     <p className="font-medium text-slate-900">Accepted columns</p>
                     <p className="mt-2 leading-6">
-                      Use headers like <span className="font-medium">order_id</span>, <span className="font-medium">order_number</span>, <span className="font-medium">business_date</span>, <span className="font-medium">site_id</span>, <span className="font-medium">site_name</span>, <span className="font-medium">pos_item_code</span>, <span className="font-medium">pos_item_name</span>, <span className="font-medium">quantity</span>, <span className="font-medium">unit_price</span>, and <span className="font-medium">total_price</span>.
+                      Use headers like <span className="font-medium">order_id</span>, <span className="font-medium">order_number</span>, <span className="font-medium">business_date</span>, <span className="font-medium">site_id</span>, <span className="font-medium">site_name</span>, <span className="font-medium">pos_item_code</span>, <span className="font-medium">pos_item_name</span>, <span className="font-medium">quantity</span>, <span className="font-medium">unit_price</span>, <span className="font-medium">total_price</span>, and <span className="font-medium">currency</span> using {SAR_CODE} for {SAR_NAME}.
                     </p>
                   </div>
 
@@ -923,7 +924,7 @@ export default function POSIntegration() {
                             <TableCell>{row.location_name}</TableCell>
                             <TableCell>{row.pos_item_name}</TableCell>
                             <TableCell>{formatNumber(row.total_quantity, 2)}</TableCell>
-                            <TableCell>${formatNumber(row.total_value, 2)}</TableCell>
+                            <TableCell>{formatCurrency(row.total_value)}</TableCell>
                           </TableRow>
                         ))}
                         {salesSummary.length === 0 ? (
@@ -947,7 +948,7 @@ export default function POSIntegration() {
                   <CardContent className="space-y-4">
                     <div className="rounded-2xl bg-slate-50 p-4">
                       <p className="text-sm text-slate-500">Sales value</p>
-                      <p className="mt-1 text-2xl font-semibold text-slate-900">${formatNumber(varianceMetrics.salesValue, 2)}</p>
+                      <p className="mt-1 text-2xl font-semibold text-slate-900">{formatCurrency(varianceMetrics.salesValue)}</p>
                     </div>
                     <div className="rounded-2xl bg-slate-50 p-4">
                       <p className="text-sm text-slate-500">Variance volume</p>

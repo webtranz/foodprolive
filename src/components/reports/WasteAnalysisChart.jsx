@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { AlertTriangle } from 'lucide-react';
+import { formatCurrency, SAR_SYMBOL } from '@/lib/currency';
 
 const COLORS = ['#ef4444', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#10b981'];
 
@@ -39,7 +40,7 @@ export default function WasteAnalysisChart({ waste }) {
           </div>
           <div className="bg-orange-50 rounded-lg p-4">
             <p className="text-sm text-slate-600">Estimated Cost</p>
-            <p className="text-2xl font-bold text-orange-700">${totalCost.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-orange-700">{formatCurrency(totalCost)}</p>
           </div>
           <div className="bg-purple-50 rounded-lg p-4">
             <p className="text-sm text-slate-600">Preventable Waste</p>
@@ -74,8 +75,8 @@ export default function WasteAnalysisChart({ waste }) {
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="category" angle={-45} textAnchor="end" height={100} />
             <YAxis />
-            <Tooltip />
-            <Bar dataKey="cost" fill="#ef4444" name="Cost ($)" />
+            <Tooltip formatter={(value) => formatCurrency(value)} />
+            <Bar dataKey="cost" fill="#ef4444" name={`Cost (${SAR_SYMBOL})`} />
           </BarChart>
         </ResponsiveContainer>
       </CardContent>

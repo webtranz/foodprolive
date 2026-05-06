@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import YieldTemplateDownload from '../components/yield/YieldTemplateDownload';
 import YieldUpload from '../components/yield/YieldUpload';
 import CostReport from '../components/yield/CostReport';
+import { formatCurrency } from '@/lib/currency';
 
 function averageBy(items, selector) {
   const values = items
@@ -160,7 +161,7 @@ export default function YieldCost() {
           />
           <StatCard
             title="Avg Cost/Unit"
-            value={`$${avgCost.toFixed(2)}`}
+            value={formatCurrency(avgCost)}
             subtitle="Per ingredient"
             icon={DollarSign}
             iconColor="text-green-600"
@@ -168,7 +169,7 @@ export default function YieldCost() {
           />
           <StatCard
             title="Total Value"
-            value={`$${totalInventoryValue}`}
+            value={formatCurrency(totalInventoryValue, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             subtitle="All ingredients"
             icon={DollarSign}
             iconColor="text-purple-600"
@@ -305,7 +306,7 @@ export default function YieldCost() {
                               ) : '-'}
                             </TableCell>
                             <TableCell className="text-right font-semibold">
-                              {ingredient.cost_per_unit ? `$${ingredient.cost_per_unit.toFixed(2)}` : '-'}
+                              {ingredient.cost_per_unit ? formatCurrency(ingredient.cost_per_unit) : '-'}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -357,10 +358,10 @@ export default function YieldCost() {
                             </TableCell>
                             <TableCell className="text-right">{recipe.servings}</TableCell>
                             <TableCell className="text-right font-semibold text-green-700">
-                              ${recipe.total_cost.toFixed(2)}
+                              {formatCurrency(recipe.total_cost)}
                             </TableCell>
                             <TableCell className="text-right font-semibold">
-                              {recipe.cost_per_serving != null ? `$${recipe.cost_per_serving.toFixed(2)}` : '-'}
+                              {recipe.cost_per_serving != null ? formatCurrency(recipe.cost_per_serving) : '-'}
                             </TableCell>
                             <TableCell className="text-right">
                               {recipe.calories_per_serving || '-'}

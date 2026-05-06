@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Camera, Upload, Sparkles, Lightbulb, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatCurrency } from '@/lib/currency';
 
 export default function CameraWasteDetection() {
   const videoRef = useRef(null);
@@ -100,7 +101,7 @@ Detect:
 4. Classify waste category
 5. Provide 2-3 specific suggestions to reduce this type of waste
 6. Give a confidence score (0-100)
-7. Estimate cost of waste (assume average $0.01 per gram)
+7. Estimate cost of waste (assume average ⃁ 0.01 per gram)
 
 Be precise and practical.`,
       file_urls: [file_url],
@@ -238,7 +239,7 @@ Be precise and practical.`,
                   </div>
                   <div className="text-right">
                     <p className="text-xl font-bold">{aiResult.estimated_waste_grams?.toFixed(0)}g</p>
-                    <p className="text-sm">≈ ${aiResult.cost_estimate?.toFixed(2)}</p>
+                    <p className="text-sm">≈ {formatCurrency(aiResult.cost_estimate)}</p>
                   </div>
                 </div>
 
@@ -310,7 +311,7 @@ Be precise and practical.`,
                       {log.waste_percentage?.toFixed(0)}%
                     </Badge>
                   </TableCell>
-                  <TableCell>${log.cost_estimate?.toFixed(2) || '0.00'}</TableCell>
+                  <TableCell>{formatCurrency(log.cost_estimate || 0)}</TableCell>
                   <TableCell className="text-xs capitalize">{log.waste_category?.replace('_', ' ')}</TableCell>
                 </TableRow>
               ))}

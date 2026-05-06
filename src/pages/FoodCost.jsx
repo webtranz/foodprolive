@@ -12,14 +12,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/exportData';
 import { CircleDollarSign, Download, TrendingUp, UtensilsCrossed } from 'lucide-react';
+import { formatCurrency, SAR_NAME } from '@/lib/currency';
 
 function safeNumber(value) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function formatCurrency(value) {
-  return `$${safeNumber(value).toFixed(2)}`;
 }
 
 function titleCase(value) {
@@ -157,7 +154,7 @@ export default function FoodCost() {
       <div className="max-w-[1680px] mx-auto space-y-6">
         <PageHeader
           title="Food Cost"
-          description="Daily, date-wise, and meal-type food cost reporting with direct exports"
+          description={`Daily, date-wise, and meal-type ${SAR_NAME} food cost reporting with direct exports`}
         >
           <Button variant="outline" onClick={() => handleExport('csv')}>
             <Download className="w-4 h-4 mr-2" />

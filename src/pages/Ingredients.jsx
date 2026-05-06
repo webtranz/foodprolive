@@ -25,6 +25,7 @@ import StatCard from '@/components/ui/StatCard';
 import { Plus, Search, Package, LayoutGrid, List, Download, AlertTriangle, PlusCircle, MinusCircle, Edit, History, Flame, Beef, Droplet, Candy, ShieldAlert } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
 import { format } from 'date-fns';
+import { formatCurrency } from '@/lib/currency';
 
 const CATEGORIES = [
   { value: 'all', label: 'All Categories' },
@@ -359,7 +360,7 @@ export default function Ingredients() {
                               </span>
                             )}
                           </TableCell>
-                          <TableCell>{ing.cost_per_unit != null ? `$${ing.cost_per_unit}` : '-'}</TableCell>
+                          <TableCell>{ing.cost_per_unit != null ? formatCurrency(ing.cost_per_unit) : '-'}</TableCell>
                           <TableCell>{ing.cooking_yield_percent ? `${ing.cooking_yield_percent}%` : '-'}</TableCell>
                           <TableCell>
                             <Button variant="ghost" size="sm" onClick={() => { setEditingIngredient(ing); setFormOpen(true); }}>Edit</Button>

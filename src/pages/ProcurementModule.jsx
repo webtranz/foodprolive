@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import { formatCurrency } from '@/lib/currency';
 import {
   AlertTriangle,
   Building2,
@@ -80,10 +81,6 @@ function formatNumber(value, digits = 0) {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits
   }).format(Number(value || 0));
-}
-
-function formatCurrency(value) {
-  return `$${formatNumber(value, 2)}`;
 }
 
 function statusBadgeClass(status) {

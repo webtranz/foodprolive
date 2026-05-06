@@ -50,6 +50,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { downloadCSV } from '../components/utils/exportData';
+import { formatCurrency } from '@/lib/currency';
 
 const STATUS_COLORS = {
   draft: '#94a3b8',
@@ -74,12 +75,6 @@ const KPI_CARD_STYLES = [
   { iconBg: 'bg-fuchsia-50', iconColor: 'text-fuchsia-600' },
   { iconBg: 'bg-slate-100', iconColor: 'text-slate-700' }
 ];
-
-const currency = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 0
-});
 
 const percent = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 1
@@ -777,19 +772,19 @@ export default function Dashboard() {
                 },
                 {
                   title: 'Total Food Cost',
-                  value: currency.format(analytics.kpis.totalFoodCost),
+                  value: formatCurrency(analytics.kpis.totalFoodCost, { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
                   subtitle: 'Ingredient cost for completed production',
                   icon: CircleDollarSign
                 },
                 {
                   title: 'Waste Cost',
-                  value: currency.format(analytics.kpis.totalWasteCost),
+                  value: formatCurrency(analytics.kpis.totalWasteCost, { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
                   subtitle: `${analytics.filteredWaste.length} waste records`,
                   icon: TrendingDown
                 },
                 {
                   title: 'Inventory Value',
-                  value: currency.format(analytics.kpis.inventoryValue),
+                  value: formatCurrency(analytics.kpis.inventoryValue, { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
                   subtitle: `${analytics.filteredInventory.length} stocked items`,
                   icon: Warehouse
                 },
@@ -871,7 +866,7 @@ export default function Dashboard() {
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                       <XAxis type="number" tick={{ fontSize: 12 }} />
                       <YAxis dataKey="location" type="category" width={120} tick={{ fontSize: 12 }} />
-                      <Tooltip formatter={(value) => currency.format(value)} />
+                      <Tooltip formatter={(value) => formatCurrency(value, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} />
                       <Legend />
                       <Bar dataKey="foodCost" stackId="cost" name="Food Cost" fill="#2563eb" radius={[0, 0, 0, 0]} />
                       <Bar dataKey="wasteCost" stackId="cost" name="Waste Cost" fill="#f97316" radius={[0, 6, 6, 0]} />
@@ -904,7 +899,7 @@ export default function Dashboard() {
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                       <XAxis type="number" tick={{ fontSize: 12 }} />
                       <YAxis dataKey="name" type="category" width={130} tick={{ fontSize: 12 }} />
-                      <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} />
+                      <Tooltip formatter={(value) => formatCurrency(Number(value), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
                       <Bar dataKey="costPerServing" name="Cost / Serving" fill="#7c3aed" radius={[0, 6, 6, 0]}>
                         {analytics.charts.topExpensiveRecipes.map((entry, index) => (
                           <Cell key={entry.name} fill={index < 3 ? '#7c3aed' : '#c4b5fd'} />

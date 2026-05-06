@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { downloadCSV, downloadExcel } from '../components/utils/exportData';
+import { formatCurrency, replaceVisibleUSDCurrency } from '@/lib/currency';
 import {
   CalendarClock,
   Download,
@@ -25,12 +26,6 @@ import {
   ShieldAlert,
   TrendingUp
 } from 'lucide-react';
-
-const currency = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 2
-});
 
 function safeNumber(value) {
   const numeric = Number(value);
@@ -53,7 +48,7 @@ function buildPdf(rows, title, filters) {
   const pdf = new jsPDF('l', 'mm', 'a4');
   const headers = rows.length ? Object.keys(rows[0]) : [];
   pdf.setFontSize(18);
-  pdf.text(title, 14, 16);
+  pdf.text(replaceVisibleUSDCurrency(title), 14, 16);
   pdf.setFontSize(9);
   pdf.text(`Date: ${filters.startDate} to ${filters.endDate}`, 14, 24);
   pdf.text(`Location: ${filters.locationId === 'all' ? 'All Locations' : filters.locationName}`, 14, 29);
@@ -559,9 +554,9 @@ export default function AdvancedReports() {
 
     sendEmailMutation.mutate({
       to: schedule.recipients,
-      subject: `${report?.title || 'FoodPro Report'} - ${format(new Date(), 'yyyy-MM-dd')}`,
+      subject: `${replaceVisibleUSDCurrency(report?.title || 'FoodPro Report')} - ${format(new Date(), 'yyyy-MM-dd')}`,
       html: `
-        <h2>${report?.title || 'FoodPro Report'}</h2>
+        <h2>${replaceVisibleUSDCurrency(report?.title || 'FoodPro Report')}</h2>
         <p>Frequency: ${schedule.frequency}</p>
         <p>Rows included: ${rows.length}</p>
         <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px;">
@@ -736,8 +731,8 @@ export default function AdvancedReports() {
                             <TableRow key={`${report.key}-${index}`}>
                               {columns.map((column) => (
                                 <TableCell key={column}>
-                                  {typeof row[column] === 'number' && column.includes('cost')
-                                    ? currency.format(row[column])
+                                  {typeof row[column] === 'number' && (column.includes('cost') || column.includes('price') || column.includes('revenue') || column.includes('amount') || column.includes('value') || column.includes('margin'))
+                                    ? formatCurrency(row[column])
                                     : row[column]}
                                 </TableCell>
                               ))}

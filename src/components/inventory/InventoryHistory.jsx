@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ArrowUpCircle, ArrowDownCircle, Activity, Repeat } from 'lucide-react';
 import { format } from 'date-fns';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatCurrency } from '@/lib/currency';
 
 const TYPE_CONFIG = {
   addition: { icon: ArrowUpCircle, color: 'text-green-600', bg: 'bg-green-50' },
@@ -79,7 +80,7 @@ export default function InventoryHistory({ ingredientId, siteId }) {
                     </TableCell>
                     <TableCell className="text-sm text-slate-600">
                       {typeof transaction.total_cost === 'number'
-                        ? `$${transaction.total_cost.toFixed(2)}`
+                        ? formatCurrency(transaction.total_cost)
                         : '-'}
                     </TableCell>
                     <TableCell className="text-sm text-slate-600 max-w-xs truncate">

@@ -13,6 +13,7 @@ import { DollarSign, TrendingDown, Download, Target, ChefHat, AlertCircle } from
 import { format, subDays } from 'date-fns';
 import StatCard from '@/components/ui/StatCard';
 import { downloadCSV } from '../components/utils/exportData';
+import { formatCurrency, SAR_SYMBOL } from '@/lib/currency';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
@@ -151,9 +152,9 @@ export default function CostControl() {
 
         {/* KPI Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatCard title="Total Food Cost" value={`$${totalIngredientCost.toFixed(2)}`} icon={DollarSign} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
-          <StatCard title="Cost per Meal" value={`$${costPerMeal.toFixed(2)}`} icon={ChefHat} iconBg="bg-blue-50" iconColor="text-blue-600" />
-          <StatCard title="Waste Cost" value={`$${totalWasteCost.toFixed(2)}`} icon={TrendingDown} iconBg="bg-red-50" iconColor="text-red-600" />
+          <StatCard title="Total Food Cost" value={formatCurrency(totalIngredientCost)} icon={DollarSign} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+          <StatCard title="Cost per Meal" value={formatCurrency(costPerMeal)} icon={ChefHat} iconBg="bg-blue-50" iconColor="text-blue-600" />
+          <StatCard title="Waste Cost" value={formatCurrency(totalWasteCost)} icon={TrendingDown} iconBg="bg-red-50" iconColor="text-red-600" />
           <StatCard title="Waste Cost %" value={`${foodCostPercent.toFixed(1)}%`} icon={Target} iconBg="bg-amber-50" iconColor="text-amber-600" />
         </div>
 
@@ -175,8 +176,8 @@ export default function CostControl() {
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
                         <YAxis tick={{ fontSize: 11 }} />
-                        <Tooltip formatter={v => `$${v.toFixed(2)}`} />
-                        <Bar dataKey="cost" fill="#10b981" radius={[4, 4, 0, 0]} name="Cost ($)" />
+                        <Tooltip formatter={v => formatCurrency(v)} />
+                        <Bar dataKey="cost" fill="#10b981" radius={[4, 4, 0, 0]} name={`Cost (${SAR_SYMBOL})`} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -192,8 +193,8 @@ export default function CostControl() {
                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                         <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
                         <YAxis tick={{ fontSize: 11 }} />
-                        <Tooltip formatter={v => `$${v.toFixed(2)}`} />
-                        <Line type="monotone" dataKey="costPerMeal" stroke="#3b82f6" strokeWidth={2} dot={false} name="$/meal" />
+                        <Tooltip formatter={v => formatCurrency(v)} />
+                        <Line type="monotone" dataKey="costPerMeal" stroke="#3b82f6" strokeWidth={2} dot={false} name={`${SAR_SYMBOL}/meal`} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -228,8 +229,8 @@ export default function CostControl() {
                         <TableRow key={idx}>
                           <TableCell className="font-medium">{recipe.name}</TableCell>
                           <TableCell>{recipe.totalServings.toLocaleString()}</TableCell>
-                          <TableCell>${recipe.totalCost.toFixed(2)}</TableCell>
-                          <TableCell className="font-semibold">${recipe.costPerServing.toFixed(2)}</TableCell>
+                          <TableCell>{formatCurrency(recipe.totalCost)}</TableCell>
+                          <TableCell className="font-semibold">{formatCurrency(recipe.costPerServing)}</TableCell>
                           <TableCell>{recipe.productions}</TableCell>
                           <TableCell>
                             <Badge className={recipe.costPerServing < 2 ? 'bg-emerald-100 text-emerald-700' : recipe.costPerServing < 5 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}>
@@ -256,7 +257,7 @@ export default function CostControl() {
                         <Pie data={topIngCosts} cx="50%" cy="50%" outerRadius={100} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
                           {topIngCosts.map((_, idx) => <Cell key={idx} fill={COLORS[idx % COLORS.length]} />)}
                         </Pie>
-                        <Tooltip formatter={v => `$${v}`} />
+                        <Tooltip formatter={v => formatCurrency(v)} />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
@@ -280,7 +281,7 @@ export default function CostControl() {
                         <TableRow key={idx}>
                           <TableCell className="font-medium">{ing.name}</TableCell>
                           <TableCell>{ing.totalQty.toFixed(1)} {ing.unit}</TableCell>
-                          <TableCell>${ing.totalCost.toFixed(2)}</TableCell>
+                          <TableCell>{formatCurrency(ing.totalCost)}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <div className="flex-1 bg-slate-100 rounded-full h-1.5">

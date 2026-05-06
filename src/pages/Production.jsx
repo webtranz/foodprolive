@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { format } from 'date-fns';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { useSiteContext } from '@/components/auth/useSiteContext';
+import { formatCurrency } from '@/lib/currency';
 
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -321,13 +322,13 @@ export default function Production() {
     let recommendation = 'Stable output. Maintain current production level.';
     let actionTone = 'bg-emerald-50 border-emerald-200 text-emerald-800';
     if (wasteRate >= 12 || row.avoidable_cost >= 75) {
-      recommendation = `Reduce planned servings by 10-20% or split production into smaller batches. Historical waste is ${wasteRate.toFixed(1)}% with $${row.waste_cost.toFixed(2)} waste cost.`;
+      recommendation = `Reduce planned servings by 10-20% or split production into smaller batches. Historical waste is ${wasteRate.toFixed(1)}% with ${formatCurrency(row.waste_cost)} waste cost.`;
       actionTone = 'bg-red-50 border-red-200 text-red-800';
     } else if (row.produced_servings >= 50 && wasteRate <= 2 && row.waste_cost <= 15) {
       recommendation = `This recipe is running cleanly. Consider a small increase if demand is rising. Historical waste is only ${wasteRate.toFixed(1)}%.`;
       actionTone = 'bg-emerald-50 border-emerald-200 text-emerald-800';
     } else {
-      recommendation = `Monitor this recipe closely. Historical waste is ${wasteRate.toFixed(1)}% with $${row.waste_cost.toFixed(2)} waste cost.`;
+      recommendation = `Monitor this recipe closely. Historical waste is ${wasteRate.toFixed(1)}% with ${formatCurrency(row.waste_cost)} waste cost.`;
       actionTone = 'bg-amber-50 border-amber-200 text-amber-800';
     }
     return {
@@ -596,11 +597,11 @@ export default function Production() {
                         <p className="text-xs text-slate-500">Target</p>
                       </div>
                       <div className="text-center">
-                        <p className="text-2xl font-bold text-emerald-700">${totalCost.toFixed(2)}</p>
+                        <p className="text-2xl font-bold text-emerald-700">{formatCurrency(totalCost)}</p>
                         <p className="text-xs text-slate-500">{production.status === 'completed' ? 'Production Cost' : 'Est. Batch Cost'}</p>
                       </div>
                       <div className="text-center">
-                        <p className="text-2xl font-bold text-slate-900">${costPerServing.toFixed(2)}</p>
+                        <p className="text-2xl font-bold text-slate-900">{formatCurrency(costPerServing)}</p>
                         <p className="text-xs text-slate-500">Cost / Serving</p>
                       </div>
                       {production.total_calories > 0 && (
@@ -679,7 +680,7 @@ export default function Production() {
                       <div className="flex flex-wrap gap-2">
                         {production.ingredients_used.map((ing, idx) => (
                           <Badge key={idx} variant="outline" className="font-normal">
-                            {ing.ingredient_name}: {ing.planned_quantity} {ing.unit} {toNumber(ing.estimated_cost, 0) > 0 ? `• $${toNumber(ing.estimated_cost, 0).toFixed(2)}` : ''}
+                            {ing.ingredient_name}: {ing.planned_quantity} {ing.unit} {toNumber(ing.estimated_cost, 0) > 0 ? `• ${formatCurrency(toNumber(ing.estimated_cost, 0))}` : ''}
                           </Badge>
                         ))}
                       </div>
@@ -705,7 +706,7 @@ export default function Production() {
                             Historical Waste Signal
                           </div>
                           <p className="mt-1 text-sm text-amber-800">
-                            Historical waste for this recipe is {historicalWasteRate.toFixed(1)}% with {wasteInsight.waste_servings.toFixed(1)} wasted servings and ${wasteInsight.waste_cost.toFixed(2)} waste cost.
+                            Historical waste for this recipe is {historicalWasteRate.toFixed(1)}% with {wasteInsight.waste_servings.toFixed(1)} wasted servings and {formatCurrency(wasteInsight.waste_cost)} waste cost.
                           </p>
                         </div>
                       ) : null}
@@ -823,7 +824,7 @@ export default function Production() {
                     </div>
                     <div className="rounded-lg bg-white/80 px-3 py-2">
                       <p className="text-xs uppercase tracking-wide text-slate-500">Waste Cost</p>
-                      <p className="mt-1 text-lg font-semibold text-slate-900">${selectedRecipeInsight.waste_cost.toFixed(2)}</p>
+                      <p className="mt-1 text-lg font-semibold text-slate-900">{formatCurrency(selectedRecipeInsight.waste_cost)}</p>
                     </div>
                   </div>
                   <p className="mt-3 text-sm">{selectedRecipeInsight.recommendation}</p>
@@ -840,11 +841,11 @@ export default function Production() {
                   <div className="mb-4 grid gap-3 md:grid-cols-2">
                     <div className="rounded-lg bg-white px-4 py-3 border border-blue-100">
                       <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Batch Cost</p>
-                      <p className="mt-1 text-2xl font-bold text-emerald-700">${estimatedBatchCost.toFixed(2)}</p>
+                      <p className="mt-1 text-2xl font-bold text-emerald-700">{formatCurrency(estimatedBatchCost)}</p>
                     </div>
                     <div className="rounded-lg bg-white px-4 py-3 border border-blue-100">
                       <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Cost / Serving</p>
-                      <p className="mt-1 text-2xl font-bold text-slate-900">${estimatedCostPerServing.toFixed(2)}</p>
+                      <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(estimatedCostPerServing)}</p>
                     </div>
                   </div>
                   <Table>
@@ -863,8 +864,8 @@ export default function Production() {
                         <TableRow key={idx}>
                           <TableCell>{ing.ingredient_name}</TableCell>
                           <TableCell className="font-medium">{ing.adjusted_quantity} {ing.unit}</TableCell>
-                          <TableCell>${toNumber(ing.unit_cost, 0).toFixed(2)}</TableCell>
-                          <TableCell>${toNumber(ing.estimated_cost, 0).toFixed(2)}</TableCell>
+                          <TableCell>{formatCurrency(toNumber(ing.unit_cost, 0))}</TableCell>
+                          <TableCell>{formatCurrency(toNumber(ing.estimated_cost, 0))}</TableCell>
                           <TableCell>{ing.current_stock} {ing.unit}</TableCell>
                           <TableCell>
                             {ing.sufficient ? (

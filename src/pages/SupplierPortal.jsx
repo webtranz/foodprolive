@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { 
+import {
   Plus, 
   Building2, 
   FileText, 
@@ -21,6 +21,7 @@ import {
   MapPin
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatCurrency } from '@/lib/currency';
 
 const STATUS_COLORS = {
   active: 'bg-green-600',
@@ -262,7 +263,7 @@ export default function SupplierPortal() {
                     )}
                     {supplier.total_orders > 0 && (
                       <div className="pt-2 border-t text-xs text-slate-500">
-                        {supplier.total_orders} orders • ${supplier.total_value?.toFixed(0) || 0}
+                        {supplier.total_orders} orders • {formatCurrency(supplier.total_value || 0, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </div>
                     )}
                   </CardContent>
@@ -354,7 +355,7 @@ export default function SupplierPortal() {
                         <TableCell>
                           {po.expected_delivery_date ? format(new Date(po.expected_delivery_date), 'MMM d, yyyy') : '-'}
                         </TableCell>
-                        <TableCell>${po.total_amount?.toFixed(2) || '0.00'}</TableCell>
+                        <TableCell>{formatCurrency(po.total_amount || 0)}</TableCell>
                         <TableCell>
                           <Badge className={STATUS_COLORS[po.status] || 'bg-slate-500'}>
                             {po.status}
@@ -397,7 +398,7 @@ export default function SupplierPortal() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-lg font-bold">${supplier.total_value?.toFixed(0) || 0}</p>
+                        <p className="text-lg font-bold">{formatCurrency(supplier.total_value || 0, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p>
                         {supplier.rating > 0 && (
                           <div className="flex items-center gap-1 justify-end">
                             <Star className="w-4 h-4 fill-amber-400 text-amber-400" />

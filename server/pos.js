@@ -81,7 +81,7 @@ function normalizeOrderPayload(order, source) {
     location_name: locationName || siteName || null,
     business_date: businessDate,
     sold_at: soldAt,
-    currency: normalizeText(order.currency || 'USD') || 'USD',
+    currency: normalizeText(order.currency || 'SAR') || 'SAR',
     total_amount: toNumber(order.total_amount || order.total || order.gross_total, 0),
     items: normalizedItems,
     raw_payload: order

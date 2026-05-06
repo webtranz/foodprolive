@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Download, FileText, DollarSign, TrendingUp } from 'lucide-react';
 import { downloadCSV } from '../utils/exportData';
 import { format } from 'date-fns';
+import { formatCurrency } from '@/lib/currency';
 
 function averageBy(items, selector) {
   const values = items
@@ -141,7 +142,7 @@ export default function CostReport({ ingredients = [], recipes = [] }) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-slate-600">Total Inventory Value</p>
-                <p className="text-2xl font-bold text-green-700">${totalInventoryValue.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-green-700">{formatCurrency(totalInventoryValue)}</p>
               </div>
               <DollarSign className="w-8 h-8 text-green-600" />
             </div>

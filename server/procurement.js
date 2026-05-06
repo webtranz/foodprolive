@@ -439,7 +439,7 @@ async function recordSupplierPriceHistory(client, { supplier, item, order, siteI
       item.ingredient_name,
       item.id,
       item.unit_price,
-      order.currency || 'USD',
+      order.currency || 'SAR',
       order.order_date,
       supplier?.lead_time_days || 0,
       siteId || null,
@@ -497,7 +497,7 @@ async function createPurchaseOrder(payload, actor) {
       po_number: normalizeText(payload.po_number || `PO-${Date.now()}`),
       order_date: dateOnly(payload.order_date || nowIso()),
       expected_delivery_date: payload.expected_delivery_date ? dateOnly(payload.expected_delivery_date) : null,
-      currency: normalizeText(payload.currency || 'USD') || 'USD'
+      currency: normalizeText(payload.currency || 'SAR') || 'SAR'
     };
     const subtotal = items.reduce((sum, item) => sum + item.line_total, 0);
     const taxAmount = toNumber(payload.tax_amount, 0);

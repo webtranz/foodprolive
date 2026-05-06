@@ -30,6 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/exportData';
+import { formatCurrency } from '@/lib/currency';
 import {
   AlertTriangle,
   Brain,
@@ -82,10 +83,6 @@ const APPROVAL_TONES = {
 function safeNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
-}
-
-function formatCurrency(value) {
-  return `$${safeNumber(value).toFixed(2)}`;
 }
 
 function matchesDate(dateValue, startDate, endDate) {

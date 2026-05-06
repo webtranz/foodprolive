@@ -42,6 +42,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import StatCard from '@/components/ui/StatCard';
 import { downloadCSV } from '../components/utils/exportData';
+import { formatCurrency } from '@/lib/currency';
 
 const STATUS_COLORS = {
   in_stock: 'bg-emerald-100 text-emerald-700',
@@ -49,11 +50,6 @@ const STATUS_COLORS = {
   out_of_stock: 'bg-red-100 text-red-700',
   expired: 'bg-rose-100 text-rose-700'
 };
-
-const CURRENCY = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD'
-});
 
 function formatQuantity(value) {
   return Number(value || 0).toLocaleString(undefined, {
@@ -856,7 +852,7 @@ export default function Inventory() {
         <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
           <StatCard title="Projects / Locations" value={stockSites.length} icon={Boxes} iconBg="bg-slate-100" iconColor="text-slate-700" />
           <StatCard title="Stock On Hand" value={formatQuantity(inventorySummary.totalQuantity)} icon={Boxes} iconBg="bg-blue-50" iconColor="text-blue-600" />
-          <StatCard title="Inventory Value" value={CURRENCY.format(inventorySummary.totalValue)} icon={Wallet} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+          <StatCard title="Inventory Value" value={formatCurrency(inventorySummary.totalValue)} icon={Wallet} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
           <StatCard title="Low Stock Items" value={inventorySummary.lowStockItems} icon={TrendingDown} iconBg="bg-amber-50" iconColor="text-amber-600" />
           <StatCard title="Expired Lots" value={inventorySummary.expiredLots} icon={AlertTriangle} iconBg="bg-rose-50" iconColor="text-rose-600" />
           <StatCard title="Near Expiry" value={inventorySummary.nearExpiryLots} icon={CalendarClock} iconBg="bg-orange-50" iconColor="text-orange-600" />
@@ -963,9 +959,9 @@ export default function Inventory() {
                               <div>Max: {item.max_stock_level ? `${formatQuantity(item.max_stock_level)} ${item.unit}` : '-'}</div>
                             </TableCell>
                             <TableCell className="text-sm text-slate-600">
-                              <div>{CURRENCY.format(Number(item.total_value || 0))}</div>
+                              <div>{formatCurrency(Number(item.total_value || 0))}</div>
                               <div className="text-xs text-slate-500">
-                                {item.valuation_method === 'weighted_average' ? 'Weighted avg' : 'FIFO'} • {CURRENCY.format(Number(item.average_unit_cost || 0))}
+                                {item.valuation_method === 'weighted_average' ? 'Weighted avg' : 'FIFO'} • {formatCurrency(Number(item.average_unit_cost || 0))}
                               </div>
                             </TableCell>
                             <TableCell className="text-sm text-slate-600">
@@ -1058,7 +1054,7 @@ export default function Inventory() {
                           <TableCell className={Number(movement.quantity || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
                             {Number(movement.quantity || 0) >= 0 ? '+' : ''}{formatQuantity(movement.quantity)} {movement.unit}
                           </TableCell>
-                          <TableCell>{CURRENCY.format(Number(movement.total_cost || 0))}</TableCell>
+                          <TableCell>{formatCurrency(Number(movement.total_cost || 0))}</TableCell>
                           <TableCell className="max-w-xs truncate">{movement.notes || movement.reason_code || '-'}</TableCell>
                         </TableRow>
                       ))}
@@ -1138,7 +1134,7 @@ export default function Inventory() {
                           <p>Remaining: {formatQuantity(lot.remaining_quantity)} {lot.unit}</p>
                           <p>Received: {lot.received_date || '-'}</p>
                           <p>Expiry: {lot.expiry_date || '-'}</p>
-                          <p>Unit Cost: {CURRENCY.format(Number(lot.unit_cost || 0))}</p>
+                          <p>Unit Cost: {formatCurrency(Number(lot.unit_cost || 0))}</p>
                         </div>
                       </div>
                     ))}
@@ -1172,9 +1168,9 @@ export default function Inventory() {
                           <TableCell>{item.site_name}</TableCell>
                           <TableCell>{item.valuation_method === 'weighted_average' ? 'Weighted Average' : 'FIFO'}</TableCell>
                           <TableCell>{formatQuantity(item.quantity)} {item.unit}</TableCell>
-                          <TableCell>{CURRENCY.format(Number(item.average_unit_cost || 0))}</TableCell>
-                          <TableCell>{CURRENCY.format(Number(item.fifo_value || 0))}</TableCell>
-                          <TableCell>{CURRENCY.format(Number(item.weighted_average_value || 0))}</TableCell>
+                          <TableCell>{formatCurrency(Number(item.average_unit_cost || 0))}</TableCell>
+                          <TableCell>{formatCurrency(Number(item.fifo_value || 0))}</TableCell>
+                          <TableCell>{formatCurrency(Number(item.weighted_average_value || 0))}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1484,7 +1480,7 @@ export default function Inventory() {
                           <TableCell>{row.project || '-'}</TableCell>
                           <TableCell>{row.ingredient || '-'}</TableCell>
                           <TableCell>{formatQuantity(row.quantity)}</TableCell>
-                          <TableCell>{CURRENCY.format(Number(row.unit_cost || 0))}</TableCell>
+                          <TableCell>{formatCurrency(Number(row.unit_cost || 0))}</TableCell>
                           <TableCell>
                             <Badge className={row.status === 'Ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
                               {row.status}

@@ -1,6 +1,7 @@
 import { format } from 'date-fns';
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
+import { replaceVisibleUSDCurrency } from '@/lib/currency';
 
 function normalizeExportRows(data) {
   if (!data || data.length === 0) {
@@ -18,7 +19,7 @@ function normalizeExportRows(data) {
       } else if (typeof value === 'object' && value !== null) {
         normalized[key] = JSON.stringify(value);
       } else {
-        normalized[key] = value ?? '';
+        normalized[key] = typeof value === 'string' ? replaceVisibleUSDCurrency(value) : (value ?? '');
       }
     });
     return normalized;
@@ -44,7 +45,7 @@ export function downloadCSV(data, filename) {
   );
 
   // Create CSV content
-  let csv = headers.join(',') + '\n';
+  let csv = headers.map((header) => replaceVisibleUSDCurrency(header)).join(',') + '\n';
   
   normalizedRows.forEach(row => {
     const values = headers.map(header => {
@@ -58,7 +59,7 @@ export function downloadCSV(data, filename) {
       }
       
       // Escape quotes and wrap in quotes if contains comma
-      value = String(value).replace(/"/g, '""');
+      value = replaceVisibleUSDCurrency(String(value)).replace(/"/g, '""');
       if (value.includes(',') || value.includes('\n')) {
         value = `"${value}"`;
       }
@@ -106,13 +107,13 @@ export function downloadPDF({
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
-  doc.text(title || 'Report', 14, y);
+  doc.text(replaceVisibleUSDCurrency(title || 'Report'), 14, y);
   y += 8;
 
   if (subtitle) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
-    const lines = doc.splitTextToSize(subtitle, 180);
+    const lines = doc.splitTextToSize(replaceVisibleUSDCurrency(subtitle), 180);
     doc.text(lines, 14, y);
     y += (lines.length * 5) + 3;
   }
@@ -125,14 +126,14 @@ export function downloadPDF({
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
-    doc.text(section.heading || 'Section', 14, y);
+    doc.text(replaceVisibleUSDCurrency(section.heading || 'Section'), 14, y);
     y += 6;
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     const bodyLines = Array.isArray(section.lines) ? section.lines : [];
     bodyLines.forEach((line) => {
-      const lines = doc.splitTextToSize(String(line), 180);
+      const lines = doc.splitTextToSize(replaceVisibleUSDCurrency(String(line)), 180);
       if (y + (lines.length * 5) > 275) {
         doc.addPage();
         y = 18;
@@ -154,7 +155,7 @@ export function exportToCSV(data, filename, customHeaders = null) {
 
   const headers = customHeaders || Object.keys(data[0]);
   
-  let csv = headers.join(',') + '\n';
+  let csv = headers.map((header) => replaceVisibleUSDCurrency(header)).join(',') + '\n';
   
   data.forEach(row => {
     const values = headers.map(header => {
@@ -166,7 +167,7 @@ export function exportToCSV(data, filename, customHeaders = null) {
         value = JSON.stringify(value);
       }
       
-      value = String(value).replace(/"/g, '""');
+      value = replaceVisibleUSDCurrency(String(value)).replace(/"/g, '""');
       if (value.includes(',') || value.includes('\n') || value.includes('"')) {
         value = `"${value}"`;
       }

@@ -21,6 +21,7 @@ import {
   ShieldAlert,
   Users
 } from 'lucide-react';
+import { formatCurrency } from '@/lib/currency';
 
 const CUISINE_TYPES = [
   { value: 'continental', label: 'Continental', icon: 'C' },
@@ -341,7 +342,7 @@ export default function Menu() {
                   <CardTitle className="text-sm text-slate-500">Total Production Cost</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-3xl font-bold text-slate-900">${totalProductionCost.toFixed(2)}</p>
+                  <p className="text-3xl font-bold text-slate-900">{formatCurrency(totalProductionCost)}</p>
                 </CardContent>
               </Card>
               <Card>
@@ -349,7 +350,7 @@ export default function Menu() {
                   <CardTitle className="text-sm text-slate-500">Average Cost Per Serving</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-3xl font-bold text-slate-900">${averageCostPerServing.toFixed(2)}</p>
+                  <p className="text-3xl font-bold text-slate-900">{formatCurrency(averageCostPerServing)}</p>
                 </CardContent>
               </Card>
             </div>
@@ -390,8 +391,8 @@ export default function Menu() {
                             </Badge>
                           </TableCell>
                           <TableCell>{row.target_servings}</TableCell>
-                          <TableCell>${row.total_cost.toFixed(2)}</TableCell>
-                          <TableCell>${row.cost_per_serving.toFixed(2)}</TableCell>
+                          <TableCell>{formatCurrency(row.total_cost)}</TableCell>
+                          <TableCell>{formatCurrency(row.cost_per_serving)}</TableCell>
                           <TableCell>{row.shortage}</TableCell>
                           <TableCell>{row.completed_by}</TableCell>
                         </TableRow>

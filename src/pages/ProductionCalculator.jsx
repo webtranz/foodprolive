@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Factory, Users, Scale, TrendingDown, AlertCircle, Printer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { formatCurrency } from '@/lib/currency';
 
 export default function ProductionCalculator() {
   const [selectedRecipe, setSelectedRecipe] = useState('');
@@ -234,7 +235,7 @@ export default function ProductionCalculator() {
                   <Card className="border-slate-100 shadow-sm">
                     <CardContent className="p-4 text-center">
                       <TrendingDown className="w-6 h-6 text-amber-600 mx-auto mb-2" />
-                      <p className="text-2xl font-bold text-slate-900">${calculations.totalCost}</p>
+                      <p className="text-2xl font-bold text-slate-900">{formatCurrency(calculations.totalCost)}</p>
                       <p className="text-xs text-slate-500">Est. Cost</p>
                     </CardContent>
                   </Card>
@@ -287,7 +288,7 @@ export default function ProductionCalculator() {
                               <TableCell className="font-semibold text-emerald-600">
                                 {ing.adjustedQuantity} {ing.unit}
                               </TableCell>
-                              <TableCell>${ing.estimatedCost.toFixed(2)}</TableCell>
+                              <TableCell>{formatCurrency(ing.estimatedCost)}</TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -296,7 +297,7 @@ export default function ProductionCalculator() {
 
                     <div className="mt-4 pt-4 border-t border-slate-100 flex justify-between items-center">
                       <span className="text-slate-600">Cost per serving:</span>
-                      <span className="text-lg font-bold text-slate-900">${calculations.costPerServing}</span>
+                      <span className="text-lg font-bold text-slate-900">{formatCurrency(calculations.costPerServing)}</span>
                     </div>
                   </CardContent>
                 </Card>

@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Utensils, Trash2, Calculator, Download, ChefHat } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
+import { formatCurrency, SAR_SYMBOL } from '@/lib/currency';
 
 const CATEGORIES = [
   { value: 'appetizer', label: 'Appetizer', icon: '🥗', color: 'bg-green-100 text-green-700' },
@@ -90,7 +91,7 @@ export default function MenuBuilder() {
       required: `${i.required} ${i.unit}`,
       raw_required: `${i.rawRequired.toFixed(2)} ${i.unit}`,
       yield_percent: `${i.yield_percent}%`,
-      cost: `$${i.cost.toFixed(2)}`
+      cost: formatCurrency(i.cost)
     }));
     downloadCSV(data, `menu_${menuName || 'builder'}`);
   };
@@ -149,11 +150,11 @@ export default function MenuBuilder() {
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-slate-600">Total Food Cost</span>
-                      <span className="font-bold text-emerald-700">${totalCost.toFixed(2)}</span>
+                      <span className="font-bold text-emerald-700">{formatCurrency(totalCost)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-slate-600">Cost per Cover</span>
-                      <span className="font-bold text-emerald-700">${numCovers > 0 ? (totalCost / numCovers).toFixed(2) : '0.00'}</span>
+                      <span className="font-bold text-emerald-700">{formatCurrency(numCovers > 0 ? (totalCost / numCovers) : 0)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-slate-600">Total Items</span>
@@ -260,7 +261,7 @@ export default function MenuBuilder() {
                                 <TableCell>{numCovers}</TableCell>
                                 <TableCell className="font-semibold text-emerald-700">{item.required.toFixed(1)} {item.unit}</TableCell>
                                 <TableCell className="text-orange-600">{item.rawRequired.toFixed(2)} {item.unit}</TableCell>
-                                <TableCell>${item.cost.toFixed(2)}</TableCell>
+                                <TableCell>{formatCurrency(item.cost)}</TableCell>
                               </TableRow>
                             );
                           })}
@@ -322,7 +323,7 @@ export default function MenuBuilder() {
                   <Input type="number" min="1" max="300" value={itemForm.yield_percent} onChange={e => setItemForm({ ...itemForm, yield_percent: e.target.value })} className="mt-1" />
                 </div>
                 <div className="col-span-2">
-                  <Label>Cost per unit ($)</Label>
+                  <Label>{`Cost per unit (${SAR_SYMBOL})`}</Label>
                   <Input type="number" step="0.01" value={itemForm.cost_per_unit} onChange={e => setItemForm({ ...itemForm, cost_per_unit: e.target.value })} placeholder="0.00" className="mt-1" />
                 </div>
               </div>

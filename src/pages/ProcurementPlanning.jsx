@@ -14,6 +14,7 @@ import { ShoppingCart, Package, AlertTriangle, Download, CheckCircle2, Send } fr
 import { format, addDays } from 'date-fns';
 import { downloadCSV } from '../components/utils/exportData';
 import StatCard from '@/components/ui/StatCard';
+import { formatCurrency } from '@/lib/currency';
 
 const PROTEIN_CATEGORIES = ['proteins_meat', 'proteins_poultry', 'proteins_seafood', 'proteins_plant'];
 const GRAIN_CATEGORIES = ['grains_cereals'];
@@ -181,7 +182,7 @@ export default function ProcurementPlanning() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard title="Total Ingredients" value={totalItems} icon={Package} iconBg="bg-blue-50" iconColor="text-blue-600" />
           <StatCard title="Shortages" value={shortageCount} icon={AlertTriangle} iconBg="bg-red-50" iconColor="text-red-600" />
-          <StatCard title="Est. Purchase Cost" value={`$${totalEstimatedCost.toFixed(2)}`} icon={ShoppingCart} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+          <StatCard title="Est. Purchase Cost" value={formatCurrency(totalEstimatedCost)} icon={ShoppingCart} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
           <StatCard title="Items to Purchase" value={aggregatedNeeds.filter(n => n.toPurchase > 0).length} icon={CheckCircle2} iconBg="bg-amber-50" iconColor="text-amber-600" />
         </div>
 
@@ -245,7 +246,7 @@ export default function ProcurementPlanning() {
                         <TableCell className="font-semibold">{n.withBuffer.toFixed(1)}</TableCell>
                         <TableCell className={n.toPurchase > 0 ? 'font-bold text-orange-600' : 'text-slate-400'}>{n.toPurchase.toFixed(1)}</TableCell>
                         <TableCell>{n.unit}</TableCell>
-                        <TableCell>${n.estimatedCost.toFixed(2)}</TableCell>
+                        <TableCell>{formatCurrency(n.estimatedCost)}</TableCell>
                         <TableCell>
                           {n.sufficient
                             ? <Badge className="bg-emerald-100 text-emerald-700">✓ Sufficient</Badge>
@@ -287,7 +288,7 @@ export default function ProcurementPlanning() {
                         <TableCell>{mr.request_date}</TableCell>
                         <TableCell className="text-sm text-slate-500">{mr.period_start} → {mr.period_end}</TableCell>
                         <TableCell>{mr.items?.length || 0}</TableCell>
-                        <TableCell>${(mr.total_estimated_cost || 0).toFixed(2)}</TableCell>
+                        <TableCell>{formatCurrency(mr.total_estimated_cost || 0)}</TableCell>
                         <TableCell>
                           <Badge className={
                             mr.status === 'pm_approved' ? 'bg-emerald-100 text-emerald-700' :

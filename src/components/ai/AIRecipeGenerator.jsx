@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Sparkles, Loader2, Save, RefreshCw, DollarSign } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { formatCurrency } from '@/lib/currency';
 
 export default function AIRecipeGenerator() {
   const [filters, setFilters] = useState({
@@ -187,14 +188,14 @@ Provide the recipe in the exact JSON format below (no markdown, no code blocks, 
       const optimizationPrompt = `Analyze this recipe and suggest cost optimizations:
 
 Recipe: ${recipe.name}
-Current Total Cost: $${totalCost.toFixed(2)}
-Cost Per Serving: $${costPerServing.toFixed(2)}
+Current Total Cost: ${formatCurrency(totalCost)}
+Cost Per Serving: ${formatCurrency(costPerServing)}
 
 Ingredients and Costs:
-${ingredientCosts.map(i => `- ${i.name}: ${i.quantity} ${i.unit} = $${i.totalCost.toFixed(2)}`).join('\n')}
+${ingredientCosts.map(i => `- ${i.name}: ${i.quantity} ${i.unit} = ${formatCurrency(i.totalCost)}`).join('\n')}
 
 Available substitute ingredients:
-${ingredients.filter(i => i.cost_per_unit).map(i => `- ${i.name} ($${i.cost_per_unit}/${i.unit}) - ${i.category}`).join('\n')}
+${ingredients.filter(i => i.cost_per_unit).map(i => `- ${i.name} (${formatCurrency(i.cost_per_unit)}/${i.unit}) - ${i.category}`).join('\n')}
 
 Provide:
 1. 3-5 specific ingredient substitutions that reduce cost while maintaining quality and flavor
@@ -460,19 +461,19 @@ Format as JSON.`;
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
                     <div className="bg-green-50 rounded-lg p-3">
                       <p className="text-xs text-slate-600">Total Cost</p>
-                      <p className="text-xl font-bold text-green-700">${costAnalysis.totalCost.toFixed(2)}</p>
+                      <p className="text-xl font-bold text-green-700">{formatCurrency(costAnalysis.totalCost)}</p>
                     </div>
                     <div className="bg-blue-50 rounded-lg p-3">
                       <p className="text-xs text-slate-600">Per Serving</p>
-                      <p className="text-xl font-bold text-blue-700">${costAnalysis.costPerServing.toFixed(2)}</p>
+                      <p className="text-xl font-bold text-blue-700">{formatCurrency(costAnalysis.costPerServing)}</p>
                     </div>
                     <div className="bg-red-50 rounded-lg p-3">
                       <p className="text-xs text-slate-600">+20% Price ↑</p>
-                      <p className="text-xl font-bold text-red-700">${costAnalysis.price_fluctuation_forecast?.increase_20_percent?.toFixed(2)}</p>
+                      <p className="text-xl font-bold text-red-700">{formatCurrency(costAnalysis.price_fluctuation_forecast?.increase_20_percent)}</p>
                     </div>
                     <div className="bg-emerald-50 rounded-lg p-3">
                       <p className="text-xs text-slate-600">-20% Price ↓</p>
-                      <p className="text-xl font-bold text-emerald-700">${costAnalysis.price_fluctuation_forecast?.decrease_20_percent?.toFixed(2)}</p>
+                      <p className="text-xl font-bold text-emerald-700">{formatCurrency(costAnalysis.price_fluctuation_forecast?.decrease_20_percent)}</p>
                     </div>
                   </div>
 
@@ -495,7 +496,7 @@ Format as JSON.`;
                                   <span className="text-green-600">{sub.substitute}</span>
                                 </p>
                                 <p className="text-xs text-green-600 font-medium mt-1">
-                                  Save ${sub.cost_savings?.toFixed(2)}
+                                  Save {formatCurrency(sub.cost_savings)}
                                 </p>
                               </div>
                             </div>
