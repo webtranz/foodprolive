@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
 import EmptyState from '@/components/ui/EmptyState';
 import RecipeForm from '@/components/recipes/RecipeForm';
 import RecipeCard from '@/components/recipes/RecipeCard';
+import { useSiteContext } from '@/components/auth/useSiteContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -27,9 +28,11 @@ const CATEGORIES = [
 ];
 
 export default function Recipes() {
+  const { allowedSiteIds, isAdmin } = useSiteContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedCuisine, setSelectedCuisine] = useState('all');
+  const [selectedSite, setSelectedSite] = useState('all');
   const [formOpen, setFormOpen] = useState(false);
   const [editingRecipe, setEditingRecipe] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -51,6 +54,16 @@ export default function Recipes() {
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
+
+  const visibleSites = useMemo(() => {
+    if (isAdmin) {
+      return sites;
+    }
+    if (!Array.isArray(allowedSiteIds) || allowedSiteIds.length === 0) {
+      return sites;
+    }
+    return sites.filter((site) => allowedSiteIds.includes(site.id));
+  }, [allowedSiteIds, isAdmin, sites]);
 
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.Recipe.create(data),
@@ -82,7 +95,14 @@ export default function Recipes() {
     const matchesSearch = recipe.name?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'all' || recipe.category === selectedCategory;
     const matchesCuisine = selectedCuisine === 'all' || recipe.cuisine_type === selectedCuisine;
-    return matchesSearch && matchesCategory && matchesCuisine;
+    const recipeSiteIds = Array.isArray(recipe.site_ids) ? recipe.site_ids : [];
+    const isGlobalRecipe = !recipe.site_scope || recipe.site_scope === 'global' || recipeSiteIds.length === 0;
+    const matchesSite = selectedSite === 'all'
+      ? true
+      : selectedSite === 'global'
+        ? isGlobalRecipe
+        : recipeSiteIds.includes(selectedSite) || recipe.site_id === selectedSite;
+    return matchesSearch && matchesCategory && matchesCuisine && matchesSite;
   });
 
   const handleSubmit = (data) => {
@@ -177,6 +197,20 @@ export default function Recipes() {
                 <SelectItem value="vegan">Vegan</SelectItem>
                 <SelectItem value="bakery">Bakery</SelectItem>
                 <SelectItem value="fusion">Fusion</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={selectedSite} onValueChange={setSelectedSite}>
+              <SelectTrigger className="w-full sm:w-[220px]">
+                <SelectValue placeholder="Project / Location" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Projects</SelectItem>
+                <SelectItem value="global">Global Recipes</SelectItem>
+                {visibleSites.map((site) => (
+                  <SelectItem key={site.id} value={site.id}>
+                    {site.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

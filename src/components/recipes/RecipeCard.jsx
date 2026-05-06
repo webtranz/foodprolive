@@ -18,6 +18,8 @@ const CATEGORY_COLORS = {
 export default function RecipeCard({ recipe, onEdit, onDelete }) {
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
   const allergens = Array.isArray(recipe.allergens) ? recipe.allergens : [];
+  const siteNames = Array.isArray(recipe.site_names) ? recipe.site_names.filter(Boolean) : [];
+  const isGlobalRecipe = !recipe.site_scope || recipe.site_scope === 'global' || siteNames.length === 0;
 
   return (
     <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 group overflow-hidden">
@@ -36,9 +38,14 @@ export default function RecipeCard({ recipe, onEdit, onDelete }) {
             <h3 className="font-semibold text-slate-900 group-hover:text-emerald-600 transition-colors">
               {recipe.name}
             </h3>
-            <Badge className={`${CATEGORY_COLORS[recipe.category]} text-xs mt-1`}>
-              {recipe.category}
-            </Badge>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              <Badge className={`${CATEGORY_COLORS[recipe.category]} text-xs`}>
+                {recipe.category}
+              </Badge>
+              <Badge variant="outline" className="text-xs">
+                {isGlobalRecipe ? 'Global' : 'Project-specific'}
+              </Badge>
+            </div>
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -121,6 +128,12 @@ export default function RecipeCard({ recipe, onEdit, onDelete }) {
             <p className="text-xs text-slate-500 truncate">
               {recipe.ingredients.map(i => i.ingredient_name).join(', ')}
             </p>
+          </div>
+        )}
+
+        {!isGlobalRecipe && siteNames.length > 0 && (
+          <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+            <span className="font-semibold">Projects:</span> {siteNames.join(', ')}
           </div>
         )}
       </CardContent>
