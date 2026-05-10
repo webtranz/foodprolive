@@ -352,6 +352,63 @@ async function syncMaterialRequestForProduction(user, production, mode = 'draft'
   return materialRequest;
 }
 
+const CORE_MENU_MEAL_TYPES = new Set(['breakfast', 'lunch', 'dinner']);
+
+function isOperationalMenuPlan(plan) {
+  return !String(plan?.event_name || '').trim();
+}
+
+function summarizeMenuPlanMeals(meals = []) {
+  return meals.reduce((summary, meal) => {
+    const servings = numericMatch(meal.expected_servings, 0);
+    const calories = numericMatch(meal.calories_per_serving, 0);
+    return {
+      total_expected_servings: summary.total_expected_servings + servings,
+      total_calories: summary.total_calories + (servings * calories)
+    };
+  }, {
+    total_expected_servings: 0,
+    total_calories: 0
+  });
+}
+
+async function findScopedOperationalMenuPlan(user, siteId, planDate) {
+  const records = await listDocuments('MenuPlan', {
+    filters: { site_id: siteId, plan_date: planDate },
+    limit: 50
+  });
+  const scopedRecords = await scopeEntityRecords(user, 'MenuPlan', records.filter(isOperationalMenuPlan));
+  return scopedRecords[0] || null;
+}
+
+function buildMenuPlanWritePayload(body = {}, existing = null) {
+  const meals = Array.isArray(body.meals)
+    ? body.meals
+      .filter((meal) => meal && meal.meal_type)
+      .map((meal) => ({
+        ...meal,
+        expected_servings: numericMatch(meal.expected_servings, 0),
+        calories_per_serving: numericMatch(meal.calories_per_serving, 0),
+        protein_per_serving: numericMatch(meal.protein_per_serving, 0),
+        carbs_per_serving: numericMatch(meal.carbs_per_serving, 0),
+        fat_per_serving: numericMatch(meal.fat_per_serving, 0),
+        sodium_per_serving: numericMatch(meal.sodium_per_serving, 0),
+        sugar_per_serving: numericMatch(meal.sugar_per_serving, 0),
+        allergens: Array.isArray(meal.allergens) ? meal.allergens : []
+      }))
+    : (Array.isArray(existing?.meals) ? existing.meals : []);
+
+  const summary = summarizeMenuPlanMeals(meals);
+
+  return {
+    ...body,
+    meals,
+    status: body.status || existing?.status || 'draft',
+    total_expected_servings: summary.total_expected_servings,
+    total_calories: summary.total_calories
+  };
+}
+
 async function getScopedProduction(request, productionId) {
   const scope = await getLocationScope(request.user);
   const production = await findDocument('Production', productionId);
@@ -649,6 +706,108 @@ app.post('/api/users/invite', requireAuth, async (request, response, next) => {
     response.json(invited);
   } catch (error) {
     next(error);
+  }
+});
+
+app.get('/api/menu-plans/by-date', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const siteId = String(request.query.site_id || '').trim();
+    const planDate = String(request.query.plan_date || '').trim();
+
+    if (!siteId || !planDate) {
+      return response.status(400).json({ message: 'site_id and plan_date are required' });
+    }
+
+    const plan = await findScopedOperationalMenuPlan(request.user, siteId, planDate);
+    return response.json(plan || null);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/menu-plans', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const payload = buildMenuPlanWritePayload(request.body || {});
+    if (!payload.site_id || !payload.plan_date) {
+      return response.status(400).json({ message: 'Project and plan date are required' });
+    }
+
+    const existing = await findScopedOperationalMenuPlan(request.user, payload.site_id, payload.plan_date);
+    if (existing) {
+      return response.status(409).json({ message: 'A menu plan already exists for this project and date' });
+    }
+
+    authorizeEntityAction(request.user, 'MenuPlan', 'create', payload);
+    const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload);
+    const created = await createDocument('MenuPlan', preparedPayload);
+    return response.status(201).json(created);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.patch('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const existing = await findDocument('MenuPlan', request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Menu plan not found' });
+    }
+
+    if (!isOperationalMenuPlan(existing)) {
+      return response.status(400).json({ message: 'Event plans must be edited from the event planning module' });
+    }
+
+    const scopedExisting = (await scopeEntityRecords(request.user, 'MenuPlan', [existing]))[0];
+    if (!scopedExisting) {
+      return response.status(403).json({ message: 'You do not have access to this menu plan' });
+    }
+
+    const payload = buildMenuPlanWritePayload(request.body || {}, existing);
+    authorizeEntityAction(request.user, 'MenuPlan', 'update', payload, existing);
+    const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload, existing);
+    const updated = await updateDocument('MenuPlan', request.params.id, preparedPayload);
+    return response.json(updated);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.delete('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const existing = await findDocument('MenuPlan', request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Menu plan not found' });
+    }
+
+    if (!isOperationalMenuPlan(existing)) {
+      return response.status(400).json({ message: 'Event plans must be deleted from the event planning module' });
+    }
+
+    const scopedExisting = (await scopeEntityRecords(request.user, 'MenuPlan', [existing]))[0];
+    if (!scopedExisting) {
+      return response.status(403).json({ message: 'You do not have access to this menu plan' });
+    }
+
+    authorizeEntityAction(request.user, 'MenuPlan', 'delete', null, existing);
+
+    const remainingMeals = (Array.isArray(existing.meals) ? existing.meals : [])
+      .filter((meal) => !CORE_MENU_MEAL_TYPES.has(String(meal.meal_type || '').toLowerCase()));
+
+    if (remainingMeals.length > 0) {
+      const summary = summarizeMenuPlanMeals(remainingMeals);
+      const updated = await updateDocument('MenuPlan', request.params.id, {
+        meals: remainingMeals,
+        total_expected_servings: summary.total_expected_servings,
+        total_calories: summary.total_calories,
+        status: 'draft'
+      });
+      return response.json({ success: true, preserved_event_meals: true, plan: updated });
+    }
+
+    await deleteDocument('MenuPlan', request.params.id);
+    return response.json({ success: true });
+  } catch (error) {
+    return next(error);
   }
 });
 

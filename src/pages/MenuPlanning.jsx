@@ -1,40 +1,59 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { addDays, eachDayOfInterval, format, startOfWeek } from 'date-fns';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Plus, Calendar, Flame, Users, ChevronLeft, ChevronRight, ShieldAlert } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { format, addDays, startOfWeek, eachDayOfInterval } from 'date-fns';
+import { AlertCircle, Calendar, ChevronLeft, ChevronRight, Save, Trash2, Users } from 'lucide-react';
+import {
+  buildDailyMenuState,
+  buildMenuPlanMeals,
+  CORE_MENU_MEAL_TYPES,
+  createEmptyDailyMenuState,
+  summarizeMenuPlanMeals,
+  validateDailyMenuState
+} from '@/lib/menuPlanning';
 
-const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack', 'event', 'custom'];
-
-const MEAL_COLORS = {
-  breakfast: 'bg-amber-100 text-amber-700 border-amber-200',
-  lunch: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  dinner: 'bg-blue-100 text-blue-700 border-blue-200',
-  snack: 'bg-purple-100 text-purple-700 border-purple-200',
-  event: 'bg-pink-100 text-pink-700 border-pink-200',
-  custom: 'bg-indigo-100 text-indigo-700 border-indigo-200'
+const MEAL_LABELS = {
+  breakfast: 'Breakfast',
+  lunch: 'Lunch',
+  dinner: 'Dinner'
 };
 
-export default function MenuPlanning() {
-  const [selectedSite, setSelectedSite] = useState('');
-  const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
-  const [formOpen, setFormOpen] = useState(false);
-  const [selectedDay, setSelectedDay] = useState(null);
-  const [formData, setFormData] = useState({
-    meal_type: 'lunch',
-    recipe_id: '',
-    expected_servings: ''
-  });
+const MEAL_BADGES = {
+  breakfast: 'bg-amber-100 text-amber-700 border-amber-200',
+  lunch: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  dinner: 'bg-blue-100 text-blue-700 border-blue-200'
+};
 
+function recipeMatchesSite(recipe, siteId) {
+  if (!siteId) {
+    return true;
+  }
+
+  if (!recipe.site_scope || recipe.site_scope === 'global') {
+    return true;
+  }
+
+  return Array.isArray(recipe.site_ids) && recipe.site_ids.includes(siteId);
+}
+
+function isOperationalMenuPlan(plan) {
+  return !String(plan?.event_name || '').trim();
+}
+
+export default function MenuPlanning() {
   const queryClient = useQueryClient();
+  const [selectedSite, setSelectedSite] = useState('');
+  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const [formData, setFormData] = useState(createEmptyDailyMenuState());
+  const [message, setMessage] = useState('');
 
   const { data: sites = [] } = useQuery({
     queryKey: ['sites'],
@@ -48,321 +67,426 @@ export default function MenuPlanning() {
 
   const { data: menuPlans = [] } = useQuery({
     queryKey: ['menuPlans', selectedSite],
-    queryFn: () => base44.entities.MenuPlan.list('-plan_date', 100),
+    queryFn: () => base44.entities.MenuPlan.list('-plan_date', 300),
     enabled: !!selectedSite
   });
 
+  const {
+    data: selectedPlan,
+    isLoading: selectedPlanLoading
+  } = useQuery({
+    queryKey: ['menuPlanByDate', selectedSite, selectedDate],
+    queryFn: () => base44.menuPlanning.getByDate(selectedSite, selectedDate),
+    enabled: !!selectedSite && !!selectedDate
+  });
+
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.MenuPlan.create(data),
+    mutationFn: (payload) => base44.menuPlanning.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
-    }
+      queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
+      setMessage('Menu plan saved successfully.');
+    },
+    onError: (error) => setMessage(error.message || 'Failed to save menu plan')
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.MenuPlan.update(id, data),
+    mutationFn: ({ id, payload }) => base44.menuPlanning.update(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
-    }
+      queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
+      setMessage('Menu plan updated successfully.');
+    },
+    onError: (error) => setMessage(error.message || 'Failed to update menu plan')
   });
 
-  const weekDays = eachDayOfInterval({
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.menuPlanning.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
+      queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
+      setFormData(createEmptyDailyMenuState());
+      setMessage('Menu plan cleared for the selected date.');
+    },
+    onError: (error) => setMessage(error.message || 'Failed to clear menu plan')
+  });
+
+  useEffect(() => {
+    setCurrentWeekStart(startOfWeek(new Date(selectedDate), { weekStartsOn: 1 }));
+  }, [selectedDate]);
+
+  useEffect(() => {
+    setFormData(buildDailyMenuState(selectedPlan));
+  }, [selectedPlan]);
+
+  const operationalPlans = useMemo(() => (
+    menuPlans
+      .filter((plan) => plan.site_id === selectedSite)
+      .filter(isOperationalMenuPlan)
+  ), [menuPlans, selectedSite]);
+
+  const selectedSiteRecord = useMemo(
+    () => sites.find((site) => site.id === selectedSite) || null,
+    [sites, selectedSite]
+  );
+
+  const additionalMeals = useMemo(() => (
+    (Array.isArray(selectedPlan?.meals) ? selectedPlan.meals : [])
+      .filter((meal) => !CORE_MENU_MEAL_TYPES.includes(meal.meal_type))
+  ), [selectedPlan]);
+
+  const availableRecipes = useMemo(() => (
+    recipes.filter((recipe) => recipeMatchesSite(recipe, selectedSite))
+  ), [recipes, selectedSite]);
+
+  const weekDays = useMemo(() => eachDayOfInterval({
     start: currentWeekStart,
     end: addDays(currentWeekStart, 6)
-  });
+  }), [currentWeekStart]);
 
   const getPlanForDay = (date) => {
-    const dateStr = format(date, 'yyyy-MM-dd');
-    return menuPlans.find(p => p.site_id === selectedSite && p.plan_date === dateStr);
+    const dayKey = format(date, 'yyyy-MM-dd');
+    return operationalPlans.find((plan) => plan.plan_date === dayKey);
+  };
+
+  const getRecipesForMeal = (mealType) => (
+    [...availableRecipes].sort((left, right) => {
+      const leftScore = left.category === mealType ? 0 : 1;
+      const rightScore = right.category === mealType ? 0 : 1;
+      if (leftScore !== rightScore) {
+        return leftScore - rightScore;
+      }
+      return String(left.name || '').localeCompare(String(right.name || ''));
+    })
+  );
+
+  const setMealValue = (mealType, field, value) => {
+    setFormData((current) => ({
+      ...current,
+      [mealType]: {
+        ...current[mealType],
+        [field]: value
+      }
+    }));
+  };
+
+  const handleSave = async () => {
+    setMessage('');
+
+    if (!selectedSiteRecord) {
+      setMessage('Select a project first.');
+      return;
+    }
+
+    const errors = validateDailyMenuState(formData);
+    if (errors.length > 0) {
+      setMessage(errors[0]);
+      return;
+    }
+
+    const meals = buildMenuPlanMeals(formData, availableRecipes, selectedPlan);
+    const summary = summarizeMenuPlanMeals(meals);
+    const payload = {
+      site_id: selectedSiteRecord.id,
+      site_name: selectedSiteRecord.name,
+      plan_date: selectedDate,
+      meals,
+      status: selectedPlan?.status || 'planned',
+      total_expected_servings: summary.total_expected_servings,
+      total_calories: summary.total_calories
+    };
+
+    if (selectedPlan?.id) {
+      await updateMutation.mutateAsync({ id: selectedPlan.id, payload });
+      return;
+    }
+
+    await createMutation.mutateAsync(payload);
+  };
+
+  const handleClearPlan = async () => {
+    setMessage('');
+    if (!selectedPlan?.id) {
+      setFormData(createEmptyDailyMenuState());
+      setMessage('There is no saved menu plan for this date yet.');
+      return;
+    }
+    await deleteMutation.mutateAsync(selectedPlan.id);
   };
 
   const navigateWeek = (direction) => {
-    setCurrentWeekStart(prev => addDays(prev, direction * 7));
+    const nextDate = addDays(currentWeekStart, direction * 7);
+    setCurrentWeekStart(nextDate);
+    setSelectedDate(format(nextDate, 'yyyy-MM-dd'));
   };
-
-  const openAddMeal = (day) => {
-    setSelectedDay(day);
-    setFormData({ meal_type: 'lunch', recipe_id: '', expected_servings: '' });
-    setFormOpen(true);
-  };
-
-  const handleAddMeal = async () => {
-    if (!formData.recipe_id || !formData.expected_servings) return;
-
-    const dateStr = format(selectedDay, 'yyyy-MM-dd');
-    const existingPlan = getPlanForDay(selectedDay);
-    const recipe = recipes.find(r => r.id === formData.recipe_id);
-    const site = sites.find(s => s.id === selectedSite);
-
-    const newMeal = {
-      meal_type: formData.meal_type,
-      recipe_id: formData.recipe_id,
-      recipe_name: recipe?.name || '',
-      expected_servings: parseInt(formData.expected_servings),
-      calories_per_serving: recipe?.calories_per_serving || 0,
-      protein_per_serving: recipe?.protein_per_serving || 0,
-      carbs_per_serving: recipe?.carbs_per_serving || 0,
-      fat_per_serving: recipe?.fat_per_serving || 0,
-      sodium_per_serving: recipe?.sodium_per_serving || 0,
-      sugar_per_serving: recipe?.sugar_per_serving || 0,
-      allergens: Array.isArray(recipe?.allergens) ? recipe.allergens : []
-    };
-
-    if (existingPlan) {
-      const updatedMeals = [...(existingPlan.meals || []), newMeal];
-      const totalServings = updatedMeals.reduce((sum, m) => sum + (m.expected_servings || 0), 0);
-      const totalCalories = updatedMeals.reduce((sum, m) => 
-        sum + ((m.expected_servings || 0) * (m.calories_per_serving || 0)), 0
-      );
-
-      await updateMutation.mutateAsync({
-        id: existingPlan.id,
-        data: {
-          meals: updatedMeals,
-          total_expected_servings: totalServings,
-          total_calories: totalCalories
-        }
-      });
-    } else {
-      await createMutation.mutateAsync({
-        site_id: selectedSite,
-        site_name: site?.name || '',
-        plan_date: dateStr,
-        meals: [newMeal],
-        total_expected_servings: newMeal.expected_servings,
-        total_calories: newMeal.expected_servings * (newMeal.calories_per_serving || 0),
-        status: 'draft'
-      });
-    }
-
-    setFormOpen(false);
-  };
-
-  const availableRecipes = recipes.filter((recipe) => {
-    if (!recipe.site_scope || recipe.site_scope === 'global') {
-      return true;
-    }
-    return Array.isArray(recipe.site_ids) && recipe.site_ids.includes(selectedSite);
-  });
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
-      <div className="max-w-[1600px] mx-auto">
-        <PageHeader 
-          title="Menu Planning" 
-          description="Plan weekly menus for your sites"
+      <div className="mx-auto max-w-[1500px] space-y-6">
+        <PageHeader
+          title="Menu Planning"
+          description="Plan breakfast, lunch, and dinner by date using the weekly calendar and daily menu editor."
         >
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="w-[200px] bg-white">
-              <SelectValue placeholder="Select site" />
+            <SelectTrigger className="w-[250px] bg-white">
+              <SelectValue placeholder="Select project / location" />
             </SelectTrigger>
             <SelectContent>
-              {sites.map(site => (
-                <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
+              {sites.map((site) => (
+                <SelectItem key={site.id} value={site.id}>
+                  {site.hierarchy_path || site.name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </PageHeader>
 
+        {message ? (
+          <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            <span>{message}</span>
+          </div>
+        ) : null}
+
         {!selectedSite ? (
           <Card className="border-slate-100 shadow-sm">
             <CardContent className="p-12 text-center">
-              <Calendar className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-slate-700 mb-2">Select a Site</h3>
-              <p className="text-slate-500">Choose a site to start planning menus</p>
+              <Calendar className="mx-auto mb-4 h-16 w-16 text-slate-300" />
+              <h3 className="mb-2 text-lg font-semibold text-slate-700">Select a Project</h3>
+              <p className="text-slate-500">Choose a project or kitchen to start planning menus date-wise.</p>
             </CardContent>
           </Card>
         ) : (
           <>
-            {/* Week Navigation */}
-            <div className="flex items-center justify-between mb-6">
-              <Button variant="outline" onClick={() => navigateWeek(-1)}>
-                <ChevronLeft className="w-4 h-4 mr-1" />
-                Previous
-              </Button>
-              <h2 className="text-lg font-semibold text-slate-900">
-                {format(currentWeekStart, 'MMM d')} - {format(addDays(currentWeekStart, 6), 'MMM d, yyyy')}
-              </h2>
-              <Button variant="outline" onClick={() => navigateWeek(1)}>
-                Next
-                <ChevronRight className="w-4 h-4 ml-1" />
-              </Button>
-            </div>
+            <Card className="border-slate-100 shadow-sm">
+              <CardHeader className="pb-3">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <CardTitle className="text-lg">Calendar Planning View</CardTitle>
+                    <p className="mt-1 text-sm text-slate-500">Select a date to create or edit Breakfast, Lunch, and Dinner for that day.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" onClick={() => navigateWeek(-1)}>
+                      <ChevronLeft className="mr-1 h-4 w-4" />
+                      Previous
+                    </Button>
+                    <Button variant="outline" onClick={() => navigateWeek(1)}>
+                      Next
+                      <ChevronRight className="ml-1 h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
+                  <div>
+                    <Label htmlFor="selectedDate">Planning Date</Label>
+                    <Input
+                      id="selectedDate"
+                      type="date"
+                      className="mt-2 bg-white"
+                      value={selectedDate}
+                      onChange={(event) => setSelectedDate(event.target.value)}
+                    />
+                    <p className="mt-2 text-xs text-slate-500">
+                      Existing menu planning data for the selected date loads automatically.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
+                    {weekDays.map((day) => {
+                      const plan = getPlanForDay(day);
+                      const dayKey = format(day, 'yyyy-MM-dd');
+                      const isSelected = dayKey === selectedDate;
 
-            {/* Weekly Calendar Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
-              {weekDays.map(day => {
-                const plan = getPlanForDay(day);
-                const isToday = format(day, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
-
-                return (
-                  <Card 
-                    key={day.toISOString()} 
-                    className={`border-slate-100 shadow-sm ${isToday ? 'ring-2 ring-emerald-500' : ''}`}
-                  >
-                    <CardHeader className="p-3 pb-2">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-xs text-slate-500 uppercase">
-                            {format(day, 'EEE')}
-                          </p>
-                          <p className={`text-lg font-bold ${isToday ? 'text-emerald-600' : 'text-slate-900'}`}>
-                            {format(day, 'd')}
-                          </p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => openAddMeal(day)}
+                      return (
+                        <button
+                          key={dayKey}
+                          type="button"
+                          onClick={() => setSelectedDate(dayKey)}
+                          className={`rounded-2xl border p-3 text-left transition-all ${isSelected ? 'border-emerald-400 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-white hover:border-emerald-200'}`}
                         >
-                          <Plus className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="p-3 pt-0">
-                      {plan?.meals && plan.meals.length > 0 ? (
-                        <div className="space-y-2">
-                          {MEAL_TYPES.map(mealType => {
-                            const meals = plan.meals.filter(m => m.meal_type === mealType);
-                            if (meals.length === 0) return null;
-                            
-                            return meals.map((meal, idx) => (
-                              <div 
-                                key={`${mealType}-${idx}`}
-                                className={`p-2 rounded-lg border ${MEAL_COLORS[mealType]}`}
-                              >
-                                <p className="text-xs font-medium capitalize mb-1">{mealType}</p>
-                                <p className="text-sm font-semibold truncate">{meal.recipe_name}</p>
-                                <div className="flex items-center gap-2 mt-1 text-xs">
-                                  <Users className="w-3 h-3" />
-                                  <span>{meal.expected_servings}</span>
-                                  {meal.calories_per_serving > 0 && (
-                                    <>
-                                      <Flame className="w-3 h-3" />
-                                      <span>{meal.calories_per_serving}</span>
-                                    </>
-                                  )}
+                          <p className="text-xs uppercase text-slate-500">{format(day, 'EEE')}</p>
+                          <p className={`text-lg font-bold ${isSelected ? 'text-emerald-700' : 'text-slate-900'}`}>{format(day, 'd')}</p>
+                          <div className="mt-2 space-y-1">
+                            {CORE_MENU_MEAL_TYPES.map((mealType) => {
+                              const meal = plan?.meals?.find((entry) => entry.meal_type === mealType);
+                              return meal ? (
+                                <div key={mealType} className={`rounded-lg border px-2 py-1 text-[11px] ${MEAL_BADGES[mealType]}`}>
+                                  <p className="font-medium">{MEAL_LABELS[mealType]}</p>
+                                  <p className="truncate">{meal.recipe_name}</p>
                                 </div>
-                                {Array.isArray(meal.allergens) && meal.allergens.length > 0 ? (
-                                  <div className="mt-2">
-                                    <div className="mb-1 flex items-center gap-1 text-[11px] font-medium">
-                                      <ShieldAlert className="h-3 w-3" />
-                                      Allergens
-                                    </div>
-                                    <div className="flex flex-wrap gap-1">
-                                      {meal.allergens.slice(0, 3).map((allergen) => (
-                                        <Badge key={allergen} variant="outline" className="border-white/70 bg-white/70 px-1.5 py-0 text-[10px] capitalize">
-                                          {allergen}
-                                        </Badge>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ) : null}
-                              </div>
-                            ));
-                          })}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-slate-400 text-center py-4">
-                          No meals planned
-                        </p>
-                      )}
-
-                      {plan && (
-                        <div className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500">
-                          <div className="flex justify-between">
-                            <span>Total:</span>
-                            <span>{plan.total_expected_servings || 0} servings</span>
+                              ) : null;
+                            })}
+                            {!plan ? (
+                              <p className="pt-4 text-center text-[11px] text-slate-400">No core meals planned</p>
+                            ) : null}
                           </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-slate-100 shadow-sm">
+              <CardHeader className="pb-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <CardTitle className="text-lg">
+                      {format(new Date(selectedDate), 'EEEE, MMM d, yyyy')}
+                    </CardTitle>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {selectedPlanLoading
+                        ? 'Loading existing menu plan...'
+                        : selectedPlan
+                          ? 'Existing menu plan loaded for the selected date.'
+                          : 'Create a new menu plan for the selected date.'}
+                    </p>
+                  </div>
+                  {selectedPlan ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="capitalize">
+                        {String(selectedPlan.status || 'planned').replace(/_/g, ' ')}
+                      </Badge>
+                      <Badge variant="outline">
+                        {selectedPlan.total_expected_servings || 0} servings
+                      </Badge>
+                    </div>
+                  ) : null}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {additionalMeals.length > 0 ? (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                    Additional meals for this date are being preserved automatically:
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {additionalMeals.map((meal, index) => (
+                        <Badge key={`${meal.meal_type}-${index}`} variant="outline" className="border-blue-200 bg-white text-blue-700">
+                          {meal.meal_type}: {meal.recipe_name || 'Unnamed meal'}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid gap-4 xl:grid-cols-3">
+                  {CORE_MENU_MEAL_TYPES.map((mealType) => {
+                    const mealRecipes = getRecipesForMeal(mealType);
+                    const recipeRow = formData[mealType];
+                    const selectedRecipe = availableRecipes.find((recipe) => recipe.id === recipeRow.recipe_id);
+
+                    return (
+                      <Card key={mealType} className="border-slate-200 shadow-none">
+                        <CardHeader>
+                          <CardTitle className="flex items-center justify-between text-base">
+                            <span>{MEAL_LABELS[mealType]}</span>
+                            <Badge className={MEAL_BADGES[mealType]}>
+                              {MEAL_LABELS[mealType]}
+                            </Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div>
+                            <Label>Recipe</Label>
+                            <Select
+                              value={recipeRow.recipe_id || 'none'}
+                              onValueChange={(value) => setMealValue(mealType, 'recipe_id', value === 'none' ? '' : value)}
+                            >
+                              <SelectTrigger className="mt-2 bg-white">
+                                <SelectValue placeholder={`Select ${mealType} recipe`} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">No recipe selected</SelectItem>
+                                {mealRecipes.map((recipe) => (
+                                  <SelectItem key={recipe.id} value={recipe.id}>
+                                    {recipe.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div>
+                            <Label>Expected Servings</Label>
+                            <Input
+                              type="number"
+                              min="1"
+                              className="mt-2 bg-white"
+                              value={recipeRow.expected_servings}
+                              onChange={(event) => setMealValue(mealType, 'expected_servings', event.target.value)}
+                              placeholder="Enter servings"
+                            />
+                          </div>
+
+                          {selectedRecipe ? (
+                            <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+                              <p className="font-medium text-slate-800">{selectedRecipe.name}</p>
+                              <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                                <span>{selectedRecipe.category || 'uncategorized'}</span>
+                                <span>{selectedRecipe.servings || 0} recipe servings</span>
+                                <span>{selectedRecipe.calories_per_serving || 0} cal / serving</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-400">
+                              Choose a recipe to plan this meal slot.
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-3">
+                  {CORE_MENU_MEAL_TYPES.map((mealType) => (
+                    <div key={`summary-${mealType}`} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                      <p className="text-xs uppercase text-slate-500">{MEAL_LABELS[mealType]}</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                        {formData[mealType].expected_servings || 0} servings
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                  <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <Users className="h-4 w-4" />
+                    <span>
+                      Total planned servings:{' '}
+                      <strong className="text-slate-900">
+                        {summarizeMenuPlanMeals(buildMenuPlanMeals(formData, availableRecipes, selectedPlan)).total_expected_servings}
+                      </strong>
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="border-red-200 text-red-700 hover:bg-red-50"
+                      onClick={handleClearPlan}
+                      disabled={deleteMutation.isPending}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Clear Date Plan
+                    </Button>
+                    <Button
+                      type="button"
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                      onClick={handleSave}
+                      disabled={createMutation.isPending || updateMutation.isPending}
+                    >
+                      <Save className="mr-2 h-4 w-4" />
+                      {selectedPlan ? 'Update Menu Plan' : 'Save Menu Plan'}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </>
         )}
-
-        {/* Add Meal Dialog */}
-        <Dialog open={formOpen} onOpenChange={setFormOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>
-                Add Meal - {selectedDay && format(selectedDay, 'EEEE, MMM d')}
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label>Meal Type</Label>
-                <Select
-                  value={formData.meal_type}
-                  onValueChange={(value) => setFormData({ ...formData, meal_type: value })}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MEAL_TYPES.map(type => (
-                      <SelectItem key={type} value={type} className="capitalize">{type}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>Recipe</Label>
-                <Select
-                  value={formData.recipe_id}
-                  onValueChange={(value) => setFormData({ ...formData, recipe_id: value })}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Select recipe" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableRecipes
-                      .filter(r => r.category === formData.meal_type || formData.meal_type === 'snack')
-                      .map(recipe => (
-                        <SelectItem key={recipe.id} value={recipe.id}>
-                          {recipe.name}
-                        </SelectItem>
-                      ))}
-                    {availableRecipes
-                      .filter(r => r.category !== formData.meal_type && formData.meal_type !== 'snack')
-                      .map(recipe => (
-                        <SelectItem key={recipe.id} value={recipe.id}>
-                          {recipe.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>Expected Servings</Label>
-                <Input
-                  type="number"
-                  min="1"
-                  value={formData.expected_servings}
-                  onChange={(e) => setFormData({ ...formData, expected_servings: e.target.value })}
-                  placeholder="Number of servings"
-                  className="mt-1"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button>
-              <Button 
-                onClick={handleAddMeal}
-                className="bg-emerald-600 hover:bg-emerald-700"
-                disabled={createMutation.isPending || updateMutation.isPending}
-              >
-                Add Meal
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
     </div>
   );

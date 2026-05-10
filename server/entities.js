@@ -277,7 +277,29 @@ export const entityRegistry = {
     defaults: { status: 'pending_procurement_ack', source_type: 'manual' }
   },
   MenuPlan: {
-    defaults: { status: 'planned' }
+    defaults: { status: 'draft', meals: [] },
+    schema: z.object({
+      site_id: stringOptional,
+      site_name: stringOptional,
+      plan_date: z.string().trim().min(1, 'Plan date is required'),
+      status: stringOptional,
+      event_name: stringOptional,
+      meals: z.array(z.object({
+        meal_type: z.string().trim().min(1, 'Meal type is required'),
+        recipe_id: stringOptional,
+        recipe_name: stringOptional,
+        expected_servings: numberOptional,
+        calories_per_serving: numberOptional,
+        protein_per_serving: numberOptional,
+        carbs_per_serving: numberOptional,
+        fat_per_serving: numberOptional,
+        sodium_per_serving: numberOptional,
+        sugar_per_serving: numberOptional,
+        allergens: arrayOptional
+      }).passthrough()).optional().nullable(),
+      total_expected_servings: numberOptional,
+      total_calories: numberOptional
+    }).passthrough()
   },
   Production: {
     defaults: { status: 'planned' }

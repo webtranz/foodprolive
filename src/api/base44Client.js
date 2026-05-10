@@ -355,6 +355,28 @@ export const base44 = {
       });
     }
   },
+  menuPlanning: {
+    getByDate(siteId, planDate) {
+      return apiRequest(`/api/menu-plans/by-date${buildQueryString({ site_id: siteId, plan_date: planDate })}`);
+    },
+    create(data) {
+      return apiRequest('/api/menu-plans', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    update(id, data) {
+      return apiRequest(`/api/menu-plans/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      });
+    },
+    delete(id) {
+      return apiRequest(`/api/menu-plans/${id}`, {
+        method: 'DELETE'
+      });
+    }
+  },
   inventory: {
     receive(data) {
       return apiRequest('/api/inventory/receive', {
