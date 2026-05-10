@@ -9,11 +9,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertCircle, Calendar, ChevronLeft, ChevronRight, Save, Trash2, Users } from 'lucide-react';
+import { AlertCircle, Calendar, ChevronLeft, ChevronRight, Plus, Save, Trash2, Users } from 'lucide-react';
 import {
   buildDailyMenuState,
   buildMenuPlanMeals,
   CORE_MENU_MEAL_TYPES,
+  createEmptyMealEntry,
   createEmptyDailyMenuState,
   summarizeMenuPlanMeals,
   validateDailyMenuState
@@ -160,14 +161,36 @@ export default function MenuPlanning() {
     })
   );
 
-  const setMealValue = (mealType, field, value) => {
+  const setMealValue = (mealType, index, field, value) => {
     setFormData((current) => ({
       ...current,
-      [mealType]: {
-        ...current[mealType],
-        [field]: value
-      }
+      [mealType]: (Array.isArray(current[mealType]) ? current[mealType] : []).map((entry, entryIndex) => (
+        entryIndex === index
+          ? {
+              ...entry,
+              [field]: value
+            }
+          : entry
+      ))
     }));
+  };
+
+  const addMealRow = (mealType) => {
+    setFormData((current) => ({
+      ...current,
+      [mealType]: [...(Array.isArray(current[mealType]) ? current[mealType] : []), createEmptyMealEntry()]
+    }));
+  };
+
+  const removeMealRow = (mealType, index) => {
+    setFormData((current) => {
+      const rows = Array.isArray(current[mealType]) ? current[mealType] : [];
+      const nextRows = rows.filter((_, rowIndex) => rowIndex !== index);
+      return {
+        ...current,
+        [mealType]: nextRows.length > 0 ? nextRows : [createEmptyMealEntry()]
+      };
+    });
   };
 
   const handleSave = async () => {
@@ -309,11 +332,13 @@ export default function MenuPlanning() {
                           <p className={`text-lg font-bold ${isSelected ? 'text-emerald-700' : 'text-slate-900'}`}>{format(day, 'd')}</p>
                           <div className="mt-2 space-y-1">
                             {CORE_MENU_MEAL_TYPES.map((mealType) => {
-                              const meal = plan?.meals?.find((entry) => entry.meal_type === mealType);
-                              return meal ? (
+                              const meals = plan?.meals?.filter((entry) => entry.meal_type === mealType) || [];
+                              return meals.length > 0 ? (
                                 <div key={mealType} className={`rounded-lg border px-2 py-1 text-[11px] ${MEAL_BADGES[mealType]}`}>
                                   <p className="font-medium">{MEAL_LABELS[mealType]}</p>
-                                  <p className="truncate">{meal.recipe_name}</p>
+                                  <p className="truncate">
+                                    {meals.length === 1 ? meals[0].recipe_name : `${meals.length} recipes planned`}
+                                  </p>
                                 </div>
                               ) : null;
                             })}
@@ -373,66 +398,95 @@ export default function MenuPlanning() {
                 <div className="grid gap-4 xl:grid-cols-3">
                   {CORE_MENU_MEAL_TYPES.map((mealType) => {
                     const mealRecipes = getRecipesForMeal(mealType);
-                    const recipeRow = formData[mealType];
-                    const selectedRecipe = availableRecipes.find((recipe) => recipe.id === recipeRow.recipe_id);
+                    const mealRows = Array.isArray(formData[mealType]) ? formData[mealType] : [createEmptyMealEntry()];
 
                     return (
                       <Card key={mealType} className="border-slate-200 shadow-none">
                         <CardHeader>
                           <CardTitle className="flex items-center justify-between text-base">
                             <span>{MEAL_LABELS[mealType]}</span>
-                            <Badge className={MEAL_BADGES[mealType]}>
-                              {MEAL_LABELS[mealType]}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <Badge className={MEAL_BADGES[mealType]}>
+                                {mealRows.filter((row) => row.recipe_id).length} planned
+                              </Badge>
+                              <Button type="button" variant="outline" size="sm" onClick={() => addMealRow(mealType)}>
+                                <Plus className="mr-1 h-4 w-4" />
+                                Add Recipe
+                              </Button>
+                            </div>
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                          <div>
-                            <Label>Recipe</Label>
-                            <Select
-                              value={recipeRow.recipe_id || 'none'}
-                              onValueChange={(value) => setMealValue(mealType, 'recipe_id', value === 'none' ? '' : value)}
-                            >
-                              <SelectTrigger className="mt-2 bg-white">
-                                <SelectValue placeholder={`Select ${mealType} recipe`} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="none">No recipe selected</SelectItem>
-                                {mealRecipes.map((recipe) => (
-                                  <SelectItem key={recipe.id} value={recipe.id}>
-                                    {recipe.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
+                          {mealRows.map((recipeRow, index) => {
+                            const selectedRecipe = availableRecipes.find((recipe) => recipe.id === recipeRow.recipe_id);
+                            return (
+                              <div key={`${mealType}-${index}`} className="space-y-4 rounded-xl border border-slate-200 p-4">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-medium text-slate-700">
+                                    {MEAL_LABELS[mealType]} Recipe {index + 1}
+                                  </p>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                                    onClick={() => removeMealRow(mealType, index)}
+                                    disabled={mealRows.length === 1}
+                                  >
+                                    <Trash2 className="mr-1 h-4 w-4" />
+                                    Remove
+                                  </Button>
+                                </div>
 
-                          <div>
-                            <Label>Expected Servings</Label>
-                            <Input
-                              type="number"
-                              min="1"
-                              className="mt-2 bg-white"
-                              value={recipeRow.expected_servings}
-                              onChange={(event) => setMealValue(mealType, 'expected_servings', event.target.value)}
-                              placeholder="Enter servings"
-                            />
-                          </div>
+                                <div>
+                                  <Label>Recipe</Label>
+                                  <Select
+                                    value={recipeRow.recipe_id || 'none'}
+                                    onValueChange={(value) => setMealValue(mealType, index, 'recipe_id', value === 'none' ? '' : value)}
+                                  >
+                                    <SelectTrigger className="mt-2 bg-white">
+                                      <SelectValue placeholder={`Select ${mealType} recipe`} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="none">No recipe selected</SelectItem>
+                                      {mealRecipes.map((recipe) => (
+                                        <SelectItem key={recipe.id} value={recipe.id}>
+                                          {recipe.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
 
-                          {selectedRecipe ? (
-                            <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
-                              <p className="font-medium text-slate-800">{selectedRecipe.name}</p>
-                              <div className="mt-2 flex flex-wrap gap-3 text-xs">
-                                <span>{selectedRecipe.category || 'uncategorized'}</span>
-                                <span>{selectedRecipe.servings || 0} recipe servings</span>
-                                <span>{selectedRecipe.calories_per_serving || 0} cal / serving</span>
+                                <div>
+                                  <Label>Expected Servings</Label>
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    className="mt-2 bg-white"
+                                    value={recipeRow.expected_servings}
+                                    onChange={(event) => setMealValue(mealType, index, 'expected_servings', event.target.value)}
+                                    placeholder="Enter servings"
+                                  />
+                                </div>
+
+                                {selectedRecipe ? (
+                                  <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+                                    <p className="font-medium text-slate-800">{selectedRecipe.name}</p>
+                                    <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                                      <span>{selectedRecipe.category || 'uncategorized'}</span>
+                                      <span>{selectedRecipe.servings || 0} recipe servings</span>
+                                      <span>{selectedRecipe.calories_per_serving || 0} cal / serving</span>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-400">
+                                    Choose a recipe to plan this meal slot.
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          ) : (
-                            <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-400">
-                              Choose a recipe to plan this meal slot.
-                            </div>
-                          )}
+                            );
+                          })}
                         </CardContent>
                       </Card>
                     );
@@ -440,14 +494,20 @@ export default function MenuPlanning() {
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-3">
-                  {CORE_MENU_MEAL_TYPES.map((mealType) => (
-                    <div key={`summary-${mealType}`} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                      <p className="text-xs uppercase text-slate-500">{MEAL_LABELS[mealType]}</p>
-                      <p className="mt-1 text-sm font-semibold text-slate-900">
-                        {formData[mealType].expected_servings || 0} servings
-                      </p>
-                    </div>
-                  ))}
+                  {CORE_MENU_MEAL_TYPES.map((mealType) => {
+                    const mealSummary = (Array.isArray(formData[mealType]) ? formData[mealType] : []).reduce((total, row) => {
+                      const servings = Number(row.expected_servings);
+                      return total + (Number.isFinite(servings) ? servings : 0);
+                    }, 0);
+                    return (
+                      <div key={`summary-${mealType}`} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                        <p className="text-xs uppercase text-slate-500">{MEAL_LABELS[mealType]}</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">
+                          {mealSummary} servings across {(Array.isArray(formData[mealType]) ? formData[mealType] : []).filter((row) => row.recipe_id).length} recipes
+                        </p>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">

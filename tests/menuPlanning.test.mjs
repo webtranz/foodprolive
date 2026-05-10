@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildDailyMenuState,
   buildMenuPlanMeals,
+  createEmptyMealEntry,
   createEmptyDailyMenuState,
   summarizeMenuPlanMeals,
   validateDailyMenuState
@@ -38,39 +39,46 @@ const cases = [
     name: 'creates an empty daily menu state',
     run() {
       assert.deepEqual(createEmptyDailyMenuState(), {
-        breakfast: { recipe_id: '', expected_servings: '' },
-        lunch: { recipe_id: '', expected_servings: '' },
-        dinner: { recipe_id: '', expected_servings: '' }
+        breakfast: [createEmptyMealEntry()],
+        lunch: [createEmptyMealEntry()],
+        dinner: [createEmptyMealEntry()]
       });
     }
   },
   {
-    name: 'loads breakfast lunch and dinner from an existing plan',
+    name: 'loads breakfast lunch and dinner rows from an existing plan',
     run() {
       assert.deepEqual(
         buildDailyMenuState({
           meals: [
             { meal_type: 'breakfast', recipe_id: 'recipe-breakfast', expected_servings: 25 },
+            { meal_type: 'breakfast', recipe_id: 'recipe-lunch', expected_servings: 12 },
             { meal_type: 'lunch', recipe_id: 'recipe-lunch', expected_servings: 60 },
             { meal_type: 'snack', recipe_id: 'snack-1', expected_servings: 15 }
           ]
         }),
         {
-          breakfast: { recipe_id: 'recipe-breakfast', expected_servings: '25' },
-          lunch: { recipe_id: 'recipe-lunch', expected_servings: '60' },
-          dinner: { recipe_id: '', expected_servings: '' }
+          breakfast: [
+            { recipe_id: 'recipe-breakfast', expected_servings: '25' },
+            { recipe_id: 'recipe-lunch', expected_servings: '12' }
+          ],
+          lunch: [{ recipe_id: 'recipe-lunch', expected_servings: '60' }],
+          dinner: [{ recipe_id: '', expected_servings: '' }]
         }
       );
     }
   },
   {
-    name: 'preserves non core meals when rebuilding menu plan meals',
+    name: 'preserves non core meals and supports multiple recipes per meal',
     run() {
       const meals = buildMenuPlanMeals(
         {
-          breakfast: { recipe_id: 'recipe-breakfast', expected_servings: '20' },
-          lunch: { recipe_id: 'recipe-lunch', expected_servings: '40' },
-          dinner: { recipe_id: '', expected_servings: '' }
+          breakfast: [
+            { recipe_id: 'recipe-breakfast', expected_servings: '20' },
+            { recipe_id: 'recipe-lunch', expected_servings: '15' }
+          ],
+          lunch: [{ recipe_id: 'recipe-lunch', expected_servings: '40' }],
+          dinner: [{ recipe_id: '', expected_servings: '' }]
         },
         sampleRecipes,
         {
@@ -80,10 +88,11 @@ const cases = [
         }
       );
 
-      assert.equal(meals.length, 3);
+      assert.equal(meals.length, 4);
       assert.equal(meals[0].meal_type, 'breakfast');
-      assert.equal(meals[1].meal_type, 'lunch');
-      assert.equal(meals[2].meal_type, 'snack');
+      assert.equal(meals[1].meal_type, 'breakfast');
+      assert.equal(meals[2].meal_type, 'lunch');
+      assert.equal(meals[3].meal_type, 'snack');
     }
   },
   {
@@ -105,17 +114,17 @@ const cases = [
     run() {
       assert.deepEqual(
         validateDailyMenuState({
-          breakfast: { recipe_id: '', expected_servings: '' },
-          lunch: { recipe_id: '', expected_servings: '' },
-          dinner: { recipe_id: '', expected_servings: '' }
+          breakfast: [{ recipe_id: '', expected_servings: '' }],
+          lunch: [{ recipe_id: '', expected_servings: '' }],
+          dinner: [{ recipe_id: '', expected_servings: '' }]
         }),
         ['Plan at least one of breakfast, lunch, or dinner.']
       );
 
       const errors = validateDailyMenuState({
-        breakfast: { recipe_id: 'recipe-breakfast', expected_servings: '' },
-        lunch: { recipe_id: '', expected_servings: '15' },
-        dinner: { recipe_id: '', expected_servings: '' }
+        breakfast: [{ recipe_id: 'recipe-breakfast', expected_servings: '' }],
+        lunch: [{ recipe_id: '', expected_servings: '15' }],
+        dinner: [{ recipe_id: '', expected_servings: '' }]
       });
 
       assert.equal(errors.length, 2);
