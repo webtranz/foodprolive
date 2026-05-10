@@ -1,5 +1,9 @@
 export const CORE_MENU_MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 export const createEmptyMealEntry = () => ({ recipe_id: '', expected_servings: '' });
+export const createMealEntryFromRecipe = (recipe) => ({
+  recipe_id: recipe?.id || '',
+  expected_servings: recipe?.servings ? String(recipe.servings) : ''
+});
 
 function safeNumber(value, fallback = '') {
   const numeric = Number(value);
@@ -120,4 +124,29 @@ export function validateDailyMenuState(formState) {
   });
 
   return errors;
+}
+
+export function reorderMealEntries(entries, startIndex, endIndex) {
+  const nextEntries = [...entries];
+  const [movedEntry] = nextEntries.splice(startIndex, 1);
+  nextEntries.splice(endIndex, 0, movedEntry);
+  return nextEntries;
+}
+
+export function moveMealEntry(formState, sourceMealType, destinationMealType, sourceIndex, destinationIndex) {
+  const sourceEntries = [...(Array.isArray(formState?.[sourceMealType]) ? formState[sourceMealType] : [])];
+  const destinationEntries = sourceMealType === destinationMealType
+    ? sourceEntries
+    : [...(Array.isArray(formState?.[destinationMealType]) ? formState[destinationMealType] : [])];
+
+  const [movedEntry] = sourceEntries.splice(sourceIndex, 1);
+  destinationEntries.splice(destinationIndex, 0, movedEntry);
+
+  return {
+    ...formState,
+    [sourceMealType]: sourceMealType === destinationMealType
+      ? destinationEntries
+      : (sourceEntries.length > 0 ? sourceEntries : [createEmptyMealEntry()]),
+    [destinationMealType]: destinationEntries.length > 0 ? destinationEntries : [createEmptyMealEntry()]
+  };
 }

@@ -4,7 +4,10 @@ import {
   buildDailyMenuState,
   buildMenuPlanMeals,
   createEmptyMealEntry,
+  createMealEntryFromRecipe,
   createEmptyDailyMenuState,
+  moveMealEntry,
+  reorderMealEntries,
   summarizeMenuPlanMeals,
   validateDailyMenuState
 } from '../src/lib/menuPlanning.js';
@@ -93,6 +96,52 @@ const cases = [
       assert.equal(meals[1].meal_type, 'breakfast');
       assert.equal(meals[2].meal_type, 'lunch');
       assert.equal(meals[3].meal_type, 'snack');
+    }
+  },
+  {
+    name: 'creates a draggable meal row from a recipe',
+    run() {
+      assert.deepEqual(
+        createMealEntryFromRecipe({ id: 'recipe-breakfast', servings: 18 }),
+        { recipe_id: 'recipe-breakfast', expected_servings: '18' }
+      );
+    }
+  },
+  {
+    name: 'reorders recipes within a meal',
+    run() {
+      const reordered = reorderMealEntries(
+        [
+          { recipe_id: 'one', expected_servings: '5' },
+          { recipe_id: 'two', expected_servings: '10' }
+        ],
+        0,
+        1
+      );
+
+      assert.deepEqual(reordered.map((entry) => entry.recipe_id), ['two', 'one']);
+    }
+  },
+  {
+    name: 'moves a recipe between meal sections',
+    run() {
+      const nextState = moveMealEntry(
+        {
+          breakfast: [
+            { recipe_id: 'one', expected_servings: '5' },
+            { recipe_id: 'two', expected_servings: '10' }
+          ],
+          lunch: [{ recipe_id: 'three', expected_servings: '8' }],
+          dinner: [{ recipe_id: '', expected_servings: '' }]
+        },
+        'breakfast',
+        'dinner',
+        1,
+        0
+      );
+
+      assert.deepEqual(nextState.breakfast.map((entry) => entry.recipe_id), ['one']);
+      assert.deepEqual(nextState.dinner.map((entry) => entry.recipe_id), ['two', '']);
     }
   },
   {
