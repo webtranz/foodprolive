@@ -11,15 +11,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertCircle, Calendar, ChevronLeft, ChevronRight, GripVertical, Plus, Save, Trash2, Users } from 'lucide-react';
+import { formatCurrency } from '@/lib/currency';
 import {
   buildDailyMenuState,
   buildMenuPlanMeals,
+  calculateRecipeCostSnapshot,
   CORE_MENU_MEAL_TYPES,
   createEmptyMealEntry,
   createMealEntryFromRecipe,
   createEmptyDailyMenuState,
   moveMealEntry,
   reorderMealEntries,
+  summarizeDailyMenuCosts,
   summarizeMenuPlanMeals,
   validateDailyMenuState
 } from '@/lib/menuPlanning';
@@ -76,6 +79,11 @@ export default function MenuPlanning() {
   const { data: recipes = [] } = useQuery({
     queryKey: ['recipes'],
     queryFn: () => base44.entities.Recipe.list()
+  });
+
+  const { data: ingredients = [] } = useQuery({
+    queryKey: ['ingredients'],
+    queryFn: () => base44.entities.Ingredient.list()
   });
 
   const { data: menuPlans = [] } = useQuery({
@@ -162,6 +170,11 @@ export default function MenuPlanning() {
       return String(left.name || '').localeCompare(String(right.name || ''));
     })
   ), [availableRecipes]);
+
+  const costSummary = useMemo(
+    () => summarizeDailyMenuCosts(formData, availableRecipes, ingredients),
+    [formData, availableRecipes, ingredients]
+  );
 
   const weekDays = useMemo(() => eachDayOfInterval({
     start: currentWeekStart,
@@ -298,7 +311,7 @@ export default function MenuPlanning() {
       return;
     }
 
-    const meals = buildMenuPlanMeals(formData, availableRecipes, selectedPlan);
+    const meals = buildMenuPlanMeals(formData, availableRecipes, ingredients, selectedPlan);
     const summary = summarizeMenuPlanMeals(meals);
     const payload = {
       site_id: selectedSiteRecord.id,
@@ -307,7 +320,8 @@ export default function MenuPlanning() {
       meals,
       status: selectedPlan?.status || 'planned',
       total_expected_servings: summary.total_expected_servings,
-      total_calories: summary.total_calories
+      total_calories: summary.total_calories,
+      total_planned_cost: summary.total_planned_cost
     };
 
     if (selectedPlan?.id) {
@@ -636,6 +650,24 @@ export default function MenuPlanning() {
                                                     <span>{selectedRecipe.servings || 0} recipe servings</span>
                                                     <span>{selectedRecipe.calories_per_serving || 0} cal / serving</span>
                                                   </div>
+                                                  <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-white p-3 text-xs">
+                                                    <div>
+                                                      <p className="text-slate-500">Cost / serving</p>
+                                                      <p className="font-semibold text-slate-900">
+                                                        {calculateRecipeCostSnapshot(selectedRecipe, ingredients).has_cost
+                                                          ? formatCurrency(calculateRecipeCostSnapshot(selectedRecipe, ingredients).cost_per_serving)
+                                                          : 'Cost unavailable'}
+                                                      </p>
+                                                    </div>
+                                                    <div>
+                                                      <p className="text-slate-500">Planned item cost</p>
+                                                      <p className="font-semibold text-slate-900">
+                                                        {costSummary[mealType].entries[index]?.has_cost
+                                                          ? formatCurrency(costSummary[mealType].entries[index]?.total_cost || 0)
+                                                          : 'Cost unavailable'}
+                                                      </p>
+                                                    </div>
+                                                  </div>
                                                 </div>
                                               ) : (
                                                 <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-400">
@@ -671,20 +703,41 @@ export default function MenuPlanning() {
                         <p className="mt-1 text-sm font-semibold text-slate-900">
                           {mealSummary} servings across {(Array.isArray(formData[mealType]) ? formData[mealType] : []).filter((row) => row.recipe_id).length} recipes
                         </p>
+                        <p className="mt-2 text-sm font-semibold text-emerald-700">
+                          {formatCurrency(costSummary[mealType].total_cost)}
+                        </p>
+                        {costSummary[mealType].missing_cost_count > 0 ? (
+                          <p className="mt-1 text-xs text-amber-600">
+                            {costSummary[mealType].missing_cost_count} item(s) missing cost data
+                          </p>
+                        ) : null}
                       </div>
                     );
                   })}
                 </div>
 
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
-                  <div className="flex items-center gap-2 text-sm text-slate-500">
-                    <Users className="h-4 w-4" />
-                    <span>
-                      Total planned servings:{' '}
-                      <strong className="text-slate-900">
-                        {summarizeMenuPlanMeals(buildMenuPlanMeals(formData, availableRecipes, selectedPlan)).total_expected_servings}
+                  <div className="flex flex-wrap items-center gap-4 text-sm text-slate-500">
+                    <div className="flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      <span>
+                        Total planned servings:{' '}
+                        <strong className="text-slate-900">
+                          {summarizeMenuPlanMeals(buildMenuPlanMeals(formData, availableRecipes, ingredients, selectedPlan)).total_expected_servings}
+                        </strong>
+                      </span>
+                    </div>
+                    <div>
+                      Total planned cost:{' '}
+                      <strong className="text-emerald-700">
+                        {formatCurrency(costSummary.total_cost)}
                       </strong>
-                    </span>
+                    </div>
+                    {costSummary.missing_cost_count > 0 ? (
+                      <div className="text-amber-600">
+                        {costSummary.missing_cost_count} planned item(s) have missing cost data
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="flex flex-wrap gap-2">

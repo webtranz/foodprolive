@@ -289,6 +289,8 @@ export const entityRegistry = {
         recipe_id: stringOptional,
         recipe_name: stringOptional,
         expected_servings: numberOptional,
+        cost_per_serving: numberOptional,
+        total_cost: numberOptional,
         calories_per_serving: numberOptional,
         protein_per_serving: numberOptional,
         carbs_per_serving: numberOptional,
@@ -298,7 +300,8 @@ export const entityRegistry = {
         allergens: arrayOptional
       }).passthrough()).optional().nullable(),
       total_expected_servings: numberOptional,
-      total_calories: numberOptional
+      total_calories: numberOptional,
+      total_planned_cost: numberOptional
     }).passthrough()
   },
   Production: {

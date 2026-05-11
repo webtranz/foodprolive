@@ -10,6 +10,90 @@ function safeNumber(value, fallback = '') {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function convertQuantityToCostUnits(quantity, recipeUnit, ingredientUnit) {
+  const numericQuantity = safeNumber(quantity, 0);
+  if (!numericQuantity) {
+    return 0;
+  }
+
+  if (!recipeUnit || !ingredientUnit || recipeUnit === ingredientUnit) {
+    return numericQuantity;
+  }
+
+  const weightUnits = { kg: 1000, g: 1 };
+  const volumeUnits = { l: 1000, ml: 1 };
+
+  if (recipeUnit in weightUnits && ingredientUnit in weightUnits) {
+    return (numericQuantity * weightUnits[recipeUnit]) / weightUnits[ingredientUnit];
+  }
+
+  if (recipeUnit in volumeUnits && ingredientUnit in volumeUnits) {
+    return (numericQuantity * volumeUnits[recipeUnit]) / volumeUnits[ingredientUnit];
+  }
+
+  return numericQuantity;
+}
+
+export function calculateRecipeCostSnapshot(recipe, ingredients = []) {
+  const directCostPerServing = safeNumber(recipe?.cost_per_serving, null);
+  const servings = safeNumber(recipe?.servings, 0);
+
+  if (directCostPerServing !== null && directCostPerServing >= 0) {
+    return {
+      cost_per_serving: directCostPerServing,
+      total_cost: servings > 0 ? directCostPerServing * servings : directCostPerServing,
+      has_cost: true,
+      source: 'recipe'
+    };
+  }
+
+  const directTotalCost = safeNumber(recipe?.total_cost, null);
+  if (directTotalCost !== null && directTotalCost >= 0 && servings > 0) {
+    return {
+      cost_per_serving: directTotalCost / servings,
+      total_cost: directTotalCost,
+      has_cost: true,
+      source: 'recipe'
+    };
+  }
+
+  const recipeIngredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  if (recipeIngredients.length === 0) {
+    return { cost_per_serving: 0, total_cost: 0, has_cost: false, source: 'missing' };
+  }
+
+  let totalCost = 0;
+  let hasAllCosts = true;
+
+  recipeIngredients.forEach((recipeIngredient) => {
+    const ingredient = ingredients.find((entry) => entry.id === recipeIngredient.ingredient_id);
+    const ingredientCost = safeNumber(ingredient?.cost_per_unit, null);
+    if (ingredientCost === null || ingredientCost < 0) {
+      hasAllCosts = false;
+      return;
+    }
+
+    const quantityInCostUnits = convertQuantityToCostUnits(
+      recipeIngredient.quantity,
+      recipeIngredient.unit || ingredient?.unit,
+      ingredient?.unit
+    );
+
+    totalCost += quantityInCostUnits * ingredientCost;
+  });
+
+  if (!hasAllCosts) {
+    return { cost_per_serving: 0, total_cost: 0, has_cost: false, source: 'missing' };
+  }
+
+  return {
+    cost_per_serving: servings > 0 ? totalCost / servings : totalCost,
+    total_cost: totalCost,
+    has_cost: true,
+    source: 'ingredients'
+  };
+}
+
 export function createEmptyDailyMenuState() {
   return {
     breakfast: [createEmptyMealEntry()],
@@ -37,7 +121,7 @@ export function buildDailyMenuState(plan) {
   return nextState;
 }
 
-export function buildMenuPlanMeals(formState, recipes = [], existingPlan = null) {
+export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], existingPlan = null) {
   const preservedMeals = (Array.isArray(existingPlan?.meals) ? existingPlan.meals : [])
     .filter((meal) => !CORE_MENU_MEAL_TYPES.includes(meal.meal_type));
 
@@ -58,11 +142,16 @@ export function buildMenuPlanMeals(formState, recipes = [], existingPlan = null)
           return [];
         }
 
+        const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients);
+        const costPerServing = costSnapshot.has_cost ? costSnapshot.cost_per_serving : 0;
+
         return [{
           meal_type: mealType,
           recipe_id: recipe.id,
           recipe_name: recipe.name || '',
           expected_servings: servings,
+          cost_per_serving: costPerServing,
+          total_cost: costPerServing * servings,
           calories_per_serving: safeNumber(recipe.calories_per_serving, 0),
           protein_per_serving: safeNumber(recipe.protein_per_serving, 0),
           carbs_per_serving: safeNumber(recipe.carbs_per_serving, 0),
@@ -81,13 +170,16 @@ export function summarizeMenuPlanMeals(meals = []) {
   return meals.reduce((summary, meal) => {
     const servings = safeNumber(meal.expected_servings, 0);
     const calories = safeNumber(meal.calories_per_serving, 0);
+    const totalCost = safeNumber(meal.total_cost, 0);
     return {
       total_expected_servings: summary.total_expected_servings + servings,
-      total_calories: summary.total_calories + (servings * calories)
+      total_calories: summary.total_calories + (servings * calories),
+      total_planned_cost: summary.total_planned_cost + totalCost
     };
   }, {
     total_expected_servings: 0,
-    total_calories: 0
+    total_calories: 0,
+    total_planned_cost: 0
   });
 }
 
@@ -149,4 +241,51 @@ export function moveMealEntry(formState, sourceMealType, destinationMealType, so
       : (sourceEntries.length > 0 ? sourceEntries : [createEmptyMealEntry()]),
     [destinationMealType]: destinationEntries.length > 0 ? destinationEntries : [createEmptyMealEntry()]
   };
+}
+
+export function summarizeDailyMenuCosts(formState, recipes = [], ingredients = []) {
+  return CORE_MENU_MEAL_TYPES.reduce((summary, mealType) => {
+    const rows = Array.isArray(formState?.[mealType]) ? formState[mealType] : [];
+    const entries = rows.map((row) => {
+      const recipe = recipes.find((entry) => entry.id === row.recipe_id);
+      const servings = safeNumber(row.expected_servings, 0);
+      if (!recipe || servings <= 0) {
+        return {
+          recipe_id: row.recipe_id || '',
+          expected_servings: servings,
+          cost_per_serving: 0,
+          total_cost: 0,
+          has_cost: false
+        };
+      }
+
+      const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients);
+      const costPerServing = costSnapshot.has_cost ? costSnapshot.cost_per_serving : 0;
+      return {
+        recipe_id: recipe.id,
+        expected_servings: servings,
+        cost_per_serving: costPerServing,
+        total_cost: costPerServing * servings,
+        has_cost: costSnapshot.has_cost
+      };
+    });
+
+    const mealTotal = entries.reduce((sum, entry) => sum + entry.total_cost, 0);
+    const missingCostCount = entries.filter((entry) => entry.expected_servings > 0 && !entry.has_cost).length;
+
+    summary[mealType] = {
+      total_cost: mealTotal,
+      missing_cost_count: missingCostCount,
+      entries
+    };
+    summary.total_cost += mealTotal;
+    summary.missing_cost_count += missingCostCount;
+    return summary;
+  }, {
+    breakfast: { total_cost: 0, missing_cost_count: 0, entries: [] },
+    lunch: { total_cost: 0, missing_cost_count: 0, entries: [] },
+    dinner: { total_cost: 0, missing_cost_count: 0, entries: [] },
+    total_cost: 0,
+    missing_cost_count: 0
+  });
 }

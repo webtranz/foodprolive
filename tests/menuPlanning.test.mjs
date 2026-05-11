@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import {
   buildDailyMenuState,
   buildMenuPlanMeals,
+  calculateRecipeCostSnapshot,
   createEmptyMealEntry,
   createMealEntryFromRecipe,
   createEmptyDailyMenuState,
   moveMealEntry,
   reorderMealEntries,
+  summarizeDailyMenuCosts,
   summarizeMenuPlanMeals,
   validateDailyMenuState
 } from '../src/lib/menuPlanning.js';
@@ -16,25 +18,38 @@ const sampleRecipes = [
   {
     id: 'recipe-breakfast',
     name: 'Eggs',
+    servings: 18,
     calories_per_serving: 220,
     protein_per_serving: 12,
     carbs_per_serving: 4,
     fat_per_serving: 8,
     sodium_per_serving: 120,
     sugar_per_serving: 2,
-    allergens: ['eggs']
+    allergens: ['eggs'],
+    ingredients: [
+      { ingredient_id: 'ingredient-eggs', quantity: 10, unit: 'pieces' }
+    ]
   },
   {
     id: 'recipe-lunch',
     name: 'Kabsa',
+    servings: 8,
     calories_per_serving: 650,
     protein_per_serving: 30,
     carbs_per_serving: 55,
     fat_per_serving: 18,
     sodium_per_serving: 400,
     sugar_per_serving: 3,
-    allergens: []
+    allergens: [],
+    ingredients: [
+      { ingredient_id: 'ingredient-rice', quantity: 2, unit: 'kg' }
+    ]
   }
+];
+
+const sampleIngredients = [
+  { id: 'ingredient-eggs', cost_per_unit: 2, unit: 'pieces' },
+  { id: 'ingredient-rice', cost_per_unit: 8, unit: 'kg' }
 ];
 
 const cases = [
@@ -84,6 +99,7 @@ const cases = [
           dinner: [{ recipe_id: '', expected_servings: '' }]
         },
         sampleRecipes,
+        sampleIngredients,
         {
           meals: [
             { meal_type: 'snack', recipe_id: 'snack-1', recipe_name: 'Fruit Cup', expected_servings: 10 }
@@ -96,6 +112,8 @@ const cases = [
       assert.equal(meals[1].meal_type, 'breakfast');
       assert.equal(meals[2].meal_type, 'lunch');
       assert.equal(meals[3].meal_type, 'snack');
+      assert.equal(meals[0].cost_per_serving, 20 / 18);
+      assert.equal(meals[2].total_cost, 80);
     }
   },
   {
@@ -145,16 +163,45 @@ const cases = [
     }
   },
   {
+    name: 'calculates recipe cost from ingredient costs',
+    run() {
+      const snapshot = calculateRecipeCostSnapshot(sampleRecipes[1], sampleIngredients);
+      assert.equal(snapshot.has_cost, true);
+      assert.equal(snapshot.total_cost, 16);
+      assert.equal(snapshot.cost_per_serving, 2);
+    }
+  },
+  {
+    name: 'summarizes meal wise and total costs safely',
+    run() {
+      const summary = summarizeDailyMenuCosts(
+        {
+          breakfast: [{ recipe_id: 'recipe-breakfast', expected_servings: '18' }],
+          lunch: [{ recipe_id: 'recipe-lunch', expected_servings: '10' }],
+          dinner: [{ recipe_id: 'unknown-recipe', expected_servings: '5' }]
+        },
+        sampleRecipes,
+        sampleIngredients
+      );
+
+      assert.equal(summary.breakfast.total_cost, 20);
+      assert.equal(summary.lunch.total_cost, 20);
+      assert.equal(summary.dinner.missing_cost_count, 1);
+      assert.equal(summary.total_cost, 40);
+    }
+  },
+  {
     name: 'summarizes servings and calories correctly',
     run() {
       const summary = summarizeMenuPlanMeals([
-        { expected_servings: 20, calories_per_serving: 220 },
-        { expected_servings: 40, calories_per_serving: 650 }
+        { expected_servings: 20, calories_per_serving: 220, total_cost: 30 },
+        { expected_servings: 40, calories_per_serving: 650, total_cost: 70 }
       ]);
 
       assert.deepEqual(summary, {
         total_expected_servings: 60,
-        total_calories: 30400
+        total_calories: 30400,
+        total_planned_cost: 100
       });
     }
   },
