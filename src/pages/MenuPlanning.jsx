@@ -17,6 +17,7 @@ import {
   buildMenuPlanMeals,
   calculateRecipeCostSnapshot,
   computeBudgetComparison,
+  computeMealBudgetStatus,
   CORE_MENU_MEAL_TYPES,
   createEmptyMealEntry,
   createMealEntryFromRecipe,
@@ -71,6 +72,13 @@ export default function MenuPlanning() {
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [formData, setFormData] = useState(createEmptyDailyMenuState());
   const [selectedBudgetId, setSelectedBudgetId] = useState('');
+  const [manualBudgetName, setManualBudgetName] = useState('');
+  const [manualBudgetAmount, setManualBudgetAmount] = useState('');
+  const [mealBudgetLimits, setMealBudgetLimits] = useState({
+    breakfast: '',
+    lunch: '',
+    dinner: ''
+  });
   const [message, setMessage] = useState('');
 
   const { data: sites = [] } = useQuery({
@@ -147,8 +155,21 @@ export default function MenuPlanning() {
   }, [selectedPlan]);
 
   useEffect(() => {
-    setSelectedBudgetId(selectedPlan?.budget_id || autoLinkedBudget?.id || '');
-  }, [selectedPlan?.budget_id, autoLinkedBudget?.id]);
+    setSelectedBudgetId(
+      selectedPlan?.budget_source === 'manual'
+        ? 'manual'
+        : (selectedPlan?.budget_id || autoLinkedBudget?.id || '')
+    );
+    setManualBudgetName(selectedPlan?.manual_budget_name || '');
+    setManualBudgetAmount(selectedPlan?.budget_source === 'manual' && Number(selectedPlan?.budget_amount) > 0
+      ? String(selectedPlan.budget_amount)
+      : '');
+    setMealBudgetLimits({
+      breakfast: selectedPlan?.meal_budget_limits?.breakfast ? String(selectedPlan.meal_budget_limits.breakfast) : '',
+      lunch: selectedPlan?.meal_budget_limits?.lunch ? String(selectedPlan.meal_budget_limits.lunch) : '',
+      dinner: selectedPlan?.meal_budget_limits?.dinner ? String(selectedPlan.meal_budget_limits.dinner) : ''
+    });
+  }, [selectedPlan, autoLinkedBudget?.id]);
 
   const operationalPlans = useMemo(() => (
     menuPlans
@@ -187,16 +208,33 @@ export default function MenuPlanning() {
   );
 
   const selectedBudget = useMemo(() => {
+    if (selectedBudgetId === 'manual') {
+      return {
+        id: null,
+        name: manualBudgetName || 'Manual Budget',
+        budget_amount: Number(manualBudgetAmount) > 0 ? Number(manualBudgetAmount) : 0,
+        currency: 'SAR',
+        scope_type: 'manual',
+        start_date: selectedDate,
+        end_date: selectedDate
+      };
+    }
     if (selectedBudgetId) {
       return budgetCandidates.find((budget) => budget.id === selectedBudgetId) || autoLinkedBudget || null;
     }
     return autoLinkedBudget || null;
-  }, [selectedBudgetId, budgetCandidates, autoLinkedBudget]);
+  }, [selectedBudgetId, budgetCandidates, autoLinkedBudget, manualBudgetAmount, manualBudgetName, selectedDate]);
 
   const budgetComparison = useMemo(
     () => computeBudgetComparison(selectedBudget?.budget_amount || 0, costSummary.total_cost),
     [selectedBudget?.budget_amount, costSummary.total_cost]
   );
+
+  const mealBudgetStatuses = useMemo(() => ({
+    breakfast: computeMealBudgetStatus(mealBudgetLimits.breakfast, costSummary.breakfast.total_cost),
+    lunch: computeMealBudgetStatus(mealBudgetLimits.lunch, costSummary.lunch.total_cost),
+    dinner: computeMealBudgetStatus(mealBudgetLimits.dinner, costSummary.dinner.total_cost)
+  }), [mealBudgetLimits, costSummary]);
 
   const weekDays = useMemo(() => eachDayOfInterval({
     start: currentWeekStart,
@@ -249,6 +287,13 @@ export default function MenuPlanning() {
         [mealType]: nextRows.length > 0 ? nextRows : [createEmptyMealEntry()]
       };
     });
+  };
+
+  const setMealBudgetLimit = (mealType, value) => {
+    setMealBudgetLimits((current) => ({
+      ...current,
+      [mealType]: value
+    }));
   };
 
   const handleDragEnd = (result) => {
@@ -333,6 +378,11 @@ export default function MenuPlanning() {
       return;
     }
 
+    if (selectedBudgetId === 'manual' && !(Number(manualBudgetAmount) > 0)) {
+      setMessage('Enter a valid manual budget amount to use manual budget mode.');
+      return;
+    }
+
     const meals = buildMenuPlanMeals(formData, availableRecipes, ingredients, selectedPlan);
     const summary = summarizeMenuPlanMeals(meals);
     const payload = {
@@ -344,9 +394,16 @@ export default function MenuPlanning() {
       total_expected_servings: summary.total_expected_servings,
       total_calories: summary.total_calories,
       total_planned_cost: summary.total_planned_cost,
-      budget_id: selectedBudget?.id || null,
+      budget_source: selectedBudgetId === 'manual' ? 'manual' : 'linked',
+      budget_id: selectedBudgetId === 'manual' ? null : (selectedBudget?.id || null),
       budget_name: selectedBudget?.name || null,
+      manual_budget_name: selectedBudgetId === 'manual' ? (manualBudgetName || 'Manual Budget') : null,
       budget_amount: selectedBudget?.budget_amount || 0,
+      meal_budget_limits: {
+        breakfast: Number(mealBudgetLimits.breakfast) > 0 ? Number(mealBudgetLimits.breakfast) : 0,
+        lunch: Number(mealBudgetLimits.lunch) > 0 ? Number(mealBudgetLimits.lunch) : 0,
+        dinner: Number(mealBudgetLimits.dinner) > 0 ? Number(mealBudgetLimits.dinner) : 0
+      },
       remaining_budget: budgetComparison.remaining_budget,
       exceeded_budget_by: budgetComparison.exceeded_amount
     };
@@ -537,6 +594,7 @@ export default function MenuPlanning() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="auto">Auto-link applicable budget</SelectItem>
+                          <SelectItem value="manual">Manual budget entry</SelectItem>
                           {budgetCandidates.map((budget) => (
                             <SelectItem key={budget.id} value={budget.id}>
                               {budget.name} · {formatCurrency(budget.budget_amount || 0)}
@@ -544,6 +602,32 @@ export default function MenuPlanning() {
                           ))}
                         </SelectContent>
                       </Select>
+                      {selectedBudgetId === 'manual' ? (
+                        <div className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-white p-3">
+                          <div>
+                            <Label htmlFor="manualBudgetName">Manual Budget Name</Label>
+                            <Input
+                              id="manualBudgetName"
+                              className="mt-2 bg-white"
+                              value={manualBudgetName}
+                              onChange={(event) => setManualBudgetName(event.target.value)}
+                              placeholder="Daily food budget"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="manualBudgetAmount">Manual Budget Amount</Label>
+                            <Input
+                              id="manualBudgetAmount"
+                              type="number"
+                              min="0"
+                              className="mt-2 bg-white"
+                              value={manualBudgetAmount}
+                              onChange={(event) => setManualBudgetAmount(event.target.value)}
+                              placeholder="Enter budget amount"
+                            />
+                          </div>
+                        </div>
+                      ) : null}
                       <p className="mt-2 text-xs text-slate-500">
                         {selectedBudget
                           ? `Active budget window: ${selectedBudget.start_date} to ${selectedBudget.end_date}`
@@ -563,10 +647,13 @@ export default function MenuPlanning() {
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                         <p className="text-xs uppercase text-slate-500">Planned Cost</p>
-                        <p className="mt-1 text-lg font-semibold text-emerald-700">
+                        <p className={`mt-1 text-lg font-semibold ${budgetComparison.is_over_budget ? 'text-red-700' : 'text-emerald-700'}`}>
                           {formatCurrency(budgetComparison.planned_cost)}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">Real-time from selected recipes and servings</p>
+                        {budgetComparison.is_over_budget ? (
+                          <span className="sr-only">Planned cost is over the allowed budget.</span>
+                        ) : null}
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                         <p className="text-xs uppercase text-slate-500">{budgetComparison.is_over_budget ? 'Exceeded By' : 'Remaining Budget'}</p>
@@ -797,15 +884,43 @@ export default function MenuPlanning() {
                       const servings = Number(row.expected_servings);
                       return total + (Number.isFinite(servings) ? servings : 0);
                     }, 0);
+                    const mealBudgetStatus = mealBudgetStatuses[mealType];
                     return (
                       <div key={`summary-${mealType}`} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                         <p className="text-xs uppercase text-slate-500">{MEAL_LABELS[mealType]}</p>
                         <p className="mt-1 text-sm font-semibold text-slate-900">
                           {mealSummary} servings across {(Array.isArray(formData[mealType]) ? formData[mealType] : []).filter((row) => row.recipe_id).length} recipes
                         </p>
-                        <p className="mt-2 text-sm font-semibold text-emerald-700">
+                        <p className={`mt-2 text-sm font-semibold ${mealBudgetStatus.is_over_limit ? 'text-red-700' : 'text-emerald-700'}`}>
                           {formatCurrency(costSummary[mealType].total_cost)}
                         </p>
+                        <div className="mt-2">
+                          <Label htmlFor={`meal-budget-${mealType}`} className="text-xs text-slate-500">
+                            {MEAL_LABELS[mealType]} Budget Limit
+                          </Label>
+                          <Input
+                            id={`meal-budget-${mealType}`}
+                            type="number"
+                            min="0"
+                            className="mt-1 h-9 bg-white text-sm"
+                            value={mealBudgetLimits[mealType]}
+                            onChange={(event) => setMealBudgetLimit(mealType, event.target.value)}
+                            placeholder="Optional limit"
+                          />
+                        </div>
+                        {mealBudgetStatus.has_limit ? (
+                          <p className={`mt-2 flex items-start gap-1 text-xs ${mealBudgetStatus.is_over_limit ? 'text-red-700' : 'text-slate-500'}`}>
+                            {mealBudgetStatus.is_over_limit ? <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" /> : null}
+                            <span>
+                              {mealBudgetStatus.is_over_limit
+                                ? `${MEAL_LABELS[mealType]} exceeds its limit by ${formatCurrency(mealBudgetStatus.exceeded_amount)}`
+                                : `${MEAL_LABELS[mealType]} remaining limit: ${formatCurrency(mealBudgetStatus.remaining_amount)}`}
+                            </span>
+                            {mealBudgetStatus.is_over_limit ? (
+                              <span className="sr-only">{MEAL_LABELS[mealType]} cost is above the defined meal budget limit.</span>
+                            ) : null}
+                          </p>
+                        ) : null}
                         {costSummary[mealType].missing_cost_count > 0 ? (
                           <p className="mt-1 text-xs text-amber-600">
                             {costSummary[mealType].missing_cost_count} item(s) missing cost data

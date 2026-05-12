@@ -5,6 +5,7 @@ import {
   buildMenuPlanMeals,
   calculateRecipeCostSnapshot,
   computeBudgetComparison,
+  computeMealBudgetStatus,
   createEmptyMealEntry,
   createMealEntryFromRecipe,
   createEmptyDailyMenuState,
@@ -213,6 +214,34 @@ const cases = [
           remaining_budget: 0,
           exceeded_amount: 25,
           is_over_budget: true
+        }
+      );
+    }
+  },
+  {
+    name: 'computes meal budget status safely',
+    run() {
+      assert.deepEqual(
+        computeMealBudgetStatus(40, 22),
+        {
+          limit_amount: 40,
+          planned_cost: 22,
+          remaining_amount: 18,
+          exceeded_amount: 0,
+          has_limit: true,
+          is_over_limit: false
+        }
+      );
+
+      assert.deepEqual(
+        computeMealBudgetStatus(15, 21),
+        {
+          limit_amount: 15,
+          planned_cost: 21,
+          remaining_amount: 0,
+          exceeded_amount: 6,
+          has_limit: true,
+          is_over_limit: true
         }
       );
     }

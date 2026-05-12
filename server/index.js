@@ -508,9 +508,12 @@ function buildMenuPlanWritePayload(body = {}, existing = null) {
     total_expected_servings: summary.total_expected_servings,
     total_calories: summary.total_calories,
     total_planned_cost: summary.total_planned_cost,
+    budget_source: body.budget_source ?? existing?.budget_source ?? 'linked',
     budget_id: body.budget_id ?? existing?.budget_id ?? null,
     budget_name: body.budget_name ?? existing?.budget_name ?? null,
+    manual_budget_name: body.manual_budget_name ?? existing?.manual_budget_name ?? null,
     budget_amount: numericMatch(body.budget_amount ?? existing?.budget_amount, 0),
+    meal_budget_limits: body.meal_budget_limits ?? existing?.meal_budget_limits ?? null,
     remaining_budget: numericMatch(body.remaining_budget ?? existing?.remaining_budget, 0),
     exceeded_budget_by: numericMatch(body.exceeded_budget_by ?? existing?.exceeded_budget_by, 0)
   };

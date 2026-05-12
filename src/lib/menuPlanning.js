@@ -303,3 +303,18 @@ export function computeBudgetComparison(budgetAmount, plannedCost) {
     is_over_budget: remainingBudget < 0
   };
 }
+
+export function computeMealBudgetStatus(limitAmount, plannedCost) {
+  const normalizedLimitAmount = safeNumber(limitAmount, 0);
+  const normalizedPlannedCost = safeNumber(plannedCost, 0);
+  const remainingAmount = normalizedLimitAmount - normalizedPlannedCost;
+
+  return {
+    limit_amount: normalizedLimitAmount,
+    planned_cost: normalizedPlannedCost,
+    remaining_amount: remainingAmount > 0 ? remainingAmount : 0,
+    exceeded_amount: remainingAmount < 0 ? Math.abs(remainingAmount) : 0,
+    has_limit: normalizedLimitAmount > 0,
+    is_over_limit: normalizedLimitAmount > 0 && remainingAmount < 0
+  };
+}

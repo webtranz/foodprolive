@@ -308,9 +308,12 @@ export const entityRegistry = {
       plan_date: z.string().trim().min(1, 'Plan date is required'),
       status: stringOptional,
       event_name: stringOptional,
+      budget_source: stringOptional,
       budget_id: stringOptional,
       budget_name: stringOptional,
+      manual_budget_name: stringOptional,
       budget_amount: numberOptional,
+      meal_budget_limits: objectOptional,
       meals: z.array(z.object({
         meal_type: z.string().trim().min(1, 'Meal type is required'),
         recipe_id: stringOptional,
