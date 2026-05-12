@@ -66,6 +66,10 @@ function parseMealDroppableId(droppableId) {
   return droppableId.startsWith('meal-') ? droppableId.replace('meal-', '') : null;
 }
 
+function getGeneratedPRNumber(run) {
+  return run?.generated_pr_number || run?.generated_request_number || '';
+}
+
 export default function MenuPlanning() {
   const { can } = usePermissions();
   const queryClient = useQueryClient();
@@ -181,9 +185,9 @@ export default function MenuPlanning() {
         setMessage(`PR already exists for cycle ${result?.run?.cycle_start} to ${result?.run?.cycle_end}. Duplicate generation was prevented.`);
         return;
       }
-      setMessage(`Purchase request ${result?.purchase_request?.request_number || result?.run?.generated_request_number || ''} generated successfully for the next menu planning cycle.`);
+      setMessage(`PR ${result?.purchase_request?.request_number || getGeneratedPRNumber(result?.run) || ''} generated successfully for the next menu planning cycle.`);
     },
-    onError: (error) => setMessage(error.message || 'Failed to generate purchase request')
+    onError: (error) => setMessage(error.message || 'Failed to generate PR')
   });
 
   useEffect(() => {
@@ -778,9 +782,9 @@ export default function MenuPlanning() {
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
-                      <h3 className="text-base font-semibold text-slate-900">Purchase Request Generation</h3>
+                      <h3 className="text-base font-semibold text-slate-900">PR Generation</h3>
                       <p className="mt-1 text-sm text-slate-500">
-                        Generate a purchase request from the next 7-day menu cycle. Thursday is the preferred generation day, and duplicate PRs are blocked automatically.
+                        Generate a PR from the next 7-day menu cycle. Thursday is the preferred generation day, and duplicate PRs are blocked automatically.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -891,7 +895,7 @@ export default function MenuPlanning() {
                             {prCurrentCycleRun ? String(prCurrentCycleRun.status || 'pending').replace(/_/g, ' ') : 'Not generated'}
                           </p>
                           <p className="mt-1 text-xs text-slate-500">
-                            {prCurrentCycleRun?.generated_request_number || 'No PR generated for this cycle yet'}
+                            {getGeneratedPRNumber(prCurrentCycleRun) || 'No PR generated for this cycle yet'}
                           </p>
                         </div>
                         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
@@ -907,7 +911,7 @@ export default function MenuPlanning() {
 
                       {prCurrentCycleRun?.status === 'generated' ? (
                         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                          PR <strong>{prCurrentCycleRun.generated_request_number}</strong> already covers this cycle. Duplicate generation will be prevented automatically.
+                          PR <strong>{getGeneratedPRNumber(prCurrentCycleRun)}</strong> already covers this cycle. Duplicate generation will be prevented automatically.
                         </div>
                       ) : null}
 
@@ -927,7 +931,7 @@ export default function MenuPlanning() {
                                   {run.cycle_start} to {run.cycle_end}
                                 </p>
                                 <p className="text-xs text-slate-500">
-                                  {run.generated_request_number || 'No PR number'} · {run.generated_item_count || 0} items
+                                  {getGeneratedPRNumber(run) || 'No PR number'} · {run.generated_item_count || 0} items
                                 </p>
                               </div>
                               <Badge
@@ -954,7 +958,7 @@ export default function MenuPlanning() {
                   </div>
                   {!can('generate_menu_plan_pr') ? (
                     <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      You can plan menus here, but only authorized users can generate purchase requests for the cycle.
+                      You can plan menus here, but only authorized users can generate PRs for the cycle.
                     </div>
                   ) : null}
                 </div>

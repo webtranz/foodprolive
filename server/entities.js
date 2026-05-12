@@ -418,6 +418,8 @@ export const entityRegistry = {
       preferred_weekday: stringOptional,
       status: stringOptional,
       trigger_type: stringOptional,
+      generated_pr_id: stringOptional,
+      generated_pr_number: stringOptional,
       generated_request_id: stringOptional,
       generated_request_number: stringOptional,
       generated_item_count: numberOptional,

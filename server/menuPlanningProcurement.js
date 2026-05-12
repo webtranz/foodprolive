@@ -310,7 +310,7 @@ async function generatePurchaseRequestFromMenuPlans(user, payload = {}) {
   const referenceDate = normalizeDateOnly(payload.reference_date) || formatDateOnly(new Date());
 
   if (!siteId || !siteName) {
-    const error = new Error('Project is required to generate a purchase request.');
+    const error = new Error('Project is required to generate a PR.');
     error.status = 400;
     throw error;
   }
@@ -418,6 +418,8 @@ async function generatePurchaseRequestFromMenuPlans(user, payload = {}) {
     preferred_weekday: schedule.preferred_weekday,
     status: 'generated',
     trigger_type: payload.trigger_type || 'manual',
+    generated_pr_id: request.id,
+    generated_pr_number: request.request_number,
     generated_request_id: request.id,
     generated_request_number: request.request_number,
     generated_item_count: items.length,
@@ -434,7 +436,7 @@ async function generatePurchaseRequestFromMenuPlans(user, payload = {}) {
     payload: {
       action: 'generate_pr',
       site_id: siteId,
-      generated_request_id: request.id,
+      generated_pr_id: request.id,
       cycle_start: schedule.cycle_start,
       cycle_end: schedule.cycle_end
     }
