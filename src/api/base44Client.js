@@ -403,6 +403,30 @@ export const base44 = {
       });
     }
   },
+  foodWaste: {
+    list(filters = {}) {
+      return apiRequest(`/api/food-waste${buildQueryString(filters)}`);
+    },
+    getContext(siteId, wasteDate, mealType) {
+      return apiRequest(`/api/food-waste/context${buildQueryString({
+        site_id: siteId,
+        waste_date: wasteDate,
+        meal_type: mealType
+      })}`);
+    },
+    create(data) {
+      return apiRequest('/api/food-waste', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    update(id, data) {
+      return apiRequest(`/api/food-waste/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      });
+    }
+  },
   inventory: {
     receive(data) {
       return apiRequest('/api/inventory/receive', {

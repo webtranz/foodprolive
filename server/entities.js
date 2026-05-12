@@ -234,7 +234,37 @@ export const entityRegistry = {
       waste_scope: 'ingredient',
       avoidable_type: 'avoidable',
       estimated_cost: 0
-    }
+    },
+    schema: z.object({
+      site_id: stringOptional,
+      site_name: stringOptional,
+      waste_date: z.string().trim().min(1, 'Waste date is required'),
+      meal_type: stringOptional,
+      served_at: stringOptional,
+      recording_deadline_at: stringOptional,
+      menu_plan_id: stringOptional,
+      menu_plan_name: stringOptional,
+      waste_category: stringOptional,
+      reason_code: stringOptional,
+      reason: stringOptional,
+      avoidable_type: stringOptional,
+      preventable: booleanOptional,
+      waste_scope: stringOptional,
+      ingredient_id: stringOptional,
+      ingredient_name: stringOptional,
+      recipe_id: stringOptional,
+      recipe_name: stringOptional,
+      production_id: stringOptional,
+      production_name: stringOptional,
+      batch_reference: stringOptional,
+      quantity: numberOptional,
+      unit: stringOptional,
+      estimated_cost: numberOptional,
+      approval_status: stringOptional,
+      status: stringOptional,
+      high_value: booleanOptional,
+      notes: stringOptional
+    }).passthrough()
   },
   Budget: {
     defaults: {

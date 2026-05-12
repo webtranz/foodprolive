@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { format, subDays } from 'date-fns';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -35,9 +35,11 @@ import {
   AlertTriangle,
   Brain,
   CheckCircle2,
+  Clock3,
   CircleDollarSign,
   Download,
   PackageCheck,
+  Pencil,
   Plus,
   Target,
   Trash2,
@@ -69,6 +71,7 @@ const WASTE_REASONS = [
 ];
 
 const APPROVAL_THRESHOLD = 100;
+const MEAL_TYPE_OPTIONS = ['breakfast', 'lunch', 'dinner'];
 
 const CATEGORY_BADGES = Object.fromEntries(
   WASTE_CATEGORIES.map((item) => [item.value, `bg-white text-slate-700 border border-slate-200`])
@@ -112,6 +115,25 @@ function titleCase(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function createDefaultWasteForm() {
+  return {
+    site_id: '',
+    waste_date: format(new Date(), 'yyyy-MM-dd'),
+    meal_type: 'breakfast',
+    waste_category: 'plate_waste',
+    reason_code: 'overproduction',
+    waste_scope: 'ingredient',
+    ingredient_id: 'none',
+    recipe_id: 'none',
+    production_id: 'none',
+    batch_reference: '',
+    quantity: '',
+    unit: 'kg',
+    preventable: true,
+    notes: ''
+  };
+}
+
 export default function FoodWaste() {
   const queryClient = useQueryClient();
   const { can } = usePermissions();
@@ -124,23 +146,11 @@ export default function FoodWaste() {
     locationId: 'all',
     wasteCategory: 'all',
     reasonCode: 'all',
-    scope: 'all'
+    scope: 'all',
+    mealType: 'all'
   });
-  const [formData, setFormData] = useState({
-    site_id: '',
-    waste_date: format(new Date(), 'yyyy-MM-dd'),
-    waste_category: 'plate_waste',
-    reason_code: 'overproduction',
-    waste_scope: 'ingredient',
-    ingredient_id: 'none',
-    recipe_id: 'none',
-    production_id: 'none',
-    batch_reference: '',
-    quantity: '',
-    unit: 'kg',
-    preventable: true,
-    notes: ''
-  });
+  const [editingWasteId, setEditingWasteId] = useState(null);
+  const [formData, setFormData] = useState(createDefaultWasteForm);
   const [targetForm, setTargetForm] = useState({
     site_id: '',
     target_percentage: '',
@@ -171,7 +181,13 @@ export default function FoodWaste() {
 
   const { data: foodWaste = [] } = useQuery({
     queryKey: ['foodWaste'],
-    queryFn: () => base44.entities.FoodWaste.list('-waste_date', 1000)
+    queryFn: () => base44.foodWaste.list()
+  });
+
+  const { data: wasteContext = null } = useQuery({
+    queryKey: ['foodWasteContext', formData.site_id, formData.waste_date, formData.meal_type],
+    enabled: Boolean(formData.site_id && formData.waste_date && formData.meal_type),
+    queryFn: () => base44.foodWaste.getContext(formData.site_id, formData.waste_date, formData.meal_type)
   });
 
   const { data: wasteTargets = [] } = useQuery({
@@ -184,33 +200,52 @@ export default function FoodWaste() {
   const productionMap = useMemo(() => new Map(productions.map((item) => [item.id, item])), [productions]);
   const siteMap = useMemo(() => new Map(sites.map((item) => [item.id, item])), [sites]);
 
+  useEffect(() => {
+    if (formData.production_id === 'none') {
+      return;
+    }
+
+    const production = productionMap.get(formData.production_id);
+    if (!production) {
+      return;
+    }
+
+    setFormData((current) => ({
+      ...current,
+      site_id: production.site_id || current.site_id,
+      waste_date: production.production_date || current.waste_date,
+      meal_type: String(production.meal_type || current.meal_type || 'breakfast').toLowerCase(),
+      recipe_id: production.recipe_id || current.recipe_id,
+      batch_reference: current.batch_reference || production.id || ''
+    }));
+  }, [formData.production_id, productionMap]);
+
   const createWasteMutation = useMutation({
-    mutationFn: (payload) => base44.entities.FoodWaste.create(payload),
+    mutationFn: (payload) => base44.foodWaste.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
       setFormOpen(false);
+      setEditingWasteId(null);
       setMessage('Waste record saved.');
-      setFormData({
-        site_id: '',
-        waste_date: format(new Date(), 'yyyy-MM-dd'),
-        waste_category: 'plate_waste',
-        reason_code: 'overproduction',
-        waste_scope: 'ingredient',
-        ingredient_id: 'none',
-        recipe_id: 'none',
-        production_id: 'none',
-        batch_reference: '',
-        quantity: '',
-        unit: 'kg',
-        preventable: true,
-        notes: ''
-      });
+      setFormData(createDefaultWasteForm());
     },
     onError: (error) => setMessage(error.message || 'Failed to save waste record')
   });
 
+  const updateWasteMutation = useMutation({
+    mutationFn: ({ id, payload }) => base44.foodWaste.update(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
+      setFormOpen(false);
+      setEditingWasteId(null);
+      setMessage('Waste record updated.');
+      setFormData(createDefaultWasteForm());
+    },
+    onError: (error) => setMessage(error.message || 'Failed to update waste record')
+  });
+
   const approvalMutation = useMutation({
-    mutationFn: ({ id, approval_status }) => base44.entities.FoodWaste.update(id, {
+    mutationFn: ({ id, approval_status }) => base44.foodWaste.update(id, {
       approval_status,
       approved_by: approval_status === 'approved' ? 'manager' : null,
       approved_at: approval_status === 'approved' ? new Date().toISOString() : null
@@ -254,6 +289,7 @@ export default function FoodWaste() {
       if (filters.wasteCategory !== 'all' && item.waste_category !== filters.wasteCategory) return false;
       if (filters.reasonCode !== 'all' && item.reason_code !== filters.reasonCode) return false;
       if (filters.scope !== 'all' && item.waste_scope !== filters.scope) return false;
+      if (filters.mealType !== 'all' && String(item.meal_type || '').toLowerCase() !== filters.mealType) return false;
       return true;
     })
   ), [foodWaste, filters]);
@@ -446,7 +482,7 @@ export default function FoodWaste() {
       const recipeName = entry.recipe_name || linkedProduction?.recipe_name || recipeMap.get(recipeId)?.name || 'Unknown recipe';
       const siteId = entry.site_id || linkedProduction?.site_id || 'unknown';
       const siteName = entry.site_name || linkedProduction?.site_name || siteMap.get(siteId)?.name || 'Unknown';
-      const mealType = linkedProduction?.meal_type || 'unspecified';
+      const mealType = linkedProduction?.meal_type || entry.meal_type || 'unspecified';
       const key = `${siteId}::${recipeId || 'unknown'}::${mealType}`;
       if (!productionRecipeStats.has(key)) {
         productionRecipeStats.set(key, {
@@ -546,7 +582,7 @@ export default function FoodWaste() {
     }, {})).map((entry) => {
       const relatedWasteCost = filteredWaste.reduce((sum, wasteRow) => {
         const linkedProduction = wasteRow.production_id ? productionMap.get(wasteRow.production_id) : null;
-        return linkedProduction?.meal_type === entry.meal_type ? sum + safeNumber(wasteRow.estimated_cost) : sum;
+        return (linkedProduction?.meal_type || wasteRow.meal_type) === entry.meal_type ? sum + safeNumber(wasteRow.estimated_cost) : sum;
       }, 0);
       return {
         ...entry,
@@ -600,10 +636,11 @@ export default function FoodWaste() {
     const estimatedCost = handleAutoCostPreview();
     const approvalStatus = estimatedCost >= APPROVAL_THRESHOLD ? 'pending' : 'approved';
 
-    createWasteMutation.mutate({
+    const payload = {
       site_id: formData.site_id,
       site_name: site?.name || '',
       waste_date: formData.waste_date,
+      meal_type: formData.meal_type,
       waste_category: formData.waste_category,
       reason_code: formData.reason_code,
       reason: reason?.label || formData.reason_code,
@@ -624,12 +661,47 @@ export default function FoodWaste() {
       status: approvalStatus === 'pending' ? 'pending_review' : 'logged',
       high_value: estimatedCost >= APPROVAL_THRESHOLD,
       notes: formData.notes
+    };
+
+    if (editingWasteId) {
+      updateWasteMutation.mutate({ id: editingWasteId, payload });
+      return;
+    }
+
+    createWasteMutation.mutate(payload);
+  };
+
+  const handleOpenCreateDialog = () => {
+    setEditingWasteId(null);
+    setFormData(createDefaultWasteForm());
+    setFormOpen(true);
+  };
+
+  const handleOpenEditDialog = (record) => {
+    setEditingWasteId(record.id);
+    setFormData({
+      site_id: record.site_id || '',
+      waste_date: record.waste_date || format(new Date(), 'yyyy-MM-dd'),
+      meal_type: String(record.meal_type || 'breakfast').toLowerCase(),
+      waste_category: record.waste_category || 'plate_waste',
+      reason_code: record.reason_code || 'overproduction',
+      waste_scope: record.waste_scope || 'ingredient',
+      ingredient_id: record.ingredient_id || 'none',
+      recipe_id: record.recipe_id || 'none',
+      production_id: record.production_id || 'none',
+      batch_reference: record.batch_reference || '',
+      quantity: String(record.quantity ?? ''),
+      unit: record.unit || 'kg',
+      preventable: record.avoidable_type !== 'unavoidable' || Boolean(record.preventable),
+      notes: record.notes || ''
     });
+    setFormOpen(true);
   };
 
   const exportWastePackage = (type = 'csv') => {
     const wasteRows = filteredWaste.map((item) => ({
       waste_date: item.waste_date,
+      meal_type: titleCase(item.meal_type),
       site_name: item.site_name,
       waste_category: item.waste_category,
       reason: item.reason,
@@ -719,7 +791,7 @@ export default function FoodWaste() {
             </Button>
           ) : null}
           {can('manage_waste') ? (
-            <Button onClick={() => setFormOpen(true)} className="bg-red-600 hover:bg-red-700">
+            <Button onClick={handleOpenCreateDialog} className="bg-red-600 hover:bg-red-700">
               <Plus className="w-4 h-4 mr-2" />
               Record Waste
             </Button>
@@ -737,7 +809,7 @@ export default function FoodWaste() {
             <CardTitle className="text-base">Filters</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
               <div>
                 <Label>Start Date</Label>
                 <Input type="date" className="mt-1" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} />
@@ -766,6 +838,18 @@ export default function FoodWaste() {
                     <SelectItem value="all">All Categories</SelectItem>
                     {WASTE_CATEGORIES.map((item) => (
                       <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Meal Type</Label>
+                <Select value={filters.mealType} onValueChange={(value) => setFilters((current) => ({ ...current, mealType: value }))}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Meals</SelectItem>
+                    {MEAL_TYPE_OPTIONS.map((item) => (
+                      <SelectItem key={item} value={item}>{titleCase(item)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -1188,23 +1272,27 @@ export default function FoodWaste() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Date</TableHead>
+                  <TableHead>Meal</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead>Reason</TableHead>
                   <TableHead>Item / Batch</TableHead>
                   <TableHead>Quantity</TableHead>
                   <TableHead>Cost</TableHead>
+                  <TableHead>Recording Window</TableHead>
                   <TableHead>Approval</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredWaste.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
+                    <TableCell colSpan={11} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
                   </TableRow>
                 ) : filteredWaste.slice(0, 30).map((item) => (
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">{item.waste_date}</TableCell>
+                    <TableCell>{titleCase(item.meal_type || '-')}</TableCell>
                     <TableCell>{item.site_name}</TableCell>
                     <TableCell>
                       <Badge className={CATEGORY_BADGES[item.waste_category] || 'bg-slate-100 text-slate-700'}>
@@ -1216,9 +1304,37 @@ export default function FoodWaste() {
                     <TableCell>{safeNumber(item.quantity).toFixed(2)} {item.unit}</TableCell>
                     <TableCell>{formatCurrency(item.estimated_cost)}</TableCell>
                     <TableCell>
+                      <Badge className={
+                        item.is_within_recording_window
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : item.window_status === 'before_service'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-slate-200 text-slate-700'
+                      }>
+                        {item.window_status === 'open'
+                          ? 'Open'
+                          : item.window_status === 'before_service'
+                            ? 'Before service'
+                            : 'Closed'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
                       <Badge className={APPROVAL_TONES[item.approval_status] || 'bg-slate-100 text-slate-700'}>
                         {item.approval_status || 'approved'}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {can('manage_waste') ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!item.can_edit}
+                          onClick={() => handleOpenEditDialog(item)}
+                        >
+                          <Pencil className="mr-2 h-4 w-4" />
+                          Edit
+                        </Button>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1227,12 +1343,56 @@ export default function FoodWaste() {
           </CardContent>
         </Card>
 
-        <Dialog open={formOpen} onOpenChange={setFormOpen}>
+        <Dialog
+          open={formOpen}
+          onOpenChange={(open) => {
+            setFormOpen(open);
+            if (!open) {
+              setEditingWasteId(null);
+              setFormData(createDefaultWasteForm());
+            }
+          }}
+        >
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Record Food Waste</DialogTitle>
+              <DialogTitle>{editingWasteId ? 'Edit Food Waste Record' : 'Record Food Waste'}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleWasteSubmit} className="space-y-4">
+              {wasteContext ? (
+                <div className={`rounded-xl border px-4 py-3 text-sm ${
+                  wasteContext.is_within_recording_window
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : wasteContext.window_status === 'before_service'
+                      ? 'border-blue-200 bg-blue-50 text-blue-800'
+                      : 'border-red-200 bg-red-50 text-red-800'
+                }`}>
+                  <div className="flex flex-wrap items-center gap-2 font-medium">
+                    <Clock3 className="h-4 w-4" />
+                    <span>{wasteContext.message}</span>
+                  </div>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                    <p>
+                      <span className="font-medium">Meal service:</span>{' '}
+                      {wasteContext.served_at ? new Date(wasteContext.served_at).toLocaleString() : 'Not scheduled'}
+                    </p>
+                    <p>
+                      <span className="font-medium">Recording deadline:</span>{' '}
+                      {wasteContext.recording_deadline_at ? new Date(wasteContext.recording_deadline_at).toLocaleString() : 'Unavailable'}
+                    </p>
+                  </div>
+                  {wasteContext.menu_plan ? (
+                    <div className="mt-3 rounded-lg border border-white/70 bg-white/70 px-3 py-2 text-slate-700">
+                      <p className="font-medium text-slate-900">Planned menu for {titleCase(wasteContext.meal_type)}</p>
+                      <p className="mt-1 text-sm">
+                        {wasteContext.planned_menu_items.length
+                          ? wasteContext.planned_menu_items.map((item) => `${item.recipe_name} (${item.expected_servings} servings)`).join(', ')
+                          : 'No planned recipes found for this meal.'}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label>Location</Label>
@@ -1248,6 +1408,17 @@ export default function FoodWaste() {
                 <div>
                   <Label>Waste Date</Label>
                   <Input type="date" className="mt-1" value={formData.waste_date} onChange={(event) => setFormData((current) => ({ ...current, waste_date: event.target.value }))} />
+                </div>
+                <div>
+                  <Label>Meal Type</Label>
+                  <Select value={formData.meal_type} onValueChange={(value) => setFormData((current) => ({ ...current, meal_type: value }))}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {MEAL_TYPE_OPTIONS.map((item) => (
+                        <SelectItem key={item} value={item}>{titleCase(item)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label>Waste Category</Label>
@@ -1299,8 +1470,10 @@ export default function FoodWaste() {
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">No linked batch</SelectItem>
-                      {productions
+                      {(wasteContext?.production_options || productions
                         .filter((item) => !formData.site_id || item.site_id === formData.site_id)
+                        .filter((item) => !formData.meal_type || String(item.meal_type || '').toLowerCase() === formData.meal_type)
+                        .filter((item) => !formData.waste_date || item.production_date === formData.waste_date))
                         .map((item) => (
                           <SelectItem key={item.id} value={item.id}>{item.recipe_name} - {item.production_date} - {item.site_name}</SelectItem>
                         ))}
@@ -1374,9 +1547,26 @@ export default function FoodWaste() {
               </div>
 
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button>
-                <Button type="submit" className="bg-red-600 hover:bg-red-700" disabled={createWasteMutation.isPending || !formData.site_id || !formData.quantity}>
-                  {createWasteMutation.isPending ? 'Saving...' : 'Save Waste Record'}
+                <Button type="button" variant="outline" onClick={() => {
+                  setFormOpen(false);
+                  setEditingWasteId(null);
+                  setFormData(createDefaultWasteForm());
+                }}>Cancel</Button>
+                <Button
+                  type="submit"
+                  className="bg-red-600 hover:bg-red-700"
+                  disabled={
+                    createWasteMutation.isPending
+                    || updateWasteMutation.isPending
+                    || !formData.site_id
+                    || !formData.quantity
+                    || !formData.meal_type
+                    || !wasteContext?.is_within_recording_window
+                  }
+                >
+                  {createWasteMutation.isPending || updateWasteMutation.isPending
+                    ? 'Saving...'
+                    : editingWasteId ? 'Update Waste Record' : 'Save Waste Record'}
                 </Button>
               </DialogFooter>
             </form>
