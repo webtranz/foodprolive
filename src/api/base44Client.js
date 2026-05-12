@@ -356,20 +356,38 @@ export const base44 = {
     }
   },
   menuPlanning: {
-      getByDate(siteId, planDate) {
-        return apiRequest(`/api/menu-plans/by-date${buildQueryString({ site_id: siteId, plan_date: planDate })}`);
-      },
-      getBudgetContext(siteId, planDate, budgetId, totalPlannedCost) {
-        return apiRequest(`/api/menu-plans/budgets${buildQueryString({
-          site_id: siteId,
-          plan_date: planDate,
-          budget_id: budgetId,
-          total_planned_cost: totalPlannedCost
-        })}`);
-      },
-      create(data) {
-        return apiRequest('/api/menu-plans', {
-          method: 'POST',
+    getByDate(siteId, planDate) {
+      return apiRequest(`/api/menu-plans/by-date${buildQueryString({ site_id: siteId, plan_date: planDate })}`);
+    },
+    getBudgetContext(siteId, planDate, budgetId, totalPlannedCost) {
+      return apiRequest(`/api/menu-plans/budgets${buildQueryString({
+        site_id: siteId,
+        plan_date: planDate,
+        budget_id: budgetId,
+        total_planned_cost: totalPlannedCost
+      })}`);
+    },
+    getPRGenerationContext(siteId, referenceDate) {
+      return apiRequest(`/api/menu-plans/pr-generation${buildQueryString({
+        site_id: siteId,
+        reference_date: referenceDate
+      })}`);
+    },
+    savePRGenerationConfig(data) {
+      return apiRequest('/api/menu-plans/pr-generation/config', {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      });
+    },
+    runPRGeneration(data) {
+      return apiRequest('/api/menu-plans/pr-generation/run', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    create(data) {
+      return apiRequest('/api/menu-plans', {
+        method: 'POST',
         body: JSON.stringify(data)
       });
     },

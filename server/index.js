@@ -78,6 +78,11 @@ import {
   runForecastScenario
 } from './forecasting.js';
 import {
+  getMenuPlanPRContext,
+  saveMenuPlanPRScheduleConfig,
+  generatePurchaseRequestFromMenuPlans
+} from './menuPlanningProcurement.js';
+import {
   getLocationScope,
   filterRecordsByLocation,
   assertPayloadLocationAccess,
@@ -894,6 +899,54 @@ app.get('/api/menu-plans/budgets', requireAuth, requirePermission('manage_menu_p
     });
 
     return response.json(budgetContext);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/menu-plans/pr-generation', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const siteId = String(request.query.site_id || '').trim();
+    const referenceDate = String(request.query.reference_date || '').trim();
+
+    if (!siteId) {
+      return response.status(400).json({ message: 'site_id is required' });
+    }
+
+    const context = await getMenuPlanPRContext(request.user, siteId, referenceDate);
+    return response.json(context);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.patch('/api/menu-plans/pr-generation/config', requireAuth, requirePermission('generate_menu_plan_pr'), async (request, response, next) => {
+  try {
+    const payload = request.body || {};
+    if (!payload.site_id || !payload.site_name) {
+      return response.status(400).json({ message: 'Project is required' });
+    }
+
+    const config = await saveMenuPlanPRScheduleConfig(request.user, payload);
+    return response.json(config);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/menu-plans/pr-generation/run', requireAuth, requirePermission('generate_menu_plan_pr'), async (request, response, next) => {
+  try {
+    const payload = request.body || {};
+    if (!payload.site_id || !payload.site_name) {
+      return response.status(400).json({ message: 'Project is required' });
+    }
+
+    const result = await generatePurchaseRequestFromMenuPlans(request.user, {
+      ...payload,
+      trigger_type: payload.trigger_type || 'manual'
+    });
+
+    return response.status(result.duplicate_prevented ? 200 : 201).json(result);
   } catch (error) {
     return next(error);
   }

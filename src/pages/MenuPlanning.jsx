@@ -10,8 +10,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertCircle, Calendar, ChevronLeft, ChevronRight, GripVertical, Plus, Save, Trash2, Users } from 'lucide-react';
+import { AlertCircle, Calendar, ChevronLeft, ChevronRight, GripVertical, Plus, RefreshCw, Save, ShoppingCart, Trash2, Users } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+import { usePermissions } from '@/components/auth/usePermissions';
 import {
   buildDailyMenuState,
   buildMenuPlanMeals,
@@ -66,6 +67,7 @@ function parseMealDroppableId(droppableId) {
 }
 
 export default function MenuPlanning() {
+  const { can } = usePermissions();
   const queryClient = useQueryClient();
   const [selectedSite, setSelectedSite] = useState('');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -79,6 +81,12 @@ export default function MenuPlanning() {
     lunch: '',
     dinner: ''
   });
+  const [prScheduleConfig, setPrScheduleConfig] = useState({
+    cycle_days: '7',
+    preferred_weekday: 'thursday',
+    is_active: true
+  });
+  const [prScheduleNotes, setPrScheduleNotes] = useState('');
   const [message, setMessage] = useState('');
 
   const { data: sites = [] } = useQuery({
@@ -108,6 +116,15 @@ export default function MenuPlanning() {
   } = useQuery({
     queryKey: ['menuPlanByDate', selectedSite, selectedDate],
     queryFn: () => base44.menuPlanning.getByDate(selectedSite, selectedDate),
+    enabled: !!selectedSite && !!selectedDate
+  });
+
+  const {
+    data: prGenerationContext,
+    isLoading: prGenerationLoading
+  } = useQuery({
+    queryKey: ['menuPlanPRGeneration', selectedSite, selectedDate],
+    queryFn: () => base44.menuPlanning.getPRGenerationContext(selectedSite, selectedDate),
     enabled: !!selectedSite && !!selectedDate
   });
 
@@ -146,6 +163,29 @@ export default function MenuPlanning() {
     onError: (error) => setMessage(error.message || 'Failed to clear menu plan')
   });
 
+  const savePRConfigMutation = useMutation({
+    mutationFn: (payload) => base44.menuPlanning.savePRGenerationConfig(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['menuPlanPRGeneration'] });
+      setMessage('PR generation schedule updated successfully.');
+    },
+    onError: (error) => setMessage(error.message || 'Failed to update PR generation schedule')
+  });
+
+  const runPRGenerationMutation = useMutation({
+    mutationFn: (payload) => base44.menuPlanning.runPRGeneration(payload),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['menuPlanPRGeneration'] });
+      queryClient.invalidateQueries({ queryKey: ['procurementRequests'] });
+      if (result?.duplicate_prevented) {
+        setMessage(`PR already exists for cycle ${result?.run?.cycle_start} to ${result?.run?.cycle_end}. Duplicate generation was prevented.`);
+        return;
+      }
+      setMessage(`Purchase request ${result?.purchase_request?.request_number || result?.run?.generated_request_number || ''} generated successfully for the next menu planning cycle.`);
+    },
+    onError: (error) => setMessage(error.message || 'Failed to generate purchase request')
+  });
+
   useEffect(() => {
     setCurrentWeekStart(startOfWeek(new Date(selectedDate), { weekStartsOn: 1 }));
   }, [selectedDate]);
@@ -170,6 +210,20 @@ export default function MenuPlanning() {
       dinner: selectedPlan?.meal_budget_limits?.dinner ? String(selectedPlan.meal_budget_limits.dinner) : ''
     });
   }, [selectedPlan, autoLinkedBudget?.id]);
+
+  useEffect(() => {
+    const schedule = prGenerationContext?.schedule;
+    if (!schedule) {
+      return;
+    }
+
+    setPrScheduleConfig({
+      cycle_days: String(schedule.cycle_days || 7),
+      preferred_weekday: schedule.preferred_weekday || 'thursday',
+      is_active: schedule.is_active !== false
+    });
+    setPrScheduleNotes(schedule.notes || '');
+  }, [prGenerationContext?.schedule]);
 
   const operationalPlans = useMemo(() => (
     menuPlans
@@ -245,6 +299,10 @@ export default function MenuPlanning() {
     const dayKey = format(date, 'yyyy-MM-dd');
     return operationalPlans.find((plan) => plan.plan_date === dayKey);
   };
+
+  const prSchedule = prGenerationContext?.schedule || null;
+  const prCurrentCycleRun = prGenerationContext?.current_cycle_run || null;
+  const prRecentRuns = Array.isArray(prGenerationContext?.recent_runs) ? prGenerationContext.recent_runs.slice(0, 5) : [];
 
   const getRecipesForMeal = (mealType) => (
     [...availableRecipes].sort((left, right) => {
@@ -424,6 +482,36 @@ export default function MenuPlanning() {
       return;
     }
     await deleteMutation.mutateAsync(selectedPlan.id);
+  };
+
+  const handleSavePRConfig = async () => {
+    if (!selectedSiteRecord) {
+      setMessage('Select a project first.');
+      return;
+    }
+
+    await savePRConfigMutation.mutateAsync({
+      site_id: selectedSiteRecord.id,
+      site_name: selectedSiteRecord.name,
+      cycle_days: prScheduleConfig.cycle_days,
+      preferred_weekday: prScheduleConfig.preferred_weekday,
+      is_active: prScheduleConfig.is_active,
+      notes: prScheduleNotes
+    });
+  };
+
+  const handleRunPRGeneration = async () => {
+    if (!selectedSiteRecord) {
+      setMessage('Select a project first.');
+      return;
+    }
+
+    await runPRGenerationMutation.mutateAsync({
+      site_id: selectedSiteRecord.id,
+      site_name: selectedSiteRecord.name,
+      reference_date: selectedDate,
+      trigger_type: 'manual'
+    });
   };
 
   const navigateWeek = (direction) => {
@@ -683,6 +771,190 @@ export default function MenuPlanning() {
                       <span>
                         Planned food cost exceeds the linked budget by {formatCurrency(budgetComparison.exceeded_amount)}. Review recipes or servings before saving.
                       </span>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">Purchase Request Generation</h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Generate a purchase request from the next 7-day menu cycle. Thursday is the preferred generation day, and duplicate PRs are blocked automatically.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {can('generate_menu_plan_pr') ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleSavePRConfig}
+                          disabled={!selectedSiteRecord || savePRConfigMutation.isPending}
+                        >
+                          <Save className="mr-2 h-4 w-4" />
+                          Save Schedule
+                        </Button>
+                      ) : null}
+                      {can('generate_menu_plan_pr') ? (
+                        <Button
+                          type="button"
+                          onClick={handleRunPRGeneration}
+                          disabled={!selectedSiteRecord || runPRGenerationMutation.isPending}
+                        >
+                          {runPRGenerationMutation.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <ShoppingCart className="mr-2 h-4 w-4" />}
+                          Generate PR
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 xl:grid-cols-[320px_1fr]">
+                    <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                      <div>
+                        <Label htmlFor="pr-cycle-days">Cycle Length (Days)</Label>
+                        <Input
+                          id="pr-cycle-days"
+                          type="number"
+                          min="1"
+                          className="mt-2 bg-white"
+                          value={prScheduleConfig.cycle_days}
+                          onChange={(event) => setPrScheduleConfig((current) => ({ ...current, cycle_days: event.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <Label>Preferred Generation Day</Label>
+                        <Select
+                          value={prScheduleConfig.preferred_weekday}
+                          onValueChange={(value) => setPrScheduleConfig((current) => ({ ...current, preferred_weekday: value }))}
+                        >
+                          <SelectTrigger className="mt-2 bg-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'].map((day) => (
+                              <SelectItem key={day} value={day}>
+                                {day.charAt(0).toUpperCase() + day.slice(1)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="pr-schedule-notes">Schedule Notes</Label>
+                        <Input
+                          id="pr-schedule-notes"
+                          className="mt-2 bg-white"
+                          value={prScheduleNotes}
+                          onChange={(event) => setPrScheduleNotes(event.target.value)}
+                          placeholder="Optional internal notes"
+                        />
+                      </div>
+                      <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={prScheduleConfig.is_active}
+                          onChange={(event) => setPrScheduleConfig((current) => ({ ...current, is_active: event.target.checked }))}
+                        />
+                        Schedule active
+                      </label>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                          <p className="text-xs uppercase text-slate-500">Preferred Run Date</p>
+                          <p className="mt-1 text-lg font-semibold text-slate-900">
+                            {prSchedule?.preferred_run_date || 'Not set'}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {prGenerationLoading ? 'Loading schedule...' : 'Next preferred generation day'}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                          <p className="text-xs uppercase text-slate-500">Cycle Window</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {prSchedule ? `${prSchedule.cycle_start} to ${prSchedule.cycle_end}` : 'Not set'}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {prSchedule ? `${prSchedule.cycle_days} day planning cycle` : 'Select a project to calculate'}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                          <p className="text-xs uppercase text-slate-500">Current Cycle Status</p>
+                          <p className={`mt-1 text-lg font-semibold ${
+                            prCurrentCycleRun?.status === 'generated'
+                              ? 'text-emerald-700'
+                              : prCurrentCycleRun?.status === 'skipped'
+                                ? 'text-amber-700'
+                                : 'text-slate-900'
+                          }`}>
+                            {prCurrentCycleRun ? String(prCurrentCycleRun.status || 'pending').replace(/_/g, ' ') : 'Not generated'}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {prCurrentCycleRun?.generated_request_number || 'No PR generated for this cycle yet'}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                          <p className="text-xs uppercase text-slate-500">Thursday Preference</p>
+                          <p className="mt-1 text-lg font-semibold text-slate-900">
+                            {prSchedule?.preferred_weekday ? prSchedule.preferred_weekday.charAt(0).toUpperCase() + prSchedule.preferred_weekday.slice(1) : 'Thursday'}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {prSchedule?.is_preferred_day ? 'Selected date is the preferred run day.' : 'Generation is aligned to the next preferred day.'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {prCurrentCycleRun?.status === 'generated' ? (
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                          PR <strong>{prCurrentCycleRun.generated_request_number}</strong> already covers this cycle. Duplicate generation will be prevented automatically.
+                        </div>
+                      ) : null}
+
+                      <div className="rounded-xl border border-slate-200 bg-white p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">Recent PR Generation Runs</p>
+                            <p className="text-xs text-slate-500">Shows the latest generated, skipped, or protected cycles for this project.</p>
+                          </div>
+                          {prGenerationLoading ? <RefreshCw className="h-4 w-4 animate-spin text-slate-400" /> : null}
+                        </div>
+                        <div className="mt-3 space-y-3">
+                          {prRecentRuns.length > 0 ? prRecentRuns.map((run) => (
+                            <div key={run.id} className="flex flex-col gap-1 rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <p className="font-medium text-slate-900">
+                                  {run.cycle_start} to {run.cycle_end}
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                  {run.generated_request_number || 'No PR number'} · {run.generated_item_count || 0} items
+                                </p>
+                              </div>
+                              <Badge
+                                variant="outline"
+                                className={
+                                  run.status === 'generated'
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : run.status === 'skipped'
+                                      ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                      : 'border-slate-200 bg-white text-slate-700'
+                                }
+                              >
+                                {String(run.status || 'pending').replace(/_/g, ' ')}
+                              </Badge>
+                            </div>
+                          )) : (
+                            <div className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500">
+                              No PR generation runs recorded yet for this project.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {!can('generate_menu_plan_pr') ? (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                      You can plan menus here, but only authorized users can generate purchase requests for the cycle.
                     </div>
                   ) : null}
                 </div>

@@ -8,7 +8,7 @@ const SYSTEM_ROLES = {
       'scan_qr', 'view_dashboard', 'view_reports', 'export_data', 'create_session',
       'manage_sessions', 'manage_groups', 'manage_users', 'manage_roles', 'delete_records',
       'view_ai_waste', 'camera_detection', 'manage_projects', 'manage_ingredients', 'manage_food_categories',
-      'manage_inventory', 'transfer_inventory', 'manage_recipes', 'manage_menu_planning',
+      'manage_inventory', 'transfer_inventory', 'manage_recipes', 'manage_menu_planning', 'generate_menu_plan_pr',
       'manage_production', 'create_production_request', 'edit_production_request',
       'submit_production_request', 'review_production_request', 'approve_production_request',
       'reject_production_request', 'request_changes_production', 'approve_production',
@@ -25,7 +25,7 @@ const SYSTEM_ROLES = {
       'scan_qr', 'view_dashboard', 'view_reports', 'export_data', 'create_session',
       'manage_sessions', 'manage_groups', 'view_ai_waste', 'camera_detection',
       'manage_projects', 'manage_ingredients', 'manage_food_categories', 'manage_inventory', 'transfer_inventory',
-      'manage_recipes', 'manage_menu_planning', 'manage_production', 'create_production_request',
+      'manage_recipes', 'manage_menu_planning', 'generate_menu_plan_pr', 'manage_production', 'create_production_request',
       'edit_production_request', 'submit_production_request', 'review_production_request',
       'approve_production_request', 'reject_production_request', 'request_changes_production',
       'approve_production', 'start_production', 'complete_production', 'create_material_request',
@@ -38,7 +38,7 @@ const SYSTEM_ROLES = {
     access_level: 'manager',
     permissions: [
       'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
-      'manage_inventory', 'manage_menu_planning', 'manage_production',
+      'manage_inventory', 'manage_menu_planning', 'generate_menu_plan_pr', 'manage_production',
       'review_production_request', 'approve_production_request', 'reject_production_request',
       'request_changes_production', 'approve_production', 'view_material_request',
       'manage_waste', 'approve_waste'

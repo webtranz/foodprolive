@@ -8,6 +8,8 @@ const LOCATION_SCOPED_ENTITIES = new Set([
   'ProductionBatch',
   'ProductionTransfer',
   'MenuPlan',
+  'MenuPlanPRSchedule',
+  'MenuPlanPRRun',
   'FoodWaste',
   'MaterialRequest',
   'PurchaseOrder',

@@ -17,6 +17,7 @@ export const permissionCatalog = [
   { key: 'transfer_inventory', label: 'Transfer Inventory' },
   { key: 'manage_recipes', label: 'Manage Recipes' },
   { key: 'manage_menu_planning', label: 'Manage Menu Planning' },
+  { key: 'generate_menu_plan_pr', label: 'Generate Menu Planning Purchase Requests' },
   { key: 'manage_production', label: 'Manage Production Plans' },
   { key: 'create_production_request', label: 'Create Production Request' },
   { key: 'edit_production_request', label: 'Edit Production Request' },
@@ -64,7 +65,7 @@ export const systemRoleDefinitions = {
     permissions: [
       'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
       'manage_ingredients', 'manage_food_categories', 'manage_inventory', 'transfer_inventory', 'manage_recipes',
-      'manage_menu_planning', 'manage_production', 'create_production_request', 'edit_production_request',
+      'manage_menu_planning', 'generate_menu_plan_pr', 'manage_production', 'create_production_request', 'edit_production_request',
       'submit_production_request', 'review_production_request', 'approve_production_request',
       'reject_production_request', 'request_changes_production', 'approve_production', 'start_production',
       'complete_production', 'create_material_request', 'view_material_request',
@@ -87,7 +88,7 @@ export const systemRoleDefinitions = {
     description: 'Kitchen leadership role focused on recipes, menus, production, and food quality.',
     permissions: [
       'view_dashboard', 'view_reports', 'manage_ingredients', 'manage_recipes',
-      'manage_menu_planning', 'manage_production', 'create_production_request',
+      'manage_menu_planning', 'generate_menu_plan_pr', 'manage_production', 'create_production_request',
       'edit_production_request', 'submit_production_request', 'start_production',
       'complete_production', 'create_material_request', 'view_material_request',
       'manage_waste', 'approve_waste', 'manage_quality'
@@ -100,7 +101,7 @@ export const systemRoleDefinitions = {
     description: 'Reviews production requests for assigned projects and controls operational approvals.',
     permissions: [
       'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
-      'manage_inventory', 'manage_menu_planning', 'manage_production',
+      'manage_inventory', 'manage_menu_planning', 'generate_menu_plan_pr', 'manage_production',
       'review_production_request', 'approve_production_request', 'reject_production_request',
       'request_changes_production', 'approve_production', 'view_material_request',
       'manage_waste', 'approve_waste'
@@ -351,6 +352,51 @@ export const entityRegistry = {
       exceeded_budget_by: numberOptional
     }).passthrough()
   },
+  MenuPlanPRSchedule: {
+    defaults: {
+      is_active: true,
+      cycle_days: 7,
+      preferred_weekday: 'thursday'
+    },
+    unique: [
+      { fields: ['site_id'], label: 'menu planning PR schedule for this project' }
+    ],
+    schema: z.object({
+      site_id: z.string().trim().min(1, 'Project is required'),
+      site_name: z.string().trim().min(1, 'Project name is required'),
+      is_active: booleanOptional,
+      cycle_days: z.coerce.number().int().min(1, 'Cycle days must be at least 1'),
+      preferred_weekday: z.string().trim().min(1, 'Preferred weekday is required'),
+      notes: stringOptional
+    }).passthrough()
+  },
+  MenuPlanPRRun: {
+    defaults: {
+      status: 'pending',
+      trigger_type: 'manual',
+      generated_item_count: 0,
+      total_estimated_cost: 0
+    },
+    schema: z.object({
+      site_id: z.string().trim().min(1, 'Project is required'),
+      site_name: z.string().trim().min(1, 'Project name is required'),
+      cycle_start: z.string().trim().min(1, 'Cycle start is required'),
+      cycle_end: z.string().trim().min(1, 'Cycle end is required'),
+      preferred_run_date: stringOptional,
+      requested_run_date: stringOptional,
+      cycle_days: z.coerce.number().int().min(1, 'Cycle days must be at least 1'),
+      preferred_weekday: stringOptional,
+      status: stringOptional,
+      trigger_type: stringOptional,
+      generated_request_id: stringOptional,
+      generated_request_number: stringOptional,
+      generated_item_count: numberOptional,
+      total_estimated_cost: numberOptional,
+      notes: stringOptional,
+      missing_recipe_ids: arrayOptional,
+      missing_ingredient_ids: arrayOptional
+    }).passthrough()
+  },
   Production: {
     defaults: { status: 'planned' }
   },
@@ -529,6 +575,8 @@ const writeRoles = {
   FoodCategory: 'manager',
   Recipe: 'manager',
   MenuPlan: 'manager',
+  MenuPlanPRSchedule: 'manager',
+  MenuPlanPRRun: 'manager',
   MaterialRequest: 'manager',
   Supplier: 'manager',
   PurchaseOrder: 'manager',
@@ -560,6 +608,8 @@ const entityPermissions = {
   InventoryLot: { read: 'manage_inventory', write: 'manage_inventory' },
   Recipe: { read: 'manage_recipes', write: 'manage_recipes' },
   MenuPlan: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
+  MenuPlanPRSchedule: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
+  MenuPlanPRRun: { read: 'generate_menu_plan_pr', write: 'generate_menu_plan_pr' },
   Production: { read: 'manage_production', write: 'manage_production' },
   ProductionBatch: { read: 'manage_production', write: 'manage_production' },
   ProductionTransfer: { read: 'transfer_inventory', write: 'transfer_inventory' },
