@@ -16,6 +16,7 @@ import {
   buildDailyMenuState,
   buildMenuPlanMeals,
   calculateRecipeCostSnapshot,
+  computeBudgetComparison,
   CORE_MENU_MEAL_TYPES,
   createEmptyMealEntry,
   createMealEntryFromRecipe,
@@ -69,6 +70,7 @@ export default function MenuPlanning() {
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [formData, setFormData] = useState(createEmptyDailyMenuState());
+  const [selectedBudgetId, setSelectedBudgetId] = useState('');
   const [message, setMessage] = useState('');
 
   const { data: sites = [] } = useQuery({
@@ -93,13 +95,17 @@ export default function MenuPlanning() {
   });
 
   const {
-    data: selectedPlan,
+    data: selectedPlanResponse,
     isLoading: selectedPlanLoading
   } = useQuery({
     queryKey: ['menuPlanByDate', selectedSite, selectedDate],
     queryFn: () => base44.menuPlanning.getByDate(selectedSite, selectedDate),
     enabled: !!selectedSite && !!selectedDate
   });
+
+  const selectedPlan = selectedPlanResponse?.plan || null;
+  const autoLinkedBudget = selectedPlanResponse?.linked_budget || null;
+  const budgetCandidates = Array.isArray(selectedPlanResponse?.budget_candidates) ? selectedPlanResponse.budget_candidates : [];
 
   const createMutation = useMutation({
     mutationFn: (payload) => base44.menuPlanning.create(payload),
@@ -140,6 +146,10 @@ export default function MenuPlanning() {
     setFormData(buildDailyMenuState(selectedPlan));
   }, [selectedPlan]);
 
+  useEffect(() => {
+    setSelectedBudgetId(selectedPlan?.budget_id || autoLinkedBudget?.id || '');
+  }, [selectedPlan?.budget_id, autoLinkedBudget?.id]);
+
   const operationalPlans = useMemo(() => (
     menuPlans
       .filter((plan) => plan.site_id === selectedSite)
@@ -174,6 +184,18 @@ export default function MenuPlanning() {
   const costSummary = useMemo(
     () => summarizeDailyMenuCosts(formData, availableRecipes, ingredients),
     [formData, availableRecipes, ingredients]
+  );
+
+  const selectedBudget = useMemo(() => {
+    if (selectedBudgetId) {
+      return budgetCandidates.find((budget) => budget.id === selectedBudgetId) || autoLinkedBudget || null;
+    }
+    return autoLinkedBudget || null;
+  }, [selectedBudgetId, budgetCandidates, autoLinkedBudget]);
+
+  const budgetComparison = useMemo(
+    () => computeBudgetComparison(selectedBudget?.budget_amount || 0, costSummary.total_cost),
+    [selectedBudget?.budget_amount, costSummary.total_cost]
   );
 
   const weekDays = useMemo(() => eachDayOfInterval({
@@ -321,7 +343,12 @@ export default function MenuPlanning() {
       status: selectedPlan?.status || 'planned',
       total_expected_servings: summary.total_expected_servings,
       total_calories: summary.total_calories,
-      total_planned_cost: summary.total_planned_cost
+      total_planned_cost: summary.total_planned_cost,
+      budget_id: selectedBudget?.id || null,
+      budget_name: selectedBudget?.name || null,
+      budget_amount: selectedBudget?.budget_amount || 0,
+      remaining_budget: budgetComparison.remaining_budget,
+      exceeded_budget_by: budgetComparison.exceeded_amount
     };
 
     if (selectedPlan?.id) {
@@ -499,6 +526,79 @@ export default function MenuPlanning() {
                     </div>
                   </div>
                 ) : null}
+
+                <div className={`rounded-2xl border p-4 ${budgetComparison.is_over_budget ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50/60'}`}>
+                  <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+                    <div>
+                      <Label>Linked Budget</Label>
+                      <Select value={selectedBudgetId || 'auto'} onValueChange={(value) => setSelectedBudgetId(value === 'auto' ? '' : value)}>
+                        <SelectTrigger className="mt-2 bg-white">
+                          <SelectValue placeholder="Auto-link budget" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">Auto-link applicable budget</SelectItem>
+                          {budgetCandidates.map((budget) => (
+                            <SelectItem key={budget.id} value={budget.id}>
+                              {budget.name} · {formatCurrency(budget.budget_amount || 0)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="mt-2 text-xs text-slate-500">
+                        {selectedBudget
+                          ? `Active budget window: ${selectedBudget.start_date} to ${selectedBudget.end_date}`
+                          : 'No active budget was found for this project and date.'}
+                      </p>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                        <p className="text-xs uppercase text-slate-500">Budget</p>
+                        <p className="mt-1 text-lg font-semibold text-slate-900">
+                          {formatCurrency(budgetComparison.budget_amount)}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {selectedBudget?.name || 'No budget linked'}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                        <p className="text-xs uppercase text-slate-500">Planned Cost</p>
+                        <p className="mt-1 text-lg font-semibold text-emerald-700">
+                          {formatCurrency(budgetComparison.planned_cost)}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">Real-time from selected recipes and servings</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                        <p className="text-xs uppercase text-slate-500">{budgetComparison.is_over_budget ? 'Exceeded By' : 'Remaining Budget'}</p>
+                        <p className={`mt-1 text-lg font-semibold ${budgetComparison.is_over_budget ? 'text-red-700' : 'text-slate-900'}`}>
+                          {formatCurrency(budgetComparison.is_over_budget ? budgetComparison.exceeded_amount : budgetComparison.remaining_budget)}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {budgetComparison.is_over_budget ? 'Planned menu is over budget.' : 'Available amount after this menu plan.'}
+                        </p>
+                      </div>
+                      <div className={`rounded-xl border px-4 py-3 ${budgetComparison.is_over_budget ? 'border-red-200 bg-red-100/70' : 'border-emerald-200 bg-emerald-100/70'}`}>
+                        <p className="text-xs uppercase text-slate-500">Budget Status</p>
+                        <p className={`mt-1 text-lg font-semibold ${budgetComparison.is_over_budget ? 'text-red-700' : 'text-emerald-700'}`}>
+                          {budgetComparison.is_over_budget ? 'Over Budget' : 'Within Budget'}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          {selectedBudget
+                            ? `${selectedBudget.scope_type || 'site_period'} budget`
+                            : 'Link a budget to compare spending.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  {selectedBudget && budgetComparison.is_over_budget ? (
+                    <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-white px-4 py-3 text-sm text-red-700">
+                      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                      <span>
+                        Planned food cost exceeds the linked budget by {formatCurrency(budgetComparison.exceeded_amount)}. Review recipes or servings before saving.
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
 
                 <DragDropContext onDragEnd={handleDragEnd}>
                   <div className="grid gap-4 xl:grid-cols-[320px_1fr]">

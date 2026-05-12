@@ -234,6 +234,30 @@ export const entityRegistry = {
       estimated_cost: 0
     }
   },
+  Budget: {
+    defaults: {
+      status: 'active',
+      currency: 'SAR',
+      scope_type: 'site_period',
+      meal_type: 'all'
+    },
+    schema: z.object({
+      name: z.string().trim().min(1, 'Budget name is required'),
+      site_id: stringOptional,
+      site_name: stringOptional,
+      start_date: z.string().trim().min(1, 'Budget start date is required'),
+      end_date: z.string().trim().min(1, 'Budget end date is required'),
+      budget_amount: z.coerce.number().min(0, 'Budget amount must be zero or greater'),
+      currency: stringOptional,
+      scope_type: stringOptional,
+      meal_type: stringOptional,
+      event_name: stringOptional,
+      category: stringOptional,
+      department: stringOptional,
+      status: stringOptional,
+      notes: stringOptional
+    }).passthrough()
+  },
   Ingredient: {
     defaults: { is_active: true, allergens: [] },
     unique: [
@@ -284,6 +308,9 @@ export const entityRegistry = {
       plan_date: z.string().trim().min(1, 'Plan date is required'),
       status: stringOptional,
       event_name: stringOptional,
+      budget_id: stringOptional,
+      budget_name: stringOptional,
+      budget_amount: numberOptional,
       meals: z.array(z.object({
         meal_type: z.string().trim().min(1, 'Meal type is required'),
         recipe_id: stringOptional,
@@ -301,7 +328,9 @@ export const entityRegistry = {
       }).passthrough()).optional().nullable(),
       total_expected_servings: numberOptional,
       total_calories: numberOptional,
-      total_planned_cost: numberOptional
+      total_planned_cost: numberOptional,
+      remaining_budget: numberOptional,
+      exceeded_budget_by: numberOptional
     }).passthrough()
   },
   Production: {
@@ -504,6 +533,7 @@ const entityPermissions = {
   RoleProfile: { read: 'manage_roles', write: 'manage_roles' },
   User: { read: 'manage_users', write: 'manage_users' },
   Ingredient: { read: 'manage_ingredients', write: 'manage_ingredients' },
+  Budget: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
   Inventory: { read: 'manage_inventory', write: 'manage_inventory' },
   InventoryTransaction: { read: 'manage_inventory', write: 'manage_inventory' },
   InventoryLot: { read: 'manage_inventory', write: 'manage_inventory' },

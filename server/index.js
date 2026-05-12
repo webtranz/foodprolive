@@ -362,14 +362,113 @@ function summarizeMenuPlanMeals(meals = []) {
   return meals.reduce((summary, meal) => {
     const servings = numericMatch(meal.expected_servings, 0);
     const calories = numericMatch(meal.calories_per_serving, 0);
+    const totalCost = numericMatch(meal.total_cost, 0);
     return {
       total_expected_servings: summary.total_expected_servings + servings,
-      total_calories: summary.total_calories + (servings * calories)
+      total_calories: summary.total_calories + (servings * calories),
+      total_planned_cost: summary.total_planned_cost + totalCost
     };
   }, {
     total_expected_servings: 0,
-    total_calories: 0
+    total_calories: 0,
+    total_planned_cost: 0
   });
+}
+
+function normalizeDateOnly(value) {
+  const normalized = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : '';
+}
+
+function budgetMatchesDate(budget, planDate) {
+  const targetDate = normalizeDateOnly(planDate);
+  const startDate = normalizeDateOnly(budget?.start_date);
+  const endDate = normalizeDateOnly(budget?.end_date);
+  if (!targetDate || !startDate || !endDate) {
+    return false;
+  }
+  return targetDate >= startDate && targetDate <= endDate;
+}
+
+function scoreBudgetMatch(budget, plan = {}) {
+  let score = 0;
+  if (budget?.site_id === plan.site_id) score += 30;
+  if (String(budget?.meal_type || 'all') === 'all') score += 5;
+  if (budget?.meal_type && budget.meal_type !== 'all') score += 10;
+  if (budget?.event_name && budget.event_name === plan.event_name) score += 12;
+  if (budget?.category && budget.category === plan.category) score += 8;
+  const startDate = normalizeDateOnly(budget?.start_date);
+  const endDate = normalizeDateOnly(budget?.end_date);
+  if (startDate && endDate) {
+    const duration = Math.max(1, Math.round((new Date(endDate) - new Date(startDate)) / 86400000) + 1);
+    score += Math.max(0, 15 - duration);
+  }
+  return score;
+}
+
+async function getMenuPlanBudgetContext(user, planLike = {}) {
+  const planDate = normalizeDateOnly(planLike.plan_date);
+  if (!planLike?.site_id || !planDate) {
+    return {
+      linked_budget: null,
+      budget_candidates: [],
+      budget_comparison: {
+        planned_cost: numericMatch(planLike.total_planned_cost, 0),
+        budget_amount: 0,
+        remaining_budget: 0,
+        exceeded_amount: 0,
+        is_over_budget: false
+      }
+    };
+  }
+
+  const budgetRecords = await listDocuments('Budget', {
+    filters: { site_id: planLike.site_id },
+    sort: 'start_date',
+    limit: 500
+  });
+  const scopedBudgets = await scopeEntityRecords(user, 'Budget', budgetRecords);
+  const candidates = scopedBudgets
+    .filter((budget) => String(budget?.status || 'active') !== 'inactive')
+    .filter((budget) => budgetMatchesDate(budget, planDate))
+    .sort((left, right) => scoreBudgetMatch(right, planLike) - scoreBudgetMatch(left, planLike));
+
+  const linkedBudget = planLike.budget_id
+    ? candidates.find((budget) => budget.id === planLike.budget_id) || null
+    : (candidates[0] || null);
+
+  const plannedCost = numericMatch(planLike.total_planned_cost, 0);
+  const budgetAmount = numericMatch(linkedBudget?.budget_amount ?? planLike.budget_amount, 0);
+
+  return {
+    linked_budget: linkedBudget ? {
+      id: linkedBudget.id,
+      name: linkedBudget.name,
+      budget_amount: budgetAmount,
+      currency: linkedBudget.currency || 'SAR',
+      start_date: linkedBudget.start_date,
+      end_date: linkedBudget.end_date,
+      meal_type: linkedBudget.meal_type || 'all',
+      scope_type: linkedBudget.scope_type || 'site_period'
+    } : null,
+    budget_candidates: candidates.map((budget) => ({
+      id: budget.id,
+      name: budget.name,
+      budget_amount: numericMatch(budget.budget_amount, 0),
+      currency: budget.currency || 'SAR',
+      start_date: budget.start_date,
+      end_date: budget.end_date,
+      meal_type: budget.meal_type || 'all',
+      scope_type: budget.scope_type || 'site_period'
+    })),
+    budget_comparison: {
+      planned_cost: plannedCost,
+      budget_amount: budgetAmount,
+      remaining_budget: Math.max(0, budgetAmount - plannedCost),
+      exceeded_amount: Math.max(0, plannedCost - budgetAmount),
+      is_over_budget: budgetAmount > 0 && plannedCost > budgetAmount
+    }
+  };
 }
 
 async function findScopedOperationalMenuPlan(user, siteId, planDate) {
@@ -388,6 +487,8 @@ function buildMenuPlanWritePayload(body = {}, existing = null) {
       .map((meal) => ({
         ...meal,
         expected_servings: numericMatch(meal.expected_servings, 0),
+        cost_per_serving: numericMatch(meal.cost_per_serving, 0),
+        total_cost: numericMatch(meal.total_cost, 0),
         calories_per_serving: numericMatch(meal.calories_per_serving, 0),
         protein_per_serving: numericMatch(meal.protein_per_serving, 0),
         carbs_per_serving: numericMatch(meal.carbs_per_serving, 0),
@@ -405,8 +506,46 @@ function buildMenuPlanWritePayload(body = {}, existing = null) {
     meals,
     status: body.status || existing?.status || 'draft',
     total_expected_servings: summary.total_expected_servings,
-    total_calories: summary.total_calories
+    total_calories: summary.total_calories,
+    total_planned_cost: summary.total_planned_cost,
+    budget_id: body.budget_id ?? existing?.budget_id ?? null,
+    budget_name: body.budget_name ?? existing?.budget_name ?? null,
+    budget_amount: numericMatch(body.budget_amount ?? existing?.budget_amount, 0),
+    remaining_budget: numericMatch(body.remaining_budget ?? existing?.remaining_budget, 0),
+    exceeded_budget_by: numericMatch(body.exceeded_budget_by ?? existing?.exceeded_budget_by, 0)
   };
+}
+
+async function validateMenuPlanBudgetSelection(user, payload) {
+  if (!payload?.budget_id) {
+    return null;
+  }
+
+  const budgetRecords = await listDocuments('Budget', {
+    filters: { id: payload.budget_id },
+    limit: 1
+  });
+  const scopedBudget = (await scopeEntityRecords(user, 'Budget', budgetRecords))[0];
+
+  if (!scopedBudget) {
+    const error = new Error('Selected budget is not available for this project.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (payload.site_id && scopedBudget.site_id && scopedBudget.site_id !== payload.site_id) {
+    const error = new Error('Selected budget does not belong to the chosen project.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!budgetMatchesDate(scopedBudget, payload.plan_date)) {
+    const error = new Error('Selected budget does not apply to the chosen date.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return scopedBudget;
 }
 
 async function getScopedProduction(request, productionId) {
@@ -719,7 +858,39 @@ app.get('/api/menu-plans/by-date', requireAuth, requirePermission('manage_menu_p
     }
 
     const plan = await findScopedOperationalMenuPlan(request.user, siteId, planDate);
-    return response.json(plan || null);
+    const budgetContext = await getMenuPlanBudgetContext(request.user, {
+      ...(plan || {}),
+      site_id: siteId,
+      plan_date: planDate,
+      total_planned_cost: numericMatch(plan?.total_planned_cost, 0),
+      budget_id: plan?.budget_id || null
+    });
+    return response.json({
+      plan: plan || null,
+      ...budgetContext
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/menu-plans/budgets', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const siteId = String(request.query.site_id || '').trim();
+    const planDate = String(request.query.plan_date || '').trim();
+
+    if (!siteId || !planDate) {
+      return response.status(400).json({ message: 'site_id and plan_date are required' });
+    }
+
+    const budgetContext = await getMenuPlanBudgetContext(request.user, {
+      site_id: siteId,
+      plan_date: planDate,
+      budget_id: String(request.query.budget_id || '').trim() || null,
+      total_planned_cost: numericMatch(request.query.total_planned_cost, 0)
+    });
+
+    return response.json(budgetContext);
   } catch (error) {
     return next(error);
   }
@@ -735,6 +906,14 @@ app.post('/api/menu-plans', requireAuth, requirePermission('manage_menu_planning
     const existing = await findScopedOperationalMenuPlan(request.user, payload.site_id, payload.plan_date);
     if (existing) {
       return response.status(409).json({ message: 'A menu plan already exists for this project and date' });
+    }
+
+    const selectedBudget = await validateMenuPlanBudgetSelection(request.user, payload);
+    if (selectedBudget) {
+      payload.budget_name = selectedBudget.name;
+      payload.budget_amount = numericMatch(selectedBudget.budget_amount, 0);
+      payload.remaining_budget = Math.max(0, payload.budget_amount - numericMatch(payload.total_planned_cost, 0));
+      payload.exceeded_budget_by = Math.max(0, numericMatch(payload.total_planned_cost, 0) - payload.budget_amount);
     }
 
     authorizeEntityAction(request.user, 'MenuPlan', 'create', payload);
@@ -763,6 +942,18 @@ app.patch('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_pla
     }
 
     const payload = buildMenuPlanWritePayload(request.body || {}, existing);
+    const selectedBudget = await validateMenuPlanBudgetSelection(request.user, payload);
+    if (selectedBudget) {
+      payload.budget_name = selectedBudget.name;
+      payload.budget_amount = numericMatch(selectedBudget.budget_amount, 0);
+      payload.remaining_budget = Math.max(0, payload.budget_amount - numericMatch(payload.total_planned_cost, 0));
+      payload.exceeded_budget_by = Math.max(0, numericMatch(payload.total_planned_cost, 0) - payload.budget_amount);
+    } else if (!payload.budget_id) {
+      payload.budget_name = null;
+      payload.budget_amount = 0;
+      payload.remaining_budget = 0;
+      payload.exceeded_budget_by = 0;
+    }
     authorizeEntityAction(request.user, 'MenuPlan', 'update', payload, existing);
     const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload, existing);
     const updated = await updateDocument('MenuPlan', request.params.id, preparedPayload);

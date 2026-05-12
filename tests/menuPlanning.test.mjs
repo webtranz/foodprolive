@@ -4,6 +4,7 @@ import {
   buildDailyMenuState,
   buildMenuPlanMeals,
   calculateRecipeCostSnapshot,
+  computeBudgetComparison,
   createEmptyMealEntry,
   createMealEntryFromRecipe,
   createEmptyDailyMenuState,
@@ -188,6 +189,32 @@ const cases = [
       assert.equal(summary.lunch.total_cost, 20);
       assert.equal(summary.dinner.missing_cost_count, 1);
       assert.equal(summary.total_cost, 40);
+    }
+  },
+  {
+    name: 'computes remaining and exceeded budget safely',
+    run() {
+      assert.deepEqual(
+        computeBudgetComparison(120, 90),
+        {
+          budget_amount: 120,
+          planned_cost: 90,
+          remaining_budget: 30,
+          exceeded_amount: 0,
+          is_over_budget: false
+        }
+      );
+
+      assert.deepEqual(
+        computeBudgetComparison(75, 100),
+        {
+          budget_amount: 75,
+          planned_cost: 100,
+          remaining_budget: 0,
+          exceeded_amount: 25,
+          is_over_budget: true
+        }
+      );
     }
   },
   {

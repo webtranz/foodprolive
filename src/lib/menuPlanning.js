@@ -289,3 +289,17 @@ export function summarizeDailyMenuCosts(formState, recipes = [], ingredients = [
     missing_cost_count: 0
   });
 }
+
+export function computeBudgetComparison(budgetAmount, plannedCost) {
+  const normalizedBudgetAmount = safeNumber(budgetAmount, 0);
+  const normalizedPlannedCost = safeNumber(plannedCost, 0);
+  const remainingBudget = normalizedBudgetAmount - normalizedPlannedCost;
+
+  return {
+    budget_amount: normalizedBudgetAmount,
+    planned_cost: normalizedPlannedCost,
+    remaining_budget: remainingBudget > 0 ? remainingBudget : 0,
+    exceeded_amount: remainingBudget < 0 ? Math.abs(remainingBudget) : 0,
+    is_over_budget: remainingBudget < 0
+  };
+}
