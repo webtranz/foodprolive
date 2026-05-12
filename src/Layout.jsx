@@ -21,6 +21,7 @@ import {
   ChevronRight,
   DollarSign,
   FileText,
+  FolderTree,
   Sparkles,
   Zap,
   Database,
@@ -36,11 +37,12 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { useSiteContext } from '@/components/auth/useSiteContext';
+import { usePermissions } from '@/components/auth/usePermissions';
 import { LanguageProvider, useLanguage } from '@/components/i18n/LanguageContext';
 import { useAuth } from '@/lib/AuthContext';
 import tamimiGlobalLogo from '@/assets/tamimi-global-logo.png';
 
-function buildNavigation(t) {
+function buildNavigation(t, can = () => true) {
   const n = t.nav;
   return [
     { name: n.dashboard, href: 'Dashboard', icon: LayoutDashboard },
@@ -48,6 +50,7 @@ function buildNavigation(t) {
     { name: n.production, href: 'Production', icon: Factory },
     { name: n.foodCost || 'Food Cost', href: 'FoodCost', icon: DollarSign },
     { name: n.ingredients, href: 'Ingredients', icon: Package },
+    ...(can('manage_food_categories') ? [{ name: n.foodCategories || 'Food Categories', href: 'FoodCategories', icon: FolderTree }] : []),
     { name: n.inventory, href: 'Inventory', icon: Boxes },
     { name: n.recipes, href: 'Recipes', icon: Utensils },
     { name: n.nutritionAllergens, href: 'NutritionAllergen', icon: ShieldAlert },
@@ -191,7 +194,8 @@ function Sidebar({ onNavigate }) {
   const currentPath = location.pathname.split('/').pop() || 'Dashboard';
   const { t } = useLanguage();
   const { user, logout } = useAuth();
-  const navigation = buildNavigation(t);
+  const { can } = usePermissions();
+  const navigation = buildNavigation(t, can);
 
   return (
     <div className="flex flex-col h-full">

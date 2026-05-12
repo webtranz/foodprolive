@@ -12,6 +12,7 @@ export const permissionCatalog = [
   { key: 'export_data', label: 'Export Data' },
   { key: 'manage_projects', label: 'Manage Projects' },
   { key: 'manage_ingredients', label: 'Manage Ingredients' },
+  { key: 'manage_food_categories', label: 'Manage Food Categories' },
   { key: 'manage_inventory', label: 'Manage Inventory' },
   { key: 'transfer_inventory', label: 'Transfer Inventory' },
   { key: 'manage_recipes', label: 'Manage Recipes' },
@@ -62,7 +63,7 @@ export const systemRoleDefinitions = {
     description: 'Cross-functional operational management for assigned projects and kitchens.',
     permissions: [
       'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
-      'manage_ingredients', 'manage_inventory', 'transfer_inventory', 'manage_recipes',
+      'manage_ingredients', 'manage_food_categories', 'manage_inventory', 'transfer_inventory', 'manage_recipes',
       'manage_menu_planning', 'manage_production', 'create_production_request', 'edit_production_request',
       'submit_production_request', 'review_production_request', 'approve_production_request',
       'reject_production_request', 'request_changes_production', 'approve_production', 'start_production',
@@ -256,6 +257,20 @@ export const entityRegistry = {
       department: stringOptional,
       status: stringOptional,
       notes: stringOptional
+    }).passthrough()
+  },
+  FoodCategory: {
+    defaults: { status: 'active', color: '#10b981' },
+    unique: [
+      { fields: ['name'], label: 'food category name' },
+      { fields: ['code'], label: 'food category code', ignoreEmpty: true }
+    ],
+    schema: z.object({
+      name: z.string().trim().min(1, 'Category name is required'),
+      code: stringOptional,
+      description: stringOptional,
+      color: stringOptional,
+      status: stringOptional
     }).passthrough()
   },
   Ingredient: {
@@ -491,7 +506,8 @@ export const knownEntities = new Set([
 const roleRank = { user: 1, manager: 2, admin: 3 };
 
 const readRoles = {
-  User: 'manager'
+  User: 'manager',
+  FoodCategory: 'manager'
 };
 
 const writeRoles = {
@@ -510,6 +526,7 @@ const writeRoles = {
   Inventory: 'manager',
   InventoryTransaction: 'manager',
   Ingredient: 'manager',
+  FoodCategory: 'manager',
   Recipe: 'manager',
   MenuPlan: 'manager',
   MaterialRequest: 'manager',
@@ -536,6 +553,7 @@ const entityPermissions = {
   RoleProfile: { read: 'manage_roles', write: 'manage_roles' },
   User: { read: 'manage_users', write: 'manage_users' },
   Ingredient: { read: 'manage_ingredients', write: 'manage_ingredients' },
+  FoodCategory: { read: 'manage_food_categories', write: 'manage_food_categories' },
   Budget: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
   Inventory: { read: 'manage_inventory', write: 'manage_inventory' },
   InventoryTransaction: { read: 'manage_inventory', write: 'manage_inventory' },

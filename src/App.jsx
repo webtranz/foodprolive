@@ -8,6 +8,8 @@ import PageNotFound from './lib/PageNotFound';
 import CategoryQRScan from './pages/CategoryQRScan';
 import AttendanceScan from './pages/AttendanceScan';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
+import { usePermissions } from '@/components/auth/usePermissions';
+import { canAccessPage } from '@/lib/pageAccess';
 import Login from '@/pages/Login';
 
 const { Pages, Layout, mainPage } = pagesConfig;
@@ -18,10 +20,22 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
   <Layout currentPageName={currentPageName}>{children}</Layout>
   : <>{children}</>;
 
+const AccessDenied = () => (
+  <div className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
+    <div className="max-w-md rounded-2xl border border-red-200 bg-white p-8 text-center shadow-sm">
+      <h1 className="text-2xl font-bold text-slate-900">Access Restricted</h1>
+      <p className="mt-3 text-sm text-slate-600">
+        You do not have permission to access this module.
+      </p>
+    </div>
+  </div>
+);
+
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isAuthenticated, authError } = useAuth();
+  const { can, loading: permissionsLoading } = usePermissions();
 
-  if (isLoadingAuth) {
+  if (isLoadingAuth || permissionsLoading) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
@@ -46,9 +60,13 @@ const AuthenticatedApp = () => {
           key={path}
           path={`/${path}`}
           element={
-            <LayoutWrapper currentPageName={path}>
-              <Page />
-            </LayoutWrapper>
+            canAccessPage(path, can)
+              ? (
+                <LayoutWrapper currentPageName={path}>
+                  <Page />
+                </LayoutWrapper>
+              )
+              : <AccessDenied />
           }
         />
       ))}
