@@ -90,6 +90,12 @@ import {
   normalizeMealType
 } from './foodWaste.js';
 import {
+  FOOD_WASTE_QR_CATEGORY,
+  buildFoodWasteQrPayload,
+  createFoodWasteQrToken,
+  isFoodWasteQrCode
+} from './foodWasteQr.js';
+import {
   getLocationScope,
   filterRecordsByLocation,
   assertPayloadLocationAccess,
@@ -631,6 +637,29 @@ async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = 
   };
 }
 
+async function findAccessibleSite(user, siteId) {
+  const site = await findDocument('Site', siteId);
+  if (!site) {
+    return null;
+  }
+
+  return (await scopeEntityRecords(user, 'Site', [site]))[0] || null;
+}
+
+async function getFoodWasteQrCodes(user, siteId = '') {
+  const qrCodes = await listDocuments('QRCode', {
+    filters: { category: FOOD_WASTE_QR_CATEGORY },
+    sort: '-updated_date',
+    limit: 500
+  });
+
+  const filtered = filterRowsByAccessibleSites(qrCodes, await getLocationScope(user), ['site_id'])
+    .filter((record) => isFoodWasteQrCode(record))
+    .filter((record) => !siteId || record.site_id === siteId);
+
+  return filtered;
+}
+
 function filterFoodWasteRows(rows, filters = {}) {
   const startDate = normalizeDateOnly(filters.start_date);
   const endDate = normalizeDateOnly(filters.end_date);
@@ -1133,6 +1162,106 @@ app.delete('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_pl
 
     await deleteDocument('MenuPlan', request.params.id);
     return response.json({ success: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/food-waste/qr-codes', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
+  try {
+    const siteId = String(request.query.site_id || '').trim();
+    if (siteId) {
+      const accessibleSite = await findAccessibleSite(request.user, siteId);
+      if (!accessibleSite) {
+        return response.status(403).json({ message: 'You do not have access to this unit.' });
+      }
+    }
+
+    const qrCodes = await getFoodWasteQrCodes(request.user, siteId);
+    return response.json(qrCodes);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/food-waste/qr-codes', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
+  try {
+    const siteId = String(request.body?.site_id || '').trim();
+    const refresh = Boolean(request.body?.refresh);
+
+    if (!siteId) {
+      return response.status(400).json({ message: 'site_id is required' });
+    }
+
+    const accessibleSite = await findAccessibleSite(request.user, siteId);
+    if (!accessibleSite) {
+      return response.status(403).json({ message: 'You do not have access to this unit.' });
+    }
+
+    const existingCodes = await getFoodWasteQrCodes(request.user, siteId);
+    const activeCode = existingCodes.find((record) => String(record.status || '').toLowerCase() === 'active') || existingCodes[0] || null;
+
+    if (activeCode && !refresh) {
+      return response.json(activeCode);
+    }
+
+    const token = createFoodWasteQrToken();
+    const payload = buildFoodWasteQrPayload({
+      site: accessibleSite,
+      baseUrl: resolvePublicBaseUrl(request),
+      token,
+      existing: activeCode,
+      createdBy: request.user?.email || null
+    });
+
+    const qrCode = activeCode
+      ? await updateDocument('QRCode', activeCode.id, payload)
+      : await createDocument('QRCode', payload);
+
+    return response.status(activeCode ? 200 : 201).json(qrCode);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/food-waste/qr-resolve', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
+  try {
+    const token = String(request.query.token || '').trim();
+    if (!token) {
+      return response.status(400).json({ message: 'token is required' });
+    }
+
+    const matches = await listDocuments('QRCode', {
+      filters: { token },
+      sort: '-updated_date',
+      limit: 5
+    });
+    const qrCode = matches.find((record) => isFoodWasteQrCode(record));
+
+    if (!qrCode) {
+      return response.status(404).json({ message: 'Food waste QR code not found.' });
+    }
+
+    if (String(qrCode.status || '').toLowerCase() !== 'active') {
+      return response.status(410).json({ message: 'This Food Waste QR code is no longer active.' });
+    }
+
+    const accessibleSite = await findAccessibleSite(request.user, String(qrCode.site_id || qrCode.linked_item || '').trim());
+    if (!accessibleSite) {
+      return response.status(403).json({ message: 'You do not have access to this unit.' });
+    }
+
+    const updatedCode = await updateDocument('QRCode', qrCode.id, {
+      scan_count: Number(qrCode.scan_count || 0) + 1,
+      last_scanned_at: new Date().toISOString()
+    });
+
+    return response.json({
+      qr_code: updatedCode,
+      site: accessibleSite,
+      default_waste_date: new Date().toISOString().slice(0, 10),
+      meal_types: ['breakfast', 'lunch', 'dinner']
+    });
   } catch (error) {
     return next(error);
   }

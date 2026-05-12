@@ -1,5 +1,7 @@
 export const pagePermissionMap = {
-  FoodCategories: 'manage_food_categories'
+  FoodCategories: 'manage_food_categories',
+  FoodWaste: 'manage_waste',
+  FoodWasteQR: 'manage_waste'
 };
 
 export function getRequiredPagePermission(pageName) {

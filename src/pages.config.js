@@ -63,6 +63,7 @@ import EventDiningCheckin from './pages/EventDiningCheckin';
 import EventInquiry from './pages/EventInquiry';
 import EventPlanning from './pages/EventPlanning';
 import FoodWaste from './pages/FoodWaste';
+import FoodWasteQR from './pages/FoodWasteQR';
 import FoodCost from './pages/FoodCost';
 import FoodCategories from './pages/FoodCategories';
 import Forecasting from './pages/Forecasting';
@@ -108,6 +109,7 @@ export const PAGES = {
     "EventInquiry": EventInquiry,
     "EventPlanning": EventPlanning,
     "FoodWaste": FoodWaste,
+    "FoodWasteQR": FoodWasteQR,
     "FoodCost": FoodCost,
     "FoodCategories": FoodCategories,
     "Forecasting": Forecasting,

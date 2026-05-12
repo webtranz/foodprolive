@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { format, subDays } from 'date-fns';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   Area,
   AreaChart,
@@ -36,11 +37,14 @@ import {
   Brain,
   CheckCircle2,
   Clock3,
+  Copy,
   CircleDollarSign,
   Download,
   PackageCheck,
   Pencil,
   Plus,
+  QrCode,
+  RefreshCw,
   Target,
   Trash2,
   TrendingDown,
@@ -134,11 +138,12 @@ function createDefaultWasteForm() {
   };
 }
 
-export default function FoodWaste() {
+export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
   const queryClient = useQueryClient();
   const { can } = usePermissions();
   const [formOpen, setFormOpen] = useState(false);
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
+  const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [filters, setFilters] = useState({
     startDate: format(subDays(new Date(), 29), 'yyyy-MM-dd'),
@@ -151,6 +156,7 @@ export default function FoodWaste() {
   });
   const [editingWasteId, setEditingWasteId] = useState(null);
   const [formData, setFormData] = useState(createDefaultWasteForm);
+  const [selectedQrSiteId, setSelectedQrSiteId] = useState('');
   const [targetForm, setTargetForm] = useState({
     site_id: '',
     target_percentage: '',
@@ -182,6 +188,21 @@ export default function FoodWaste() {
   const { data: foodWaste = [] } = useQuery({
     queryKey: ['foodWaste'],
     queryFn: () => base44.foodWaste.list()
+  });
+
+  const { data: foodWasteQRCodes = [] } = useQuery({
+    queryKey: ['foodWasteQRCodes'],
+    enabled: can('manage_waste'),
+    queryFn: () => base44.foodWaste.listQRCodes()
+  });
+
+  const {
+    data: qrResolvedContext = null,
+    error: qrResolvedError
+  } = useQuery({
+    queryKey: ['foodWasteQrResolve', qrToken],
+    enabled: Boolean(qrToken && can('manage_waste')),
+    queryFn: () => base44.foodWaste.resolveQRCode(qrToken)
   });
 
   const { data: wasteContext = null } = useQuery({
@@ -219,6 +240,30 @@ export default function FoodWaste() {
       batch_reference: current.batch_reference || production.id || ''
     }));
   }, [formData.production_id, productionMap]);
+
+  useEffect(() => {
+    if (!qrResolvedContext?.site?.id) {
+      return;
+    }
+
+    setEditingWasteId(null);
+    setSelectedQrSiteId(qrResolvedContext.site.id);
+    setFormData((current) => ({
+      ...createDefaultWasteForm(),
+      ...current,
+      site_id: qrResolvedContext.site.id,
+      waste_date: qrResolvedContext.default_waste_date || current.waste_date || format(new Date(), 'yyyy-MM-dd')
+    }));
+    setMessage(`QR access ready for ${qrResolvedContext.site.name}. Select meal details and record waste within the allowed window.`);
+    setFormOpen(true);
+  }, [qrResolvedContext]);
+
+  useEffect(() => {
+    if (!qrResolvedError) {
+      return;
+    }
+    setMessage(qrResolvedError.message || 'Unable to resolve Food Waste QR code.');
+  }, [qrResolvedError]);
 
   const createWasteMutation = useMutation({
     mutationFn: (payload) => base44.foodWaste.create(payload),
@@ -282,6 +327,16 @@ export default function FoodWaste() {
     onError: (error) => setMessage(error.message || 'Failed to save target')
   });
 
+  const generateQrMutation = useMutation({
+    mutationFn: ({ site_id, refresh = false }) => base44.foodWaste.createQRCode({ site_id, refresh }),
+    onSuccess: (qrCode) => {
+      queryClient.invalidateQueries({ queryKey: ['foodWasteQRCodes'] });
+      setSelectedQrSiteId(qrCode.site_id || '');
+      setMessage(`Food Waste QR ready for ${qrCode.site_name || 'the selected unit'}.`);
+    },
+    onError: (error) => setMessage(error.message || 'Failed to generate Food Waste QR code')
+  });
+
   const filteredWaste = useMemo(() => (
     foodWaste.filter((item) => {
       if (!matchesDate(item.waste_date, filters.startDate, filters.endDate)) return false;
@@ -293,6 +348,14 @@ export default function FoodWaste() {
       return true;
     })
   ), [foodWaste, filters]);
+
+  const selectedQrCode = useMemo(() => (
+    foodWasteQRCodes.find((item) => item.site_id === selectedQrSiteId && String(item.status || '').toLowerCase() === 'active')
+    || foodWasteQRCodes.find((item) => item.site_id === selectedQrSiteId)
+    || null
+  ), [foodWasteQRCodes, selectedQrSiteId]);
+
+  const selectedQrScanUrl = selectedQrCode?.scan_url || '';
 
   const linkedProductionIds = new Set(
     filteredWaste.map((item) => item.production_id).filter(Boolean)
@@ -677,6 +740,11 @@ export default function FoodWaste() {
     setFormOpen(true);
   };
 
+  const handleOpenQrDialog = () => {
+    setSelectedQrSiteId((current) => current || formData.site_id || sites[0]?.id || '');
+    setQrDialogOpen(true);
+  };
+
   const handleOpenEditDialog = (record) => {
     setEditingWasteId(record.id);
     setFormData({
@@ -696,6 +764,28 @@ export default function FoodWaste() {
       notes: record.notes || ''
     });
     setFormOpen(true);
+  };
+
+  const downloadQrCode = (siteId) => {
+    const svg = document.getElementById(`food-waste-qr-${siteId}`);
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([svgData], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `food-waste-${siteId}.svg`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const copyQrLink = async (value) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setMessage('Food Waste QR link copied.');
+    } catch {
+      setMessage('Unable to copy the Food Waste QR link.');
+    }
   };
 
   const exportWastePackage = (type = 'csv') => {
@@ -788,6 +878,12 @@ export default function FoodWaste() {
             <Button variant="outline" onClick={() => setTargetDialogOpen(true)}>
               <Target className="w-4 h-4 mr-2" />
               Waste Targets
+            </Button>
+          ) : null}
+          {can('manage_waste') ? (
+            <Button variant="outline" onClick={handleOpenQrDialog}>
+              <QrCode className="w-4 h-4 mr-2" />
+              Unit QR Access
             </Button>
           ) : null}
           {can('manage_waste') ? (
@@ -1355,9 +1451,26 @@ export default function FoodWaste() {
         >
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editingWasteId ? 'Edit Food Waste Record' : 'Record Food Waste'}</DialogTitle>
+              <DialogTitle>
+                {editingWasteId
+                  ? 'Edit Food Waste Record'
+                  : qrMode
+                    ? 'Record Food Waste (QR Access)'
+                    : 'Record Food Waste'}
+              </DialogTitle>
             </DialogHeader>
             <form onSubmit={handleWasteSubmit} className="space-y-4">
+              {qrResolvedContext?.site ? (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                  <div className="flex items-center gap-2 font-medium">
+                    <QrCode className="h-4 w-4" />
+                    <span>QR-linked unit: {qrResolvedContext.site.name}</span>
+                  </div>
+                  <p className="mt-2 text-blue-700">
+                    This Food Waste form was opened from a unit QR code. The location is locked to the scanned unit and all meal/date and 2-hour rules still apply.
+                  </p>
+                </div>
+              ) : null}
               {wasteContext ? (
                 <div className={`rounded-xl border px-4 py-3 text-sm ${
                   wasteContext.is_within_recording_window
@@ -1396,7 +1509,11 @@ export default function FoodWaste() {
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label>Location</Label>
-                  <Select value={formData.site_id} onValueChange={(value) => setFormData((current) => ({ ...current, site_id: value }))}>
+                  <Select
+                    value={formData.site_id}
+                    onValueChange={(value) => setFormData((current) => ({ ...current, site_id: value }))}
+                    disabled={Boolean(qrResolvedContext?.site?.id)}
+                  >
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Select location" /></SelectTrigger>
                     <SelectContent>
                       {sites.map((site) => (
@@ -1570,6 +1687,90 @@ export default function FoodWaste() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Unit Food Waste QR Access</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label>Unit / Location</Label>
+                <Select value={selectedQrSiteId} onValueChange={setSelectedQrSiteId}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="Select unit" /></SelectTrigger>
+                  <SelectContent>
+                    {sites.map((site) => (
+                      <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  onClick={() => generateQrMutation.mutate({ site_id: selectedQrSiteId, refresh: false })}
+                  disabled={!selectedQrSiteId || generateQrMutation.isPending}
+                >
+                  <QrCode className="mr-2 h-4 w-4" />
+                  {selectedQrCode ? 'View QR' : 'Generate QR'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => generateQrMutation.mutate({ site_id: selectedQrSiteId, refresh: true })}
+                  disabled={!selectedQrSiteId || generateQrMutation.isPending}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Refresh Token
+                </Button>
+              </div>
+
+              {selectedQrCode ? (
+                <div className="grid gap-4 md:grid-cols-[0.9fr_1.1fr]">
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 flex items-center justify-center">
+                    <QRCodeSVG
+                      id={`food-waste-qr-${selectedQrCode.site_id}`}
+                      value={selectedQrScanUrl}
+                      size={220}
+                      level="H"
+                      includeMargin
+                      fgColor="#0f172a"
+                      bgColor="#ffffff"
+                      aria-label="Food Waste unit QR code"
+                    />
+                  </div>
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">{selectedQrCode.site_name}</p>
+                      <p className="text-xs text-slate-500">Scanning this QR opens the secured Food Waste recording form for the selected unit.</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 break-all">
+                      {selectedQrScanUrl || 'QR link unavailable'}
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Button type="button" variant="outline" onClick={() => copyQrLink(selectedQrScanUrl)} disabled={!selectedQrScanUrl}>
+                        <Copy className="mr-2 h-4 w-4" />
+                        Copy Link
+                      </Button>
+                      <Button type="button" variant="outline" onClick={() => downloadQrCode(selectedQrCode.site_id)}>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download QR
+                      </Button>
+                    </div>
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                      Users must still sign in and have Food Waste permission. The QR does not bypass meal/date checks or the 2-hour recording window.
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  Generate a QR code to enable unit-level Food Waste access.
+                </div>
+              )}
+            </div>
           </DialogContent>
         </Dialog>
 

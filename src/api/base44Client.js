@@ -407,6 +407,18 @@ export const base44 = {
     list(filters = {}) {
       return apiRequest(`/api/food-waste${buildQueryString(filters)}`);
     },
+    listQRCodes(siteId = '') {
+      return apiRequest(`/api/food-waste/qr-codes${buildQueryString({ site_id: siteId })}`);
+    },
+    createQRCode(data) {
+      return apiRequest('/api/food-waste/qr-codes', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    resolveQRCode(token) {
+      return apiRequest(`/api/food-waste/qr-resolve${buildQueryString({ token })}`);
+    },
     getContext(siteId, wasteDate, mealType) {
       return apiRequest(`/api/food-waste/context${buildQueryString({
         site_id: siteId,
