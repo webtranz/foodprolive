@@ -1,4 +1,9 @@
 export const pagePermissionMap = {
+  Menu: 'manage_menu_planning',
+  MenuPlanning: 'manage_menu_planning',
+  MenuBuilder: 'manage_menu_planning',
+  AutoSchedule: 'manage_menu_planning',
+  FoodCost: 'manage_menu_planning',
   EventPlanning: [
     'manage_menu_planning',
     'create_special_event',

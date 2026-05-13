@@ -42,13 +42,40 @@ import { LanguageProvider, useLanguage } from '@/components/i18n/LanguageContext
 import { useAuth } from '@/lib/AuthContext';
 import tamimiGlobalLogo from '@/assets/tamimi-global-logo.png';
 
+function filterNavigationItems(items = [], can = () => true) {
+  return items.reduce((visibleItems, item) => {
+    if (item.permission && !can(item.permission)) {
+      return visibleItems;
+    }
+
+    if (item.permissions && !item.permissions.some((permission) => can(permission))) {
+      return visibleItems;
+    }
+
+    if (item.children) {
+      const visibleChildren = filterNavigationItems(item.children, can);
+      if (!visibleChildren.length) {
+        return visibleItems;
+      }
+      visibleItems.push({
+        ...item,
+        children: visibleChildren
+      });
+      return visibleItems;
+    }
+
+    visibleItems.push(item);
+    return visibleItems;
+  }, []);
+}
+
 function buildNavigation(t, can = () => true) {
   const n = t.nav;
-  return [
+  return filterNavigationItems([
     { name: n.dashboard, href: 'Dashboard', icon: LayoutDashboard },
     { name: n.sites, href: 'Sites', icon: Building2 },
     { name: n.production, href: 'Production', icon: Factory },
-    { name: n.foodCost || 'Food Cost', href: 'FoodCost', icon: DollarSign },
+    { name: n.foodCost || 'Food Cost', href: 'FoodCost', icon: DollarSign, permission: 'manage_menu_planning' },
     { name: n.ingredients, href: 'Ingredients', icon: Package },
     ...(can('manage_food_categories') ? [{ name: n.foodCategories || 'Food Categories', href: 'FoodCategories', icon: FolderTree }] : []),
     { name: n.inventory, href: 'Inventory', icon: Boxes },
@@ -58,16 +85,38 @@ function buildNavigation(t, can = () => true) {
     {
       name: n.menuPlanning,
       icon: Calendar,
+      permissions: [
+        'manage_menu_planning',
+        'create_special_event',
+        'edit_special_event',
+        'submit_special_event',
+        'review_special_event',
+        'approve_special_event',
+        'reject_special_event'
+      ],
       children: [
-        { name: n.menu, href: 'Menu', icon: Calendar },
-        { name: n.menuPlanningPage, href: 'MenuPlanning', icon: Calendar },
-        { name: n.eventPlanning, href: 'EventPlanning', icon: ChefHat },
-        { name: n.menuBuilder, href: 'MenuBuilder', icon: Utensils },
-        { name: n.autoSchedule, href: 'AutoSchedule', icon: Zap },
+        { name: n.menu, href: 'Menu', icon: Calendar, permission: 'manage_menu_planning' },
+        { name: n.menuPlanningPage, href: 'MenuPlanning', icon: Calendar, permission: 'manage_menu_planning' },
+        {
+          name: n.eventPlanning,
+          href: 'EventPlanning',
+          icon: ChefHat,
+          permissions: [
+            'manage_menu_planning',
+            'create_special_event',
+            'edit_special_event',
+            'submit_special_event',
+            'review_special_event',
+            'approve_special_event',
+            'reject_special_event'
+          ]
+        },
+        { name: n.menuBuilder, href: 'MenuBuilder', icon: Utensils, permission: 'manage_menu_planning' },
+        { name: n.autoSchedule, href: 'AutoSchedule', icon: Zap, permission: 'manage_menu_planning' },
       ]
     },
     { name: n.materialRequests, href: 'MaterialRequests', icon: FileText },
-    { name: n.foodWaste, href: 'FoodWaste', icon: Trash2 },
+    { name: n.foodWaste, href: 'FoodWaste', icon: Trash2, permission: 'manage_waste' },
     { name: n.yieldCost, href: 'YieldCost', icon: DollarSign },
     {
       name: n.reportsAnalytics,
@@ -96,7 +145,7 @@ function buildNavigation(t, can = () => true) {
     { name: n.posIntegration, href: 'POSIntegration', icon: Cable },
     { name: n.supplierPortal, href: 'SupplierPortal', icon: Building2 },
     { name: n.userRoles, href: 'UserRoleManagement', icon: Shield }
-  ];
+  ], can);
 }
 
 function LanguageSwitcher() {
