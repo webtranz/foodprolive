@@ -403,6 +403,56 @@ export const base44 = {
       });
     }
   },
+  specialEvents: {
+    list(limit = 300) {
+      return apiRequest(`/api/special-events${buildQueryString({ limit })}`);
+    },
+    get(id) {
+      return apiRequest(`/api/special-events/${id}`);
+    },
+    getHistory(id) {
+      return apiRequest(`/api/special-events/${id}/history`);
+    },
+    getBudgetContext(siteId, eventDate, eventName, budgetId, estimatedCost) {
+      return apiRequest(`/api/special-events/budgets${buildQueryString({
+        site_id: siteId,
+        event_date: eventDate,
+        event_name: eventName,
+        budget_id: budgetId,
+        estimated_cost: estimatedCost
+      })}`);
+    },
+    create(data) {
+      return apiRequest('/api/special-events', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    update(id, data) {
+      return apiRequest(`/api/special-events/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      });
+    },
+    submit(id, note) {
+      return apiRequest(`/api/special-events/${id}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({ note })
+      });
+    },
+    approve(id, note) {
+      return apiRequest(`/api/special-events/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ note })
+      });
+    },
+    reject(id, reason) {
+      return apiRequest(`/api/special-events/${id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ reason })
+      });
+    }
+  },
   foodWaste: {
     list(filters = {}) {
       return apiRequest(`/api/food-waste${buildQueryString(filters)}`);

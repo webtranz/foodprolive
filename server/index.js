@@ -90,6 +90,14 @@ import {
   normalizeMealType
 } from './foodWaste.js';
 import {
+  SPECIAL_EVENT_STATUSES,
+  appendApprovalHistory,
+  assertSpecialEventBudgetApproval,
+  buildSpecialEventWritePayload,
+  createApprovalHistoryEntry,
+  isSpecialEventPlan
+} from './specialEvents.js';
+import {
   FOOD_WASTE_QR_CATEGORY,
   buildFoodWasteQrPayload,
   createFoodWasteQrToken,
@@ -496,6 +504,48 @@ async function findScopedOperationalMenuPlan(user, siteId, planDate) {
   });
   const scopedRecords = await scopeEntityRecords(user, 'MenuPlan', records.filter(isOperationalMenuPlan));
   return scopedRecords[0] || null;
+}
+
+async function findScopedSpecialEventById(user, eventId) {
+  const existing = await findDocument('MenuPlan', eventId);
+  if (!existing || !isSpecialEventPlan(existing)) {
+    return null;
+  }
+  return (await scopeEntityRecords(user, 'MenuPlan', [existing]))[0] || null;
+}
+
+async function listScopedSpecialEvents(user, limit = 300) {
+  const records = await listDocuments('MenuPlan', {
+    sort: '-plan_date',
+    limit
+  });
+  const scopedRecords = await scopeEntityRecords(user, 'MenuPlan', records.filter(isSpecialEventPlan));
+  return scopedRecords;
+}
+
+async function getSpecialEventBudgetContext(user, planLike = {}) {
+  return getMenuPlanBudgetContext(user, {
+    ...planLike,
+    site_id: planLike.site_id || null,
+    plan_date: planLike.event_date || planLike.plan_date || null,
+    total_planned_cost: numericMatch(planLike.estimated_cost ?? planLike.total_planned_cost, 0),
+    budget_id: planLike.budget_id || null,
+    event_name: planLike.event_name || null
+  });
+}
+
+function canEditSpecialEvent(record) {
+  return ['draft', 'rejected'].includes(String(record?.status || '').toLowerCase());
+}
+
+async function buildSpecialEventResponse(user, record) {
+  const budgetContext = await getSpecialEventBudgetContext(user, record);
+  return {
+    ...record,
+    linked_budget: budgetContext.linked_budget,
+    budget_candidates: budgetContext.budget_candidates,
+    budget_comparison: budgetContext.budget_comparison
+  };
 }
 
 function buildMenuPlanWritePayload(body = {}, existing = null) {
@@ -1167,6 +1217,298 @@ app.delete('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_pl
   }
 });
 
+app.get('/api/special-events', requireAuth, requireAnyPermission([
+  'manage_menu_planning',
+  'create_special_event',
+  'edit_special_event',
+  'submit_special_event',
+  'review_special_event',
+  'approve_special_event',
+  'reject_special_event'
+]), async (request, response, next) => {
+  try {
+    const events = await listScopedSpecialEvents(request.user, Number(request.query.limit || 300));
+    const payload = await Promise.all(events.map((event) => buildSpecialEventResponse(request.user, event)));
+    return response.json(payload);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/special-events/budgets', requireAuth, requireAnyPermission([
+  'manage_menu_planning',
+  'create_special_event',
+  'edit_special_event',
+  'submit_special_event',
+  'review_special_event',
+  'approve_special_event',
+  'reject_special_event'
+]), async (request, response, next) => {
+  try {
+    const siteId = String(request.query.site_id || '').trim();
+    const eventDate = String(request.query.event_date || request.query.plan_date || '').trim();
+    const eventName = String(request.query.event_name || '').trim();
+
+    if (!siteId || !eventDate) {
+      return response.status(400).json({ message: 'site_id and event_date are required' });
+    }
+
+    const budgetContext = await getSpecialEventBudgetContext(request.user, {
+      site_id: siteId,
+      plan_date: eventDate,
+      event_date: eventDate,
+      event_name: eventName,
+      budget_id: String(request.query.budget_id || '').trim() || null,
+      estimated_cost: numericMatch(request.query.estimated_cost, 0)
+    });
+
+    return response.json(budgetContext);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/special-events/:id', requireAuth, requireAnyPermission([
+  'manage_menu_planning',
+  'create_special_event',
+  'edit_special_event',
+  'submit_special_event',
+  'review_special_event',
+  'approve_special_event',
+  'reject_special_event'
+]), async (request, response, next) => {
+  try {
+    const event = await findScopedSpecialEventById(request.user, request.params.id);
+    if (!event) {
+      return response.status(404).json({ message: 'Special event not found' });
+    }
+    return response.json(await buildSpecialEventResponse(request.user, event));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/special-events/:id/history', requireAuth, requireAnyPermission([
+  'manage_menu_planning',
+  'create_special_event',
+  'edit_special_event',
+  'submit_special_event',
+  'review_special_event',
+  'approve_special_event',
+  'reject_special_event'
+]), async (request, response, next) => {
+  try {
+    const event = await findScopedSpecialEventById(request.user, request.params.id);
+    if (!event) {
+      return response.status(404).json({ message: 'Special event not found' });
+    }
+    return response.json({
+      id: event.id,
+      status: event.status,
+      approval_history: Array.isArray(event.approval_history) ? event.approval_history : []
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/special-events', requireAuth, requirePermission('create_special_event'), async (request, response, next) => {
+  try {
+    const payload = buildSpecialEventWritePayload(request.body || {});
+    if (!payload.site_id || !payload.event_name || !payload.plan_date) {
+      return response.status(400).json({ message: 'Event name, project, and event date are required' });
+    }
+    payload.status = SPECIAL_EVENT_STATUSES.draft;
+
+    let budgetContext = await getSpecialEventBudgetContext(request.user, payload);
+    if (!payload.budget_id && budgetContext.linked_budget) {
+      payload.budget_id = budgetContext.linked_budget.id;
+      payload.budget_name = budgetContext.linked_budget.name;
+      payload.budget_amount = numericMatch(budgetContext.linked_budget.budget_amount, 0);
+      payload.remaining_budget = numericMatch(budgetContext.budget_comparison.remaining_budget, 0);
+      payload.exceeded_budget_by = numericMatch(budgetContext.budget_comparison.exceeded_amount, 0);
+    } else if (payload.budget_id) {
+      const selectedBudget = await validateMenuPlanBudgetSelection(request.user, payload);
+      payload.budget_name = selectedBudget?.name || payload.budget_name || null;
+      budgetContext = await getSpecialEventBudgetContext(request.user, payload);
+      payload.budget_amount = numericMatch(budgetContext.linked_budget?.budget_amount, 0);
+      payload.remaining_budget = numericMatch(budgetContext.budget_comparison.remaining_budget, 0);
+      payload.exceeded_budget_by = numericMatch(budgetContext.budget_comparison.exceeded_amount, 0);
+    }
+
+    authorizeEntityAction(request.user, 'MenuPlan', 'create', payload);
+    const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload);
+    const created = await createDocument('MenuPlan', preparedPayload);
+    return response.status(201).json(await buildSpecialEventResponse(request.user, created));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.patch('/api/special-events/:id', requireAuth, requirePermission('edit_special_event'), async (request, response, next) => {
+  try {
+    const existing = await findScopedSpecialEventById(request.user, request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Special event not found' });
+    }
+
+    if (!canEditSpecialEvent(existing)) {
+      return response.status(400).json({ message: 'Only draft or rejected special events can be edited.' });
+    }
+
+    const payload = buildSpecialEventWritePayload(request.body || {}, existing);
+    payload.status = existing.status;
+    let budgetContext = await getSpecialEventBudgetContext(request.user, payload);
+    if (!payload.budget_id && budgetContext.linked_budget) {
+      payload.budget_id = budgetContext.linked_budget.id;
+      payload.budget_name = budgetContext.linked_budget.name;
+    } else if (payload.budget_id) {
+      const selectedBudget = await validateMenuPlanBudgetSelection(request.user, payload);
+      payload.budget_name = selectedBudget?.name || payload.budget_name || null;
+      budgetContext = await getSpecialEventBudgetContext(request.user, payload);
+    } else {
+      payload.budget_name = null;
+    }
+
+    payload.budget_amount = numericMatch(budgetContext.linked_budget?.budget_amount, 0);
+    payload.remaining_budget = numericMatch(budgetContext.budget_comparison.remaining_budget, 0);
+    payload.exceeded_budget_by = numericMatch(budgetContext.budget_comparison.exceeded_amount, 0);
+
+    authorizeEntityAction(request.user, 'MenuPlan', 'update', payload, existing);
+    const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload, existing);
+    const updated = await updateDocument('MenuPlan', request.params.id, preparedPayload);
+    return response.json(await buildSpecialEventResponse(request.user, updated));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/special-events/:id/submit', requireAuth, requirePermission('submit_special_event'), async (request, response, next) => {
+  try {
+    const existing = await findScopedSpecialEventById(request.user, request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Special event not found' });
+    }
+
+    if (!canEditSpecialEvent(existing)) {
+      return response.status(400).json({ message: 'Only draft or rejected special events can be submitted.' });
+    }
+
+    const payload = buildSpecialEventWritePayload(existing, existing);
+    const budgetContext = await getSpecialEventBudgetContext(request.user, payload);
+    const linkedBudget = budgetContext.linked_budget;
+    if (!linkedBudget) {
+      return response.status(400).json({ message: 'A valid linked budget is required before submitting a special event.' });
+    }
+
+    const historyEntry = createApprovalHistoryEntry({
+      action: 'submitted',
+      fromStatus: existing.status,
+      toStatus: SPECIAL_EVENT_STATUSES.pendingApproval,
+      actor: request.user,
+      note: request.body?.note
+    });
+
+    const updated = await updateDocument('MenuPlan', existing.id, {
+      status: SPECIAL_EVENT_STATUSES.pendingApproval,
+      budget_id: linkedBudget.id,
+      budget_name: linkedBudget.name,
+      budget_amount: numericMatch(linkedBudget.budget_amount, 0),
+      remaining_budget: numericMatch(budgetContext.budget_comparison.remaining_budget, 0),
+      exceeded_budget_by: numericMatch(budgetContext.budget_comparison.exceeded_amount, 0),
+      submitted_by: request.user.email || null,
+      submitted_by_name: request.user.full_name || request.user.email || null,
+      submitted_at: new Date().toISOString(),
+      approval_history: appendApprovalHistory(existing.approval_history, historyEntry)
+    });
+
+    return response.json(await buildSpecialEventResponse(request.user, updated));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/special-events/:id/approve', requireAuth, requirePermission('approve_special_event'), async (request, response, next) => {
+  try {
+    const existing = await findScopedSpecialEventById(request.user, request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Special event not found' });
+    }
+
+    if (String(existing.status) !== SPECIAL_EVENT_STATUSES.pendingApproval) {
+      return response.status(400).json({ message: 'Only submitted special events can be approved.' });
+    }
+
+    const budgetContext = await getSpecialEventBudgetContext(request.user, existing);
+    assertSpecialEventBudgetApproval(existing, budgetContext);
+
+    const historyEntry = createApprovalHistoryEntry({
+      action: 'approved',
+      fromStatus: existing.status,
+      toStatus: SPECIAL_EVENT_STATUSES.approved,
+      actor: request.user,
+      note: request.body?.note
+    });
+
+    const updated = await updateDocument('MenuPlan', existing.id, {
+      status: SPECIAL_EVENT_STATUSES.approved,
+      budget_id: budgetContext.linked_budget.id,
+      budget_name: budgetContext.linked_budget.name,
+      budget_amount: numericMatch(budgetContext.linked_budget.budget_amount, 0),
+      remaining_budget: numericMatch(budgetContext.budget_comparison.remaining_budget, 0),
+      exceeded_budget_by: numericMatch(budgetContext.budget_comparison.exceeded_amount, 0),
+      approved_by: request.user.email || null,
+      approved_by_name: request.user.full_name || request.user.email || null,
+      approved_at: new Date().toISOString(),
+      approval_notes: String(request.body?.note || '').trim() || existing.approval_notes || null,
+      approval_history: appendApprovalHistory(existing.approval_history, historyEntry)
+    });
+
+    return response.json(await buildSpecialEventResponse(request.user, updated));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/special-events/:id/reject', requireAuth, requirePermission('reject_special_event'), async (request, response, next) => {
+  try {
+    const existing = await findScopedSpecialEventById(request.user, request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Special event not found' });
+    }
+
+    if (String(existing.status) !== SPECIAL_EVENT_STATUSES.pendingApproval) {
+      return response.status(400).json({ message: 'Only submitted special events can be rejected.' });
+    }
+
+    const reason = String(request.body?.reason || request.body?.note || '').trim();
+    if (!reason) {
+      return response.status(400).json({ message: 'A rejection reason is required.' });
+    }
+
+    const historyEntry = createApprovalHistoryEntry({
+      action: 'rejected',
+      fromStatus: existing.status,
+      toStatus: SPECIAL_EVENT_STATUSES.rejected,
+      actor: request.user,
+      note: reason
+    });
+
+    const updated = await updateDocument('MenuPlan', existing.id, {
+      status: SPECIAL_EVENT_STATUSES.rejected,
+      rejected_by: request.user.email || null,
+      rejected_by_name: request.user.full_name || request.user.email || null,
+      rejected_at: new Date().toISOString(),
+      rejection_reason: reason,
+      approval_history: appendApprovalHistory(existing.approval_history, historyEntry)
+    });
+
+    return response.json(await buildSpecialEventResponse(request.user, updated));
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.get('/api/food-waste/qr-codes', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
@@ -1481,6 +1823,9 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
   try {
     const entity = request.params.entity;
     ensureKnownEntity(entity);
+    if (entity === 'MenuPlan' && isSpecialEventPlan(request.body || {})) {
+      return response.status(400).json({ message: 'Special events must be created from the event planning module.' });
+    }
     authorizeEntityAction(request.user, entity, 'create', request.body || {});
     const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {});
     let record = await createDocument(entity, preparedPayload);
@@ -1507,6 +1852,9 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
     const scopedExisting = (await scopeEntityRecords(request.user, entity, [existing]))[0];
     if (!scopedExisting) {
       return response.status(403).json({ message: 'You do not have access to this record' });
+    }
+    if (entity === 'MenuPlan' && isSpecialEventPlan(existing)) {
+      return response.status(400).json({ message: 'Special events must be edited from the event planning module.' });
     }
     authorizeEntityAction(request.user, entity, 'update', request.body || {}, existing);
     const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {}, existing);
@@ -1540,6 +1888,9 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
     const scopedExisting = (await scopeEntityRecords(request.user, entity, [existing]))[0];
     if (!scopedExisting) {
       return response.status(403).json({ message: 'You do not have access to this record' });
+    }
+    if (entity === 'MenuPlan' && isSpecialEventPlan(existing)) {
+      return response.status(400).json({ message: 'Special events must be deleted from the event planning module.' });
     }
     authorizeEntityAction(request.user, entity, 'delete', null, existing);
     const removed = await deleteDocument(entity, request.params.id);
