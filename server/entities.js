@@ -442,6 +442,9 @@ export const entityRegistry = {
       generated_item_count: 0,
       total_estimated_cost: 0
     },
+    unique: [
+      { fields: ['generated_pr_id'], label: 'generated purchase request', ignoreEmpty: true }
+    ],
     schema: z.object({
       site_id: z.string().trim().min(1, 'Project is required'),
       site_name: z.string().trim().min(1, 'Project name is required'),
@@ -477,7 +480,10 @@ export const entityRegistry = {
     defaults: { status: 'draft' }
   },
   QRCode: {
-    defaults: { status: 'active' }
+    defaults: { status: 'active' },
+    unique: [
+      { fields: ['token'], label: 'QR code token', ignoreEmpty: true }
+    ]
   },
   RoleProfile: {
     defaults: { is_active: true, is_system: false, access_level: 'user', permissions: [] },

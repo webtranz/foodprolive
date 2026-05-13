@@ -325,3 +325,51 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lookup
 CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_lookup
   ON entity_records ((data->>'site_id'), (data->>'ingredient_id'), (data->>'batch_number'))
   WHERE entity_name = 'InventoryLot';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_site_date_status
+  ON entity_records ((data->>'site_id'), (data->>'plan_date'), (data->>'status'))
+  WHERE entity_name = 'MenuPlan';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_event_lookup
+  ON entity_records ((data->>'site_id'), (data->>'event_date'), (data->>'status'))
+  WHERE entity_name = 'MenuPlan' AND COALESCE(data->>'event_name', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_budget_lookup
+  ON entity_records ((data->>'budget_id'), (data->>'site_id'), (data->>'plan_date'))
+  WHERE entity_name = 'MenuPlan' AND COALESCE(data->>'budget_id', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_budget_site_period_status
+  ON entity_records ((data->>'site_id'), (data->>'start_date'), (data->>'end_date'), (data->>'status'))
+  WHERE entity_name = 'Budget';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_budget_scope_lookup
+  ON entity_records ((data->>'scope_type'), (data->>'meal_type'), (data->>'event_name'))
+  WHERE entity_name = 'Budget';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_food_waste_site_date_meal
+  ON entity_records ((data->>'site_id'), (data->>'waste_date'), (data->>'meal_type'))
+  WHERE entity_name = 'FoodWaste';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_food_waste_status_lookup
+  ON entity_records ((data->>'approval_status'), (data->>'status'), (data->>'production_id'))
+  WHERE entity_name = 'FoodWaste';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_menu_plan_pr_schedule_site_unique
+  ON entity_records ((data->>'site_id'))
+  WHERE entity_name = 'MenuPlanPRSchedule';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_pr_run_cycle
+  ON entity_records ((data->>'site_id'), (data->>'cycle_start'), (data->>'cycle_end'), (data->>'status'))
+  WHERE entity_name = 'MenuPlanPRRun';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_pr_run_generated_pr
+  ON entity_records ((data->>'generated_pr_id'))
+  WHERE entity_name = 'MenuPlanPRRun' AND COALESCE(data->>'generated_pr_id', '') <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_qrcode_token_unique
+  ON entity_records ((data->>'token'))
+  WHERE entity_name = 'QRCode' AND COALESCE(data->>'token', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_qrcode_site_category_status
+  ON entity_records ((data->>'site_id'), (data->>'category'), (data->>'status'))
+  WHERE entity_name = 'QRCode';
