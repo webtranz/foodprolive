@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DragDropContext, Draggable, Droppable } from '@hello-pangea/dnd';
 import { base44 } from '@/api/base44Client';
 import PageHeader from '@/components/ui/PageHeader';
+import AsyncStatePanel from '@/components/ui/AsyncStatePanel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -93,22 +94,38 @@ export default function MenuPlanning() {
   const [prScheduleNotes, setPrScheduleNotes] = useState('');
   const [message, setMessage] = useState('');
 
-  const { data: sites = [] } = useQuery({
+  const {
+    data: sites = [],
+    isLoading: sitesLoading,
+    error: sitesError
+  } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
 
-  const { data: recipes = [] } = useQuery({
+  const {
+    data: recipes = [],
+    isLoading: recipesLoading,
+    error: recipesError
+  } = useQuery({
     queryKey: ['recipes'],
     queryFn: () => base44.entities.Recipe.list()
   });
 
-  const { data: ingredients = [] } = useQuery({
+  const {
+    data: ingredients = [],
+    isLoading: ingredientsLoading,
+    error: ingredientsError
+  } = useQuery({
     queryKey: ['ingredients'],
     queryFn: () => base44.entities.Ingredient.list()
   });
 
-  const { data: menuPlans = [] } = useQuery({
+  const {
+    data: menuPlans = [],
+    isLoading: menuPlansLoading,
+    error: menuPlansError
+  } = useQuery({
     queryKey: ['menuPlans', selectedSite],
     queryFn: () => base44.entities.MenuPlan.list('-plan_date', 300),
     enabled: !!selectedSite
@@ -307,6 +324,8 @@ export default function MenuPlanning() {
   const prSchedule = prGenerationContext?.schedule || null;
   const prCurrentCycleRun = prGenerationContext?.current_cycle_run || null;
   const prRecentRuns = Array.isArray(prGenerationContext?.recent_runs) ? prGenerationContext.recent_runs.slice(0, 5) : [];
+  const bootstrapError = sitesError || recipesError || ingredientsError || menuPlansError;
+  const bootstrapLoading = sitesLoading || recipesLoading || ingredientsLoading || (Boolean(selectedSite) && menuPlansLoading);
 
   const getRecipesForMeal = (mealType) => (
     [...availableRecipes].sort((left, right) => {
@@ -552,7 +571,33 @@ export default function MenuPlanning() {
           </div>
         ) : null}
 
-        {!selectedSite ? (
+        {bootstrapError ? (
+          <AsyncStatePanel
+            variant="error"
+            title="Menu Planning Could Not Load"
+            description={bootstrapError.message || 'Some planning data could not be loaded. Refresh the page or try again in a moment.'}
+            action={
+              <Button
+                variant="outline"
+                onClick={() => {
+                  queryClient.invalidateQueries({ queryKey: ['sites'] });
+                  queryClient.invalidateQueries({ queryKey: ['recipes'] });
+                  queryClient.invalidateQueries({ queryKey: ['ingredients'] });
+                  queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
+                }}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Retry Loading
+              </Button>
+            }
+          />
+        ) : bootstrapLoading ? (
+          <AsyncStatePanel
+            variant="loading"
+            title="Loading Menu Planning Workspace"
+            description="Fetching projects, recipes, ingredients, and saved plans for the current planning cycle."
+          />
+        ) : !selectedSite ? (
           <Card className="border-slate-100 shadow-sm">
             <CardContent className="p-12 text-center">
               <Calendar className="mx-auto mb-4 h-16 w-16 text-slate-300" />
@@ -562,6 +607,14 @@ export default function MenuPlanning() {
           </Card>
         ) : (
           <>
+            {availableRecipes.length === 0 ? (
+              <AsyncStatePanel
+                variant="empty"
+                title="No Recipes Available For This Project"
+                description="This project does not currently have any recipes in scope. Add or assign recipes first, then return to build Breakfast, Lunch, and Dinner plans."
+              />
+            ) : null}
+
             <Card className="border-slate-100 shadow-sm">
               <CardHeader className="pb-3">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

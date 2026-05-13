@@ -19,6 +19,7 @@ import {
 import { base44 } from '@/api/base44Client';
 import { usePermissions } from '@/components/auth/usePermissions';
 import PageHeader from '@/components/ui/PageHeader';
+import AsyncStatePanel from '@/components/ui/AsyncStatePanel';
 import StatCard from '@/components/ui/StatCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -165,27 +166,47 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
     notes: ''
   });
 
-  const { data: sites = [] } = useQuery({
+  const {
+    data: sites = [],
+    isLoading: sitesLoading,
+    error: sitesError
+  } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
 
-  const { data: ingredients = [] } = useQuery({
+  const {
+    data: ingredients = [],
+    isLoading: ingredientsLoading,
+    error: ingredientsError
+  } = useQuery({
     queryKey: ['ingredients'],
     queryFn: () => base44.entities.Ingredient.list()
   });
 
-  const { data: recipes = [] } = useQuery({
+  const {
+    data: recipes = [],
+    isLoading: recipesLoading,
+    error: recipesError
+  } = useQuery({
     queryKey: ['recipes'],
     queryFn: () => base44.entities.Recipe.list()
   });
 
-  const { data: productions = [] } = useQuery({
+  const {
+    data: productions = [],
+    isLoading: productionsLoading,
+    error: productionsError
+  } = useQuery({
     queryKey: ['productionsForWaste'],
     queryFn: () => base44.entities.Production.list('-production_date', 1000)
   });
 
-  const { data: foodWaste = [] } = useQuery({
+  const {
+    data: foodWaste = [],
+    isLoading: foodWasteLoading,
+    error: foodWasteError
+  } = useQuery({
     queryKey: ['foodWaste'],
     queryFn: () => base44.foodWaste.list()
   });
@@ -211,7 +232,11 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
     queryFn: () => base44.foodWaste.getContext(formData.site_id, formData.waste_date, formData.meal_type)
   });
 
-  const { data: wasteTargets = [] } = useQuery({
+  const {
+    data: wasteTargets = [],
+    isLoading: wasteTargetsLoading,
+    error: wasteTargetsError
+  } = useQuery({
     queryKey: ['wasteTargets'],
     queryFn: () => base44.entities.WasteTarget.list('-target_month', 500)
   });
@@ -220,6 +245,8 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
   const recipeMap = useMemo(() => new Map(recipes.map((item) => [item.id, item])), [recipes]);
   const productionMap = useMemo(() => new Map(productions.map((item) => [item.id, item])), [productions]);
   const siteMap = useMemo(() => new Map(sites.map((item) => [item.id, item])), [sites]);
+  const bootstrapLoading = sitesLoading || ingredientsLoading || recipesLoading || productionsLoading || foodWasteLoading || wasteTargetsLoading;
+  const bootstrapError = sitesError || ingredientsError || recipesError || productionsError || foodWasteError || wasteTargetsError || qrResolvedError;
 
   useEffect(() => {
     if (formData.production_id === 'none') {
@@ -898,6 +925,46 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
           <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
             {message}
           </div>
+        ) : null}
+
+        {bootstrapError ? (
+          <AsyncStatePanel
+            variant="error"
+            title="Food Waste Workspace Could Not Load"
+            description={bootstrapError.message || 'Core food waste data could not be loaded. Retry the page and confirm your access to waste, production, recipe, and site records.'}
+            action={
+              <Button
+                variant="outline"
+                onClick={() => {
+                  queryClient.invalidateQueries({ queryKey: ['sites'] });
+                  queryClient.invalidateQueries({ queryKey: ['ingredients'] });
+                  queryClient.invalidateQueries({ queryKey: ['recipes'] });
+                  queryClient.invalidateQueries({ queryKey: ['productionsForWaste'] });
+                  queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
+                  queryClient.invalidateQueries({ queryKey: ['wasteTargets'] });
+                }}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Retry Loading
+              </Button>
+            }
+          />
+        ) : null}
+
+        {!bootstrapError && bootstrapLoading ? (
+          <AsyncStatePanel
+            variant="loading"
+            title="Loading Food Waste Recording"
+            description="Fetching units, recipes, ingredients, production batches, recording windows, and previously logged waste records."
+          />
+        ) : null}
+
+        {!bootstrapError && !bootstrapLoading && sites.length === 0 ? (
+          <AsyncStatePanel
+            variant="empty"
+            title="No Projects Or Units Available"
+            description="Food waste recording needs at least one visible project or unit. Add or assign a location first, then return to log meal waste."
+          />
         ) : null}
 
         <Card className="border-slate-200 shadow-sm">

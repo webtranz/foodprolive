@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
+import AsyncStatePanel from '@/components/ui/AsyncStatePanel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -133,12 +134,20 @@ export default function EventPlanning() {
   const [formData, setFormData] = useState(initialForm);
   const [qrEvent, setQrEvent] = useState(null);
 
-  const { data: sites = [] } = useQuery({
+  const {
+    data: sites = [],
+    isLoading: sitesLoading,
+    error: sitesError
+  } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
 
-  const { data: events = [], isLoading } = useQuery({
+  const {
+    data: events = [],
+    isLoading,
+    error: eventsError
+  } = useQuery({
     queryKey: ['specialEvents'],
     queryFn: () => base44.specialEvents.list(300)
   });
@@ -281,6 +290,8 @@ export default function EventPlanning() {
 
   const budgetCandidates = budgetContext?.budget_candidates || [];
   const linkedBudget = budgetContext?.linked_budget || null;
+  const bootstrapLoading = sitesLoading || isLoading;
+  const bootstrapError = sitesError || eventsError;
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
@@ -296,7 +307,30 @@ export default function EventPlanning() {
           )}
         </PageHeader>
 
-        {sortedEvents.length === 0 && !isLoading ? (
+        {bootstrapError ? (
+          <AsyncStatePanel
+            variant="error"
+            title="Special Event Workflow Could Not Load"
+            description={bootstrapError.message || 'Event requests, sites, or approval data could not be loaded. Retry and confirm your event permissions.'}
+            action={
+              <Button
+                variant="outline"
+                onClick={() => {
+                  queryClient.invalidateQueries({ queryKey: ['sites'] });
+                  queryClient.invalidateQueries({ queryKey: ['specialEvents'] });
+                }}
+              >
+                Try Again
+              </Button>
+            }
+          />
+        ) : bootstrapLoading ? (
+          <AsyncStatePanel
+            variant="loading"
+            title="Loading Special Event Requests"
+            description="Fetching event requests, site assignments, budgets, and approval workflow details."
+          />
+        ) : sortedEvents.length === 0 ? (
           <Card className="border-slate-100 shadow-sm">
             <CardContent className="p-16 text-center">
               <Calendar className="w-16 h-16 text-slate-300 mx-auto mb-4" />
