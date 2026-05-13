@@ -83,6 +83,14 @@ import {
   generatePurchaseRequestFromMenuPlans
 } from './menuPlanningProcurement.js';
 import {
+  buildApiObjectResponse,
+  summarizeMenuPlanCostPreview,
+  validateSiteAndDateInput,
+  validateMenuPlanPayload,
+  validatePRGenerationPayload,
+  validateFoodWasteContextInput
+} from './menuPlanningApi.js';
+import {
   buildFoodWasteMenuPlanSummary,
   decorateFoodWasteRecord,
   getMealServiceWindow,
@@ -1020,8 +1028,9 @@ app.get('/api/menu-plans/by-date', requireAuth, requirePermission('manage_menu_p
     const siteId = String(request.query.site_id || '').trim();
     const planDate = String(request.query.plan_date || '').trim();
 
-    if (!siteId || !planDate) {
-      return response.status(400).json({ message: 'site_id and plan_date are required' });
+    const errors = validateSiteAndDateInput({ siteId, planDate });
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
     }
 
     const plan = await findScopedOperationalMenuPlan(request.user, siteId, planDate);
@@ -1032,10 +1041,10 @@ app.get('/api/menu-plans/by-date', requireAuth, requirePermission('manage_menu_p
       total_planned_cost: numericMatch(plan?.total_planned_cost, 0),
       budget_id: plan?.budget_id || null
     });
-    return response.json({
+    return response.json(buildApiObjectResponse({
       plan: plan || null,
       ...budgetContext
-    });
+    }, { site_id: siteId, plan_date: planDate }));
   } catch (error) {
     return next(error);
   }
@@ -1046,8 +1055,9 @@ app.get('/api/menu-plans/budgets', requireAuth, requirePermission('manage_menu_p
     const siteId = String(request.query.site_id || '').trim();
     const planDate = String(request.query.plan_date || '').trim();
 
-    if (!siteId || !planDate) {
-      return response.status(400).json({ message: 'site_id and plan_date are required' });
+    const errors = validateSiteAndDateInput({ siteId, planDate });
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
     }
 
     const budgetContext = await getMenuPlanBudgetContext(request.user, {
@@ -1057,23 +1067,59 @@ app.get('/api/menu-plans/budgets', requireAuth, requirePermission('manage_menu_p
       total_planned_cost: numericMatch(request.query.total_planned_cost, 0)
     });
 
-    return response.json(budgetContext);
+    return response.json(buildApiObjectResponse(budgetContext, { site_id: siteId, plan_date: planDate }));
   } catch (error) {
     return next(error);
   }
 });
 
-app.get('/api/menu-plans/pr-generation', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+app.post('/api/menu-plans/cost-preview', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const payload = buildMenuPlanWritePayload(request.body || {});
+    const errors = validateMenuPlanPayload(payload);
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
+    }
+
+    const [recipes, ingredients] = await Promise.all([
+      listDocuments('Recipe', { limit: 4000 }),
+      listDocuments('Ingredient', { limit: 4000 })
+    ]);
+
+    const costSummary = summarizeMenuPlanCostPreview(payload.meals, recipes, ingredients);
+    const budgetContext = await getMenuPlanBudgetContext(request.user, {
+      site_id: payload.site_id,
+      plan_date: payload.plan_date,
+      budget_id: payload.budget_id || null,
+      total_planned_cost: numericMatch(costSummary.total_cost, 0)
+    });
+
+    return response.json(buildApiObjectResponse({
+      meals: payload.meals,
+      cost_summary: costSummary,
+      budget_context: budgetContext
+    }, {
+      site_id: payload.site_id,
+      plan_date: payload.plan_date
+    }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/menu-plans/pr-generation', requireAuth, requireAnyPermission(['manage_menu_planning', 'generate_menu_plan_pr']), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
     const referenceDate = String(request.query.reference_date || '').trim();
 
-    if (!siteId) {
-      return response.status(400).json({ message: 'site_id is required' });
+    const errors = validatePRGenerationPayload({ site_id: siteId, site_name: 'placeholder', reference_date: referenceDate })
+      .filter((error) => error !== 'site_name is required');
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
     }
 
     const context = await getMenuPlanPRContext(request.user, siteId, referenceDate);
-    return response.json(context);
+    return response.json(buildApiObjectResponse(context, { site_id: siteId, reference_date: referenceDate || null }));
   } catch (error) {
     return next(error);
   }
@@ -1082,12 +1128,13 @@ app.get('/api/menu-plans/pr-generation', requireAuth, requirePermission('manage_
 app.patch('/api/menu-plans/pr-generation/config', requireAuth, requirePermission('generate_menu_plan_pr'), async (request, response, next) => {
   try {
     const payload = request.body || {};
-    if (!payload.site_id || !payload.site_name) {
-      return response.status(400).json({ message: 'Project is required' });
+    const errors = validatePRGenerationPayload(payload);
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
     }
 
     const config = await saveMenuPlanPRScheduleConfig(request.user, payload);
-    return response.json(config);
+    return response.json(buildApiObjectResponse(config, { site_id: payload.site_id }));
   } catch (error) {
     return next(error);
   }
@@ -1096,8 +1143,9 @@ app.patch('/api/menu-plans/pr-generation/config', requireAuth, requirePermission
 app.post('/api/menu-plans/pr-generation/run', requireAuth, requirePermission('generate_menu_plan_pr'), async (request, response, next) => {
   try {
     const payload = request.body || {};
-    if (!payload.site_id || !payload.site_name) {
-      return response.status(400).json({ message: 'Project is required' });
+    const errors = validatePRGenerationPayload(payload);
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
     }
 
     const result = await generatePurchaseRequestFromMenuPlans(request.user, {
@@ -1105,7 +1153,9 @@ app.post('/api/menu-plans/pr-generation/run', requireAuth, requirePermission('ge
       trigger_type: payload.trigger_type || 'manual'
     });
 
-    return response.status(result.duplicate_prevented ? 200 : 201).json(result);
+    return response.status(result.duplicate_prevented ? 200 : 201).json(
+      buildApiObjectResponse(result, { site_id: payload.site_id, trigger_type: payload.trigger_type || 'manual' })
+    );
   } catch (error) {
     return next(error);
   }
@@ -1114,8 +1164,9 @@ app.post('/api/menu-plans/pr-generation/run', requireAuth, requirePermission('ge
 app.post('/api/menu-plans', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
   try {
     const payload = buildMenuPlanWritePayload(request.body || {});
-    if (!payload.site_id || !payload.plan_date) {
-      return response.status(400).json({ message: 'Project and plan date are required' });
+    const errors = validateMenuPlanPayload(payload);
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
     }
 
     const existing = await findScopedOperationalMenuPlan(request.user, payload.site_id, payload.plan_date);
@@ -1134,7 +1185,7 @@ app.post('/api/menu-plans', requireAuth, requirePermission('manage_menu_planning
     authorizeEntityAction(request.user, 'MenuPlan', 'create', payload);
     const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload);
     const created = await createDocument('MenuPlan', preparedPayload);
-    return response.status(201).json(created);
+    return response.status(201).json(buildApiObjectResponse(created, { action: 'create' }));
   } catch (error) {
     return next(error);
   }
@@ -1157,6 +1208,10 @@ app.patch('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_pla
     }
 
     const payload = buildMenuPlanWritePayload(request.body || {}, existing);
+    const errors = validateMenuPlanPayload(payload);
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
+    }
     const selectedBudget = await validateMenuPlanBudgetSelection(request.user, payload);
     if (selectedBudget) {
       payload.budget_name = selectedBudget.name;
@@ -1172,7 +1227,7 @@ app.patch('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_pla
     authorizeEntityAction(request.user, 'MenuPlan', 'update', payload, existing);
     const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload, existing);
     const updated = await updateDocument('MenuPlan', request.params.id, preparedPayload);
-    return response.json(updated);
+    return response.json(buildApiObjectResponse(updated, { action: 'update' }));
   } catch (error) {
     return next(error);
   }
@@ -1207,11 +1262,11 @@ app.delete('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_pl
         total_calories: summary.total_calories,
         status: 'draft'
       });
-      return response.json({ success: true, preserved_event_meals: true, plan: updated });
+      return response.json(buildApiObjectResponse({ success: true, preserved_event_meals: true, plan: updated }, { action: 'delete' }));
     }
 
     await deleteDocument('MenuPlan', request.params.id);
-    return response.json({ success: true });
+    return response.json(buildApiObjectResponse({ success: true }, { action: 'delete' }));
   } catch (error) {
     return next(error);
   }
@@ -1282,7 +1337,7 @@ app.get('/api/special-events/:id', requireAuth, requireAnyPermission([
     if (!event) {
       return response.status(404).json({ message: 'Special event not found' });
     }
-    return response.json(await buildSpecialEventResponse(request.user, event));
+    return response.json(buildApiObjectResponse(await buildSpecialEventResponse(request.user, event), { id: event.id }));
   } catch (error) {
     return next(error);
   }
@@ -1302,11 +1357,11 @@ app.get('/api/special-events/:id/history', requireAuth, requireAnyPermission([
     if (!event) {
       return response.status(404).json({ message: 'Special event not found' });
     }
-    return response.json({
+    return response.json(buildApiObjectResponse({
       id: event.id,
       status: event.status,
       approval_history: Array.isArray(event.approval_history) ? event.approval_history : []
-    });
+    }, { id: event.id }));
   } catch (error) {
     return next(error);
   }
@@ -1339,7 +1394,7 @@ app.post('/api/special-events', requireAuth, requirePermission('create_special_e
     authorizeEntityAction(request.user, 'MenuPlan', 'create', payload);
     const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload);
     const created = await createDocument('MenuPlan', preparedPayload);
-    return response.status(201).json(await buildSpecialEventResponse(request.user, created));
+    return response.status(201).json(buildApiObjectResponse(await buildSpecialEventResponse(request.user, created), { action: 'create' }));
   } catch (error) {
     return next(error);
   }
@@ -1377,7 +1432,7 @@ app.patch('/api/special-events/:id', requireAuth, requirePermission('edit_specia
     authorizeEntityAction(request.user, 'MenuPlan', 'update', payload, existing);
     const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload, existing);
     const updated = await updateDocument('MenuPlan', request.params.id, preparedPayload);
-    return response.json(await buildSpecialEventResponse(request.user, updated));
+    return response.json(buildApiObjectResponse(await buildSpecialEventResponse(request.user, updated), { action: 'update' }));
   } catch (error) {
     return next(error);
   }
@@ -1422,7 +1477,7 @@ app.post('/api/special-events/:id/submit', requireAuth, requirePermission('submi
       approval_history: appendApprovalHistory(existing.approval_history, historyEntry)
     });
 
-    return response.json(await buildSpecialEventResponse(request.user, updated));
+    return response.json(buildApiObjectResponse(await buildSpecialEventResponse(request.user, updated), { action: 'submit' }));
   } catch (error) {
     return next(error);
   }
@@ -1464,7 +1519,7 @@ app.post('/api/special-events/:id/approve', requireAuth, requirePermission('appr
       approval_history: appendApprovalHistory(existing.approval_history, historyEntry)
     });
 
-    return response.json(await buildSpecialEventResponse(request.user, updated));
+    return response.json(buildApiObjectResponse(await buildSpecialEventResponse(request.user, updated), { action: 'approve' }));
   } catch (error) {
     return next(error);
   }
@@ -1503,7 +1558,7 @@ app.post('/api/special-events/:id/reject', requireAuth, requirePermission('rejec
       approval_history: appendApprovalHistory(existing.approval_history, historyEntry)
     });
 
-    return response.json(await buildSpecialEventResponse(request.user, updated));
+    return response.json(buildApiObjectResponse(await buildSpecialEventResponse(request.user, updated), { action: 'reject' }));
   } catch (error) {
     return next(error);
   }
@@ -1560,7 +1615,7 @@ app.post('/api/food-waste/qr-codes', requireAuth, requirePermission('manage_wast
       ? await updateDocument('QRCode', activeCode.id, payload)
       : await createDocument('QRCode', payload);
 
-    return response.status(activeCode ? 200 : 201).json(qrCode);
+    return response.status(activeCode ? 200 : 201).json(buildApiObjectResponse(qrCode, { action: activeCode ? 'reuse' : 'create' }));
   } catch (error) {
     return next(error);
   }
@@ -1569,8 +1624,9 @@ app.post('/api/food-waste/qr-codes', requireAuth, requirePermission('manage_wast
 app.get('/api/food-waste/qr-resolve', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
   try {
     const token = String(request.query.token || '').trim();
-    if (!token) {
-      return response.status(400).json({ message: 'token is required' });
+    const errors = validateFoodWasteContextInput({ token });
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
     }
 
     const matches = await listDocuments('QRCode', {
@@ -1598,12 +1654,12 @@ app.get('/api/food-waste/qr-resolve', requireAuth, requirePermission('manage_was
       last_scanned_at: new Date().toISOString()
     });
 
-    return response.json({
+    return response.json(buildApiObjectResponse({
       qr_code: updatedCode,
       site: accessibleSite,
       default_waste_date: new Date().toISOString().slice(0, 10),
       meal_types: ['breakfast', 'lunch', 'dinner']
-    });
+    }, { token }));
   } catch (error) {
     return next(error);
   }
@@ -1615,8 +1671,9 @@ app.get('/api/food-waste/context', requireAuth, requirePermission('manage_waste'
     const wasteDate = String(request.query.waste_date || '').trim();
     const mealType = String(request.query.meal_type || '').trim();
 
-    if (!siteId || !wasteDate || !mealType) {
-      return response.status(400).json({ message: 'site_id, waste_date, and meal_type are required' });
+    const errors = validateFoodWasteContextInput({ siteId, wasteDate, mealType });
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
     }
 
     const context = await buildFoodWasteContext(request.user, {
@@ -1625,7 +1682,7 @@ app.get('/api/food-waste/context', requireAuth, requirePermission('manage_waste'
       mealType
     });
 
-    return response.json(context);
+    return response.json(buildApiObjectResponse(context, { site_id: siteId, waste_date: wasteDate, meal_type: mealType }));
   } catch (error) {
     return next(error);
   }
@@ -1661,8 +1718,9 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
     const wasteDate = normalizeDateOnly(payload.waste_date);
     const mealType = normalizeMealType(payload.meal_type);
 
-    if (!siteId || !wasteDate || !mealType) {
-      return response.status(400).json({ message: 'Project, waste date, and meal type are required.' });
+    const errors = validateFoodWasteContextInput({ siteId, wasteDate, mealType });
+    if (errors.length) {
+      return response.status(400).json({ message: errors[0], errors });
     }
 
     const context = await buildFoodWasteContext(request.user, {
@@ -1697,7 +1755,7 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
     authorizeEntityAction(request.user, 'FoodWaste', 'create', preparedPayload);
     const finalPayload = await prepareEntityPayload(request.user, 'FoodWaste', preparedPayload);
     const created = await createDocument('FoodWaste', finalPayload);
-    return response.status(201).json(decorateFoodWasteRecord(created));
+    return response.status(201).json(buildApiObjectResponse(decorateFoodWasteRecord(created), { action: 'create' }));
   } catch (error) {
     return next(error);
   }
@@ -1762,7 +1820,7 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
     authorizeEntityAction(request.user, 'FoodWaste', 'update', payload, existing);
     const preparedPayload = await prepareEntityPayload(request.user, 'FoodWaste', merged, existing);
     const updated = await updateDocument('FoodWaste', request.params.id, preparedPayload);
-    return response.json(decorateFoodWasteRecord(updated));
+    return response.json(buildApiObjectResponse(decorateFoodWasteRecord(updated), { action: approvalOnly ? 'approval' : 'update' }));
   } catch (error) {
     return next(error);
   }

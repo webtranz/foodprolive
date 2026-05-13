@@ -359,6 +359,12 @@ export const base44 = {
     getByDate(siteId, planDate) {
       return apiRequest(`/api/menu-plans/by-date${buildQueryString({ site_id: siteId, plan_date: planDate })}`);
     },
+    previewCost(data) {
+      return apiRequest('/api/menu-plans/cost-preview', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
     getBudgetContext(siteId, planDate, budgetId, totalPlannedCost) {
       return apiRequest(`/api/menu-plans/budgets${buildQueryString({
         site_id: siteId,

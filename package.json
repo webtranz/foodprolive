@@ -11,7 +11,7 @@
     "build:client": "vite build",
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
-    "test": "node tests/currency.test.mjs && node tests/menuPlanning.test.mjs && node tests/menuPlanningPR.test.mjs && node tests/foodCategoriesAccess.test.mjs && node tests/foodWasteWindow.test.mjs && node tests/foodWasteQR.test.mjs && node tests/specialEventWorkflow.test.mjs && node tests/navigationPermission.test.mjs",
+    "test": "node tests/currency.test.mjs && node tests/menuPlanning.test.mjs && node tests/menuPlanningApi.test.mjs && node tests/menuPlanningPR.test.mjs && node tests/foodCategoriesAccess.test.mjs && node tests/foodWasteWindow.test.mjs && node tests/foodWasteQR.test.mjs && node tests/specialEventWorkflow.test.mjs && node tests/navigationPermission.test.mjs",
     "typecheck": "tsc -p ./jsconfig.json",
     "seed:camps": "node scripts/seed-camps-test-data.mjs",
     "preview": "vite preview",
