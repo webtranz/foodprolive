@@ -160,7 +160,7 @@ function normalizeRecord(entity, payload, existing = null) {
   };
 }
 
-async function findRoleProfileByKey(roleKey) {
+async function findRoleProfileByKey(roleKey, executor = pool) {
   const normalized = String(roleKey || '').trim().toLowerCase();
   if (!normalized) {
     return null;
@@ -172,7 +172,8 @@ async function findRoleProfileByKey(roleKey) {
      WHERE entity_name = 'RoleProfile'
        AND LOWER(COALESCE(data->>'role_key', '')) = $1
      LIMIT 1`,
-    [normalized]
+    [normalized],
+    executor
   );
 
   if (result.rowCount) {
@@ -192,10 +193,10 @@ async function findRoleProfileByKey(roleKey) {
   };
 }
 
-async function hydrateUserRole(user) {
+async function hydrateUserRole(user, executor = pool) {
   if (!user) return null;
 
-  const roleProfile = await findRoleProfileByKey(user.role || 'user');
+  const roleProfile = await findRoleProfileByKey(user.role || 'user', executor);
   const accessLevel = roleProfile?.access_level || (['admin', 'manager', 'user'].includes(user.role) ? user.role : 'user');
   const rolePermissions = Array.isArray(roleProfile?.permissions) ? roleProfile.permissions : [];
 
@@ -218,14 +219,13 @@ function valuesMatchForUnique(left, right) {
   return normalizeUniqueValue(left) === normalizeUniqueValue(right);
 }
 
-async function ensureEntityUniqueness(entity, record, currentId = null) {
+async function ensureEntityUniqueness(entity, record, currentId = null, executor = pool) {
   const config = entityRegistry[entity];
   const uniqueRules = config?.unique || [];
   if (!uniqueRules.length) {
     return;
   }
 
-  const records = await listDocuments(entity, { limit: 10000 });
   for (const rule of uniqueRules) {
     const fields = Array.isArray(rule.fields) ? rule.fields : [];
     if (!fields.length) continue;
@@ -235,6 +235,13 @@ async function ensureEntityUniqueness(entity, record, currentId = null) {
       continue;
     }
 
+    await query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      [`entity-unique:${entity}:${fields.map((field) => normalizeUniqueValue(record[field])).join(':')}`],
+      executor
+    );
+
+    const records = await listDocuments(entity, { limit: 10000 }, executor);
     const duplicate = records.find((existing) => {
       if (currentId && existing.id === currentId) {
         return false;
@@ -295,8 +302,243 @@ function sortRecords(records, sort) {
   });
 }
 
-async function query(text, params = []) {
-  return pool.query(text, params);
+async function query(text, params = [], executor = pool) {
+  return executor.query(text, params);
+}
+
+async function withTransaction(handler) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await handler(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+const singleReferenceTargets = new Map([
+  ['site_id', 'Site'],
+  ['from_site_id', 'Site'],
+  ['to_site_id', 'Site'],
+  ['parent_site_id', 'Site'],
+  ['ingredient_id', 'Ingredient'],
+  ['recipe_id', 'Recipe'],
+  ['budget_id', 'Budget'],
+  ['menu_plan_id', 'MenuPlan'],
+  ['production_id', 'Production'],
+  ['source_production_id', 'Production'],
+  ['linked_material_request_id', 'MaterialRequest'],
+  ['inventory_lot_id', 'InventoryLot'],
+  ['scenario_id', 'ForecastScenario'],
+  ['latest_snapshot_id', 'ForecastSnapshot']
+]);
+
+const arrayReferenceTargets = new Map([
+  ['site_ids', 'Site'],
+  ['allowed_site_ids', 'Site']
+]);
+
+const opaqueDocumentFields = new Set([
+  'data_mapping',
+  'payload',
+  'raw_payload',
+  'request_payload',
+  'response_payload',
+  'settings'
+]);
+
+function collectDocumentReferences(value, references = [], pathPrefix = '') {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => collectDocumentReferences(entry, references, `${pathPrefix}[${index}]`));
+    return references;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return references;
+  }
+
+  Object.entries(value).forEach(([field, nestedValue]) => {
+    const pathName = pathPrefix ? `${pathPrefix}.${field}` : field;
+    const singleTarget = singleReferenceTargets.get(field);
+    const arrayTarget = arrayReferenceTargets.get(field);
+
+    if (opaqueDocumentFields.has(field)) {
+      return;
+    }
+
+    if (singleTarget && nestedValue !== null && typeof nestedValue !== 'undefined' && String(nestedValue).trim()) {
+      references.push({
+        targetEntity: singleTarget,
+        id: String(nestedValue).trim(),
+        path: pathName
+      });
+      return;
+    }
+
+    if (arrayTarget && Array.isArray(nestedValue)) {
+      nestedValue
+        .filter((entry) => entry !== null && typeof entry !== 'undefined' && String(entry).trim())
+        .forEach((entry, index) => references.push({
+          targetEntity: arrayTarget,
+          id: String(entry).trim(),
+          path: `${pathName}[${index}]`
+        }));
+      return;
+    }
+
+    collectDocumentReferences(nestedValue, references, pathName);
+  });
+
+  return references;
+}
+
+async function validateDocumentRelationships(entity, record, currentId = null, executor = pool) {
+  const references = collectDocumentReferences(record);
+  const uniqueReferences = new Map();
+
+  references.forEach((reference) => {
+    uniqueReferences.set(`${reference.targetEntity}:${reference.id}`, reference);
+  });
+
+  if (entity === 'Site') {
+    await query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      ['site-hierarchy'],
+      executor
+    );
+  }
+
+  if (entity === 'Site' && record.parent_site_id) {
+    const siteId = String(currentId || record.id || '');
+    const visited = new Set(siteId ? [siteId] : []);
+    let parentId = String(record.parent_site_id);
+
+    while (parentId) {
+      if (visited.has(parentId)) {
+        const error = new Error('Site hierarchy cannot contain a cycle');
+        error.status = 409;
+        throw error;
+      }
+      visited.add(parentId);
+      const parent = await findDocument('Site', parentId, executor);
+      if (!parent) {
+        break;
+      }
+      parentId = parent.parent_site_id ? String(parent.parent_site_id) : '';
+    }
+  }
+
+  const orderedReferences = [...uniqueReferences.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, reference]) => reference);
+
+  for (const reference of orderedReferences) {
+    if (
+      reference.targetEntity === entity &&
+      reference.id === String(currentId || record.id || '')
+    ) {
+      const error = new Error(`${reference.path} cannot reference the same ${entity} record`);
+      error.status = 409;
+      throw error;
+    }
+
+    await query(
+      'SELECT pg_advisory_xact_lock_shared(hashtext($1))',
+      [`entity-reference:${reference.targetEntity}:${reference.id}`],
+      executor
+    );
+    const target = await findDocument(reference.targetEntity, reference.id, executor);
+    if (!target) {
+      const error = new Error(
+        `${reference.path} references a missing ${reference.targetEntity} record (${reference.id})`
+      );
+      error.status = 409;
+      throw error;
+    }
+  }
+}
+
+const normalizedReferenceChecks = {
+  Site: [
+    {
+      label: 'user location assignment',
+      sql: `SELECT id FROM users
+            WHERE site_id = $1
+               OR COALESCE(profile->'allowed_site_ids', '[]'::jsonb) ? $1
+            LIMIT 1`
+    },
+    { label: 'POS source', sql: 'SELECT id FROM pos_sources WHERE default_site_id = $1 LIMIT 1' },
+    { label: 'POS sales order', sql: 'SELECT id FROM pos_sales_orders WHERE site_id = $1 LIMIT 1' },
+    { label: 'POS sales item', sql: 'SELECT id FROM pos_sales_items WHERE site_id = $1 LIMIT 1' },
+    { label: 'POS recipe mapping', sql: 'SELECT id FROM pos_recipe_mapping WHERE site_id = $1 LIMIT 1' },
+    { label: 'purchase request', sql: 'SELECT id FROM purchase_requests WHERE site_id = $1 LIMIT 1' },
+    { label: 'purchase order', sql: 'SELECT id FROM purchase_orders WHERE site_id = $1 LIMIT 1' },
+    { label: 'goods receipt', sql: 'SELECT id FROM goods_receipts WHERE site_id = $1 LIMIT 1' },
+    { label: 'supplier price history', sql: 'SELECT id FROM supplier_price_history WHERE site_id = $1 LIMIT 1' }
+  ],
+  Ingredient: [
+    { label: 'purchase request item', sql: 'SELECT id FROM purchase_request_items WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'purchase order item', sql: 'SELECT id FROM purchase_order_items WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'goods receipt item', sql: 'SELECT id FROM goods_receipt_items WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'supplier price history', sql: 'SELECT id FROM supplier_price_history WHERE ingredient_id = $1 LIMIT 1' }
+  ],
+  Recipe: [
+    { label: 'POS recipe mapping', sql: 'SELECT id FROM pos_recipe_mapping WHERE recipe_id = $1 LIMIT 1' },
+    { label: 'POS sales item', sql: 'SELECT id FROM pos_sales_items WHERE recipe_id = $1 LIMIT 1' }
+  ]
+};
+
+async function ensureDocumentNotReferenced(entity, id, executor = pool) {
+  if (entity === 'Site') {
+    await query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      ['site-hierarchy'],
+      executor
+    );
+  }
+
+  await query(
+    'SELECT pg_advisory_xact_lock(hashtext($1))',
+    [`entity-reference:${entity}:${id}`],
+    executor
+  );
+
+  const documentRows = await query(
+    `SELECT id, entity_name, data
+     FROM entity_records
+     WHERE NOT (entity_name = $1 AND id = $2)
+     FOR SHARE`,
+    [entity, id],
+    executor
+  );
+
+  const documentReference = documentRows.rows.find((row) =>
+    collectDocumentReferences(row.data).some((reference) =>
+      reference.targetEntity === entity && reference.id === String(id)
+    )
+  );
+
+  if (documentReference) {
+    const error = new Error(
+      `${entity} ${id} is still referenced by ${documentReference.entity_name} ${documentReference.id}`
+    );
+    error.status = 409;
+    throw error;
+  }
+
+  for (const check of normalizedReferenceChecks[entity] || []) {
+    const result = await query(check.sql, [id], executor);
+    if (result.rowCount > 0) {
+      const error = new Error(`${entity} ${id} is still referenced by a ${check.label}`);
+      error.status = 409;
+      throw error;
+    }
+  }
 }
 
 async function initDatabase() {
@@ -347,23 +589,23 @@ async function ensureAdminAccounts() {
   }
 }
 
-async function listUsers() {
-  const result = await query('SELECT * FROM users ORDER BY updated_at DESC');
-  return Promise.all(result.rows.map(async (row) => sanitizeUser(await hydrateUserRole(toUserRecord(row)))));
+async function listUsers(executor = pool) {
+  const result = await query('SELECT * FROM users ORDER BY updated_at DESC', [], executor);
+  return Promise.all(result.rows.map(async (row) => sanitizeUser(await hydrateUserRole(toUserRecord(row), executor))));
 }
 
-async function findUserById(id) {
-  const result = await query('SELECT * FROM users WHERE id = $1 LIMIT 1', [id]);
-  return result.rowCount ? hydrateUserRole(toUserRecord(result.rows[0])) : null;
+async function findUserById(id, executor = pool) {
+  const result = await query('SELECT * FROM users WHERE id = $1 LIMIT 1', [id], executor);
+  return result.rowCount ? hydrateUserRole(toUserRecord(result.rows[0]), executor) : null;
 }
 
-async function findUserByEmail(email) {
-  const result = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
-  return result.rowCount ? hydrateUserRole(toUserRecord(result.rows[0])) : null;
+async function findUserByEmail(email, executor = pool) {
+  const result = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [email], executor);
+  return result.rowCount ? hydrateUserRole(toUserRecord(result.rows[0]), executor) : null;
 }
 
-async function createUser(data) {
-  const existing = await findUserByEmail(data.email);
+async function createUser(data, executor = pool) {
+  const existing = await findUserByEmail(data.email, executor);
   if (existing) {
     const error = new Error('User already exists');
     error.status = 409;
@@ -372,6 +614,7 @@ async function createUser(data) {
 
   const id = data.id || randomId('user');
   const timestamp = nowIso();
+  await validateDocumentRelationships('User', { ...data, id }, null, executor);
   const credentials = resolvePasswordFields(data);
   if (!credentials.password_hash) {
     const error = new Error('Password is required when creating a user');
@@ -407,18 +650,19 @@ async function createUser(data) {
       credentials.temporary_password,
       JSON.stringify(profile),
       timestamp
-    ]
+    ],
+    executor
   );
 
-  return sanitizeUser(await findUserById(id));
+  return sanitizeUser(await findUserById(id, executor));
 }
 
-async function updateUser(id, patch) {
-  const existing = await findUserById(id);
+async function updateUser(id, patch, executor = pool) {
+  const existing = await findUserById(id, executor);
   if (!existing) return null;
 
   if (patch.email && normalizeUniqueValue(patch.email) !== normalizeUniqueValue(existing.email)) {
-    const duplicate = await findUserByEmail(patch.email);
+    const duplicate = await findUserByEmail(patch.email, executor);
     if (duplicate && duplicate.id !== id) {
       const error = new Error('User email already exists');
       error.status = 409;
@@ -434,6 +678,7 @@ async function updateUser(id, patch) {
     id,
     updated_date: nowIso()
   };
+  await validateDocumentRelationships('User', merged, id, executor);
   const profile = { ...merged };
   delete profile.id;
   delete profile.email;
@@ -473,92 +718,124 @@ async function updateUser(id, patch) {
       merged.temporary_password || null,
       JSON.stringify(profile),
       merged.updated_date
-    ]
+    ],
+    executor
   );
 
-  return sanitizeUser(await findUserById(id));
+  return sanitizeUser(await findUserById(id, executor));
 }
 
-async function listDocuments(entity, { filters = {}, sort, limit } = {}) {
+async function listDocuments(entity, { filters = {}, sort, limit, lock = false } = {}, executor = pool) {
   ensureKnownEntity(entity);
   if (entity === 'User') {
-    const filtered = (await listUsers()).filter((record) => matchesFilter(record, filters));
+    const filtered = (await listUsers(executor)).filter((record) => matchesFilter(record, filters));
     const sorted = sortRecords(filtered, sort);
     return typeof limit === 'number' ? sorted.slice(0, limit) : sorted;
   }
 
   const result = await query(
-    'SELECT data FROM entity_records WHERE entity_name = $1 ORDER BY updated_at DESC',
-    [entity]
+    `SELECT data
+     FROM entity_records
+     WHERE entity_name = $1
+     ORDER BY updated_at DESC
+     ${lock ? 'FOR UPDATE' : ''}`,
+    [entity],
+    executor
   );
   const records = result.rows.map((row) => row.data).filter((record) => matchesFilter(record, filters));
   const sorted = sortRecords(records, sort);
   return typeof limit === 'number' ? sorted.slice(0, limit) : sorted;
 }
 
-async function findDocument(entity, id) {
+async function findDocument(entity, id, executor = pool, lock = false) {
   ensureKnownEntity(entity);
   if (entity === 'User') {
-    return sanitizeUser(await findUserById(id));
+    return sanitizeUser(await findUserById(id, executor));
   }
 
   const result = await query(
-    'SELECT data FROM entity_records WHERE entity_name = $1 AND id = $2 LIMIT 1',
-    [entity, id]
+    `SELECT data
+     FROM entity_records
+     WHERE entity_name = $1 AND id = $2
+     LIMIT 1
+     ${lock ? 'FOR UPDATE' : ''}`,
+    [entity, id],
+    executor
   );
   return result.rowCount ? result.rows[0].data : null;
 }
 
-async function createDocument(entity, payload) {
+async function createDocument(entity, payload, executor = null) {
+  if (!executor) {
+    return withTransaction((client) => createDocument(entity, payload, client));
+  }
+
   ensureKnownEntity(entity);
   if (entity === 'User') {
-    return createUser(payload);
+    return createUser(payload, executor);
   }
 
   const validated = validateEntityPayload(entity, payload);
   const record = normalizeRecord(entity, validated);
-  await ensureEntityUniqueness(entity, record);
+  await validateDocumentRelationships(entity, record, null, executor);
+  await ensureEntityUniqueness(entity, record, null, executor);
 
   await query(
     `INSERT INTO entity_records (id, entity_name, data, created_at, updated_at)
      VALUES ($1, $2, $3::jsonb, $4, $5)`,
-    [record.id, entity, JSON.stringify(record), record.created_date, record.updated_date]
+    [record.id, entity, JSON.stringify(record), record.created_date, record.updated_date],
+    executor
   );
 
   return record;
 }
 
-async function updateDocument(entity, id, patch) {
-  ensureKnownEntity(entity);
-  if (entity === 'User') {
-    return updateUser(id, patch);
+async function updateDocument(entity, id, patch, executor = null) {
+  if (!executor) {
+    return withTransaction((client) => updateDocument(entity, id, patch, client));
   }
 
-  const existing = await findDocument(entity, id);
+  ensureKnownEntity(entity);
+  if (entity === 'User') {
+    return updateUser(id, patch, executor);
+  }
+
+  const existing = await findDocument(entity, id, executor);
   if (!existing) return null;
 
   const validated = validateEntityPayload(entity, { ...existing, ...patch });
   const record = normalizeRecord(entity, validated, existing);
-  await ensureEntityUniqueness(entity, record, id);
+  await validateDocumentRelationships(entity, record, id, executor);
+  await ensureEntityUniqueness(entity, record, id, executor);
 
   await query(
     `UPDATE entity_records
      SET data = $3::jsonb, updated_at = $4
      WHERE entity_name = $1 AND id = $2`,
-    [entity, id, JSON.stringify(record), record.updated_date]
+    [entity, id, JSON.stringify(record), record.updated_date],
+    executor
   );
 
   return record;
 }
 
-async function deleteDocument(entity, id) {
+async function deleteDocument(entity, id, executor = null) {
+  if (!executor) {
+    return withTransaction((client) => deleteDocument(entity, id, client));
+  }
+
   ensureKnownEntity(entity);
   if (entity === 'User') {
-    const result = await query('DELETE FROM users WHERE id = $1', [id]);
+    const result = await query('DELETE FROM users WHERE id = $1', [id], executor);
     return result.rowCount > 0;
   }
 
-  const result = await query('DELETE FROM entity_records WHERE entity_name = $1 AND id = $2', [entity, id]);
+  await ensureDocumentNotReferenced(entity, id, executor);
+  const result = await query(
+    'DELETE FROM entity_records WHERE entity_name = $1 AND id = $2',
+    [entity, id],
+    executor
+  );
   return result.rowCount > 0;
 }
 
@@ -640,6 +917,9 @@ async function createEmailLog(payload) {
 
 export {
   pool,
+  withTransaction,
+  collectDocumentReferences,
+  validateDocumentRelationships,
   uploadsDir,
   initDatabase,
   listDocuments,

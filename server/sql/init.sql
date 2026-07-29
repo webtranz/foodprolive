@@ -198,7 +198,9 @@ CREATE TABLE IF NOT EXISTS purchase_request_items (
   estimated_unit_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
   line_total NUMERIC(14, 2) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',
-  preferred_supplier_id TEXT,
+  preferred_supplier_id TEXT
+    CONSTRAINT fk_purchase_request_items_preferred_supplier
+    REFERENCES suppliers(id) ON DELETE SET NULL,
   preferred_supplier_name TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -263,7 +265,7 @@ CREATE TABLE IF NOT EXISTS goods_receipts (
 CREATE TABLE IF NOT EXISTS goods_receipt_items (
   id TEXT PRIMARY KEY,
   receipt_id TEXT NOT NULL REFERENCES goods_receipts(id) ON DELETE CASCADE,
-  order_item_id TEXT REFERENCES purchase_order_items(id) ON DELETE SET NULL,
+  order_item_id TEXT NOT NULL REFERENCES purchase_order_items(id) ON DELETE RESTRICT,
   ingredient_id TEXT,
   ingredient_name TEXT NOT NULL,
   received_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
@@ -312,6 +314,183 @@ CREATE TABLE IF NOT EXISTS supplier_price_history (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'fk_purchase_request_items_preferred_supplier'
+  ) THEN
+    ALTER TABLE purchase_request_items
+      ADD CONSTRAINT fk_purchase_request_items_preferred_supplier
+      FOREIGN KEY (preferred_supplier_id)
+      REFERENCES suppliers(id)
+      ON DELETE SET NULL
+      NOT VALID;
+  END IF;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'chk_goods_receipt_items_order_item_required'
+  ) THEN
+    ALTER TABLE goods_receipt_items
+      ADD CONSTRAINT chk_goods_receipt_items_order_item_required
+      CHECK (order_item_id IS NOT NULL)
+      NOT VALID;
+  END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION validate_purchase_order_item_request_link()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  order_request_id TEXT;
+  item_request_id TEXT;
+BEGIN
+  IF NEW.request_item_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT request_id INTO order_request_id
+  FROM purchase_orders
+  WHERE id = NEW.order_id;
+
+  SELECT request_id INTO item_request_id
+  FROM purchase_request_items
+  WHERE id = NEW.request_item_id;
+
+  IF order_request_id IS NULL OR item_request_id IS DISTINCT FROM order_request_id THEN
+    RAISE EXCEPTION 'Purchase order item must reference an item from its purchase request'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_validate_purchase_order_item_request_link ON purchase_order_items;
+CREATE TRIGGER trg_validate_purchase_order_item_request_link
+BEFORE INSERT OR UPDATE OF order_id, request_item_id
+ON purchase_order_items
+FOR EACH ROW
+EXECUTE FUNCTION validate_purchase_order_item_request_link();
+
+CREATE OR REPLACE FUNCTION validate_goods_receipt_item_order_link()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  receipt_order_id TEXT;
+  item_order_id TEXT;
+BEGIN
+  IF NEW.order_item_id IS NULL THEN
+    RAISE EXCEPTION 'Goods receipt item must reference a purchase order item'
+      USING ERRCODE = '23502';
+  END IF;
+
+  SELECT purchase_order_id INTO receipt_order_id
+  FROM goods_receipts
+  WHERE id = NEW.receipt_id;
+
+  SELECT order_id INTO item_order_id
+  FROM purchase_order_items
+  WHERE id = NEW.order_item_id;
+
+  IF receipt_order_id IS NULL OR item_order_id IS DISTINCT FROM receipt_order_id THEN
+    RAISE EXCEPTION 'Goods receipt item must reference an item from its purchase order'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_validate_goods_receipt_item_order_link ON goods_receipt_items;
+CREATE TRIGGER trg_validate_goods_receipt_item_order_link
+BEFORE INSERT OR UPDATE OF receipt_id, order_item_id
+ON goods_receipt_items
+FOR EACH ROW
+EXECUTE FUNCTION validate_goods_receipt_item_order_link();
+
+CREATE OR REPLACE FUNCTION validate_supplier_invoice_chain()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  order_supplier_id TEXT;
+  receipt_order_id TEXT;
+  receipt_supplier_id TEXT;
+BEGIN
+  IF NEW.purchase_order_id IS NOT NULL THEN
+    SELECT supplier_id INTO order_supplier_id
+    FROM purchase_orders
+    WHERE id = NEW.purchase_order_id;
+  END IF;
+
+  IF NEW.goods_receipt_id IS NOT NULL THEN
+    SELECT purchase_order_id, supplier_id
+      INTO receipt_order_id, receipt_supplier_id
+    FROM goods_receipts
+    WHERE id = NEW.goods_receipt_id;
+  END IF;
+
+  IF NEW.purchase_order_id IS NOT NULL
+     AND NEW.goods_receipt_id IS NOT NULL
+     AND receipt_order_id IS DISTINCT FROM NEW.purchase_order_id THEN
+    RAISE EXCEPTION 'Supplier invoice receipt must belong to its purchase order'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF NEW.supplier_id IS NOT NULL
+     AND order_supplier_id IS NOT NULL
+     AND NEW.supplier_id IS DISTINCT FROM order_supplier_id THEN
+    RAISE EXCEPTION 'Supplier invoice supplier must match its purchase order'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF NEW.supplier_id IS NOT NULL
+     AND receipt_supplier_id IS NOT NULL
+     AND NEW.supplier_id IS DISTINCT FROM receipt_supplier_id THEN
+    RAISE EXCEPTION 'Supplier invoice supplier must match its goods receipt'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_validate_supplier_invoice_chain ON supplier_invoices;
+CREATE TRIGGER trg_validate_supplier_invoice_chain
+BEFORE INSERT OR UPDATE OF supplier_id, purchase_order_id, goods_receipt_id
+ON supplier_invoices
+FOR EACH ROW
+EXECUTE FUNCTION validate_supplier_invoice_chain();
+
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_app_logs_user ON app_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_pos_sales_orders_source ON pos_sales_orders(source_id);
+CREATE INDEX IF NOT EXISTS idx_pos_sales_items_order ON pos_sales_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_pos_recipe_mapping_source ON pos_recipe_mapping(source_id);
+CREATE INDEX IF NOT EXISTS idx_pos_sync_logs_source ON pos_sync_logs(source_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_request_items_request ON purchase_request_items(request_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_request_items_supplier ON purchase_request_items(preferred_supplier_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_request ON purchase_orders(request_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_order_items_order ON purchase_order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_order_items_request_item ON purchase_order_items(request_item_id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipt_items_receipt ON goods_receipt_items(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_goods_receipt_items_order_item ON goods_receipt_items(order_item_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_order ON supplier_invoices(purchase_order_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_receipt ON supplier_invoices(goods_receipt_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_price_history_order_item ON supplier_price_history(purchase_order_item_id);
+
 CREATE INDEX IF NOT EXISTS idx_purchase_requests_status ON purchase_requests(status, request_date DESC);
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status, order_date DESC);
 CREATE INDEX IF NOT EXISTS idx_goods_receipts_order ON goods_receipts(purchase_order_id, receipt_date DESC);
@@ -321,6 +500,12 @@ CREATE INDEX IF NOT EXISTS idx_supplier_price_history_lookup ON supplier_price_h
 CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lookup
   ON entity_records ((data->>'site_id'), (data->>'ingredient_id'))
   WHERE entity_name = 'Inventory';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_inventory_site_ingredient_unique
+  ON entity_records ((data->>'site_id'), (data->>'ingredient_id'))
+  WHERE entity_name = 'Inventory'
+    AND COALESCE(data->>'site_id', '') <> ''
+    AND COALESCE(data->>'ingredient_id', '') <> '';
 
 CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_lookup
   ON entity_records ((data->>'site_id'), (data->>'ingredient_id'), (data->>'batch_number'))

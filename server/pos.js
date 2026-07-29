@@ -1,5 +1,11 @@
 import crypto from 'node:crypto';
-import { pool, listDocuments, findDocument } from './db.js';
+import {
+  pool,
+  withTransaction,
+  listDocuments,
+  findDocument,
+  validateDocumentRelationships
+} from './db.js';
 import { deductStock } from './inventory.js';
 
 const POS_STATUSES = new Set(['success', 'warning', 'error']);
@@ -42,8 +48,26 @@ function parseSettings(settings) {
   }
 }
 
-async function query(text, params = []) {
-  return pool.query(text, params);
+async function query(text, params = [], executor = pool) {
+  return executor.query(text, params);
+}
+
+async function requireSite(siteId, executor = pool) {
+  const normalizedSiteId = normalizeText(siteId);
+  if (!normalizedSiteId) return null;
+  await validateDocumentRelationships(
+    'PosRecord',
+    { site_id: normalizedSiteId },
+    null,
+    executor
+  );
+  const site = await findDocument('Site', normalizedSiteId, executor);
+  if (!site) {
+    const error = new Error('Site not found');
+    error.status = 404;
+    throw error;
+  }
+  return site;
 }
 
 function requireApiSettings(source) {
@@ -103,68 +127,76 @@ async function getPosSourceById(id) {
 }
 
 async function createPosSource(payload) {
-  const id = randomId('possrc');
-  const settings = parseSettings(payload.settings);
-  const result = await query(
-    `INSERT INTO pos_sources (
-      id, name, source_type, api_url, api_key, api_secret, sync_frequency, is_active,
-      default_site_id, default_site_name, settings, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,NOW(),NOW())
-    RETURNING *`,
-    [
-      id,
-      normalizeText(payload.name),
-      normalizeText(payload.source_type || 'api'),
-      normalizeText(payload.api_url) || null,
-      normalizeText(payload.api_key) || null,
-      normalizeText(payload.api_secret) || null,
-      normalizeText(payload.sync_frequency || 'manual'),
-      payload.is_active !== false,
-      normalizeText(payload.default_site_id) || null,
-      normalizeText(payload.default_site_name) || null,
-      JSON.stringify(settings)
-    ]
-  );
-  return result.rows[0];
+  return withTransaction(async (client) => {
+    await requireSite(payload.default_site_id, client);
+    const id = randomId('possrc');
+    const settings = parseSettings(payload.settings);
+    const result = await query(
+      `INSERT INTO pos_sources (
+        id, name, source_type, api_url, api_key, api_secret, sync_frequency, is_active,
+        default_site_id, default_site_name, settings, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,NOW(),NOW())
+      RETURNING *`,
+      [
+        id,
+        normalizeText(payload.name),
+        normalizeText(payload.source_type || 'api'),
+        normalizeText(payload.api_url) || null,
+        normalizeText(payload.api_key) || null,
+        normalizeText(payload.api_secret) || null,
+        normalizeText(payload.sync_frequency || 'manual'),
+        payload.is_active !== false,
+        normalizeText(payload.default_site_id) || null,
+        normalizeText(payload.default_site_name) || null,
+        JSON.stringify(settings)
+      ],
+      client
+    );
+    return result.rows[0];
+  });
 }
 
 async function updatePosSource(id, patch) {
   const existing = await getPosSourceById(id);
   if (!existing) return null;
-  const mergedSettings = {
-    ...(existing.settings || {}),
-    ...parseSettings(patch.settings)
-  };
-  const result = await query(
-    `UPDATE pos_sources
-     SET name = $2,
-         source_type = $3,
-         api_url = $4,
-         api_key = $5,
-         api_secret = $6,
-         sync_frequency = $7,
-         is_active = $8,
-         default_site_id = $9,
-         default_site_name = $10,
-         settings = $11::jsonb,
-         updated_at = NOW()
-     WHERE id = $1
-     RETURNING *`,
-    [
-      id,
-      normalizeText(patch.name ?? existing.name),
-      normalizeText(patch.source_type ?? existing.source_type),
-      normalizeText(patch.api_url ?? existing.api_url) || null,
-      normalizeText(patch.api_key ?? existing.api_key) || null,
-      normalizeText(patch.api_secret ?? existing.api_secret) || null,
-      normalizeText(patch.sync_frequency ?? existing.sync_frequency),
-      patch.is_active ?? existing.is_active,
-      normalizeText(patch.default_site_id ?? existing.default_site_id) || null,
-      normalizeText(patch.default_site_name ?? existing.default_site_name) || null,
-      JSON.stringify(mergedSettings)
-    ]
-  );
-  return result.rows[0];
+  return withTransaction(async (client) => {
+    await requireSite(patch.default_site_id ?? existing.default_site_id, client);
+    const mergedSettings = {
+      ...(existing.settings || {}),
+      ...parseSettings(patch.settings)
+    };
+    const result = await query(
+      `UPDATE pos_sources
+       SET name = $2,
+           source_type = $3,
+           api_url = $4,
+           api_key = $5,
+           api_secret = $6,
+           sync_frequency = $7,
+           is_active = $8,
+           default_site_id = $9,
+           default_site_name = $10,
+           settings = $11::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        id,
+        normalizeText(patch.name ?? existing.name),
+        normalizeText(patch.source_type ?? existing.source_type),
+        normalizeText(patch.api_url ?? existing.api_url) || null,
+        normalizeText(patch.api_key ?? existing.api_key) || null,
+        normalizeText(patch.api_secret ?? existing.api_secret) || null,
+        normalizeText(patch.sync_frequency ?? existing.sync_frequency),
+        patch.is_active ?? existing.is_active,
+        normalizeText(patch.default_site_id ?? existing.default_site_id) || null,
+        normalizeText(patch.default_site_name ?? existing.default_site_name) || null,
+        JSON.stringify(mergedSettings)
+      ],
+      client
+    );
+    return result.rows[0];
+  });
 }
 
 async function deletePosSource(id) {
@@ -183,65 +215,88 @@ async function getRecipeMappingById(id) {
 }
 
 async function createRecipeMapping(payload) {
-  const recipe = await findDocument('Recipe', payload.recipe_id);
-  const id = randomId('posmap');
-  const result = await query(
-    `INSERT INTO pos_recipe_mapping (
-      id, source_id, pos_item_code, pos_item_name, recipe_id, recipe_name, servings_per_sale,
-      site_scope, site_id, auto_deduct, notes, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
-    RETURNING *`,
-    [
-      id,
-      normalizeText(payload.source_id) || null,
-      normalizeText(payload.pos_item_code) || null,
-      normalizeText(payload.pos_item_name),
-      normalizeText(payload.recipe_id),
-      recipe?.name || normalizeText(payload.recipe_name),
-      toNumber(payload.servings_per_sale, 1),
-      normalizeText(payload.site_scope || 'global'),
-      normalizeText(payload.site_id) || null,
-      payload.auto_deduct !== false,
-      normalizeText(payload.notes) || null
-    ]
-  );
-  return result.rows[0];
+  return withTransaction(async (client) => {
+    await validateDocumentRelationships(
+      'PosRecipeMapping',
+      {
+        recipe_id: normalizeText(payload.recipe_id),
+        site_id: normalizeText(payload.site_id) || null
+      },
+      null,
+      client
+    );
+    const recipe = await findDocument('Recipe', payload.recipe_id, client);
+    const id = randomId('posmap');
+    const result = await query(
+      `INSERT INTO pos_recipe_mapping (
+        id, source_id, pos_item_code, pos_item_name, recipe_id, recipe_name, servings_per_sale,
+        site_scope, site_id, auto_deduct, notes, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
+      RETURNING *`,
+      [
+        id,
+        normalizeText(payload.source_id) || null,
+        normalizeText(payload.pos_item_code) || null,
+        normalizeText(payload.pos_item_name),
+        normalizeText(payload.recipe_id),
+        recipe.name || normalizeText(payload.recipe_name),
+        toNumber(payload.servings_per_sale, 1),
+        normalizeText(payload.site_scope || 'global'),
+        normalizeText(payload.site_id) || null,
+        payload.auto_deduct !== false,
+        normalizeText(payload.notes) || null
+      ],
+      client
+    );
+    return result.rows[0];
+  });
 }
 
 async function updateRecipeMapping(id, patch) {
   const existing = await getRecipeMappingById(id);
   if (!existing) return null;
-  const recipe = patch.recipe_id ? await findDocument('Recipe', patch.recipe_id) : null;
-  const result = await query(
-    `UPDATE pos_recipe_mapping
-     SET source_id = $2,
-         pos_item_code = $3,
-         pos_item_name = $4,
-         recipe_id = $5,
-         recipe_name = $6,
-         servings_per_sale = $7,
-         site_scope = $8,
-         site_id = $9,
-         auto_deduct = $10,
-         notes = $11,
-         updated_at = NOW()
-     WHERE id = $1
-     RETURNING *`,
-    [
-      id,
-      normalizeText(patch.source_id ?? existing.source_id) || null,
-      normalizeText(patch.pos_item_code ?? existing.pos_item_code) || null,
-      normalizeText(patch.pos_item_name ?? existing.pos_item_name),
-      normalizeText(patch.recipe_id ?? existing.recipe_id),
-      recipe?.name || normalizeText(patch.recipe_name ?? existing.recipe_name),
-      toNumber(patch.servings_per_sale ?? existing.servings_per_sale, 1),
-      normalizeText(patch.site_scope ?? existing.site_scope ?? 'global'),
-      normalizeText(patch.site_id ?? existing.site_id) || null,
-      patch.auto_deduct ?? existing.auto_deduct,
-      normalizeText(patch.notes ?? existing.notes) || null
-    ]
-  );
-  return result.rows[0];
+  return withTransaction(async (client) => {
+    const recipeId = normalizeText(patch.recipe_id ?? existing.recipe_id);
+    const siteId = normalizeText(patch.site_id ?? existing.site_id) || null;
+    await validateDocumentRelationships(
+      'PosRecipeMapping',
+      { recipe_id: recipeId, site_id: siteId },
+      null,
+      client
+    );
+    const recipe = await findDocument('Recipe', recipeId, client);
+    const result = await query(
+      `UPDATE pos_recipe_mapping
+       SET source_id = $2,
+           pos_item_code = $3,
+           pos_item_name = $4,
+           recipe_id = $5,
+           recipe_name = $6,
+           servings_per_sale = $7,
+           site_scope = $8,
+           site_id = $9,
+           auto_deduct = $10,
+           notes = $11,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        id,
+        normalizeText(patch.source_id ?? existing.source_id) || null,
+        normalizeText(patch.pos_item_code ?? existing.pos_item_code) || null,
+        normalizeText(patch.pos_item_name ?? existing.pos_item_name),
+        recipeId,
+        recipe.name || normalizeText(patch.recipe_name ?? existing.recipe_name),
+        toNumber(patch.servings_per_sale ?? existing.servings_per_sale, 1),
+        normalizeText(patch.site_scope ?? existing.site_scope ?? 'global'),
+        siteId,
+        patch.auto_deduct ?? existing.auto_deduct,
+        normalizeText(patch.notes ?? existing.notes) || null
+      ],
+      client
+    );
+    return result.rows[0];
+  });
 }
 
 async function deleteRecipeMapping(id) {

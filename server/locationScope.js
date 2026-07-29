@@ -205,10 +205,31 @@ function buildSiteHierarchy(payload = {}, existing = null, scope) {
   const parentId = payload.parent_site_id ?? existing?.parent_site_id ?? null;
   const parent = parentId ? graph.byId.get(parentId) : null;
   const type = String(payload.type || existing?.type || 'location');
+  const currentId = String(existing?.id || payload.id || '');
+
+  if (parentId && !parent) {
+    const error = new Error('Selected parent site does not exist');
+    error.status = 400;
+    throw error;
+  }
+
+  if (currentId && String(parentId || '') === currentId) {
+    const error = new Error('A site cannot be its own parent');
+    error.status = 400;
+    throw error;
+  }
 
   const chain = [];
   let cursor = parent;
+  const visited = new Set(currentId ? [currentId] : []);
   while (cursor) {
+    const cursorId = String(cursor.id || '');
+    if (!cursorId || visited.has(cursorId)) {
+      const error = new Error('Site hierarchy cannot contain a cycle');
+      error.status = 400;
+      throw error;
+    }
+    visited.add(cursorId);
     chain.unshift(cursor);
     cursor = cursor.parent_site_id ? graph.byId.get(cursor.parent_site_id) : null;
   }
