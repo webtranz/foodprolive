@@ -30,12 +30,10 @@ cp .env.example .env
 npm run dev
 ```
 
-4. Sign in with the seeded admin account:
+4. Sign in with either administrator account configured through
+   `ADMIN_*` or `SECOND_ADMIN_*` in `.env`.
 
-- Email: `humayoonkhizar12@gmail.com`
-- Password: `Tafga@2030`
-
-Override those defaults in `.env` before first production deployment.
+Override the example credentials before first production deployment.
 
 ## Production build
 
