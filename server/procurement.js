@@ -1,10 +1,12 @@
 import crypto from 'node:crypto';
 import {
   pool,
+  withTransaction,
   listDocuments,
   findDocument,
   createDocument,
-  updateDocument
+  updateDocument,
+  validateDocumentRelationships
 } from './db.js';
 import { receiveStock } from './inventory.js';
 
@@ -25,6 +27,32 @@ function dateOnly(value = new Date()) {
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString().slice(0, 10) : parsed.toISOString().slice(0, 10);
 }
 
+async function validateProcurementReferences(
+  { siteId = null, items = [] } = {},
+  executor = pool
+) {
+  await validateDocumentRelationships(
+    'ProcurementRecord',
+    {
+      site_id: normalizeText(siteId) || null,
+      items
+    },
+    null,
+    executor
+  );
+  const supplierIds = [...new Set(
+    items.map((item) => normalizeText(item.preferred_supplier_id)).filter(Boolean)
+  )];
+  for (const supplierId of supplierIds) {
+    const supplier = await getSupplierById(supplierId, executor);
+    if (!supplier) {
+      const error = new Error('Preferred supplier not found');
+      error.status = 404;
+      throw error;
+    }
+  }
+}
+
 function daysBetween(start, end) {
   if (!start || !end) return null;
   const first = new Date(start);
@@ -34,23 +62,8 @@ function daysBetween(start, end) {
   return Math.round(diff / (1000 * 60 * 60 * 24));
 }
 
-async function query(text, params = []) {
-  return pool.query(text, params);
-}
-
-async function withTransaction(handler) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await handler(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+async function query(text, params = [], executor = pool) {
+  return executor.query(text, params);
 }
 
 async function clientQuery(client, text, params = []) {
@@ -69,8 +82,8 @@ async function listSuppliers() {
   return result.rows.map(toSupplier);
 }
 
-async function getSupplierById(id) {
-  const result = await query('SELECT * FROM suppliers WHERE id = $1 LIMIT 1', [id]);
+async function getSupplierById(id, executor = pool) {
+  const result = await query('SELECT * FROM suppliers WHERE id = $1 LIMIT 1', [id], executor);
   return result.rowCount ? toSupplier(result.rows[0]) : null;
 }
 
@@ -148,19 +161,20 @@ async function deleteSupplier(id) {
   return result.rowCount > 0;
 }
 
-async function getRequestItems(requestIds = []) {
+async function getRequestItems(requestIds = [], executor = pool) {
   if (!requestIds.length) return [];
   const result = await query(
     'SELECT * FROM purchase_request_items WHERE request_id = ANY($1::text[]) ORDER BY created_at ASC',
-    [requestIds]
+    [requestIds],
+    executor
   );
   return result.rows;
 }
 
-async function listPurchaseRequests() {
-  const headers = await query('SELECT * FROM purchase_requests ORDER BY created_at DESC');
+async function listPurchaseRequests(executor = pool) {
+  const headers = await query('SELECT * FROM purchase_requests ORDER BY created_at DESC', [], executor);
   const ids = headers.rows.map((row) => row.id);
-  const items = await getRequestItems(ids);
+  const items = await getRequestItems(ids, executor);
   const itemMap = new Map();
 
   items.forEach((item) => {
@@ -176,10 +190,10 @@ async function listPurchaseRequests() {
   }));
 }
 
-async function getPurchaseRequestById(id) {
-  const result = await query('SELECT * FROM purchase_requests WHERE id = $1 LIMIT 1', [id]);
+async function getPurchaseRequestById(id, executor = pool) {
+  const result = await query('SELECT * FROM purchase_requests WHERE id = $1 LIMIT 1', [id], executor);
   if (!result.rowCount) return null;
-  const items = await getRequestItems([id]);
+  const items = await getRequestItems([id], executor);
   return {
     ...result.rows[0],
     items
@@ -217,6 +231,11 @@ async function createPurchaseRequest(payload, actor) {
   }
 
   return withTransaction(async (client) => {
+    await validateProcurementReferences({
+      siteId: payload.site_id,
+      items
+    }, client);
+
     const id = randomId('pr');
     const requestNumber = normalizeText(payload.request_number || `PR-${Date.now()}`);
     const totalEstimatedCost = items.reduce((sum, item) => sum + item.line_total, 0);
@@ -273,7 +292,7 @@ async function createPurchaseRequest(payload, actor) {
       );
     }
 
-    return getPurchaseRequestById(id);
+    return getPurchaseRequestById(id, client);
   });
 }
 
@@ -330,7 +349,7 @@ async function approvePurchaseRequest(id, payload, actor) {
       );
     }
 
-    return getPurchaseRequestById(id);
+    return getPurchaseRequestById(id, client);
   });
 }
 
@@ -388,19 +407,24 @@ async function autoGeneratePurchaseRequestFromLowStock(payload, actor) {
   }, actor);
 }
 
-async function getOrderItems(orderIds = []) {
+async function getOrderItems(orderIds = [], executor = pool, lock = false) {
   if (!orderIds.length) return [];
   const result = await query(
-    'SELECT * FROM purchase_order_items WHERE order_id = ANY($1::text[]) ORDER BY created_at ASC',
-    [orderIds]
+    `SELECT *
+     FROM purchase_order_items
+     WHERE order_id = ANY($1::text[])
+     ORDER BY created_at ASC
+     ${lock ? 'FOR UPDATE' : ''}`,
+    [orderIds],
+    executor
   );
   return result.rows;
 }
 
-async function listPurchaseOrders() {
-  const headers = await query('SELECT * FROM purchase_orders ORDER BY created_at DESC');
+async function listPurchaseOrders(executor = pool) {
+  const headers = await query('SELECT * FROM purchase_orders ORDER BY created_at DESC', [], executor);
   const ids = headers.rows.map((row) => row.id);
-  const items = await getOrderItems(ids);
+  const items = await getOrderItems(ids, executor);
   const itemMap = new Map();
   items.forEach((item) => {
     if (!itemMap.has(item.order_id)) {
@@ -415,12 +439,16 @@ async function listPurchaseOrders() {
   }));
 }
 
-async function getPurchaseOrderById(id) {
-  const result = await query('SELECT * FROM purchase_orders WHERE id = $1 LIMIT 1', [id]);
+async function getPurchaseOrderById(id, executor = pool, lock = false) {
+  const result = await query(
+    `SELECT * FROM purchase_orders WHERE id = $1 LIMIT 1 ${lock ? 'FOR UPDATE' : ''}`,
+    [id],
+    executor
+  );
   if (!result.rowCount) return null;
   return {
     ...result.rows[0],
-    items: await getOrderItems([id])
+    items: await getOrderItems([id], executor, lock)
   };
 }
 
@@ -456,7 +484,17 @@ async function createPurchaseOrder(payload, actor) {
     throw error;
   }
 
-  const linkedRequest = payload.request_id ? await getPurchaseRequestById(payload.request_id) : null;
+  const requestId = normalizeText(payload.request_id) || null;
+  const linkedRequest = requestId ? await getPurchaseRequestById(requestId) : null;
+  if (requestId && !linkedRequest) {
+    const error = new Error('Purchase request not found');
+    error.status = 404;
+    throw error;
+  }
+
+  const linkedRequestItems = new Map(
+    (linkedRequest?.items || []).map((item) => [String(item.id), item])
+  );
   const sourceItems = Array.isArray(payload.items) && payload.items.length
     ? payload.items
     : (linkedRequest?.items || []).map((item) => ({
@@ -469,16 +507,24 @@ async function createPurchaseOrder(payload, actor) {
     }));
 
   const items = sourceItems.map((item) => {
+    const requestItemId = normalizeText(item.request_item_id) || null;
+    const linkedRequestItem = requestItemId ? linkedRequestItems.get(requestItemId) : null;
+    if (requestItemId && !linkedRequestItem) {
+      const error = new Error('Purchase order item does not belong to the selected purchase request');
+      error.status = 409;
+      throw error;
+    }
+
     const orderedQuantity = toNumber(item.ordered_quantity, 0);
     const unitPrice = toNumber(item.unit_price, 0);
     return {
       id: item.id || randomId('poi'),
-      request_item_id: normalizeText(item.request_item_id) || null,
-      ingredient_id: normalizeText(item.ingredient_id) || null,
-      ingredient_name: normalizeText(item.ingredient_name),
+      request_item_id: requestItemId,
+      ingredient_id: normalizeText(linkedRequestItem?.ingredient_id || item.ingredient_id) || null,
+      ingredient_name: normalizeText(linkedRequestItem?.ingredient_name || item.ingredient_name),
       ordered_quantity: orderedQuantity,
       received_quantity: 0,
-      unit: normalizeText(item.unit),
+      unit: normalizeText(linkedRequestItem?.unit || item.unit),
       unit_price: unitPrice,
       line_total: orderedQuantity * unitPrice,
       status: 'pending'
@@ -492,6 +538,11 @@ async function createPurchaseOrder(payload, actor) {
   }
 
   return withTransaction(async (client) => {
+    await validateProcurementReferences({
+      siteId: payload.site_id || linkedRequest?.site_id,
+      items
+    }, client);
+
     const id = randomId('po');
     const order = {
       po_number: normalizeText(payload.po_number || `PO-${Date.now()}`),
@@ -513,7 +564,7 @@ async function createPurchaseOrder(payload, actor) {
       [
         id,
         order.po_number,
-        linkedRequest?.id || normalizeText(payload.request_id) || null,
+        linkedRequest?.id || null,
         supplier.id,
         supplier.name,
         normalizeText(payload.site_id || linkedRequest?.site_id) || null,
@@ -571,7 +622,7 @@ async function createPurchaseOrder(payload, actor) {
       });
     }
 
-    return getPurchaseOrderById(id);
+    return getPurchaseOrderById(id, client);
   });
 }
 
@@ -621,19 +672,20 @@ async function cancelPurchaseOrder(id, payload, actor) {
   return getPurchaseOrderById(id);
 }
 
-async function getReceiptItems(receiptIds = []) {
+async function getReceiptItems(receiptIds = [], executor = pool) {
   if (!receiptIds.length) return [];
   const result = await query(
     'SELECT * FROM goods_receipt_items WHERE receipt_id = ANY($1::text[]) ORDER BY created_at ASC',
-    [receiptIds]
+    [receiptIds],
+    executor
   );
   return result.rows;
 }
 
-async function listGoodsReceipts() {
-  const headers = await query('SELECT * FROM goods_receipts ORDER BY created_at DESC');
+async function listGoodsReceipts(executor = pool) {
+  const headers = await query('SELECT * FROM goods_receipts ORDER BY created_at DESC', [], executor);
   const ids = headers.rows.map((row) => row.id);
-  const items = await getReceiptItems(ids);
+  const items = await getReceiptItems(ids, executor);
   const itemMap = new Map();
   items.forEach((item) => {
     if (!itemMap.has(item.receipt_id)) {
@@ -648,12 +700,12 @@ async function listGoodsReceipts() {
   }));
 }
 
-async function getGoodsReceiptById(id) {
-  const result = await query('SELECT * FROM goods_receipts WHERE id = $1 LIMIT 1', [id]);
+async function getGoodsReceiptById(id, executor = pool) {
+  const result = await query('SELECT * FROM goods_receipts WHERE id = $1 LIMIT 1', [id], executor);
   if (!result.rowCount) return null;
   return {
     ...result.rows[0],
-    items: await getReceiptItems([id])
+    items: await getReceiptItems([id], executor)
   };
 }
 
@@ -663,7 +715,7 @@ function inventoryStatus(quantity, minimum) {
   return 'in_stock';
 }
 
-async function applyReceiptToInventory(order, receiptItem, actor) {
+async function applyReceiptToInventory(order, receiptItem, actor, executor = null) {
   await receiveStock({
     site_id: order.site_id,
     site_name: order.site_name,
@@ -679,7 +731,7 @@ async function applyReceiptToInventory(order, receiptItem, actor) {
     notes: `Goods receipt for PO ${order.po_number}`,
     performed_by: actor.email,
     reason_code: 'procurement_receipt'
-  });
+  }, executor);
 }
 
 async function createGoodsReceipt(payload, actor) {
@@ -704,20 +756,45 @@ async function createGoodsReceipt(payload, actor) {
       expiry_date: null
     }));
 
-  const items = sourceItems.map((item) => ({
-    id: item.id || randomId('gri'),
-    order_item_id: normalizeText(item.order_item_id) || null,
-    ingredient_id: normalizeText(item.ingredient_id) || null,
-    ingredient_name: normalizeText(item.ingredient_name),
-    received_quantity: toNumber(item.received_quantity, 0),
-      accepted_quantity: toNumber(item.accepted_quantity, 0),
-      rejected_quantity: toNumber(item.rejected_quantity, 0),
-      unit: normalizeText(item.unit),
-      unit_cost: toNumber(item.unit_cost, 0),
+  const orderItemsById = new Map(order.items.map((item) => [String(item.id), item]));
+  const items = sourceItems.map((item) => {
+    const orderItemId = normalizeText(item.order_item_id);
+    const linkedOrderItem = orderItemsById.get(orderItemId);
+    if (!orderItemId || !linkedOrderItem) {
+      const error = new Error('Goods receipt item does not belong to the selected purchase order');
+      error.status = 409;
+      throw error;
+    }
+
+    const receivedQuantity = toNumber(item.received_quantity, 0);
+    const acceptedQuantity = toNumber(item.accepted_quantity, receivedQuantity);
+    const rejectedQuantity = toNumber(item.rejected_quantity, 0);
+    if (
+      receivedQuantity <= 0 ||
+      acceptedQuantity < 0 ||
+      rejectedQuantity < 0 ||
+      acceptedQuantity + rejectedQuantity > receivedQuantity
+    ) {
+      const error = new Error('Received, accepted, and rejected quantities are inconsistent');
+      error.status = 400;
+      throw error;
+    }
+
+    return {
+      id: item.id || randomId('gri'),
+      order_item_id: orderItemId,
+      ingredient_id: normalizeText(linkedOrderItem.ingredient_id) || null,
+      ingredient_name: normalizeText(linkedOrderItem.ingredient_name),
+      received_quantity: receivedQuantity,
+      accepted_quantity: acceptedQuantity,
+      rejected_quantity: rejectedQuantity,
+      unit: normalizeText(linkedOrderItem.unit || item.unit),
+      unit_cost: toNumber(item.unit_cost, linkedOrderItem.unit_price),
       batch_number: normalizeText(item.batch_number) || null,
       expiry_date: item.expiry_date ? dateOnly(item.expiry_date) : null,
       status: normalizeText(item.status || 'accepted') || 'accepted'
-  })).filter((item) => item.ingredient_name && item.received_quantity > 0);
+    };
+  }).filter((item) => item.ingredient_name && item.received_quantity > 0);
 
   if (!items.length) {
     const error = new Error('At least one received item is required');
@@ -726,6 +803,26 @@ async function createGoodsReceipt(payload, actor) {
   }
 
   return withTransaction(async (client) => {
+    const lockedOrder = await getPurchaseOrderById(order.id, client, true);
+    if (!lockedOrder) {
+      const error = new Error('Purchase order not found');
+      error.status = 404;
+      throw error;
+    }
+    const lockedItemsById = new Map(lockedOrder.items.map((item) => [String(item.id), item]));
+    for (const item of items) {
+      const lockedItem = lockedItemsById.get(item.order_item_id);
+      const remainingQuantity = Math.max(
+        0,
+        toNumber(lockedItem?.ordered_quantity, 0) - toNumber(lockedItem?.received_quantity, 0)
+      );
+      if (!lockedItem || item.accepted_quantity > remainingQuantity) {
+        const error = new Error('Accepted quantity exceeds the remaining purchase order quantity');
+        error.status = 409;
+        throw error;
+      }
+    }
+
     const receiptId = randomId('grn');
     await clientQuery(
       client,
@@ -736,11 +833,11 @@ async function createGoodsReceipt(payload, actor) {
       [
         receiptId,
         normalizeText(payload.grn_number || `GRN-${Date.now()}`),
-        order.id,
-        order.supplier_id,
-        order.supplier_name,
-        order.site_id,
-        order.site_name,
+        lockedOrder.id,
+        lockedOrder.supplier_id,
+        lockedOrder.supplier_name,
+        lockedOrder.site_id,
+        lockedOrder.site_name,
         dateOnly(payload.receipt_date || nowIso()),
         actor.email,
         actor.full_name || actor.email,
@@ -786,7 +883,7 @@ async function createGoodsReceipt(payload, actor) {
       }
     }
 
-    const refreshedOrder = await getPurchaseOrderById(order.id);
+    const refreshedOrder = await getPurchaseOrderById(lockedOrder.id, client);
     const totalOrdered = refreshedOrder.items.reduce((sum, item) => sum + toNumber(item.ordered_quantity, 0), 0);
     const totalReceived = refreshedOrder.items.reduce((sum, item) => sum + toNumber(item.received_quantity, 0), 0);
     const receivedPercentage = totalOrdered > 0 ? (totalReceived / totalOrdered) * 100 : 0;
@@ -799,14 +896,14 @@ async function createGoodsReceipt(payload, actor) {
            received_percentage = $3,
            updated_at = NOW()
        WHERE id = $1`,
-      [order.id, nextStatus, receivedPercentage]
+      [lockedOrder.id, nextStatus, receivedPercentage]
     );
 
     for (const item of items) {
-      await applyReceiptToInventory(order, item, actor);
+      await applyReceiptToInventory(lockedOrder, item, actor, client);
     }
 
-    return getGoodsReceiptById(receiptId);
+    return getGoodsReceiptById(receiptId, client);
   });
 }
 
@@ -817,8 +914,44 @@ async function listSupplierInvoices() {
 
 async function createSupplierInvoice(payload, actor) {
   const supplier = payload.supplier_id ? await getSupplierById(payload.supplier_id) : null;
-  const order = payload.purchase_order_id ? await getPurchaseOrderById(payload.purchase_order_id) : null;
   const receipt = payload.goods_receipt_id ? await getGoodsReceiptById(payload.goods_receipt_id) : null;
+  let order = payload.purchase_order_id ? await getPurchaseOrderById(payload.purchase_order_id) : null;
+
+  if (payload.supplier_id && !supplier) {
+    const error = new Error('Supplier not found');
+    error.status = 404;
+    throw error;
+  }
+  if (payload.purchase_order_id && !order) {
+    const error = new Error('Purchase order not found');
+    error.status = 404;
+    throw error;
+  }
+  if (payload.goods_receipt_id && !receipt) {
+    const error = new Error('Goods receipt not found');
+    error.status = 404;
+    throw error;
+  }
+
+  if (receipt && !order) {
+    order = await getPurchaseOrderById(receipt.purchase_order_id);
+  }
+  if (receipt && order && receipt.purchase_order_id !== order.id) {
+    const error = new Error('Goods receipt does not belong to the selected purchase order');
+    error.status = 409;
+    throw error;
+  }
+  if (supplier && order?.supplier_id && supplier.id !== order.supplier_id) {
+    const error = new Error('Supplier does not belong to the selected purchase order');
+    error.status = 409;
+    throw error;
+  }
+  if (supplier && receipt?.supplier_id && supplier.id !== receipt.supplier_id) {
+    const error = new Error('Supplier does not belong to the selected goods receipt');
+    error.status = 409;
+    throw error;
+  }
+
   const subtotal = toNumber(payload.subtotal, order?.subtotal || 0);
   const taxAmount = toNumber(payload.tax_amount, order?.tax_amount || 0);
   const totalAmount = toNumber(payload.total_amount, subtotal + taxAmount);
@@ -835,8 +968,8 @@ async function createSupplierInvoice(payload, actor) {
       normalizeText(payload.invoice_number || `INV-${Date.now()}`),
       supplier?.id || order?.supplier_id || null,
       supplier?.name || order?.supplier_name || receipt?.supplier_name || null,
-      order?.id || normalizeText(payload.purchase_order_id) || null,
-      receipt?.id || normalizeText(payload.goods_receipt_id) || null,
+      order?.id || null,
+      receipt?.id || null,
       dateOnly(payload.invoice_date || nowIso()),
       payload.due_date ? dateOnly(payload.due_date) : null,
       subtotal,

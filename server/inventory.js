@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import {
+  withTransaction,
   listDocuments,
   findDocument,
   createDocument,
@@ -8,6 +9,13 @@ import {
 
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const nowIso = () => new Date().toISOString();
+
+async function runInTransaction(executor, handler) {
+  if (executor) {
+    return handler(executor);
+  }
+  return withTransaction(handler);
+}
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -39,11 +47,36 @@ function inventoryStatus(quantity, minimum) {
   return 'in_stock';
 }
 
-async function listInventoryLots({ siteId, ingredientId, includeEmpty = false } = {}) {
+function getAvailableLotQuantity(lots = []) {
+  return lots.reduce(
+    (sum, lot) => sum + Math.max(0, toNumber(lot?.remaining_quantity, 0)),
+    0
+  );
+}
+
+function assertSufficientStock(lots, quantity, allowShortage = true) {
+  const requiredQuantity = toNumber(quantity, 0);
+  const availableQuantity = getAvailableLotQuantity(lots);
+  if (!allowShortage && availableQuantity < requiredQuantity) {
+    const error = new Error('Insufficient stock available for this movement');
+    error.status = 400;
+    throw error;
+  }
+  return availableQuantity;
+}
+
+async function listInventoryLots(
+  { siteId, ingredientId, includeEmpty = false, lock = false } = {},
+  executor = null
+) {
   const filters = {};
   if (siteId) filters.site_id = siteId;
   if (ingredientId) filters.ingredient_id = ingredientId;
-  const lots = await listDocuments('InventoryLot', { filters, limit: 5000, sort: 'received_date' });
+  const lots = await listDocuments(
+    'InventoryLot',
+    { filters, limit: 5000, sort: 'received_date', lock },
+    executor || undefined
+  );
   return lots.filter((lot) => includeEmpty || toNumber(lot.remaining_quantity, 0) > 0);
 }
 
@@ -56,11 +89,19 @@ async function ensureInventoryRecord({
   min_stock_level = 0,
   max_stock_level = null,
   valuation_method = 'fifo'
-}) {
+}, executor = null) {
+  if (executor) {
+    await executor.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      [`inventory:${String(site_id || '')}:${String(ingredient_id || '')}`]
+    );
+  }
+
   const existing = (await listDocuments('Inventory', {
     filters: { site_id, ingredient_id },
-    limit: 10
-  }))[0];
+    limit: 10,
+    lock: Boolean(executor)
+  }, executor || undefined))[0];
 
   if (existing) {
     return existing;
@@ -81,15 +122,15 @@ async function ensureInventoryRecord({
     valuation_method,
     batch_count: 0,
     status: 'out_of_stock'
-  });
+  }, executor || undefined);
 }
 
-async function recalculateInventoryRecord(record) {
+async function recalculateInventoryRecord(record, executor = null) {
   const lots = await listInventoryLots({
     siteId: record.site_id,
     ingredientId: record.ingredient_id,
     includeEmpty: true
-  });
+  }, executor);
 
   const activeLots = lots.filter((lot) => toNumber(lot.remaining_quantity, 0) > 0);
   const quantity = activeLots.reduce((sum, lot) => sum + toNumber(lot.remaining_quantity, 0), 0);
@@ -118,7 +159,7 @@ async function recalculateInventoryRecord(record) {
     near_expiry_count: nearExpiryCount,
     expired_lot_count: expiredCount,
     status: inventoryStatus(quantity, toNumber(record.min_stock_level, 0))
-  });
+  }, executor || undefined);
 }
 
 async function postInventoryTransaction({
@@ -144,7 +185,7 @@ async function postInventoryTransaction({
   to_site_name = null,
   reason_code = null,
   movement_layers = []
-}) {
+}, executor = null) {
   return createDocument('InventoryTransaction', {
     site_id,
     site_name,
@@ -168,10 +209,10 @@ async function postInventoryTransaction({
     to_site_name,
     reason_code: normalizeText(reason_code) || null,
     movement_layers
-  });
+  }, executor || undefined);
 }
 
-async function receiveStock({
+async function receiveStockWithExecutor({
   site_id,
   site_name,
   ingredient_id,
@@ -190,7 +231,7 @@ async function receiveStock({
   notes = '',
   performed_by = 'system',
   reason_code = 'receipt'
-}) {
+}, executor) {
   const qty = toNumber(quantity, 0);
   if (qty <= 0) {
     const error = new Error('Received quantity must be greater than zero');
@@ -207,7 +248,7 @@ async function receiveStock({
     min_stock_level,
     max_stock_level,
     valuation_method
-  });
+  }, executor);
 
   const lot = await createDocument('InventoryLot', {
     id: randomId('lot'),
@@ -227,7 +268,7 @@ async function receiveStock({
     reference_id,
     reference_type,
     status: expiry_date && daysUntil(expiry_date) < 0 ? 'expired' : 'active'
-  });
+  }, executor);
 
   await postInventoryTransaction({
     site_id,
@@ -247,13 +288,20 @@ async function receiveStock({
     total_cost: qty * toNumber(unit_cost, 0),
     unit_cost: toNumber(unit_cost, 0),
     reason_code
-  });
+  }, executor);
 
-  const refreshed = await recalculateInventoryRecord(inventory);
+  const refreshed = await recalculateInventoryRecord(inventory, executor);
   return { inventory: refreshed, lot };
 }
 
-async function deductStock({
+async function receiveStock(payload, executor = null) {
+  return runInTransaction(
+    executor,
+    (client) => receiveStockWithExecutor(payload, client)
+  );
+}
+
+async function deductStockWithExecutor({
   site_id,
   site_name,
   ingredient_id,
@@ -269,7 +317,7 @@ async function deductStock({
   valuation_method = 'fifo',
   reason_code = null,
   allow_shortage = true
-}) {
+}, executor) {
   const qty = toNumber(quantity, 0);
   if (qty <= 0) {
     const error = new Error('Deduction quantity must be greater than zero');
@@ -284,12 +332,13 @@ async function deductStock({
     ingredient_name,
     unit,
     valuation_method
-  });
+  }, executor);
 
   const lots = await listInventoryLots({
     siteId: site_id,
-    ingredientId: ingredient_id
-  });
+    ingredientId: ingredient_id,
+    lock: true
+  }, executor);
 
   const sortedLots = [...lots].sort((left, right) => {
     const leftExpiry = left.expiry_date || '9999-12-31';
@@ -299,6 +348,8 @@ async function deductStock({
     }
     return leftExpiry.localeCompare(rightExpiry);
   });
+
+  assertSufficientStock(sortedLots, qty, allow_shortage);
 
   let remainingToDeduct = qty;
   let fifoCost = 0;
@@ -314,7 +365,7 @@ async function deductStock({
     await updateDocument('InventoryLot', lot.id, {
       remaining_quantity: nextRemaining,
       status: nextRemaining <= 0 ? 'consumed' : lot.status
-    });
+    }, executor);
 
     const layerCost = layerQuantity * toNumber(lot.unit_cost, 0);
     fifoCost += layerCost;
@@ -328,12 +379,6 @@ async function deductStock({
     });
 
     remainingToDeduct -= layerQuantity;
-  }
-
-  if (remainingToDeduct > 0 && !allow_shortage) {
-    const error = new Error('Insufficient stock available for this movement');
-    error.status = 400;
-    throw error;
   }
 
   const valuationMethod = normalizeText(inventory.valuation_method || valuation_method || 'fifo') || 'fifo';
@@ -357,9 +402,9 @@ async function deductStock({
     unit_cost: qty > 0 ? totalCost / qty : 0,
     reason_code,
     movement_layers: movementLayers
-  });
+  }, executor);
 
-  const refreshed = await recalculateInventoryRecord(inventory);
+  const refreshed = await recalculateInventoryRecord(inventory, executor);
   return {
     inventory: refreshed,
     shortage_quantity: Number(remainingToDeduct.toFixed(3)),
@@ -368,15 +413,22 @@ async function deductStock({
   };
 }
 
-async function adjustStock({
+async function deductStock(payload, executor = null) {
+  return runInTransaction(
+    executor,
+    (client) => deductStockWithExecutor(payload, client)
+  );
+}
+
+async function adjustStockWithExecutor({
   inventory_id,
   quantity_change,
   reason_code,
   notes,
   transaction_date,
   performed_by
-}) {
-  const inventory = await findDocument('Inventory', inventory_id);
+}, executor) {
+  const inventory = await findDocument('Inventory', inventory_id, executor, true);
   if (!inventory) {
     const error = new Error('Inventory record not found');
     error.status = 404;
@@ -408,7 +460,7 @@ async function adjustStock({
       notes,
       performed_by,
       reason_code: reason_code || 'adjustment_positive'
-    });
+    }, executor);
   }
 
   return deductStock({
@@ -427,10 +479,17 @@ async function adjustStock({
     valuation_method: inventory.valuation_method || 'fifo',
     reason_code: reason_code || 'adjustment_negative',
     allow_shortage: false
-  });
+  }, executor);
 }
 
-async function transferStock({
+async function adjustStock(payload, executor = null) {
+  return runInTransaction(
+    executor,
+    (client) => adjustStockWithExecutor(payload, client)
+  );
+}
+
+async function transferStockWithExecutor({
   from_site_id,
   from_site_name,
   to_site_id,
@@ -440,17 +499,20 @@ async function transferStock({
   reference_id,
   notes,
   performed_by
-}) {
+}, executor) {
   const results = [];
 
   for (const item of items) {
     const sourceInventory = (await listDocuments('Inventory', {
       filters: { site_id: from_site_id, ingredient_id: item.ingredient_id },
-      limit: 10
-    }))[0];
+      limit: 10,
+      lock: true
+    }, executor))[0];
 
     if (!sourceInventory) {
-      continue;
+      const error = new Error(`Source inventory not found for ingredient ${item.ingredient_id}`);
+      error.status = 404;
+      throw error;
     }
 
     const deduction = await deductStock({
@@ -469,7 +531,7 @@ async function transferStock({
       valuation_method: sourceInventory.valuation_method || 'fifo',
       reason_code: 'transfer_out',
       allow_shortage: false
-    });
+    }, executor);
 
     for (const layer of deduction.movement_layers) {
       await receiveStock({
@@ -488,7 +550,7 @@ async function transferStock({
         notes: notes || `Transfer from ${from_site_name}`,
         performed_by,
         reason_code: 'transfer_in'
-      });
+      }, executor);
     }
 
     results.push(deduction);
@@ -497,8 +559,15 @@ async function transferStock({
   return results;
 }
 
-async function completeProduction(productionId, actor) {
-  const production = await findDocument('Production', productionId);
+async function transferStock(payload, executor = null) {
+  return runInTransaction(
+    executor,
+    (client) => transferStockWithExecutor(payload, client)
+  );
+}
+
+async function completeProductionWithExecutor(productionId, actor, executor) {
+  const production = await findDocument('Production', productionId, executor, true);
   if (!production) {
     const error = new Error('Production record not found');
     error.status = 404;
@@ -515,7 +584,7 @@ async function completeProduction(productionId, actor) {
     throw error;
   }
 
-  const ingredientCatalog = await listDocuments('Ingredient', { limit: 5000 });
+  const ingredientCatalog = await listDocuments('Ingredient', { limit: 5000 }, executor);
   const ingredientMap = new Map(ingredientCatalog.map((ingredient) => [ingredient.id, ingredient]));
   const consumptionSummary = [];
   let totalProductionCost = 0;
@@ -537,7 +606,7 @@ async function completeProduction(productionId, actor) {
       performed_by: actor.email,
       reason_code: 'production_consumption',
       allow_shortage: true
-    });
+    }, executor);
 
     const ingredientData = ingredientMap.get(ingredient.ingredient_id);
     const fallbackUnitCost = toNumber(ingredientData?.cost_per_unit, 0);
@@ -568,7 +637,14 @@ async function completeProduction(productionId, actor) {
     cost_per_serving: Number((totalProductionCost / servings).toFixed(2)),
     total_shortage_quantity: Number(totalShortageQuantity.toFixed(3)),
     completion_lines: consumptionSummary
-  });
+  }, executor);
+}
+
+async function completeProduction(productionId, actor, executor = null) {
+  return runInTransaction(
+    executor,
+    (client) => completeProductionWithExecutor(productionId, actor, client)
+  );
 }
 
 async function getStockOnHandReport() {
@@ -657,6 +733,8 @@ async function getInventoryValuationReport() {
 
 export {
   listInventoryLots,
+  getAvailableLotQuantity,
+  assertSufficientStock,
   ensureInventoryRecord,
   recalculateInventoryRecord,
   receiveStock,
