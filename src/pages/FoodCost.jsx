@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/exportData';
 import { CircleDollarSign, Download, TrendingUp, UtensilsCrossed } from 'lucide-react';
 import { formatCurrency, SAR_NAME } from '@/lib/currency';
+import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
 
 function safeNumber(value) {
   const numeric = Number(value);
@@ -37,7 +38,13 @@ export default function FoodCost() {
 
   const { data: sites = [] } = useQuery({ queryKey: ['sites'], queryFn: () => base44.entities.Site.list() });
   const { data: recipes = [] } = useQuery({ queryKey: ['recipes'], queryFn: () => base44.entities.Recipe.list() });
+  const { data: ingredients = [] } = useQuery({ queryKey: ['ingredients'], queryFn: () => base44.entities.Ingredient.list() });
   const { data: productions = [] } = useQuery({ queryKey: ['foodCostProductionsPage'], queryFn: () => base44.entities.Production.list('-production_date', 1000) });
+
+  const ingredientMap = useMemo(
+    () => Object.fromEntries(ingredients.map((ingredient) => [ingredient.id, ingredient])),
+    [ingredients]
+  );
 
   const categories = useMemo(() => {
     const values = new Set(recipes.map((recipe) => recipe.category).filter(Boolean));
@@ -56,11 +63,16 @@ export default function FoodCost() {
         return true;
       })
       .map((production) => {
-        const totalCost = safeNumber(
-          production.production_cost_total
-          ?? production.ingredient_cost_total
-          ?? production.estimated_batch_cost
-        ) || (production.ingredients_used || []).reduce((sum, ingredient) => sum + safeNumber(ingredient.estimated_cost), 0);
+        const recalculatedEstimate = (production.ingredients_used || []).reduce(
+          (sum, ingredient) => sum + calculateProductionIngredientCost(
+            ingredient,
+            ingredientMap[ingredient.ingredient_id]
+          ),
+          0
+        );
+        const totalCost = production.status === 'completed'
+          ? safeNumber(production.production_cost_total ?? production.ingredient_cost_total) || recalculatedEstimate
+          : recalculatedEstimate;
         const servings = safeNumber(production.actual_servings || production.target_servings);
         const recipe = recipes.find((item) => item.id === production.recipe_id);
         return {
@@ -100,7 +112,7 @@ export default function FoodCost() {
       total_cost: Number(row.total_cost.toFixed(2)),
       cost_per_serving: Number((row.total_servings > 0 ? row.total_cost / row.total_servings : 0).toFixed(2))
     }));
-  }, [filters, productions, recipes]);
+  }, [filters, ingredientMap, productions, recipes]);
 
   const summary = useMemo(() => {
     const totalCost = filteredRows.reduce((sum, row) => sum + safeNumber(row.total_cost), 0);

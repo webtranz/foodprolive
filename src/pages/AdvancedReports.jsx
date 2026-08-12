@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { downloadCSV, downloadExcel } from '../components/utils/exportData';
 import { formatCurrency, replaceVisibleUSDCurrency } from '@/lib/currency';
+import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
 import {
   CalendarClock,
   Download,
@@ -231,9 +232,10 @@ export default function AdvancedReports() {
   const reportRows = useMemo(() => {
     const productionCostRows = filteredData.productions.map((production) => {
       const totalCost = (production.ingredients_used || []).reduce((sum, ingredient) => {
-        const cost = safeNumber(ingredientMap[ingredient.ingredient_id]?.cost_per_unit);
-        const qty = safeNumber(ingredient.actual_quantity || ingredient.planned_quantity);
-        return sum + (cost * qty);
+        return sum + calculateProductionIngredientCost(
+          ingredient,
+          ingredientMap[ingredient.ingredient_id]
+        );
       }, 0);
       const servings = safeNumber(production.actual_servings || production.target_servings);
       return {
@@ -448,9 +450,10 @@ export default function AdvancedReports() {
       const actual = safeNumber(production.actual_servings || production.target_servings);
       accumulator[key].production_qty += actual;
       accumulator[key].food_cost += (production.ingredients_used || []).reduce((sum, ingredient) => {
-        const cost = safeNumber(ingredientMap[ingredient.ingredient_id]?.cost_per_unit);
-        const qty = safeNumber(ingredient.actual_quantity || ingredient.planned_quantity);
-        return sum + (cost * qty);
+        return sum + calculateProductionIngredientCost(
+          ingredient,
+          ingredientMap[ingredient.ingredient_id]
+        );
       }, 0);
       accumulator[key].efficiency_percent.push(target > 0 ? (actual / target) * 100 : 0);
       return accumulator;

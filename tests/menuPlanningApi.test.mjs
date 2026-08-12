@@ -22,6 +22,15 @@ const sampleRecipes = [
     id: 'recipe-lunch',
     name: 'Kabsa',
     servings: 5,
+    sub_recipes: [
+      { recipe_id: 'recipe-rice-base', recipe_name: 'Rice Base', quantity: 1, unit: 'batch' }
+    ],
+    ingredients: []
+  },
+  {
+    id: 'recipe-rice-base',
+    name: 'Rice Base',
+    servings: 5,
     ingredients: [
       { ingredient_id: 'ingredient-rice', quantity: 2, unit: 'kg' }
     ]

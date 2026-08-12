@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 
 import { canAccessPage, getRequiredPagePermission } from '../src/lib/pageAccess.js';
+import {
+  GRANULAR_PAGE_ACCESS_PERMISSION,
+  normalizeGranularPermissions,
+  PAGE_ACCESS_PERMISSION_MAP,
+  ROLE_PERMISSION_SECTIONS
+} from '../src/lib/rolePermissions.js';
 
 const fakeCan = (permissions = []) => (permission) => permissions.includes(permission);
 
@@ -38,6 +44,40 @@ const cases = [
       assert.equal(canAccessPage('EventPlanning', fakeCan(['approve_special_event'])), true);
       assert.equal(canAccessPage('EventPlanning', fakeCan(['create_special_event'])), true);
       assert.equal(canAccessPage('EventPlanning', fakeCan(['manage_menu_planning'])), true);
+    }
+  },
+  {
+    name: 'granular roles require the selected subsection permission',
+    run() {
+      const granularOnly = [GRANULAR_PAGE_ACCESS_PERMISSION, 'access_inventory'];
+      assert.equal(canAccessPage('Inventory', fakeCan(granularOnly)), true);
+      assert.equal(canAccessPage('Dashboard', fakeCan(granularOnly)), false);
+      assert.equal(canAccessPage('MenuPlanning', fakeCan([
+        GRANULAR_PAGE_ACCESS_PERMISSION,
+        'manage_menu_planning'
+      ])), false);
+    }
+  },
+  {
+    name: 'every configured role subsection maps to a route permission',
+    run() {
+      const subsectionPages = ROLE_PERMISSION_SECTIONS.flatMap((section) => (
+        section.subsections.map((subsection) => subsection.page)
+      ));
+      assert.equal(new Set(subsectionPages).size, subsectionPages.length);
+      subsectionPages.forEach((page) => {
+        assert.match(PAGE_ACCESS_PERMISSION_MAP[page], /^access_/);
+      });
+    }
+  },
+  {
+    name: 'new role permissions always enable granular page enforcement',
+    run() {
+      assert.deepEqual(normalizeGranularPermissions([]), [GRANULAR_PAGE_ACCESS_PERMISSION]);
+      assert.deepEqual(
+        normalizeGranularPermissions(['access_dashboard', 'access_dashboard']),
+        [GRANULAR_PAGE_ACCESS_PERMISSION, 'access_dashboard']
+      );
     }
   }
 ];

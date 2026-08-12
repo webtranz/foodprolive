@@ -7,6 +7,8 @@ import {
   validateDocumentRelationships
 } from './db.js';
 import { deductStock } from './inventory.js';
+import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
+import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 
 const POS_STATUSES = new Set(['success', 'warning', 'error']);
 
@@ -375,8 +377,15 @@ async function applyMappedItemDeductions({ order, item, mapping, actorEmail }) {
     return { applied: false, reason: 'No auto-deduct mapping configured' };
   }
 
-  const recipe = await findDocument('Recipe', mapping.recipe_id);
-  if (!recipe?.ingredients?.length) {
+  const [recipes, ingredients] = await Promise.all([
+    listDocuments('Recipe', { limit: 5000 }),
+    listDocuments('Ingredient', { limit: 5000 })
+  ]);
+  const recipe = recipes.find((item) => item.id === mapping.recipe_id);
+  const hasComponents = recipe
+    && ((Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0)
+      || (Array.isArray(recipe.sub_recipes) && recipe.sub_recipes.length > 0));
+  if (!hasComponents) {
     return { applied: false, reason: 'Mapped recipe has no ingredient definition' };
   }
 
@@ -384,8 +393,23 @@ async function applyMappedItemDeductions({ order, item, mapping, actorEmail }) {
     ? (toNumber(item.quantity) * toNumber(mapping.servings_per_sale, 1)) / toNumber(recipe.servings, 1)
     : toNumber(item.quantity);
 
-  for (const recipeIngredient of recipe.ingredients) {
-    const quantityToDeduct = toNumber(recipeIngredient.quantity) * saleMultiplier;
+  const expandedRecipe = expandRecipeIngredients(
+    recipe,
+    recipes,
+    ingredients,
+    { multiplier: saleMultiplier, aggregate: true }
+  );
+
+  for (const recipeIngredient of expandedRecipe.ingredients) {
+    const ingredientData = ingredients.find((entry) => entry.id === recipeIngredient.ingredient_id);
+    const inventory = await findInventoryRecord(order.site_id, recipeIngredient.ingredient_id);
+    const inventoryUnit = inventory?.unit || ingredientData?.unit || recipeIngredient.unit;
+    const quantityToDeduct = convertIngredientQuantity(
+      recipeIngredient.quantity,
+      recipeIngredient.unit || inventoryUnit,
+      inventoryUnit,
+      ingredientData
+    );
     if (quantityToDeduct <= 0) continue;
     await deductStock({
       site_id: order.site_id,
@@ -393,7 +417,7 @@ async function applyMappedItemDeductions({ order, item, mapping, actorEmail }) {
       ingredient_id: recipeIngredient.ingredient_id,
       ingredient_name: recipeIngredient.ingredient_name,
       quantity: quantityToDeduct,
-      unit: recipeIngredient.unit,
+      unit: inventoryUnit,
       transaction_type: 'pos_sale',
       transaction_date: order.business_date,
       reference_id: order.id,

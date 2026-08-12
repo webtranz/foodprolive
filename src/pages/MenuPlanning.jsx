@@ -1170,8 +1170,8 @@ export default function MenuPlanning() {
                                                     <div>
                                                       <p className="text-slate-500">Cost / serving</p>
                                                       <p className="font-semibold text-slate-900">
-                                                        {calculateRecipeCostSnapshot(selectedRecipe, ingredients).has_cost
-                                                          ? formatCurrency(calculateRecipeCostSnapshot(selectedRecipe, ingredients).cost_per_serving)
+                                                        {calculateRecipeCostSnapshot(selectedRecipe, ingredients, recipes).has_cost
+                                                          ? formatCurrency(calculateRecipeCostSnapshot(selectedRecipe, ingredients, recipes).cost_per_serving)
                                                           : 'Cost unavailable'}
                                                       </p>
                                                     </div>

@@ -147,6 +147,7 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
       sodium_per_100g: formData.sodium_per_100g ? parseFloat(formData.sodium_per_100g) : null,
       sugar_per_100g: formData.sugar_per_100g ? parseFloat(formData.sugar_per_100g) : null,
       allergens: formData.allergens,
+      conversion_factor: formData.conversion_factor ? parseFloat(formData.conversion_factor) : null,
       cost_per_unit: formData.cost_per_unit ? parseFloat(formData.cost_per_unit) : null
     };
     onSubmit(submitData);
@@ -240,14 +241,14 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
                 </div>
 
                 <div>
-                  <Label htmlFor="conversion_factor">Conversion Factor</Label>
+                  <Label htmlFor="conversion_factor">Conversion Units per Base Unit</Label>
                   <Input
                     id="conversion_factor"
                     type="number"
                     step="0.01"
                     value={formData.conversion_factor}
                     onChange={(e) => setFormData({ ...formData, conversion_factor: e.target.value })}
-                    placeholder="Base units per conversion unit"
+                    placeholder="e.g., 1000 g per kg"
                     className="mt-1"
                   />
                 </div>

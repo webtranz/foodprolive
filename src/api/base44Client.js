@@ -578,6 +578,15 @@ export const base44 = {
           headers: {}
         });
       },
+      UploadRecipeImage({ file }) {
+        const formData = new FormData();
+        formData.append('file', file);
+        return apiRequest('/api/integrations/recipe-image', {
+          method: 'POST',
+          body: formData,
+          headers: {}
+        });
+      },
       SendEmail(payload) {
         return apiRequest('/api/integrations/send-email', {
           method: 'POST',

@@ -1,3 +1,8 @@
+import {
+  GRANULAR_PAGE_ACCESS_PERMISSION,
+  PAGE_ACCESS_PERMISSION_MAP
+} from './rolePermissions.js';
+
 export const pagePermissionMap = {
   Menu: 'manage_menu_planning',
   MenuPlanning: 'manage_menu_planning',
@@ -23,14 +28,23 @@ export function getRequiredPagePermission(pageName) {
 }
 
 export function canAccessPage(pageName, can) {
+  if (typeof can !== 'function') {
+    return false;
+  }
+
+  if (can(GRANULAR_PAGE_ACCESS_PERMISSION)) {
+    const granularPermission = PAGE_ACCESS_PERMISSION_MAP[pageName];
+    return granularPermission ? Boolean(can(granularPermission)) : false;
+  }
+
   const requiredPermission = getRequiredPagePermission(pageName);
   if (!requiredPermission) {
     return true;
   }
 
   if (Array.isArray(requiredPermission)) {
-    return typeof can === 'function' ? requiredPermission.some((permission) => can(permission)) : false;
+    return requiredPermission.some((permission) => can(permission));
   }
 
-  return typeof can === 'function' ? Boolean(can(requiredPermission)) : false;
+  return Boolean(can(requiredPermission));
 }

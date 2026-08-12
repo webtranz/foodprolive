@@ -7,6 +7,8 @@ import {
 } from './db.js';
 import { createPurchaseRequest } from './procurement.js';
 import { filterRecordsByLocation, getLocationScope } from './locationScope.js';
+import { expandRecipeIngredients } from '../shared/recipeComposition.js';
+import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
 
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const DEFAULT_CYCLE_DAYS = 7;
@@ -82,30 +84,6 @@ function isOperationalMenuPlan(plan) {
   return !String(plan?.event_name || '').trim();
 }
 
-function convertQuantityToInventoryUnit(quantity, recipeUnit, ingredientUnit) {
-  const numericQuantity = toNumber(quantity, 0);
-  if (!numericQuantity) {
-    return 0;
-  }
-
-  if (!recipeUnit || !ingredientUnit || recipeUnit === ingredientUnit) {
-    return numericQuantity;
-  }
-
-  const weightUnits = { kg: 1000, g: 1 };
-  const volumeUnits = { l: 1000, ml: 1 };
-
-  if (recipeUnit in weightUnits && ingredientUnit in weightUnits) {
-    return (numericQuantity * weightUnits[recipeUnit]) / weightUnits[ingredientUnit];
-  }
-
-  if (recipeUnit in volumeUnits && ingredientUnit in volumeUnits) {
-    return (numericQuantity * volumeUnits[recipeUnit]) / volumeUnits[ingredientUnit];
-  }
-
-  return numericQuantity;
-}
-
 function normalizeMealRequirements(menuPlans = []) {
   return menuPlans.flatMap((plan) => {
     const planDate = normalizeDateOnly(plan.plan_date);
@@ -137,7 +115,12 @@ function aggregateMenuPlanRequirements(menuPlans = [], recipes = [], ingredients
 
     const recipeServings = Math.max(1, toNumber(recipe.servings, 1));
     const multiplier = requirement.expected_servings / recipeServings;
-    const recipeIngredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+    const recipeIngredients = expandRecipeIngredients(
+      recipe,
+      recipes,
+      ingredients,
+      { multiplier, aggregate: true }
+    ).ingredients;
 
     recipeIngredients.forEach((recipeIngredient) => {
       if (!recipeIngredient?.ingredient_id) {
@@ -151,10 +134,11 @@ function aggregateMenuPlanRequirements(menuPlans = [], recipes = [], ingredients
       }
 
       const inventoryUnit = ingredient.unit || recipeIngredient.unit || 'unit';
-      const normalizedQuantity = convertQuantityToInventoryUnit(
-        toNumber(recipeIngredient.quantity, 0) * multiplier,
+      const normalizedQuantity = convertIngredientQuantity(
+        toNumber(recipeIngredient.quantity, 0),
         recipeIngredient.unit || ingredient.unit,
-        inventoryUnit
+        inventoryUnit,
+        ingredient
       );
 
       const key = String(recipeIngredient.ingredient_id);

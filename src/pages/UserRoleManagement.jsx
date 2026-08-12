@@ -15,6 +15,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  GRANULAR_PAGE_ACCESS_PERMISSION,
+  normalizeGranularPermissions,
+  PAGE_ACCESS_PERMISSION_MAP,
+  ROLE_PERMISSION_SECTIONS
+} from '@/lib/rolePermissions';
+import { pagePermissionMap } from '@/lib/pageAccess';
+import {
   Briefcase,
   Building2,
   KeyRound,
@@ -27,74 +34,6 @@ import {
   UserPlus,
   Users2
 } from 'lucide-react';
-
-const PERMISSION_GROUPS = [
-  {
-    title: 'Executive Access',
-    permissions: ['view_dashboard', 'view_reports', 'export_data']
-  },
-  {
-    title: 'Master Data',
-    permissions: ['manage_projects', 'manage_ingredients', 'manage_recipes', 'manage_menu_planning']
-  },
-  {
-    title: 'Operations',
-    permissions: [
-      'manage_inventory', 'transfer_inventory', 'manage_production',
-      'create_production_request', 'edit_production_request', 'submit_production_request',
-      'review_production_request', 'approve_production_request', 'reject_production_request',
-      'request_changes_production', 'approve_production', 'start_production', 'complete_production',
-      'create_material_request', 'view_material_request', 'acknowledge_material_request'
-    ]
-  },
-  {
-    title: 'Supply Chain',
-    permissions: ['manage_procurement', 'approve_procurement', 'manage_suppliers', 'manage_pos', 'manage_erp', 'manage_forecasting']
-  },
-  {
-    title: 'People & Compliance',
-    permissions: ['manage_attendance', 'approve_attendance', 'manage_quality', 'manage_waste', 'approve_waste', 'manage_users', 'manage_roles']
-  }
-];
-
-const PERMISSION_LABELS = {
-  view_dashboard: 'View dashboard',
-  view_reports: 'View reports',
-  export_data: 'Export data',
-  manage_projects: 'Manage projects',
-  manage_ingredients: 'Manage ingredients',
-  manage_inventory: 'Manage inventory',
-  transfer_inventory: 'Transfer inventory',
-  manage_recipes: 'Manage recipes',
-  manage_menu_planning: 'Manage menu planning',
-  manage_production: 'Manage production plans',
-  create_production_request: 'Create production requests',
-  edit_production_request: 'Edit production requests',
-  submit_production_request: 'Submit production requests for approval',
-  review_production_request: 'Review production requests',
-  approve_production_request: 'Approve production requests',
-  reject_production_request: 'Reject production requests',
-  request_changes_production: 'Request changes on production requests',
-  approve_production: 'Approve production plans',
-  start_production: 'Start approved production',
-  complete_production: 'Complete production batches',
-  create_material_request: 'Create material requests',
-  view_material_request: 'View material requests',
-  acknowledge_material_request: 'Acknowledge material requests',
-  manage_procurement: 'Manage procurement',
-  approve_procurement: 'Approve procurement',
-  manage_suppliers: 'Manage suppliers',
-  manage_waste: 'Manage food waste',
-  approve_waste: 'Approve high-value waste',
-  manage_pos: 'Manage POS integration',
-  manage_erp: 'Manage ERP integration',
-  manage_forecasting: 'Manage forecasting',
-  manage_attendance: 'Manage attendance',
-  approve_attendance: 'Approve attendance',
-  manage_quality: 'Manage quality control',
-  manage_users: 'Manage users',
-  manage_roles: 'Manage roles'
-};
 
 const ROLE_STYLE_MAP = {
   admin: { color: 'bg-red-100 text-red-800 border-red-200', icon: Shield },
@@ -144,6 +83,26 @@ function normalizeRoleLabel(role) {
   return role?.name || role?.role_key?.replace(/_/g, ' ') || 'Role';
 }
 
+function preparePermissionsForEditing(permissions = []) {
+  const existing = Array.from(new Set((permissions || []).filter(Boolean)));
+  if (existing.includes(GRANULAR_PAGE_ACCESS_PERMISSION)) {
+    return existing;
+  }
+
+  const can = (permission) => existing.includes(permission);
+  const legacyPagePermissions = Object.entries(PAGE_ACCESS_PERMISSION_MAP)
+    .filter(([page]) => {
+      const requirement = pagePermissionMap[page];
+      if (!requirement) return true;
+      return Array.isArray(requirement)
+        ? requirement.some((permission) => can(permission))
+        : can(requirement);
+    })
+    .map(([, permission]) => permission);
+
+  return normalizeGranularPermissions([...existing, ...legacyPagePermissions]);
+}
+
 function SiteAccessChecklist({ roots, childMap, selectedIds, onToggle }) {
   const renderNode = (site, depth = 0) => {
     const children = childMap.get(site.id) || [];
@@ -168,22 +127,85 @@ function SiteAccessChecklist({ roots, childMap, selectedIds, onToggle }) {
   );
 }
 
-function PermissionChecklist({ selected, onToggle }) {
+function PermissionChecklist({ selected, onToggleMany }) {
   return (
-    <div className="space-y-4">
-      {PERMISSION_GROUPS.map((group) => (
-        <div key={group.title} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <h4 className="mb-3 text-sm font-semibold text-slate-700">{group.title}</h4>
-          <div className="grid gap-3 md:grid-cols-2">
-            {group.permissions.map((permission) => (
-              <label key={permission} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 text-sm">
-                <Checkbox checked={selected.includes(permission)} onCheckedChange={(checked) => onToggle(permission, Boolean(checked))} />
-                <span>{PERMISSION_LABELS[permission] || permission}</span>
-              </label>
-            ))}
-          </div>
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold text-emerald-900">Granular section access</p>
+          <p className="text-xs text-emerald-700">Select the pages this role can open, then choose its actions and approvals.</p>
         </div>
-      ))}
+        <Badge variant="outline" className="border-emerald-300 bg-white text-emerald-800">
+          {selected.filter((permission) => permission !== GRANULAR_PAGE_ACCESS_PERMISSION).length} selected
+        </Badge>
+      </div>
+
+      {ROLE_PERMISSION_SECTIONS.map((section) => {
+        const sectionPermissions = [
+          ...section.subsections.map((subsection) => subsection.key),
+          ...section.capabilities.map((capability) => capability.key)
+        ];
+        const selectedCount = sectionPermissions.filter((permission) => selected.includes(permission)).length;
+        const sectionChecked = selectedCount === sectionPermissions.length;
+        const sectionState = selectedCount > 0 && !sectionChecked ? 'indeterminate' : sectionChecked;
+
+        return (
+          <div key={section.key} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
+                <Checkbox
+                  checked={sectionState}
+                  onCheckedChange={(checked) => onToggleMany(sectionPermissions, Boolean(checked))}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-slate-800">{section.title}</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">{section.description}</span>
+                </span>
+              </label>
+              <Badge variant="outline" className="bg-white text-slate-600">
+                {selectedCount}/{sectionPermissions.length}
+              </Badge>
+            </div>
+
+            <div className="space-y-5 p-4">
+              <div>
+                <h5 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Subsections</h5>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {section.subsections.map((subsection) => (
+                    <label key={subsection.key} className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 px-3 py-2.5 hover:border-emerald-300 hover:bg-emerald-50/40">
+                      <Checkbox
+                        checked={selected.includes(subsection.key)}
+                        onCheckedChange={(checked) => onToggleMany([subsection.key], Boolean(checked))}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-slate-800">{subsection.label}</span>
+                        <span className="mt-0.5 block text-xs leading-4 text-slate-500">{subsection.description}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h5 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Actions & approvals</h5>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {section.capabilities.map((capability) => (
+                    <label key={capability.key} className="flex cursor-pointer items-center gap-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                      <Checkbox
+                        checked={selected.includes(capability.key)}
+                        onCheckedChange={(checked) => onToggleMany([capability.key], Boolean(checked))}
+                      />
+                      <span>{capability.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -238,12 +260,12 @@ export default function UserRoleManagement() {
     }));
   };
 
-  const togglePermission = (setter, selected, permission, checked) => {
+  const togglePermissions = (setter, permissions, checked) => {
     setter((current) => ({
       ...current,
       permissions: checked
-        ? Array.from(new Set([...(selected || []), permission]))
-        : (selected || []).filter((item) => item !== permission)
+        ? Array.from(new Set([...(current.permissions || []), ...permissions]))
+        : (current.permissions || []).filter((item) => !permissions.includes(item))
     }));
   };
 
@@ -331,7 +353,7 @@ export default function UserRoleManagement() {
       name: role.name || '',
       description: role.description || '',
       access_level: role.access_level || 'user',
-      permissions: Array.isArray(role.permissions) ? role.permissions : [],
+      permissions: preparePermissionsForEditing(role.permissions),
       is_active: role.is_active !== false
     });
     setRoleError('');
@@ -394,7 +416,8 @@ export default function UserRoleManagement() {
     createRoleMutation.mutate({
       ...roleForm,
       role_key: roleForm.role_key.trim().toLowerCase().replace(/\s+/g, '_'),
-      name: roleForm.name.trim()
+      name: roleForm.name.trim(),
+      permissions: normalizeGranularPermissions(roleForm.permissions)
     });
   };
 
@@ -407,7 +430,8 @@ export default function UserRoleManagement() {
       data: {
         ...editRoleForm,
         name: editRoleForm.name.trim(),
-        description: editRoleForm.description.trim()
+        description: editRoleForm.description.trim(),
+        permissions: normalizeGranularPermissions(editRoleForm.permissions)
       }
     });
   };
@@ -572,7 +596,11 @@ export default function UserRoleManagement() {
                           <TableCell>
                             <Badge variant="outline" className="capitalize">{role.access_level}</Badge>
                           </TableCell>
-                          <TableCell className="text-sm text-slate-600">{Array.isArray(role.permissions) ? role.permissions.length : 0} permissions</TableCell>
+                          <TableCell className="text-sm text-slate-600">
+                            {Array.isArray(role.permissions)
+                              ? role.permissions.filter((permission) => permission !== GRANULAR_PAGE_ACCESS_PERMISSION).length
+                              : 0} permissions
+                          </TableCell>
                           <TableCell>
                             <Badge variant={role.is_active === false ? 'secondary' : 'default'}>
                               {role.is_system ? 'System' : 'Custom'}
@@ -805,7 +833,10 @@ export default function UserRoleManagement() {
               </Select>
             </div>
 
-            <PermissionChecklist selected={roleForm.permissions} onToggle={(permission, checked) => togglePermission(setRoleForm, roleForm.permissions, permission, checked)} />
+            <PermissionChecklist
+              selected={roleForm.permissions}
+              onToggleMany={(permissions, checked) => togglePermissions(setRoleForm, permissions, checked)}
+            />
 
             {roleError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{roleError}</div> : null}
 
@@ -853,7 +884,10 @@ export default function UserRoleManagement() {
               </Select>
             </div>
 
-            <PermissionChecklist selected={editRoleForm.permissions} onToggle={(permission, checked) => togglePermission(setEditRoleForm, editRoleForm.permissions, permission, checked)} />
+            <PermissionChecklist
+              selected={editRoleForm.permissions}
+              onToggleMany={(permissions, checked) => togglePermissions(setEditRoleForm, permissions, checked)}
+            />
 
             {editingRole?.is_system ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">

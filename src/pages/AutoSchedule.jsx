@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
+import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -117,7 +118,8 @@ export default function AutoSchedule() {
         cuisine_type: r.cuisine_type,
         category: r.category,
         servings: r.servings,
-        ingredients: r.ingredients
+        ingredients: expandRecipeIngredients(r, recipes, ingredients, { aggregate: true }).ingredients,
+        sub_recipes: r.sub_recipes || []
       }));
 
       const prompt = `You are a production planning expert. Create an optimized production schedule.

@@ -587,6 +587,36 @@ async function ensureAdminAccounts() {
       [randomId('user'), admin.email, admin.fullName, passwordHash]
     );
   }
+
+  const seededUsers = [
+    {
+      email: 'patric.s@al-tamimi.com',
+      fullName: 'Patric S',
+      password: 'Init@2030',
+      role: 'user'
+    }
+  ];
+
+  for (const seededUser of seededUsers) {
+    const existingSeededUser = await query(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [seededUser.email]
+    );
+
+    if (existingSeededUser.rowCount === 0) {
+      await query(
+        `INSERT INTO users (id, email, full_name, role, status, password_hash, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'active', $5, NOW(), NOW())`,
+        [
+          randomId('user'),
+          seededUser.email,
+          seededUser.fullName,
+          seededUser.role,
+          bcrypt.hashSync(seededUser.password, 10)
+        ]
+      );
+    }
+  }
 }
 
 async function listUsers(executor = pool) {

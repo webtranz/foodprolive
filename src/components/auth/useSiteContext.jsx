@@ -16,7 +16,7 @@ export function useSiteContext() {
       .catch(() => setLoading(false));
   }, []);
 
-  const isAdmin = currentUser?.role === 'admin';
+  const isAdmin = (currentUser?.role_access_level || currentUser?.role) === 'admin';
   const allowedSiteIds = Array.isArray(currentUser?.allowed_site_ids)
     ? currentUser.allowed_site_ids
     : (currentUser?.site_id ? [currentUser.site_id] : []);

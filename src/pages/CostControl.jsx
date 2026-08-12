@@ -14,6 +14,10 @@ import { format, subDays } from 'date-fns';
 import StatCard from '@/components/ui/StatCard';
 import { downloadCSV } from '../components/utils/exportData';
 import { formatCurrency, SAR_SYMBOL } from '@/lib/currency';
+import {
+  calculateProductionIngredientCost,
+  quantityInIngredientBaseUnit
+} from '../../shared/ingredientUnits.js';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
@@ -53,13 +57,13 @@ export default function CostControl() {
     filteredProductions.forEach(prod => {
       (prod.ingredients_used || []).forEach(ing => {
         const ingData = ingredients.find(i => i.id === ing.ingredient_id);
-        const costPerUnit = ingData?.cost_per_unit || 0;
         const qty = ing.actual_quantity || ing.planned_quantity || 0;
-        const cost = qty * costPerUnit;
+        const quantityInBaseUnit = quantityInIngredientBaseUnit(qty, ing.unit, ingData);
+        const cost = calculateProductionIngredientCost(ing, ingData);
         if (!costMap[ing.ingredient_id]) {
-          costMap[ing.ingredient_id] = { name: ing.ingredient_name, totalQty: 0, totalCost: 0, unit: ing.unit };
+          costMap[ing.ingredient_id] = { name: ing.ingredient_name, totalQty: 0, totalCost: 0, unit: ingData?.unit || ing.unit };
         }
-        costMap[ing.ingredient_id].totalQty += qty;
+        costMap[ing.ingredient_id].totalQty += quantityInBaseUnit;
         costMap[ing.ingredient_id].totalCost += cost;
       });
     });
@@ -84,8 +88,7 @@ export default function CostControl() {
       recipeMap[prod.recipe_id].productions += 1;
       const ingCost = (prod.ingredients_used || []).reduce((sum, ing) => {
         const ingData = ingredients.find(i => i.id === ing.ingredient_id);
-        const qty = ing.actual_quantity || ing.planned_quantity || 0;
-        return sum + (qty * (ingData?.cost_per_unit || 0));
+        return sum + calculateProductionIngredientCost(ing, ingData);
       }, 0);
       recipeMap[prod.recipe_id].totalCost += ingCost;
     });
@@ -103,8 +106,7 @@ export default function CostControl() {
       if (!dayMap[day]) dayMap[day] = { date: day, cost: 0, servings: 0 };
       const ingCost = (prod.ingredients_used || []).reduce((sum, ing) => {
         const ingData = ingredients.find(i => i.id === ing.ingredient_id);
-        const qty = ing.actual_quantity || ing.planned_quantity || 0;
-        return sum + (qty * (ingData?.cost_per_unit || 0));
+        return sum + calculateProductionIngredientCost(ing, ingData);
       }, 0);
       dayMap[day].cost += ingCost;
       dayMap[day].servings += prod.actual_servings || prod.target_servings || 0;

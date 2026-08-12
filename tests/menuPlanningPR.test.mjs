@@ -31,9 +31,19 @@ const sampleRecipes = [
     id: 'recipe-breakfast',
     name: 'Egg Tray',
     servings: 10,
+    sub_recipes: [
+      { recipe_id: 'recipe-egg-base', recipe_name: 'Egg Base', quantity: 1, unit: 'batch' }
+    ],
     ingredients: [
-      { ingredient_id: 'ingredient-eggs', quantity: 20, unit: 'pieces' },
       { ingredient_id: 'ingredient-bread', quantity: 10, unit: 'pieces' }
+    ]
+  },
+  {
+    id: 'recipe-egg-base',
+    name: 'Egg Base',
+    servings: 10,
+    ingredients: [
+      { ingredient_id: 'ingredient-eggs', quantity: 20, unit: 'pieces' }
     ]
   },
   {

@@ -1,3 +1,6 @@
+import { expandRecipeIngredients } from '../shared/recipeComposition.js';
+import { quantityInIngredientBaseUnit } from '../shared/ingredientUnits.js';
+
 const CORE_MENU_MEAL_TYPES = new Set(['breakfast', 'lunch', 'dinner']);
 
 function toNumber(value, fallback = 0) {
@@ -14,31 +17,7 @@ function normalizeDateOnly(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : '';
 }
 
-function convertQuantityToCostUnits(quantity, recipeUnit, ingredientUnit) {
-  const numericQuantity = toNumber(quantity, 0);
-  if (!numericQuantity) {
-    return 0;
-  }
-
-  if (!recipeUnit || !ingredientUnit || recipeUnit === ingredientUnit) {
-    return numericQuantity;
-  }
-
-  const weightUnits = { kg: 1000, g: 1 };
-  const volumeUnits = { l: 1000, ml: 1 };
-
-  if (recipeUnit in weightUnits && ingredientUnit in weightUnits) {
-    return (numericQuantity * weightUnits[recipeUnit]) / weightUnits[ingredientUnit];
-  }
-
-  if (recipeUnit in volumeUnits && ingredientUnit in volumeUnits) {
-    return (numericQuantity * volumeUnits[recipeUnit]) / volumeUnits[ingredientUnit];
-  }
-
-  return numericQuantity;
-}
-
-function calculateRecipeCostSnapshot(recipe, ingredients = []) {
+function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
   const directCostPerServing = toNumber(recipe?.cost_per_serving, NaN);
   const servings = Math.max(0, toNumber(recipe?.servings, 0));
 
@@ -61,7 +40,12 @@ function calculateRecipeCostSnapshot(recipe, ingredients = []) {
     };
   }
 
-  const recipeIngredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  const recipeIngredients = expandRecipeIngredients(
+    recipe,
+    recipes,
+    ingredients,
+    { aggregate: true }
+  ).ingredients;
   if (!recipeIngredients.length) {
     return { has_cost: false, source: 'missing', cost_per_serving: 0, total_cost: 0 };
   }
@@ -78,10 +62,10 @@ function calculateRecipeCostSnapshot(recipe, ingredients = []) {
       return;
     }
 
-    const quantityInCostUnits = convertQuantityToCostUnits(
+    const quantityInCostUnits = quantityInIngredientBaseUnit(
       recipeIngredient.quantity,
       recipeIngredient.unit || ingredient?.unit,
-      ingredient?.unit
+      ingredient
     );
 
     totalCost += quantityInCostUnits * ingredientCost;
@@ -116,7 +100,7 @@ function summarizeMenuPlanCostPreview(meals = [], recipes = [], ingredients = []
 
     const recipe = recipes.find((entry) => entry.id === meal.recipe_id);
     const servings = Math.max(0, toNumber(meal.expected_servings, 0));
-    const costSnapshot = recipe ? calculateRecipeCostSnapshot(recipe, ingredients) : {
+    const costSnapshot = recipe ? calculateRecipeCostSnapshot(recipe, ingredients, recipes) : {
       has_cost: false,
       source: 'missing',
       cost_per_serving: 0,

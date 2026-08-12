@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
+import { ALL_GRANULAR_ROLE_PERMISSION_KEYS } from '@/lib/rolePermissions';
 
 const SYSTEM_ROLES = {
   admin: {
@@ -17,7 +18,7 @@ const SYSTEM_ROLES = {
       'acknowledge_material_request', 'manage_procurement',
       'approve_procurement', 'manage_suppliers', 'manage_waste', 'approve_waste',
       'manage_pos', 'manage_erp', 'manage_forecasting', 'manage_attendance',
-      'approve_attendance', 'manage_quality'
+      'approve_attendance', 'manage_quality', ...ALL_GRANULAR_ROLE_PERMISSION_KEYS
     ]
   },
   manager: {
@@ -92,9 +93,10 @@ export function usePermissions() {
   const role = currentUser?.role || 'user';
   const roleProfile = roleProfiles.find((profile) => profile.role_key === role) || SYSTEM_ROLES[role] || null;
   const accessLevel = currentUser?.role_access_level || roleProfile?.access_level || (['admin', 'manager', 'user'].includes(role) ? role : 'user');
+  const roleSpecificPermissions = roleProfile?.permissions || currentUser?.role_permissions || [];
   const permissions = Array.from(new Set([
-    ...(SYSTEM_ROLES[accessLevel]?.permissions || []),
-    ...(roleProfile?.permissions || currentUser?.role_permissions || [])
+    ...(currentUser?.is_custom_role ? [] : (SYSTEM_ROLES[accessLevel]?.permissions || [])),
+    ...roleSpecificPermissions
   ]));
 
   const can = (permission) => permissions.includes(permission);

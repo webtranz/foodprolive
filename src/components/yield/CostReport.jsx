@@ -5,6 +5,7 @@ import { Download, FileText, DollarSign, TrendingUp } from 'lucide-react';
 import { downloadCSV } from '../utils/exportData';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
+import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 
 function averageBy(items, selector) {
   const values = items
@@ -16,37 +17,6 @@ function averageBy(items, selector) {
   }
 
   return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function convertQuantityToCostUnits(quantity, recipeUnit, ingredientUnit) {
-  const numericQuantity = Number(quantity) || 0;
-  if (!numericQuantity) {
-    return 0;
-  }
-
-  if (!recipeUnit || !ingredientUnit || recipeUnit === ingredientUnit) {
-    return numericQuantity;
-  }
-
-  const weightUnits = {
-    kg: 1000,
-    g: 1
-  };
-
-  const volumeUnits = {
-    l: 1000,
-    ml: 1
-  };
-
-  if (recipeUnit in weightUnits && ingredientUnit in weightUnits) {
-    return (numericQuantity * weightUnits[recipeUnit]) / weightUnits[ingredientUnit];
-  }
-
-  if (recipeUnit in volumeUnits && ingredientUnit in volumeUnits) {
-    return (numericQuantity * volumeUnits[recipeUnit]) / volumeUnits[ingredientUnit];
-  }
-
-  return numericQuantity;
 }
 
 export default function CostReport({ ingredients = [], recipes = [] }) {
@@ -69,27 +39,8 @@ export default function CostReport({ ingredients = [], recipes = [] }) {
 
   const generateRecipeCostReport = () => {
     const recipeCosts = recipes.map(recipe => {
-      let totalCost = 0;
-      let ingredientDetails = [];
-
-      recipe.ingredients?.forEach(recipeIng => {
-        const ingredient = ingredients.find(i => i.id === recipeIng.ingredient_id);
-        if (ingredient?.cost_per_unit) {
-          const quantity = convertQuantityToCostUnits(
-            recipeIng.quantity,
-            recipeIng.unit || ingredient.unit,
-            ingredient.unit
-          );
-          const cost = quantity * ingredient.cost_per_unit;
-          totalCost += cost;
-          ingredientDetails.push({
-            name: ingredient.name,
-            quantity: quantity,
-            unit: ingredient.unit,
-            cost: cost.toFixed(2)
-          });
-        }
-      });
+      const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
+      const totalCost = costSnapshot.has_cost ? costSnapshot.total_cost : 0;
 
       const servings = Number(recipe.servings) || 0;
       const caloriesPerServing = Number(recipe.calories_per_serving) || 0;

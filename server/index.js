@@ -4,6 +4,13 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import nodemailer from 'nodemailer';
+import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
+import { validateRecipeComposition } from '../shared/recipeComposition.js';
+import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
+import {
+  MAX_RECIPE_IMAGE_BYTES,
+  RECIPE_IMAGE_MIME_TYPES
+} from '../shared/recipeImage.js';
 import {
   uploadsDir,
   listDocuments,
@@ -144,6 +151,25 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
+const recipeImageStorage = multer.diskStorage({
+  destination: (_request, _file, callback) => callback(null, uploadsDir),
+  filename: (_request, file, callback) => {
+    const extension = RECIPE_IMAGE_MIME_TYPES[file.mimetype] || '';
+    callback(null, `${Date.now()}-recipe-${Math.random().toString(36).slice(2, 10)}${extension}`);
+  }
+});
+
+const recipeImageUpload = multer({
+  storage: recipeImageStorage,
+  limits: { fileSize: MAX_RECIPE_IMAGE_BYTES, files: 1 },
+  fileFilter: (_request, file, callback) => {
+    if (!Object.hasOwn(RECIPE_IMAGE_MIME_TYPES, file.mimetype)) {
+      return callback(new Error('Recipe pictures must be JPG, PNG, WebP, or GIF files.'));
+    }
+    return callback(null, true);
+  }
+});
+
 const delay = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
@@ -231,7 +257,15 @@ async function prepareEntityPayload(user, entity, payload = {}, existing = null)
   }
 
   if (entity === 'Recipe') {
-    return normalizeRecipeLocationPayload(merged, scope);
+    const normalizedRecipe = normalizeRecipeLocationPayload(merged, scope);
+    const recipeCatalog = await listDocuments('Recipe', { limit: 5000 });
+    const compositionErrors = validateRecipeComposition(normalizedRecipe, recipeCatalog);
+    if (compositionErrors.length > 0) {
+      const error = new Error(compositionErrors[0]);
+      error.status = 400;
+      throw error;
+    }
+    return normalizedRecipe;
   }
 
   return merged;
@@ -240,6 +274,32 @@ async function prepareEntityPayload(user, entity, payload = {}, existing = null)
 async function scopeEntityRecords(user, entity, records = []) {
   const scope = await getLocationScope(user);
   return filterRecordsByLocation(user, entity, records, scope);
+}
+
+async function decorateRecipesWithServingWeights(records = []) {
+  if (!Array.isArray(records) || records.length === 0) return records;
+  const [recipeCatalog, ingredients] = await Promise.all([
+    listDocuments('Recipe', { limit: 5000 }),
+    listDocuments('Ingredient', { limit: 5000 })
+  ]);
+
+  return records.map((recipe) => {
+    const weight = calculateRecipeServingWeight(recipe, recipeCatalog, ingredients);
+    return {
+      ...recipe,
+      grams_per_serving: weight.grams_per_serving,
+      raw_grams_per_serving: weight.raw_grams_per_serving,
+      serving_weight_complete: weight.is_complete,
+      serving_weight_basis: 'cooked_yield_adjusted',
+      serving_weight_warnings: weight.warnings
+    };
+  });
+}
+
+async function decorateEntityRecords(entity, records = []) {
+  return entity === 'Recipe'
+    ? decorateRecipesWithServingWeights(records)
+    : records;
 }
 
 function filterRowsByAccessibleSites(rows = [], scope, fields = ['site_id']) {
@@ -261,23 +321,35 @@ function numericMatch(input, fallback = 0) {
 function buildInventoryShortages(production = {}, inventoryRows = [], ingredients = []) {
   return (Array.isArray(production.ingredients_used) ? production.ingredients_used : [])
     .map((ingredientLine) => {
-      const requiredQuantity = numericMatch(
+      const sourceRequiredQuantity = numericMatch(
         ingredientLine.planned_quantity ?? ingredientLine.adjusted_quantity ?? ingredientLine.required_quantity,
         0
       );
       const inventoryItem = inventoryRows.find((item) => item.ingredient_id === ingredientLine.ingredient_id);
       const ingredientMaster = ingredients.find((item) => item.id === ingredientLine.ingredient_id);
-      const currentStock = numericMatch(inventoryItem?.quantity, 0);
+      const inventoryUnit = ingredientMaster?.unit || inventoryItem?.unit || ingredientLine.unit || 'unit';
+      const requiredQuantity = convertIngredientQuantity(
+        sourceRequiredQuantity,
+        ingredientLine.unit || inventoryUnit,
+        inventoryUnit,
+        ingredientMaster
+      );
+      const currentStock = convertIngredientQuantity(
+        numericMatch(inventoryItem?.quantity, 0),
+        inventoryItem?.unit || inventoryUnit,
+        inventoryUnit,
+        ingredientMaster
+      );
       const shortageQuantity = Math.max(0, requiredQuantity - currentStock);
       const unitCost = numericMatch(
-        ingredientLine.unit_cost ?? inventoryItem?.average_cost ?? ingredientMaster?.cost_per_unit,
+        ingredientLine.unit_cost ?? ingredientMaster?.cost_per_unit ?? inventoryItem?.average_unit_cost,
         0
       );
 
       return {
         ingredient_id: ingredientLine.ingredient_id,
         ingredient_name: ingredientLine.ingredient_name,
-        unit: ingredientLine.unit || ingredientMaster?.unit || inventoryItem?.unit || 'unit',
+        unit: inventoryUnit,
         required_quantity: Number(requiredQuantity.toFixed(2)),
         current_stock: Number(currentStock.toFixed(2)),
         shortage_quantity: Number(shortageQuantity.toFixed(2)),
@@ -319,13 +391,25 @@ async function syncMaterialRequestForProduction(user, production, mode = 'draft'
   const productionItems = (Array.isArray(production.ingredients_used) ? production.ingredients_used : []).map((item) => {
     const inventoryItem = inventoryRows.find((inventoryRow) => inventoryRow.ingredient_id === item.ingredient_id);
     const ingredientMaster = ingredients.find((ingredient) => ingredient.id === item.ingredient_id);
-    const requiredQuantity = numericMatch(
+    const sourceRequiredQuantity = numericMatch(
       item.planned_quantity ?? item.adjusted_quantity ?? item.required_quantity,
       0
     );
-    const currentStock = numericMatch(inventoryItem?.quantity, 0);
+    const inventoryUnit = ingredientMaster?.unit || inventoryItem?.unit || item.unit || 'unit';
+    const requiredQuantity = convertIngredientQuantity(
+      sourceRequiredQuantity,
+      item.unit || inventoryUnit,
+      inventoryUnit,
+      ingredientMaster
+    );
+    const currentStock = convertIngredientQuantity(
+      numericMatch(inventoryItem?.quantity, 0),
+      inventoryItem?.unit || inventoryUnit,
+      inventoryUnit,
+      ingredientMaster
+    );
     const unitCost = numericMatch(
-      item.unit_cost ?? inventoryItem?.average_unit_cost ?? ingredientMaster?.cost_per_unit,
+      item.unit_cost ?? ingredientMaster?.cost_per_unit ?? inventoryItem?.average_unit_cost,
       0
     );
 
@@ -336,7 +420,7 @@ async function syncMaterialRequestForProduction(user, production, mode = 'draft'
       current_stock: currentStock,
       shortage_quantity: Math.max(0, requiredQuantity - currentStock),
       request_quantity: requiredQuantity,
-      unit: item.unit,
+      unit: inventoryUnit,
       estimated_cost: Number((requiredQuantity * unitCost).toFixed(2))
     };
   });
@@ -1836,7 +1920,8 @@ app.get('/api/entities/:entity', requireAuth, async (request, response, next) =>
       sort: request.query.sort,
       limit
     });
-    response.json(await scopeEntityRecords(request.user, entity, records));
+    const scopedRecords = await scopeEntityRecords(request.user, entity, records);
+    response.json(await decorateEntityRecords(entity, scopedRecords));
   } catch (error) {
     next(error);
   }
@@ -1852,7 +1937,8 @@ app.post('/api/entities/:entity/filter', requireAuth, async (request, response, 
       sort: request.body?.sort,
       limit: request.body?.limit
     });
-    response.json(await scopeEntityRecords(request.user, entity, records));
+    const scopedRecords = await scopeEntityRecords(request.user, entity, records);
+    response.json(await decorateEntityRecords(entity, scopedRecords));
   } catch (error) {
     next(error);
   }
@@ -1871,7 +1957,7 @@ app.get('/api/entities/:entity/:id', requireAuth, async (request, response, next
     if (!scopedRecord) {
       return response.status(403).json({ message: 'You do not have access to this record' });
     }
-    response.json(scopedRecord);
+    response.json((await decorateEntityRecords(entity, [scopedRecord]))[0]);
   } catch (error) {
     next(error);
   }
@@ -1893,7 +1979,7 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
       record = await findDocument(entity, record.id);
     }
 
-    response.status(201).json(record);
+    response.status(201).json((await decorateEntityRecords(entity, [record]))[0]);
   } catch (error) {
     next(error);
   }
@@ -1929,7 +2015,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       }
     }
 
-    return response.json(updated);
+    return response.json((await decorateEntityRecords(entity, [updated]))[0]);
   } catch (error) {
     next(error);
   }
@@ -1950,6 +2036,19 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
     if (entity === 'MenuPlan' && isSpecialEventPlan(existing)) {
       return response.status(400).json({ message: 'Special events must be deleted from the event planning module.' });
     }
+    if (entity === 'Recipe') {
+      const recipes = await listDocuments('Recipe', { limit: 5000 });
+      const referencingRecipe = recipes.find((recipe) => (
+        recipe.id !== existing.id
+        && (Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [])
+          .some((line) => line?.recipe_id === existing.id)
+      ));
+      if (referencingRecipe) {
+        return response.status(409).json({
+          message: `Recipe cannot be deleted because it is used by ${referencingRecipe.name || 'another recipe'}.`
+        });
+      }
+    }
     authorizeEntityAction(request.user, entity, 'delete', null, existing);
     const removed = await deleteDocument(entity, request.params.id);
     if (!removed) {
@@ -1966,6 +2065,26 @@ app.post('/api/integrations/upload', requireAuth, upload.single('file'), (reques
   response.json({
     file_url: fileUrl,
     public_file_url: `${resolvePublicBaseUrl(request)}${fileUrl}`
+  });
+});
+
+app.post('/api/integrations/recipe-image', requireAuth, (request, response) => {
+  recipeImageUpload.single('file')(request, response, (error) => {
+    if (error) {
+      const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      const message = error.code === 'LIMIT_FILE_SIZE'
+        ? 'Recipe pictures must not exceed 1 MB.'
+        : (error.message || 'Recipe picture upload failed.');
+      return response.status(status).json({ message });
+    }
+    if (!request.file) {
+      return response.status(400).json({ message: 'Select an image to upload.' });
+    }
+    const fileUrl = `/uploads/${request.file.filename}`;
+    return response.json({
+      file_url: fileUrl,
+      public_file_url: `${resolvePublicBaseUrl(request)}${fileUrl}`
+    });
   });
 });
 

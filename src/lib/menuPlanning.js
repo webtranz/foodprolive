@@ -1,3 +1,6 @@
+import { quantityInIngredientBaseUnit } from '../../shared/ingredientUnits.js';
+import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
+
 export const CORE_MENU_MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 export const createEmptyMealEntry = () => ({ recipe_id: '', expected_servings: '' });
 export const createMealEntryFromRecipe = (recipe) => ({
@@ -10,31 +13,7 @@ function safeNumber(value, fallback = '') {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
-function convertQuantityToCostUnits(quantity, recipeUnit, ingredientUnit) {
-  const numericQuantity = safeNumber(quantity, 0);
-  if (!numericQuantity) {
-    return 0;
-  }
-
-  if (!recipeUnit || !ingredientUnit || recipeUnit === ingredientUnit) {
-    return numericQuantity;
-  }
-
-  const weightUnits = { kg: 1000, g: 1 };
-  const volumeUnits = { l: 1000, ml: 1 };
-
-  if (recipeUnit in weightUnits && ingredientUnit in weightUnits) {
-    return (numericQuantity * weightUnits[recipeUnit]) / weightUnits[ingredientUnit];
-  }
-
-  if (recipeUnit in volumeUnits && ingredientUnit in volumeUnits) {
-    return (numericQuantity * volumeUnits[recipeUnit]) / volumeUnits[ingredientUnit];
-  }
-
-  return numericQuantity;
-}
-
-export function calculateRecipeCostSnapshot(recipe, ingredients = []) {
+export function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
   const directCostPerServing = safeNumber(recipe?.cost_per_serving, null);
   const servings = safeNumber(recipe?.servings, 0);
 
@@ -57,7 +36,12 @@ export function calculateRecipeCostSnapshot(recipe, ingredients = []) {
     };
   }
 
-  const recipeIngredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  const recipeIngredients = expandRecipeIngredients(
+    recipe,
+    recipes,
+    ingredients,
+    { aggregate: true }
+  ).ingredients;
   if (recipeIngredients.length === 0) {
     return { cost_per_serving: 0, total_cost: 0, has_cost: false, source: 'missing' };
   }
@@ -73,10 +57,10 @@ export function calculateRecipeCostSnapshot(recipe, ingredients = []) {
       return;
     }
 
-    const quantityInCostUnits = convertQuantityToCostUnits(
+    const quantityInCostUnits = quantityInIngredientBaseUnit(
       recipeIngredient.quantity,
       recipeIngredient.unit || ingredient?.unit,
-      ingredient?.unit
+      ingredient
     );
 
     totalCost += quantityInCostUnits * ingredientCost;
@@ -142,7 +126,7 @@ export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], ex
           return [];
         }
 
-        const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients);
+        const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
         const costPerServing = costSnapshot.has_cost ? costSnapshot.cost_per_serving : 0;
 
         return [{
@@ -259,7 +243,7 @@ export function summarizeDailyMenuCosts(formState, recipes = [], ingredients = [
         };
       }
 
-      const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients);
+      const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
       const costPerServing = costSnapshot.has_cost ? costSnapshot.cost_per_serving : 0;
       return {
         recipe_id: recipe.id,

@@ -6,6 +6,7 @@ import {
   getStockOnHandReport
 } from './inventory.js';
 import { getLocationScope } from './locationScope.js';
+import { calculateProductionIngredientCost } from '../shared/ingredientUnits.js';
 
 const nowIso = () => new Date().toISOString();
 const ROW_EXPORT_TRANSPORTS = new Set(['csv', 'excel', 'preview']);
@@ -185,9 +186,10 @@ async function buildFoodCostRows({ startDate, endDate, locationId, category, sco
           .filter((production) => matchesDate(production.production_date, startDate, endDate))
           .map((production) => {
             const totalCost = (production.ingredients_used || []).reduce((sum, ingredient) => {
-              const unitCost = safeNumber(ingredientMap.get(ingredient.ingredient_id)?.cost_per_unit);
-              const quantity = safeNumber(ingredient.actual_quantity || ingredient.planned_quantity);
-              return sum + (unitCost * quantity);
+              return sum + calculateProductionIngredientCost(
+                ingredient,
+                ingredientMap.get(ingredient.ingredient_id)
+              );
             }, 0);
             const servings = safeNumber(production.actual_servings || production.target_servings);
             return {

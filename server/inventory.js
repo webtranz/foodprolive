@@ -6,6 +6,10 @@ import {
   createDocument,
   updateDocument
 } from './db.js';
+import {
+  calculateIngredientCost,
+  convertIngredientQuantity
+} from '../shared/ingredientUnits.js';
 
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const nowIso = () => new Date().toISOString();
@@ -584,20 +588,40 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
     throw error;
   }
 
-  const ingredientCatalog = await listDocuments('Ingredient', { limit: 5000 }, executor);
+  const [ingredientCatalog, inventoryCatalog] = await Promise.all([
+    listDocuments('Ingredient', { limit: 5000 }, executor),
+    listDocuments('Inventory', {
+      filters: { site_id: production.site_id },
+      limit: 5000
+    }, executor)
+  ]);
   const ingredientMap = new Map(ingredientCatalog.map((ingredient) => [ingredient.id, ingredient]));
+  const inventoryMap = new Map(inventoryCatalog.map((item) => [item.ingredient_id, item]));
   const consumptionSummary = [];
   let totalProductionCost = 0;
   let totalShortageQuantity = 0;
 
   for (const ingredient of production.ingredients_used || []) {
+    const ingredientData = ingredientMap.get(ingredient.ingredient_id);
+    const sourceQuantity = toNumber(
+      ingredient.actual_quantity ?? ingredient.planned_quantity ?? ingredient.adjusted_quantity,
+      0
+    );
+    const inventoryItem = inventoryMap.get(ingredient.ingredient_id);
+    const inventoryUnit = inventoryItem?.unit || ingredientData?.unit || ingredient.unit;
+    const inventoryQuantity = convertIngredientQuantity(
+      sourceQuantity,
+      ingredient.unit || inventoryUnit,
+      inventoryUnit,
+      ingredientData
+    );
     const movement = await deductStock({
       site_id: production.site_id,
       site_name: production.site_name,
       ingredient_id: ingredient.ingredient_id,
       ingredient_name: ingredient.ingredient_name,
-      quantity: ingredient.planned_quantity || ingredient.actual_quantity || 0,
-      unit: ingredient.unit,
+      quantity: inventoryQuantity,
+      unit: inventoryUnit,
       transaction_type: 'production_use',
       transaction_date: production.production_date,
       reference_id: production.id,
@@ -608,9 +632,13 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
       allow_shortage: true
     }, executor);
 
-    const ingredientData = ingredientMap.get(ingredient.ingredient_id);
     const fallbackUnitCost = toNumber(ingredientData?.cost_per_unit, 0);
-    const fallbackShortageCost = movement.shortage_quantity * fallbackUnitCost;
+    const fallbackShortageCost = calculateIngredientCost(
+      movement.shortage_quantity,
+      inventoryUnit,
+      ingredientData,
+      fallbackUnitCost
+    );
     const movementCost = toNumber(movement.total_cost, 0);
 
     totalProductionCost += movementCost + fallbackShortageCost;
@@ -618,8 +646,8 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
     consumptionSummary.push({
       ingredient_id: ingredient.ingredient_id,
       ingredient_name: ingredient.ingredient_name,
-      unit: ingredient.unit,
-      planned_quantity: toNumber(ingredient.planned_quantity || ingredient.actual_quantity, 0),
+      unit: inventoryUnit,
+      planned_quantity: Number(inventoryQuantity.toFixed(4)),
       shortage_quantity: toNumber(movement.shortage_quantity, 0),
       posted_cost: Number(movementCost.toFixed(2)),
       estimated_shortage_cost: Number(fallbackShortageCost.toFixed(2)),

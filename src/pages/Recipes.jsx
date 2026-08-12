@@ -239,6 +239,8 @@ export default function Recipes() {
               <RecipeCard
                 key={recipe.id}
                 recipe={recipe}
+                recipes={recipes}
+                ingredients={ingredients}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
               />
@@ -252,6 +254,7 @@ export default function Recipes() {
           onClose={() => { setFormOpen(false); setEditingRecipe(null); }}
           onSubmit={handleSubmit}
           recipe={editingRecipe}
+          recipes={recipes}
           ingredients={ingredients}
           sites={sites}
           isLoading={createMutation.isPending || updateMutation.isPending}

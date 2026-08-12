@@ -51,9 +51,13 @@ const AuthenticatedApp = () => {
     <Routes>
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="/" element={
-        <LayoutWrapper currentPageName={mainPageKey}>
-          <MainPage />
-        </LayoutWrapper>
+        canAccessPage(mainPageKey, can)
+          ? (
+            <LayoutWrapper currentPageName={mainPageKey}>
+              <MainPage />
+            </LayoutWrapper>
+          )
+          : <AccessDenied />
       } />
       {Object.entries(Pages).map(([path, Page]) => (
         <Route

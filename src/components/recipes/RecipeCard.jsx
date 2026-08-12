@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { MoreVertical, Pencil, Trash2, Clock, Users, Flame, ShieldAlert, Candy, Droplets } from 'lucide-react';
+import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
 
 const CATEGORY_COLORS = {
   breakfast: 'bg-amber-100 text-amber-700',
@@ -15,11 +16,23 @@ const CATEGORY_COLORS = {
   side: 'bg-slate-100 text-slate-700'
 };
 
-export default function RecipeCard({ recipe, onEdit, onDelete }) {
+export default function RecipeCard({ recipe, recipes = [], ingredients = [], onEdit, onDelete }) {
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
   const allergens = Array.isArray(recipe.allergens) ? recipe.allergens : [];
+  const subRecipes = Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [];
   const siteNames = Array.isArray(recipe.site_names) ? recipe.site_names.filter(Boolean) : [];
   const isGlobalRecipe = !recipe.site_scope || recipe.site_scope === 'global' || siteNames.length === 0;
+  const servingWeight = useMemo(
+    () => calculateRecipeServingWeight(recipe, recipes, ingredients),
+    [ingredients, recipe, recipes]
+  );
+  const formattedServingWeight = servingWeight.is_complete
+    ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(servingWeight.grams_per_serving)
+    : '—';
+  const servingCount = Number(recipe.servings) || 1;
+  const servingWeightTitle = servingWeight.is_complete
+    ? 'Yield-adjusted cooked weight per serving'
+    : servingWeight.warnings.join(' ') || 'Add ingredient weights and units to calculate grams per serving.';
 
   return (
     <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 group overflow-hidden">
@@ -75,10 +88,13 @@ export default function RecipeCard({ recipe, onEdit, onDelete }) {
           </p>
         )}
 
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <div className="flex items-center gap-1 text-slate-600">
             <Users className="w-4 h-4 text-slate-400" />
-            <span>{recipe.servings} servings</span>
+            <span>{servingCount} serving{servingCount === 1 ? '' : 's'}</span>
+            <span className={servingWeight.is_complete ? 'font-medium text-emerald-700' : 'text-slate-400'} title={servingWeightTitle}>
+              · {formattedServingWeight} g
+            </span>
           </div>
           
           {totalTime > 0 && (
@@ -128,6 +144,13 @@ export default function RecipeCard({ recipe, onEdit, onDelete }) {
             <p className="text-xs text-slate-500 truncate">
               {recipe.ingredients.map(i => i.ingredient_name).join(', ')}
             </p>
+          </div>
+        )}
+
+        {subRecipes.length > 0 && (
+          <div className="mt-2 rounded-lg bg-indigo-50 px-3 py-2">
+            <p className="text-xs font-semibold text-indigo-700">{subRecipes.length} sub-recipe{subRecipes.length === 1 ? '' : 's'}</p>
+            <p className="truncate text-xs text-indigo-600">{subRecipes.map((item) => item.recipe_name).join(', ')}</p>
           </div>
         )}
 

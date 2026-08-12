@@ -22,6 +22,7 @@ import {
   Users
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
 
 const CUISINE_TYPES = [
   { value: 'continental', label: 'Continental', icon: 'C' },
@@ -114,7 +115,7 @@ export default function Menu() {
     return productions.map((production) => {
       const fallbackCost = (production.ingredients_used || []).reduce((sum, ingredient) => {
         const ingredientData = ingredientMap[ingredient.ingredient_id];
-        return sum + (toNumber(ingredient.planned_quantity || ingredient.actual_quantity) * toNumber(ingredientData?.cost_per_unit));
+        return sum + calculateProductionIngredientCost(ingredient, ingredientData);
       }, 0);
 
       const totalCost = toNumber(production.production_cost_total || production.ingredient_cost_total, fallbackCost);

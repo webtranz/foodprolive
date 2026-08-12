@@ -1,4 +1,5 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
+import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,7 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Trash2, Flame, ShieldAlert } from 'lucide-react';
+import { Plus, Trash2, Flame, ShieldAlert, GitBranch, ImagePlus, X } from 'lucide-react';
+import {
+  expandRecipeIngredients,
+  validateRecipeComposition,
+  wouldCreateRecipeCycle
+} from '../../../shared/recipeComposition.js';
+import { validateRecipeImageFile } from '../../../shared/recipeImage.js';
+import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
 
 const ALLERGEN_COLORS = {
   dairy: 'bg-sky-100 text-sky-700',
@@ -41,7 +49,12 @@ function roundValue(value) {
   return Math.round((Number(value) || 0) * 10) / 10;
 }
 
-export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredients = [], sites = [], isLoading }) {
+export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = [], ingredients = [], sites = [], isLoading }) {
+  const imageInputRef = useRef(null);
+  const [formError, setFormError] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     recipe_code: '',
@@ -53,7 +66,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
     cook_time_minutes: '',
     servings: '1',
     instructions: '',
+    image_url: '',
     ingredients: [],
+    sub_recipes: [],
     is_active: true,
     site_scope: 'global',
     site_ids: []
@@ -72,7 +87,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
         cook_time_minutes: recipe.cook_time_minutes || '',
         servings: recipe.servings || '1',
         instructions: recipe.instructions || '',
+        image_url: recipe.image_url || '',
         ingredients: recipe.ingredients || [],
+        sub_recipes: Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [],
         is_active: recipe.is_active !== false,
         site_scope: recipe.site_scope || 'global',
         site_ids: Array.isArray(recipe.site_ids) ? recipe.site_ids : []
@@ -89,13 +106,26 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
         cook_time_minutes: '',
         servings: '1',
         instructions: '',
+        image_url: '',
         ingredients: [],
+        sub_recipes: [],
         is_active: true,
         site_scope: 'global',
         site_ids: []
       });
     }
+    setFormError('');
+    setImageFile(null);
+    setImagePreview(recipe?.image_url || '');
+    setImageUploading(false);
   }, [recipe, open]);
+
+  const availableSubRecipes = useMemo(() => recipes.filter((recipeOption) => (
+    recipeOption?.id
+    && recipeOption.id !== recipe?.id
+    && recipeOption.is_active !== false
+    && !wouldCreateRecipeCycle(recipe?.id, recipeOption.id, recipes)
+  )), [recipe?.id, recipes]);
 
   const calculatedNutrition = useMemo(() => {
     const totals = {
@@ -108,7 +138,14 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
     };
     const allergenSet = new Set();
 
-    formData.ingredients.forEach((ingredientLine) => {
+    const expanded = expandRecipeIngredients(
+      { ...formData, id: recipe?.id || null },
+      recipes,
+      ingredients,
+      { aggregate: false }
+    );
+
+    expanded.ingredients.forEach((ingredientLine) => {
       const ingredientData = ingredients.find((item) => item.id === ingredientLine.ingredient_id);
       if (!ingredientData) {
         return;
@@ -145,7 +182,16 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
       sugar_per_serving: roundValue(totals.sugar / servings),
       allergens: Array.from(allergenSet).sort()
     };
-  }, [formData.ingredients, formData.servings, ingredients]);
+  }, [formData, ingredients, recipe?.id, recipes]);
+
+  const calculatedServingWeight = useMemo(
+    () => calculateRecipeServingWeight(
+      { ...formData, id: recipe?.id || null },
+      recipes,
+      ingredients
+    ),
+    [formData, ingredients, recipe?.id, recipes]
+  );
 
   const addIngredient = () => {
     setFormData((prev) => ({
@@ -178,10 +224,90 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
     });
   };
 
-  const handleSubmit = (e) => {
+  const addSubRecipe = () => {
+    setFormData((prev) => ({
+      ...prev,
+      sub_recipes: [
+        ...prev.sub_recipes,
+        { recipe_id: '', recipe_name: '', quantity: '1', unit: 'batch' }
+      ]
+    }));
+  };
+
+  const removeSubRecipe = (index) => {
+    setFormData((prev) => ({
+      ...prev,
+      sub_recipes: prev.sub_recipes.filter((_, itemIndex) => itemIndex !== index)
+    }));
+  };
+
+  const updateSubRecipe = (index, field, value) => {
+    setFormData((prev) => {
+      const nextSubRecipes = [...prev.sub_recipes];
+      nextSubRecipes[index] = { ...nextSubRecipes[index], [field]: value };
+      if (field === 'recipe_id') {
+        const selected = recipes.find((item) => item.id === value);
+        nextSubRecipes[index].recipe_name = selected?.name || '';
+      }
+      return { ...prev, sub_recipes: nextSubRecipes };
+    });
+  };
+
+  const handleImageChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    event.target.value = '';
+    if (!file) return;
+    const validationError = validateRecipeImageFile(file);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setImagePreview(String(reader.result || ''));
+    reader.readAsDataURL(file);
+    setImageFile(file);
+    setFormError('');
+  };
+
+  const removeImage = () => {
+    setImageFile(null);
+    setImagePreview('');
+    setFormData((current) => ({ ...current, image_url: '' }));
+    setFormError('');
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    const normalizedSubRecipes = formData.sub_recipes.map((line) => ({
+      ...line,
+      quantity: parseFloat(line.quantity) || 0,
+      unit: line.unit || 'batch'
+    }));
+    const compositionErrors = validateRecipeComposition(
+      { ...formData, id: recipe?.id || null, sub_recipes: normalizedSubRecipes },
+      recipes
+    );
+    if (compositionErrors.length > 0) {
+      setFormError(compositionErrors[0]);
+      return;
+    }
+    setFormError('');
+    let imageUrl = formData.image_url || '';
+    if (imageFile) {
+      try {
+        setImageUploading(true);
+        const uploadResult = await base44.integrations.Core.UploadRecipeImage({ file: imageFile });
+        imageUrl = uploadResult.file_url || uploadResult.public_file_url || '';
+      } catch (error) {
+        setFormError(error.message || 'Recipe picture upload failed.');
+        setImageUploading(false);
+        return;
+      }
+      setImageUploading(false);
+    }
     const submitData = {
       ...formData,
+      image_url: imageUrl,
       prep_time_minutes: formData.prep_time_minutes ? parseInt(formData.prep_time_minutes, 10) : null,
       cook_time_minutes: formData.cook_time_minutes ? parseInt(formData.cook_time_minutes, 10) : null,
       servings: formData.servings ? parseInt(formData.servings, 10) : 1,
@@ -191,7 +317,8 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
       ingredients: formData.ingredients.map((ingredientLine) => ({
         ...ingredientLine,
         quantity: parseFloat(ingredientLine.quantity) || 0
-      }))
+      })),
+      sub_recipes: normalizedSubRecipes
     };
     onSubmit(submitData);
   };
@@ -316,6 +443,46 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
             </div>
           </div>
 
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <ImagePlus className="h-5 w-5 text-emerald-600" />
+                  <Label className="text-base font-semibold">Recipe Picture</Label>
+                </div>
+                <p className="mt-1 text-sm text-slate-500">JPG, PNG, WebP, or GIF. Maximum file size: 1 MB.</p>
+              </div>
+              {imagePreview ? (
+                <Button type="button" variant="ghost" size="sm" onClick={removeImage} className="text-red-600 hover:bg-red-50 hover:text-red-700">
+                  <X className="mr-1 h-4 w-4" /> Remove
+                </Button>
+              ) : null}
+            </div>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={handleImageChange}
+            />
+            {imagePreview ? (
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                className="group relative block h-56 w-full overflow-hidden rounded-xl border border-slate-200 bg-white"
+              >
+                <img src={imagePreview} alt="Recipe preview" className="h-full w-full object-cover" />
+                <span className="absolute inset-x-0 bottom-0 bg-slate-950/70 px-3 py-2 text-sm font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
+                  Click to replace picture
+                </span>
+              </button>
+            ) : (
+              <Button type="button" variant="outline" onClick={() => imageInputRef.current?.click()} className="h-32 w-full border-dashed bg-white">
+                <ImagePlus className="mr-2 h-5 w-5" /> Choose Recipe Picture
+              </Button>
+            )}
+          </div>
+
           <div>
             <div className="mb-3 flex items-center justify-between">
               <Label className="text-base font-semibold">Ingredients</Label>
@@ -390,7 +557,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
               ) : null}
             </div>
 
-            {formData.ingredients.length > 0 ? (
+            {formData.ingredients.length > 0 || formData.sub_recipes.length > 0 ? (
               <div className="mt-4 space-y-4 rounded-xl border border-orange-100 bg-orange-50 p-4">
                 <div className="flex items-center gap-2">
                   <Flame className="h-5 w-5 text-orange-500" />
@@ -429,7 +596,13 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
                   </div>
                   <div>
                     <p className="text-sm text-slate-600">Servings</p>
-                    <p className="font-semibold text-slate-900">{Math.max(1, Number(formData.servings) || 1)}</p>
+                    <p className="font-semibold text-slate-900">
+                      {Math.max(1, Number(formData.servings) || 1)}
+                      {' · '}
+                      {calculatedServingWeight.is_complete
+                        ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(calculatedServingWeight.grams_per_serving)
+                        : '—'} g each
+                    </p>
                   </div>
                 </div>
                 <div className="rounded-lg border border-amber-200 bg-white p-3">
@@ -451,6 +624,76 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
                 </div>
               </div>
             ) : null}
+          </div>
+
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <GitBranch className="h-5 w-5 text-indigo-600" />
+                  <Label className="text-base font-semibold text-indigo-950">Sub-recipes</Label>
+                </div>
+                <p className="mt-1 text-sm text-indigo-700">
+                  Reuse another recipe as a component. Its raw ingredients are expanded automatically for cost, nutrition, production, and procurement.
+                </p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={addSubRecipe} className="border-indigo-200 bg-white">
+                <Plus className="mr-1 h-4 w-4" />
+                Add Sub-recipe
+              </Button>
+            </div>
+
+            <div className="space-y-3">
+              {formData.sub_recipes.map((subRecipeLine, index) => (
+                <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border border-indigo-100 bg-white p-3 md:grid-cols-[1fr_120px_140px_48px]">
+                  <Select
+                    value={subRecipeLine.recipe_id}
+                    onValueChange={(value) => updateSubRecipe(index, 'recipe_id', value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select another recipe" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableSubRecipes.map((recipeOption) => (
+                        <SelectItem key={recipeOption.id} value={recipeOption.id}>
+                          {recipeOption.name} ({recipeOption.servings || 1} servings)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={subRecipeLine.quantity}
+                    onChange={(event) => updateSubRecipe(index, 'quantity', event.target.value)}
+                    placeholder="Qty"
+                  />
+                  <Select
+                    value={subRecipeLine.unit || 'batch'}
+                    onValueChange={(value) => updateSubRecipe(index, 'unit', value)}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="batch">Batch(es)</SelectItem>
+                      <SelectItem value="servings">Serving(s)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeSubRecipe(index)}
+                    className="text-red-500 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+              {formData.sub_recipes.length === 0 ? (
+                <p className="py-3 text-center text-sm text-indigo-600">No sub-recipes added.</p>
+              ) : null}
+            </div>
           </div>
 
           <div>
@@ -502,15 +745,18 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, ingredient
           </div>
 
           <DialogFooter>
+            {formError ? (
+              <p className="mr-auto text-sm font-medium text-red-600">{formError}</p>
+            ) : null}
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
             <Button
               type="submit"
               className="bg-emerald-600 hover:bg-emerald-700"
-              disabled={isLoading}
+              disabled={isLoading || imageUploading}
             >
-              {isLoading ? 'Saving...' : (recipe ? 'Update Recipe' : 'Create Recipe')}
+              {imageUploading ? 'Uploading picture...' : isLoading ? 'Saving...' : (recipe ? 'Update Recipe' : 'Create Recipe')}
             </Button>
           </DialogFooter>
         </form>

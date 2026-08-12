@@ -19,6 +19,12 @@ import { format } from 'date-fns';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { formatCurrency } from '@/lib/currency';
+import {
+  calculateIngredientCost,
+  calculateProductionIngredientCost,
+  convertIngredientQuantity
+} from '../../shared/ingredientUnits.js';
+import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -187,34 +193,61 @@ export default function Production() {
   useEffect(() => {
     if (formData.recipe_id && formData.target_servings && formData.site_id) {
       const recipe = recipes.find(r => r.id === formData.recipe_id);
-      if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
+      const hasRecipeComponents = recipe
+        && ((Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0)
+          || (Array.isArray(recipe.sub_recipes) && recipe.sub_recipes.length > 0));
+      if (hasRecipeComponents) {
         const multiplier = recipe.servings > 0
           ? parseFloat(formData.target_servings) / recipe.servings
           : parseFloat(formData.target_servings) || 1;
         const siteInventory = inventory.filter(i => i.site_id === formData.site_id);
+        const expandedRecipe = expandRecipeIngredients(
+          recipe,
+          recipes,
+          ingredients,
+          { multiplier, aggregate: true }
+        );
         
-        const calculated = recipe.ingredients.map(ing => {
+        const calculated = expandedRecipe.ingredients.map(ing => {
           const ingredientData = ingredients.find(i => i.id === ing.ingredient_id);
-          const plannedQty = (ing.quantity || 0) * multiplier;
+          const plannedQty = ing.quantity || 0;
           const shrinkage = ingredientData?.shrinkage_percent || 0;
           const adjustedQty = plannedQty * (1 + shrinkage / 100);
           
           const invItem = siteInventory.find(i => i.ingredient_id === ing.ingredient_id);
+          const inventoryUnit = invItem?.unit || ingredientData?.unit || ing.unit;
+          const costUnit = ingredientData?.unit || inventoryUnit;
+          const requiredInventoryQty = convertIngredientQuantity(
+            adjustedQty,
+            ing.unit,
+            inventoryUnit,
+            ingredientData
+          );
+          const costQuantity = convertIngredientQuantity(
+            adjustedQty,
+            ing.unit,
+            costUnit,
+            ingredientData
+          );
           const currentStock = invItem?.quantity || 0;
-          const shortage = Math.max(0, adjustedQty - currentStock);
+          const shortage = Math.max(0, requiredInventoryQty - currentStock);
           const unitCost = toNumber(ingredientData?.cost_per_unit, 0);
-          const estimatedCost = adjustedQty * unitCost;
+          const estimatedCost = calculateIngredientCost(adjustedQty, ing.unit, ingredientData, unitCost);
           
           return {
             ingredient_id: ing.ingredient_id,
             ingredient_name: ing.ingredient_name,
+            source_recipe_names: ing.source_recipe_names || [],
             planned_quantity: Math.round(plannedQty * 100) / 100,
             adjusted_quantity: Math.round(adjustedQty * 100) / 100,
             current_stock: Math.round(currentStock * 100) / 100,
             shortage: Math.round(shortage * 100) / 100,
             unit: ing.unit,
+            inventory_unit: inventoryUnit,
+            cost_quantity: Number(costQuantity.toFixed(4)),
+            cost_unit: costUnit,
             shrinkage_percent: shrinkage,
-            sufficient: currentStock >= adjustedQty,
+            sufficient: currentStock >= requiredInventoryQty,
             unit_cost: Number(unitCost.toFixed(2)),
             estimated_cost: Number(estimatedCost.toFixed(2))
           };
@@ -343,12 +376,21 @@ export default function Production() {
     const siteInventory = inventory.filter((item) => item.site_id === production.site_id);
     return (production.ingredients_used || []).map((ingredient) => {
       const stockItem = siteInventory.find((item) => item.ingredient_id === ingredient.ingredient_id);
+      const ingredientData = ingredients.find((item) => item.id === ingredient.ingredient_id);
       const requiredQuantity = toNumber(ingredient.planned_quantity ?? ingredient.adjusted_quantity, 0);
+      const inventoryUnit = stockItem?.unit || ingredientData?.unit || ingredient.unit;
+      const requiredInventoryQty = convertIngredientQuantity(
+        requiredQuantity,
+        ingredient.unit,
+        inventoryUnit,
+        ingredientData
+      );
       const currentStock = toNumber(stockItem?.quantity, 0);
-      const shortage = Math.max(0, requiredQuantity - currentStock);
+      const shortage = Math.max(0, requiredInventoryQty - currentStock);
 
       return {
         ...ingredient,
+        inventory_unit: inventoryUnit,
         current_stock: Number(currentStock.toFixed(2)),
         shortage: Number(shortage.toFixed(2)),
         sufficient: shortage <= 0
@@ -368,9 +410,12 @@ export default function Production() {
       ingredients_used: calculatedIngredients.map(ing => ({
         ingredient_id: ing.ingredient_id,
         ingredient_name: ing.ingredient_name,
+        source_recipe_names: ing.source_recipe_names,
         planned_quantity: ing.adjusted_quantity,
         actual_quantity: null,
         unit: ing.unit,
+        cost_quantity: ing.cost_quantity,
+        cost_unit: ing.cost_unit,
         unit_cost: ing.unit_cost,
         estimated_cost: ing.estimated_cost
       })),
@@ -548,17 +593,21 @@ export default function Production() {
                     const shortages = getProductionShortages(production);
                     const requiresMaterialRequest = true;
                     const canStartProduction = canStartWithMaterialRequest(linkedMaterialRequest);
-                    const totalCost = toNumber(
-                      production.production_cost_total
-                      ?? production.ingredient_cost_total
-                      ?? production.estimated_batch_cost,
-                      (production.ingredients_used || []).reduce((sum, ingredient) => sum + toNumber(ingredient.estimated_cost, 0), 0)
-                    );
+                    const recalculatedEstimate = (production.ingredients_used || []).reduce((sum, ingredient) => {
+                      const ingredientData = ingredients.find((item) => item.id === ingredient.ingredient_id);
+                      return sum + calculateProductionIngredientCost(ingredient, ingredientData);
+                    }, 0);
+                    const isCompleted = production.status === 'completed';
+                    const totalCost = isCompleted
+                      ? toNumber(
+                        production.production_cost_total ?? production.ingredient_cost_total,
+                        recalculatedEstimate
+                      )
+                      : recalculatedEstimate;
                     const servings = Math.max(1, toNumber(production.target_servings, 0));
-                    const costPerServing = toNumber(
-                      production.cost_per_serving ?? production.estimated_cost_per_serving,
-                      totalCost / servings
-                    );
+                    const costPerServing = isCompleted
+                      ? toNumber(production.cost_per_serving, totalCost / servings)
+                      : totalCost / servings;
 
                     const wasteInsightKey = `${production.site_id || 'unknown'}::${production.recipe_id || 'unknown'}::${production.meal_type || 'unspecified'}`;
                     const wasteInsight = recipeWasteInsights.get(wasteInsightKey);
@@ -678,11 +727,15 @@ export default function Production() {
                     <div className="mt-4 pt-4 border-t border-slate-100">
                       <p className="text-sm font-medium text-slate-700 mb-2">Required Ingredients:</p>
                       <div className="flex flex-wrap gap-2">
-                        {production.ingredients_used.map((ing, idx) => (
-                          <Badge key={idx} variant="outline" className="font-normal">
-                            {ing.ingredient_name}: {ing.planned_quantity} {ing.unit} {toNumber(ing.estimated_cost, 0) > 0 ? `• ${formatCurrency(toNumber(ing.estimated_cost, 0))}` : ''}
-                          </Badge>
-                        ))}
+                        {production.ingredients_used.map((ing, idx) => {
+                          const ingredientData = ingredients.find((item) => item.id === ing.ingredient_id);
+                          const lineCost = calculateProductionIngredientCost(ing, ingredientData);
+                          return (
+                            <Badge key={idx} variant="outline" className="font-normal">
+                              {ing.ingredient_name}: {ing.planned_quantity} {ing.unit} {lineCost > 0 ? `• ${formatCurrency(lineCost)}` : ''}
+                            </Badge>
+                          );
+                        })}
                       </div>
                       {linkedMaterialRequest ? (
                         <p className="mt-3 text-sm text-indigo-700">
@@ -864,14 +917,14 @@ export default function Production() {
                         <TableRow key={idx}>
                           <TableCell>{ing.ingredient_name}</TableCell>
                           <TableCell className="font-medium">{ing.adjusted_quantity} {ing.unit}</TableCell>
-                          <TableCell>{formatCurrency(toNumber(ing.unit_cost, 0))}</TableCell>
+                          <TableCell>{formatCurrency(toNumber(ing.unit_cost, 0))} / {ing.cost_unit}</TableCell>
                           <TableCell>{formatCurrency(toNumber(ing.estimated_cost, 0))}</TableCell>
-                          <TableCell>{ing.current_stock} {ing.unit}</TableCell>
+                          <TableCell>{ing.current_stock} {ing.inventory_unit}</TableCell>
                           <TableCell>
                             {ing.sufficient ? (
                               <Badge className="bg-green-600">Sufficient</Badge>
                             ) : (
-                              <Badge className="bg-red-600">Short {ing.shortage} {ing.unit}</Badge>
+                              <Badge className="bg-red-600">Short {ing.shortage} {ing.inventory_unit}</Badge>
                             )}
                           </TableCell>
                         </TableRow>
@@ -958,12 +1011,12 @@ export default function Production() {
                       <TableRow key={idx}>
                         <TableCell>{ing.ingredient_name}</TableCell>
                         <TableCell>{ing.adjusted_quantity} {ing.unit}</TableCell>
-                        <TableCell>{ing.current_stock} {ing.unit}</TableCell>
+                        <TableCell>{ing.current_stock} {ing.inventory_unit}</TableCell>
                         <TableCell>
                           {ing.sufficient ? (
                             <Badge className="bg-green-600">✓ OK</Badge>
                           ) : (
-                            <Badge className="bg-red-600">Short {ing.shortage} {ing.unit}</Badge>
+                            <Badge className="bg-red-600">Short {ing.shortage} {ing.inventory_unit}</Badge>
                           )}
                         </TableCell>
                       </TableRow>

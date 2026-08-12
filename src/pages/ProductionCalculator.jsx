@@ -11,6 +11,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Factory, Users, Scale, TrendingDown, AlertCircle, Printer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/currency';
+import { calculateIngredientCost } from '../../shared/ingredientUnits.js';
+import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 
 export default function ProductionCalculator() {
   const [selectedRecipe, setSelectedRecipe] = useState('');
@@ -37,7 +39,12 @@ export default function ProductionCalculator() {
 
     const recipe = recipes.find(r => r.id === selectedRecipe);
     const recipeData = recipe?.data || recipe;
-    const recipeIngredients = recipeData?.ingredients || [];
+    const recipeIngredients = expandRecipeIngredients(
+      recipeData,
+      recipes,
+      ingredients,
+      { aggregate: true }
+    ).ingredients;
     
     if (!recipe || !recipeIngredients || recipeIngredients.length === 0) {
       setCalculations(null);
@@ -70,20 +77,7 @@ export default function ProductionCalculator() {
       const baseQuantity = (ing.quantity || 0) * multiplier;
       const shrinkagePercent = ingData?.shrinkage_percent || 0;
       const adjustedQuantity = baseQuantity * (1 + shrinkagePercent / 100);
-      const costPerUnit = ingData?.cost_per_unit || 0;
-      
-      let costMultiplier = 1;
-      if (ing.unit === 'g' && ingData?.unit === 'kg') {
-        costMultiplier = 0.001;
-      } else if (ing.unit === 'ml' && ingData?.unit === 'l') {
-        costMultiplier = 0.001;
-      } else if (ing.unit === 'kg' && ingData?.unit === 'kg') {
-        costMultiplier = 1;
-      } else if (ing.unit === 'l' && ingData?.unit === 'l') {
-        costMultiplier = 1;
-      }
-      
-      const estimatedCost = adjustedQuantity * costPerUnit * costMultiplier;
+      const estimatedCost = calculateIngredientCost(adjustedQuantity, ing.unit, ingData);
       
       return {
         id: ing.ingredient_id,
@@ -93,7 +87,8 @@ export default function ProductionCalculator() {
         unit: ing.unit,
         shrinkagePercent,
         estimatedCost: Math.round(estimatedCost * 100) / 100,
-        category: ingData?.category
+        category: ingData?.category,
+        sourceRecipeNames: ing.source_recipe_names || []
       };
     });
 

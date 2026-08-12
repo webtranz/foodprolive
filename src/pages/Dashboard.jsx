@@ -39,6 +39,7 @@ import {
   TrendingUp,
   Warehouse
 } from 'lucide-react';
+import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
 import PageHeader from '@/components/ui/PageHeader';
 import StatCard from '@/components/ui/StatCard';
 import { Button } from '@/components/ui/button';
@@ -352,9 +353,10 @@ export default function Dashboard() {
 
     const totalFoodCost = completedProductions.reduce((sum, production) => {
       const productionCost = (production.ingredients_used || []).reduce((ingredientSum, ingredient) => {
-        const unitCost = safeNumber(ingredientMap[ingredient.ingredient_id]?.cost_per_unit);
-        const quantity = safeNumber(ingredient.actual_quantity || ingredient.planned_quantity);
-        return ingredientSum + (unitCost * quantity);
+        return ingredientSum + calculateProductionIngredientCost(
+          ingredient,
+          ingredientMap[ingredient.ingredient_id]
+        );
       }, 0);
       return sum + productionCost;
     }, 0);
@@ -402,9 +404,10 @@ export default function Dashboard() {
       current.capacity += safeNumber(site.capacity || locationSite?.capacity);
       current.runs += 1;
       current.foodCost += (production.ingredients_used || []).reduce((sum, ingredient) => {
-        const unitCost = safeNumber(ingredientMap[ingredient.ingredient_id]?.cost_per_unit);
-        const quantity = safeNumber(ingredient.actual_quantity || ingredient.planned_quantity);
-        return sum + (unitCost * quantity);
+        return sum + calculateProductionIngredientCost(
+          ingredient,
+          ingredientMap[ingredient.ingredient_id]
+        );
       }, 0);
 
       locationPerformanceMap[locationId] = current;
@@ -527,9 +530,10 @@ export default function Dashboard() {
 
       current.servings += safeNumber(production.actual_servings || production.target_servings);
       current.cost += (production.ingredients_used || []).reduce((sum, ingredient) => {
-        const unitCost = safeNumber(ingredientMap[ingredient.ingredient_id]?.cost_per_unit);
-        const quantity = safeNumber(ingredient.actual_quantity || ingredient.planned_quantity);
-        return sum + (unitCost * quantity);
+        return sum + calculateProductionIngredientCost(
+          ingredient,
+          ingredientMap[ingredient.ingredient_id]
+        );
       }, 0);
       current.runs += 1;
       topExpensiveRecipesMap[key] = current;

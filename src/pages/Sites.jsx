@@ -40,6 +40,7 @@ import {
   FileSpreadsheet
 } from 'lucide-react';
 import SiteUserManager from '@/components/sites/SiteUserManager';
+import { usePermissions } from '@/components/auth/usePermissions';
 import { downloadCSV } from '../components/utils/exportData';
 
 const SITE_TYPES = [
@@ -238,6 +239,7 @@ export default function Sites() {
   const [bulkSummary, setBulkSummary] = useState(null);
 
   const queryClient = useQueryClient();
+  const { isAdmin } = usePermissions();
 
   const { data: sites = [], isLoading } = useQuery({
     queryKey: ['sites'],
@@ -350,6 +352,7 @@ export default function Sites() {
   );
 
   const openCreate = (parentId = '', type = 'location') => {
+    if (!isAdmin) return;
     setEditingSite(null);
     setFormData({ ...emptyForm, parent_site_id: parentId, type });
     setFormOpen(true);
@@ -376,6 +379,7 @@ export default function Sites() {
 
   const handleSubmit = (event) => {
     event.preventDefault();
+    if (!editingSite && !isAdmin) return;
     const payload = {
       ...formData,
       capacity: formData.capacity ? parseInt(formData.capacity, 10) : null
@@ -439,6 +443,10 @@ export default function Sites() {
   };
 
   const handleSubmitBulkImport = () => {
+    if (!isAdmin) {
+      setBulkError('Only administrators can import projects');
+      return;
+    }
     if (!parsedBulkImport.items.length) {
       setBulkError('Upload a valid project / warehouse file before importing');
       return;
@@ -503,14 +511,18 @@ export default function Sites() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => openCreate(site.id, 'location')}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Child
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => openCreate(site.id, 'warehouse')}>
-                    <Warehouse className="h-4 w-4 mr-2" />
-                    Add Warehouse
-                  </DropdownMenuItem>
+                  {isAdmin ? (
+                    <>
+                      <DropdownMenuItem onClick={() => openCreate(site.id, 'location')}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Child
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => openCreate(site.id, 'warehouse')}>
+                        <Warehouse className="h-4 w-4 mr-2" />
+                        Add Warehouse
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
                   <DropdownMenuItem onClick={() => openEdit(site)}>
                     <Pencil className="h-4 w-4 mr-2" />
                     Edit
@@ -544,18 +556,22 @@ export default function Sites() {
             <Download className="w-4 h-4 mr-2" />
             Export
           </Button>
-          <Button variant="outline" onClick={() => setBulkDialogOpen(true)}>
-            <Upload className="w-4 h-4 mr-2" />
-            Bulk Upload
-          </Button>
-          <Button variant="outline" onClick={() => openCreate('', 'warehouse')}>
-            <Warehouse className="w-4 h-4 mr-2" />
-            Add Warehouse
-          </Button>
-          <Button onClick={() => openCreate('', 'location')} className="bg-emerald-600 hover:bg-emerald-700">
-            <Plus className="w-4 h-4 mr-2" />
-            Add Project
-          </Button>
+          {isAdmin ? (
+            <>
+              <Button variant="outline" onClick={() => setBulkDialogOpen(true)}>
+                <Upload className="w-4 h-4 mr-2" />
+                Bulk Upload
+              </Button>
+              <Button variant="outline" onClick={() => openCreate('', 'warehouse')}>
+                <Warehouse className="w-4 h-4 mr-2" />
+                Add Warehouse
+              </Button>
+              <Button onClick={() => openCreate('', 'location')} className="bg-emerald-600 hover:bg-emerald-700">
+                <Plus className="w-4 h-4 mr-2" />
+                Add Project
+              </Button>
+            </>
+          ) : null}
         </PageHeader>
 
         <div className="mb-6 grid gap-4 md:grid-cols-4">
@@ -585,9 +601,11 @@ export default function Sites() {
           <EmptyState
             icon={Network}
             title="No projects found"
-            description="Create your first company, region, or operating project to build the hierarchy"
-            actionLabel="Add Project"
-            onAction={() => openCreate('', 'location')}
+            description={isAdmin
+              ? 'Create your first company, region, or operating project to build the hierarchy'
+              : 'No projects are available in your current access scope'}
+            actionLabel={isAdmin ? 'Add Project' : undefined}
+            onAction={isAdmin ? () => openCreate('', 'location') : undefined}
           />
         ) : (
           <div className="space-y-4">

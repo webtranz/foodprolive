@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { assertCanCreateProject, getUserEffectiveRole } from './accessControl.js';
+
+export { getUserEffectiveRole } from './accessControl.js';
 
 const stringOptional = z.string().trim().optional().nullable();
 const numberOptional = z.coerce.number().optional().nullable();
@@ -6,7 +9,61 @@ const booleanOptional = z.coerce.boolean().optional().nullable();
 const arrayOptional = z.array(z.any()).optional().nullable();
 const objectOptional = z.record(z.any()).optional().nullable();
 
+const granularPagePermissionLabels = {
+  access_dashboard: 'Open Dashboard',
+  access_sites: 'Open Projects & Sites',
+  access_ingredients: 'Open Ingredients',
+  access_food_categories: 'Open Food Categories',
+  access_recipes: 'Open Recipes',
+  access_nutrition_allergen: 'Open Nutrition & Allergens',
+  access_ai_recipes: 'Open AI Recipe Generator',
+  access_food_cost: 'Open Food Cost',
+  access_menu: 'Open Menu',
+  access_menu_planning: 'Open Menu Planning',
+  access_event_planning: 'Open Event Planning',
+  access_menu_builder: 'Open Menu Builder',
+  access_auto_schedule: 'Open Auto Schedule',
+  access_production: 'Open Production',
+  access_inventory: 'Open Inventory',
+  access_material_requests: 'Open Material Requests',
+  access_yield_cost: 'Open Yield & Cost',
+  access_batch_tracking: 'Open Batch Tracking',
+  access_branch_orders: 'Open Branch Orders',
+  access_production_transfer: 'Open Production Transfer',
+  access_procurement_planning: 'Open Procurement Planning',
+  access_procurement: 'Open Procurement',
+  access_supplier_portal: 'Open Supplier Portal',
+  access_pos: 'Open POS Integration',
+  access_d365: 'Open D365 / ERP Integration',
+  access_forecasting: 'Open Forecasting',
+  access_attendance: 'Open Attendance',
+  access_daily_meal_checkin: 'Open Daily Meal Check-in',
+  access_dining_scanner: 'Open Dining Scanner',
+  access_event_dining_checkin: 'Open Event Dining Check-in',
+  access_event_inquiry: 'Open Event Inquiry',
+  access_qr_management: 'Open QR Management',
+  access_user_roles: 'Open Users & Roles',
+  access_food_waste: 'Open Food Waste',
+  access_food_waste_qr: 'Open Food Waste QR',
+  access_quality_control: 'Open Quality Control',
+  access_reports: 'Open Reports',
+  access_advanced_reports: 'Open Advanced Reports',
+  access_cost_control: 'Open Cost Control',
+  access_productivity_tracking: 'Open Productivity Tracking',
+  access_production_calculator: 'Open Production Calculator',
+  access_calories_calculator: 'Open Calories Calculator'
+};
+
 export const permissionCatalog = [
+  { key: 'granular_page_access', label: 'Use Granular Page Access' },
+  ...Object.entries(granularPagePermissionLabels).map(([key, label]) => ({ key, label })),
+  { key: 'scan_qr', label: 'Scan QR Codes' },
+  { key: 'create_session', label: 'Create Attendance Sessions' },
+  { key: 'manage_sessions', label: 'Manage Attendance Sessions' },
+  { key: 'manage_groups', label: 'Manage User Groups' },
+  { key: 'delete_records', label: 'Delete Protected Records' },
+  { key: 'view_ai_waste', label: 'View AI Waste Detection' },
+  { key: 'camera_detection', label: 'Use Camera Waste Detection' },
   { key: 'view_dashboard', label: 'View Dashboard' },
   { key: 'view_reports', label: 'View Reports' },
   { key: 'export_data', label: 'Export Data' },
@@ -179,19 +236,20 @@ export function getSystemRoleDefinition(roleKey) {
   return systemRoleDefinitions[roleKey] || null;
 }
 
-export function getUserEffectiveRole(user) {
-  const role = user?.role_access_level || user?.role || 'user';
-  return ['admin', 'manager', 'user'].includes(role) ? role : 'user';
-}
-
 export function getUserPermissions(user) {
   const effectiveRole = getUserEffectiveRole(user);
   const builtInFromCurrentRole = getSystemRoleDefinition(user?.role);
   const builtInFromAccessLevel = getSystemRoleDefinition(effectiveRole);
+  const explicitPermissions = (Array.isArray(user?.role_permissions) ? user.role_permissions : []).filter(Boolean);
+
+  if (user?.is_custom_role) {
+    return Array.from(new Set(explicitPermissions));
+  }
+
   return Array.from(new Set([
     ...(builtInFromAccessLevel?.permissions || []),
     ...(builtInFromCurrentRole?.permissions || []),
-    ...((Array.isArray(user?.role_permissions) ? user.role_permissions : []).filter(Boolean))
+    ...explicitPermissions
   ]));
 }
 
@@ -508,7 +566,7 @@ export const entityRegistry = {
     defaults: { status: 'pending' }
   },
   Recipe: {
-    defaults: { is_active: true, ingredients: [] },
+    defaults: { is_active: true, ingredients: [], sub_recipes: [] },
     unique: [
       { fields: ['name'], label: 'recipe name' },
       { fields: ['recipe_code'], label: 'recipe code', ignoreEmpty: true }
@@ -520,6 +578,7 @@ export const entityRegistry = {
       category: stringOptional,
       servings: numberOptional,
       ingredients: arrayOptional,
+      sub_recipes: arrayOptional,
       instructions: stringOptional,
       prep_time_minutes: numberOptional,
       cook_time_minutes: numberOptional,
@@ -539,7 +598,8 @@ export const entityRegistry = {
       is_active: booleanOptional,
       site_scope: stringOptional,
       site_ids: arrayOptional,
-      site_names: arrayOptional
+      site_names: arrayOptional,
+      image_url: stringOptional
     }).passthrough()
   },
   RFQ: {
@@ -741,6 +801,10 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
   const requiresReadRole = readRoles[entity];
   const requiresWriteRole = writeRoles[entity];
   const permissionRequirements = entityPermissions[entity] || {};
+
+  if (entity === 'Site' && action === 'create') {
+    return assertCanCreateProject(user);
+  }
 
   if (entity === 'Production') {
     const nextStatus = payload?.status;

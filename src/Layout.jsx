@@ -40,16 +40,31 @@ import { useSiteContext } from '@/components/auth/useSiteContext';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { LanguageProvider, useLanguage } from '@/components/i18n/LanguageContext';
 import { useAuth } from '@/lib/AuthContext';
+import {
+  GRANULAR_PAGE_ACCESS_PERMISSION,
+  PAGE_ACCESS_PERMISSION_MAP
+} from '@/lib/rolePermissions';
 import tamimiGlobalLogo from '@/assets/tamimi-global-logo.png';
 
 function filterNavigationItems(items = [], can = () => true) {
-  return items.reduce((visibleItems, item) => {
-    if (item.permission && !can(item.permission)) {
-      return visibleItems;
-    }
+  const usesGranularPageAccess = can(GRANULAR_PAGE_ACCESS_PERMISSION);
 
-    if (item.permissions && !item.permissions.some((permission) => can(permission))) {
-      return visibleItems;
+  return items.reduce((visibleItems, item) => {
+    if (usesGranularPageAccess) {
+      if (item.href) {
+        const pagePermission = PAGE_ACCESS_PERMISSION_MAP[item.href];
+        if (!pagePermission || !can(pagePermission)) {
+          return visibleItems;
+        }
+      }
+    } else {
+      if (item.permission && !can(item.permission)) {
+        return visibleItems;
+      }
+
+      if (item.permissions && !item.permissions.some((permission) => can(permission))) {
+        return visibleItems;
+      }
     }
 
     if (item.children) {
@@ -77,7 +92,7 @@ function buildNavigation(t, can = () => true) {
     { name: n.production, href: 'Production', icon: Factory },
     { name: n.foodCost || 'Food Cost', href: 'FoodCost', icon: DollarSign, permission: 'manage_menu_planning' },
     { name: n.ingredients, href: 'Ingredients', icon: Package },
-    ...(can('manage_food_categories') ? [{ name: n.foodCategories || 'Food Categories', href: 'FoodCategories', icon: FolderTree }] : []),
+    { name: n.foodCategories || 'Food Categories', href: 'FoodCategories', icon: FolderTree, permission: 'manage_food_categories' },
     { name: n.inventory, href: 'Inventory', icon: Boxes },
     { name: n.recipes, href: 'Recipes', icon: Utensils },
     { name: n.nutritionAllergens, href: 'NutritionAllergen', icon: ShieldAlert },

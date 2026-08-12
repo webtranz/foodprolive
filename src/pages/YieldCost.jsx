@@ -17,6 +17,7 @@ import YieldTemplateDownload from '../components/yield/YieldTemplateDownload';
 import YieldUpload from '../components/yield/YieldUpload';
 import CostReport from '../components/yield/CostReport';
 import { formatCurrency } from '@/lib/currency';
+import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 
 function averageBy(items, selector) {
   const values = items
@@ -28,37 +29,6 @@ function averageBy(items, selector) {
   }
 
   return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function convertQuantityToCostUnits(quantity, recipeUnit, ingredientUnit) {
-  const numericQuantity = Number(quantity) || 0;
-  if (!numericQuantity) {
-    return 0;
-  }
-
-  if (!recipeUnit || !ingredientUnit || recipeUnit === ingredientUnit) {
-    return numericQuantity;
-  }
-
-  const weightUnits = {
-    kg: 1000,
-    g: 1
-  };
-
-  const volumeUnits = {
-    l: 1000,
-    ml: 1
-  };
-
-  if (recipeUnit in weightUnits && ingredientUnit in weightUnits) {
-    return (numericQuantity * weightUnits[recipeUnit]) / weightUnits[ingredientUnit];
-  }
-
-  if (recipeUnit in volumeUnits && ingredientUnit in volumeUnits) {
-    return (numericQuantity * volumeUnits[recipeUnit]) / volumeUnits[ingredientUnit];
-  }
-
-  return numericQuantity;
 }
 
 export default function YieldCost() {
@@ -99,29 +69,12 @@ export default function YieldCost() {
 
   // Calculate recipe costs
   const recipeCosts = recipes.map(recipe => {
-    let totalCost = 0;
-    let hasAllCosts = true;
-
-    recipe.ingredients?.forEach(recipeIng => {
-      const ingredient = ingredients.find(i => i.id === recipeIng.ingredient_id);
-      if (ingredient?.cost_per_unit) {
-        const quantityInCostUnits = convertQuantityToCostUnits(
-          recipeIng.quantity,
-          recipeIng.unit || ingredient.unit,
-          ingredient.unit
-        );
-        totalCost += (quantityInCostUnits * ingredient.cost_per_unit);
-      } else {
-        hasAllCosts = false;
-      }
-    });
-
-    const servings = Number(recipe.servings) || 0;
+    const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
 
     return {
       ...recipe,
-      total_cost: hasAllCosts ? totalCost : null,
-      cost_per_serving: hasAllCosts && servings > 0 ? (totalCost / servings) : null
+      total_cost: costSnapshot.has_cost ? costSnapshot.total_cost : null,
+      cost_per_serving: costSnapshot.has_cost ? costSnapshot.cost_per_serving : null
     };
   }).filter(r => r.total_cost !== null);
 

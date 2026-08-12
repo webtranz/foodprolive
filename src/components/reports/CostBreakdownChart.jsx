@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { DollarSign } from 'lucide-react';
 import { formatCurrency, SAR_SYMBOL } from '@/lib/currency';
+import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
@@ -11,18 +12,13 @@ export default function CostBreakdownChart({ recipes, ingredients, filters }) {
     const recipeCosts = recipes
       .filter(r => filters.cuisineType === 'all' || r.cuisine_type === filters.cuisineType)
       .map(recipe => {
-        let totalCost = 0;
-        recipe.ingredients?.forEach(recipeIng => {
-          const ingredient = ingredients.find(i => i.id === recipeIng.ingredient_id);
-          if (ingredient?.cost_per_unit) {
-            totalCost += (recipeIng.quantity || 0) * ingredient.cost_per_unit;
-          }
-        });
+        const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
+        const totalCost = costSnapshot.has_cost ? costSnapshot.total_cost : 0;
         
         return {
           name: recipe.name.length > 15 ? recipe.name.substring(0, 15) + '...' : recipe.name,
           cost: parseFloat(totalCost.toFixed(2)),
-          costPerServing: recipe.servings ? parseFloat((totalCost / recipe.servings).toFixed(2)) : 0
+          costPerServing: parseFloat((costSnapshot.cost_per_serving || 0).toFixed(2))
         };
       })
       .sort((a, b) => b.cost - a.cost)

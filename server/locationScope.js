@@ -1,4 +1,5 @@
 import { listDocuments } from './db.js';
+import { hasAdminAccess } from './accessControl.js';
 
 const LOCATION_SCOPED_ENTITIES = new Set([
   'Inventory',
@@ -100,8 +101,12 @@ function isGlobalRecipe(record = {}) {
   return !record.site_scope || record.site_scope === 'global' || normalizeArray(record.site_ids).length === 0;
 }
 
+export function hasUnrestrictedLocationAccess(user = {}) {
+  return hasAdminAccess(user);
+}
+
 function canAccessLocationRecord(user, record, accessibleSiteIds, accessibleTreeIds) {
-  if (user?.role === 'admin') return true;
+  if (hasUnrestrictedLocationAccess(user)) return true;
   if (!record) return true;
 
   if (record.id && accessibleTreeIds.has(record.id)) {
@@ -133,7 +138,7 @@ async function getLocationScope(user) {
   const sites = await getAllSites();
   const graph = createSiteGraph(sites);
 
-  if (user?.role === 'admin') {
+  if (hasUnrestrictedLocationAccess(user)) {
     const allIds = new Set(sites.map((site) => String(site.id)));
     return {
       sites,
@@ -166,7 +171,7 @@ async function getLocationScope(user) {
 }
 
 function filterRecordsByLocation(user, entity, records = [], scope) {
-  if (user?.role === 'admin' || !LOCATION_SCOPED_ENTITIES.has(entity)) {
+  if (hasUnrestrictedLocationAccess(user) || !LOCATION_SCOPED_ENTITIES.has(entity)) {
     return records;
   }
 
@@ -180,7 +185,7 @@ function filterRecordsByLocation(user, entity, records = [], scope) {
 }
 
 function assertPayloadLocationAccess(user, entity, payload = {}, scope) {
-  if (user?.role === 'admin' || !LOCATION_SCOPED_ENTITIES.has(entity)) {
+  if (hasUnrestrictedLocationAccess(user) || !LOCATION_SCOPED_ENTITIES.has(entity)) {
     return;
   }
 

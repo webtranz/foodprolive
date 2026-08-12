@@ -33,6 +33,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/exportData';
 import { formatCurrency } from '@/lib/currency';
+import { calculateIngredientCost } from '../../shared/ingredientUnits.js';
+import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 import {
   AlertTriangle,
   Brain,
@@ -106,11 +108,16 @@ function getCategoryMeta(categoryCode) {
   return WASTE_CATEGORIES.find((item) => item.value === categoryCode) || null;
 }
 
-function sumRecipeIngredientCost(recipe, ingredientMap) {
-  const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
-  return ingredients.reduce((total, item) => {
+function sumRecipeIngredientCost(recipe, recipeMap, ingredientMap) {
+  const expandedIngredients = expandRecipeIngredients(
+    recipe,
+    [...recipeMap.values()],
+    [...ingredientMap.values()],
+    { aggregate: true }
+  ).ingredients;
+  return expandedIngredients.reduce((total, item) => {
     const ingredient = ingredientMap.get(item.ingredient_id);
-    return total + (safeNumber(ingredient?.cost_per_unit) * safeNumber(item.quantity));
+    return total + calculateIngredientCost(item.quantity, item.unit, ingredient);
   }, 0);
 }
 
@@ -695,13 +702,13 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
 
     if (formData.waste_scope === 'ingredient' && formData.ingredient_id !== 'none') {
       const ingredient = ingredientMap.get(formData.ingredient_id);
-      return Number((safeNumber(ingredient?.cost_per_unit) * quantity).toFixed(2));
+      return Number(calculateIngredientCost(quantity, formData.unit, ingredient).toFixed(2));
     }
 
     if (formData.waste_scope === 'recipe' && formData.recipe_id !== 'none') {
       const recipe = recipeMap.get(formData.recipe_id);
       const servings = Math.max(1, safeNumber(recipe?.servings, 1));
-      const totalRecipeCost = sumRecipeIngredientCost(recipe, ingredientMap);
+      const totalRecipeCost = sumRecipeIngredientCost(recipe, recipeMap, ingredientMap);
       return Number(((totalRecipeCost / servings) * quantity).toFixed(2));
     }
 
@@ -709,7 +716,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       const production = productionMap.get(formData.production_id);
       const recipe = recipeMap.get(production?.recipe_id);
       const servings = Math.max(1, safeNumber(production?.actual_servings || production?.target_servings || recipe?.servings, 1));
-      const totalRecipeCost = sumRecipeIngredientCost(recipe, ingredientMap);
+      const totalRecipeCost = sumRecipeIngredientCost(recipe, recipeMap, ingredientMap);
       return Number(((totalRecipeCost / servings) * quantity).toFixed(2));
     }
 
