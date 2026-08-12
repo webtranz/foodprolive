@@ -38,7 +38,15 @@ export const translations = {
       procurement: 'Procurement',
       posIntegration: 'POS Integration',
       supplierPortal: 'Supplier Portal',
-      userRoles: 'User Roles'
+      userRoles: 'User Roles',
+      utilities: 'Utilities',
+      bulkUploadCenter: 'Bulk Upload Center',
+      bulkUploadTemplates: 'Bulk Upload Templates',
+      dataExports: 'CSV / Excel / PDF Reports',
+      activityLogs: 'Activity Logs',
+      auditLogs: 'Audit Logs',
+      bulkUploadProgress: 'Bulk Upload Progress',
+      reportsPreview: 'Reports Preview'
     },
     common: {
       save: 'Save',
@@ -116,7 +124,15 @@ export const translations = {
       procurement: 'المشتريات',
       posIntegration: 'تكامل نقاط البيع',
       supplierPortal: 'بوابة الموردين',
-      userRoles: 'أدوار المستخدمين'
+      userRoles: 'أدوار المستخدمين',
+      utilities: 'الأدوات',
+      bulkUploadCenter: 'مركز الرفع المجمع',
+      bulkUploadTemplates: 'قوالب الرفع المجمع',
+      dataExports: 'تقارير CSV / Excel / PDF',
+      activityLogs: 'سجلات النشاط',
+      auditLogs: 'سجلات التدقيق',
+      bulkUploadProgress: 'تقدم الرفع المجمع',
+      reportsPreview: 'معاينة التقارير'
     },
     common: {
       save: 'حفظ',
@@ -194,7 +210,15 @@ export const translations = {
       procurement: 'خریداری',
       posIntegration: 'POS انضمام',
       supplierPortal: 'سپلائر پورٹل',
-      userRoles: 'صارف کردار'
+      userRoles: 'صارف کردار',
+      utilities: 'یوٹیلیٹیز',
+      bulkUploadCenter: 'بلک اپ لوڈ سینٹر',
+      bulkUploadTemplates: 'بلک اپ لوڈ ٹیمپلیٹس',
+      dataExports: 'CSV / Excel / PDF رپورٹس',
+      activityLogs: 'سرگرمی لاگز',
+      auditLogs: 'آڈٹ لاگز',
+      bulkUploadProgress: 'بلک اپ لوڈ پیش رفت',
+      reportsPreview: 'رپورٹس پیش منظر'
     },
     common: {
       save: 'محفوظ کریں',
@@ -273,7 +297,15 @@ export const translations = {
       procurement: 'Beschaffung',
       posIntegration: 'POS-Integration',
       supplierPortal: 'Lieferantenportal',
-      userRoles: 'Benutzerrollen'
+      userRoles: 'Benutzerrollen',
+      utilities: 'Werkzeuge',
+      bulkUploadCenter: 'Massenupload-Center',
+      bulkUploadTemplates: 'Massenupload-Vorlagen',
+      dataExports: 'CSV-/Excel-/PDF-Berichte',
+      activityLogs: 'Aktivitätsprotokolle',
+      auditLogs: 'Prüfprotokolle',
+      bulkUploadProgress: 'Massenupload-Fortschritt',
+      reportsPreview: 'Berichtsvorschau'
     },
     common: {
       save: 'Speichern',

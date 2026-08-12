@@ -7,6 +7,7 @@ const SYSTEM_ROLES = {
     access_level: 'admin',
     permissions: [
       'scan_qr', 'view_dashboard', 'view_reports', 'export_data', 'create_session',
+      'manage_bulk_uploads', 'view_audit_logs', 'view_bulk_upload_progress',
       'manage_sessions', 'manage_groups', 'manage_users', 'manage_roles', 'delete_records',
       'view_ai_waste', 'camera_detection', 'manage_projects', 'manage_ingredients', 'manage_food_categories',
       'manage_inventory', 'transfer_inventory', 'manage_recipes', 'manage_menu_planning', 'generate_menu_plan_pr',
@@ -25,6 +26,7 @@ const SYSTEM_ROLES = {
     access_level: 'manager',
     permissions: [
       'scan_qr', 'view_dashboard', 'view_reports', 'export_data', 'create_session',
+      'manage_bulk_uploads', 'view_audit_logs', 'view_bulk_upload_progress',
       'manage_sessions', 'manage_groups', 'view_ai_waste', 'camera_detection',
       'manage_projects', 'manage_ingredients', 'manage_food_categories', 'manage_inventory', 'transfer_inventory',
       'manage_recipes', 'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event', 'edit_special_event',

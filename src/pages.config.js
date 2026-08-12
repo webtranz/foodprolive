@@ -89,6 +89,12 @@ import Sites from './pages/Sites';
 import SupplierPortal from './pages/SupplierPortal';
 import UserRoleManagement from './pages/UserRoleManagement';
 import YieldCost from './pages/YieldCost';
+import BulkUploadCenter from './pages/BulkUploadCenter';
+import BulkUploadTemplates from './pages/BulkUploadTemplates';
+import DataExports from './pages/DataExports';
+import AuditLogs from './pages/AuditLogs';
+import BulkUploadProgress from './pages/BulkUploadProgress';
+import ReportsPreview from './pages/ReportsPreview';
 import __Layout from './Layout.jsx';
 
 
@@ -135,6 +141,12 @@ export const PAGES = {
     "SupplierPortal": SupplierPortal,
     "UserRoleManagement": UserRoleManagement,
     "YieldCost": YieldCost,
+    "BulkUploadCenter": BulkUploadCenter,
+    "BulkUploadTemplates": BulkUploadTemplates,
+    "DataExports": DataExports,
+    "AuditLogs": AuditLogs,
+    "BulkUploadProgress": BulkUploadProgress,
+    "ReportsPreview": ReportsPreview,
 }
 
 export const pagesConfig = {

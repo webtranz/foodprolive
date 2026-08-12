@@ -5,7 +5,6 @@ import cors from 'cors';
 import multer from 'multer';
 import nodemailer from 'nodemailer';
 import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
-import { validateRecipeComposition } from '../shared/recipeComposition.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
 import {
   MAX_RECIPE_IMAGE_BYTES,
@@ -24,6 +23,10 @@ import {
   loginUser,
   inviteUser,
   createAppLog,
+  listAuditLogs,
+  createBulkUploadJob,
+  getBulkUploadJob,
+  listBulkUploadJobs,
   createEmailLog
 } from './db.js';
 import { authorizeEntityAction, ensureKnownEntity } from './entities.js';
@@ -121,11 +124,17 @@ import {
 import {
   getLocationScope,
   filterRecordsByLocation,
-  assertPayloadLocationAccess,
-  buildSiteHierarchy,
-  normalizeUserLocationPayload,
-  normalizeRecipeLocationPayload
+  assertPayloadLocationAccess
 } from './locationScope.js';
+import { prepareEntityPayload } from './entityPreparation.js';
+import { auditAction } from './audit.js';
+import {
+  createTemplateCsv,
+  getUtilityModule,
+  listUtilityModules,
+  serializeReportRows
+} from './utilities.js';
+import { enqueueBulkUpload, resumeBulkUploadQueue } from './bulkUploadQueue.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -166,6 +175,20 @@ const recipeImageUpload = multer({
     if (!Object.hasOwn(RECIPE_IMAGE_MIME_TYPES, file.mimetype)) {
       return callback(new Error('Recipe pictures must be JPG, PNG, WebP, or GIF files.'));
     }
+    return callback(null, true);
+  }
+});
+
+const bulkUpload = multer({
+  storage,
+  limits: {
+    fileSize: Math.max(1, Number(process.env.BULK_UPLOAD_MAX_MB || 25)) * 1024 * 1024,
+    files: 1
+  },
+  fileFilter: (_request, file, callback) => {
+    const extension = path.extname(file.originalname || '').toLowerCase();
+    const allowed = extension === '.csv' || file.mimetype === 'text/csv' || file.mimetype === 'application/vnd.ms-excel';
+    if (!allowed) return callback(new Error('Bulk uploads must be CSV files.'));
     return callback(null, true);
   }
 });
@@ -238,37 +261,6 @@ function requireAnyPermission(permissions) {
     }
     return next();
   };
-}
-
-async function prepareEntityPayload(user, entity, payload = {}, existing = null) {
-  const scope = await getLocationScope(user);
-  assertPayloadLocationAccess(user, entity, payload, scope);
-  const merged = existing ? { ...existing, ...payload } : payload;
-
-  if (entity === 'Site') {
-    return {
-      ...merged,
-      ...buildSiteHierarchy(merged, existing, scope)
-    };
-  }
-
-  if (entity === 'User') {
-    return normalizeUserLocationPayload(merged, scope);
-  }
-
-  if (entity === 'Recipe') {
-    const normalizedRecipe = normalizeRecipeLocationPayload(merged, scope);
-    const recipeCatalog = await listDocuments('Recipe', { limit: 5000 });
-    const compositionErrors = validateRecipeComposition(normalizedRecipe, recipeCatalog);
-    if (compositionErrors.length > 0) {
-      const error = new Error(compositionErrors[0]);
-      error.status = 400;
-      throw error;
-    }
-    return normalizedRecipe;
-  }
-
-  return merged;
 }
 
 async function scopeEntityRecords(user, entity, records = []) {
@@ -1072,8 +1064,22 @@ app.post('/api/auth/login', async (request, response) => {
   const session = await loginUser(email || '', password || '');
 
   if (!session) {
+    await auditAction({
+      action: 'LOGIN_FAILED',
+      entity: 'Auth',
+      entityId: email || 'unknown',
+      details: { email: email || null, reason: 'invalid_credentials' }
+    });
     return response.status(401).json({ message: 'Invalid email or password' });
   }
+
+  await auditAction({
+    user: session.user,
+    action: 'LOGIN_SUCCESS',
+    entity: 'Auth',
+    entityId: session.user.id,
+    details: { email: session.user.email, role: session.user.role }
+  });
 
   return response.json(session);
 });
@@ -1093,6 +1099,13 @@ app.patch('/api/auth/me', requireAuth, async (request, response, next) => {
 });
 
 app.post('/api/auth/logout', requireAuth, async (request, response) => {
+  await auditAction({
+    user: request.user,
+    action: 'LOGOUT',
+    entity: 'Auth',
+    entityId: request.user.id,
+    details: { email: request.user.email, role: request.user.role }
+  });
   await revokeToken(request.token);
   response.status(204).send();
 });
@@ -1979,6 +1992,14 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
       record = await findDocument(entity, record.id);
     }
 
+    await auditAction({
+      user: request.user,
+      action: `${entity.toUpperCase()}_CREATE`,
+      entity,
+      entityId: record.id,
+      details: { input: request.body || {}, created_record: record }
+    });
+
     response.status(201).json((await decorateEntityRecords(entity, [record]))[0]);
   } catch (error) {
     next(error);
@@ -2014,6 +2035,14 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
         updated = await findDocument(entity, request.params.id);
       }
     }
+
+    await auditAction({
+      user: request.user,
+      action: `${entity.toUpperCase()}_UPDATE`,
+      entity,
+      entityId: updated.id,
+      details: { before: existing, input: request.body || {}, after: updated }
+    });
 
     return response.json((await decorateEntityRecords(entity, [updated]))[0]);
   } catch (error) {
@@ -2054,7 +2083,207 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
     if (!removed) {
       return response.status(404).json({ message: 'Record not found' });
     }
+    await auditAction({
+      user: request.user,
+      action: `${entity.toUpperCase()}_DELETE`,
+      entity,
+      entityId: request.params.id,
+      details: { deleted_record: existing }
+    });
     return response.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+function serializeBulkUploadJob(job) {
+  if (!job) return null;
+  const { file_path: _filePath, actor_snapshot: _actorSnapshot, ...safeJob } = job;
+  return safeJob;
+}
+
+async function accessibleSiteIds(user) {
+  const scope = await getLocationScope(user);
+  return scope.unrestricted ? null : [...scope.accessibleSiteIds];
+}
+
+app.get('/api/utilities/modules', requireAuth, requireAnyPermission([
+  'manage_bulk_uploads',
+  'export_data',
+  'view_reports',
+  'view_audit_logs'
+]), (_request, response) => {
+  response.json({ modules: listUtilityModules() });
+});
+
+app.get('/api/utilities/templates/:module', requireAuth, requireAnyPermission([
+  'manage_bulk_uploads',
+  'export_data'
+]), async (request, response) => {
+  const csv = createTemplateCsv(request.params.module);
+  if (!csv) return response.status(404).json({ message: 'Template module not found.' });
+  await auditAction({
+    user: request.user,
+    action: 'BULK_TEMPLATE_DOWNLOAD',
+    entity: 'UtilityTemplate',
+    entityId: request.params.module,
+    details: { module: request.params.module }
+  });
+  response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  response.setHeader('Content-Disposition', `attachment; filename="${request.params.module}-template.csv"`);
+  return response.send(csv);
+});
+
+app.post('/api/utilities/bulk-upload', requireAuth, requirePermission('manage_bulk_uploads'), (request, response, next) => {
+  bulkUpload.single('file')(request, response, async (uploadError) => {
+    const cleanupUploadedFile = () => request.file?.path
+      ? fs.promises.unlink(request.file.path).catch(() => {})
+      : Promise.resolve();
+    if (uploadError) {
+      await cleanupUploadedFile();
+      const status = uploadError.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      return response.status(status).json({ message: uploadError.message || 'Bulk upload failed.' });
+    }
+    try {
+      const moduleKey = String(request.body?.module || '');
+      const definition = getUtilityModule(moduleKey);
+      if (!definition) {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Select a supported upload module.' });
+      }
+      const importMode = String(request.body?.import_mode || 'keep_existing');
+      if (!['keep_existing', 'replace_existing', 'delete_existing'].includes(importMode)) {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Invalid import mode.' });
+      }
+      if (importMode !== 'delete_existing' && !request.file) {
+        return response.status(400).json({ message: 'Select a CSV file to upload.' });
+      }
+      if (importMode === 'delete_existing' && request.file) {
+        await cleanupUploadedFile();
+        request.file = undefined;
+      }
+      const scope = await getLocationScope(request.user);
+      const requestedSiteId = String(request.body?.site_id || '').trim() || null;
+      if (requestedSiteId && !scope.unrestricted && !scope.accessibleSiteIds.has(requestedSiteId)) {
+        await cleanupUploadedFile();
+        return response.status(403).json({ message: 'You do not have access to the selected project.' });
+      }
+      const batchSize = Math.min(
+        Math.max(Number(process.env.BULK_UPLOAD_BATCH_SIZE || 500), 50),
+        1000
+      );
+      const job = await createBulkUploadJob({
+        module_key: moduleKey,
+        entity_name: definition.entity,
+        import_mode: importMode,
+        file_name: request.file?.originalname || null,
+        file_path: request.file?.path || null,
+        file_size: request.file?.size || 0,
+        batch_size: batchSize,
+        actor: request.user,
+        site_id: requestedSiteId,
+        site_name: String(request.body?.site_name || '').trim() || null
+      });
+      await auditAction({
+        user: request.user,
+        action: 'BULK_UPLOAD_QUEUED',
+        entity: definition.entity,
+        entityId: job.id,
+        siteId: job.site_id,
+        siteName: job.site_name,
+        details: {
+          module: moduleKey,
+          file_name: job.file_name,
+          file_size: Number(job.file_size),
+          import_mode: importMode,
+          batch_size: batchSize
+        }
+      });
+      enqueueBulkUpload(job.id);
+      return response.status(202).json({ job: serializeBulkUploadJob(job) });
+    } catch (error) {
+      await cleanupUploadedFile();
+      return next(error);
+    }
+  });
+});
+
+app.get('/api/activity/bulk-upload-jobs', requireAuth, requireAnyPermission([
+  'manage_bulk_uploads',
+  'view_bulk_upload_progress'
+]), async (request, response, next) => {
+  try {
+    const siteIds = await accessibleSiteIds(request.user);
+    const jobs = await listBulkUploadJobs({
+      limit: request.query.limit ? Number(request.query.limit) : 100,
+      siteIds,
+      actorId: request.user.id
+    });
+    response.json({ jobs: jobs.map(serializeBulkUploadJob) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/activity/bulk-upload-jobs/:id', requireAuth, requireAnyPermission([
+  'manage_bulk_uploads',
+  'view_bulk_upload_progress'
+]), async (request, response, next) => {
+  try {
+    const job = await getBulkUploadJob(request.params.id);
+    if (!job) return response.status(404).json({ message: 'Bulk upload job not found.' });
+    const siteIds = await accessibleSiteIds(request.user);
+    const ownsJob = job.actor_id && job.actor_id === request.user.id;
+    const canSeeSite = siteIds === null || (job.site_id && siteIds.includes(String(job.site_id)));
+    if (!ownsJob && !canSeeSite) return response.status(403).json({ message: 'You cannot access this upload job.' });
+    return response.json({ job: serializeBulkUploadJob(job) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/activity/audit-logs', requireAuth, requirePermission('view_audit_logs'), async (request, response, next) => {
+  try {
+    const siteIds = await accessibleSiteIds(request.user);
+    const logs = await listAuditLogs({
+      limit: request.query.limit ? Number(request.query.limit) : 200,
+      offset: request.query.offset ? Number(request.query.offset) : 0,
+      action: request.query.action || '',
+      entity: request.query.entity || '',
+      search: request.query.search || '',
+      siteIds,
+      actorId: request.user.id
+    });
+    response.json({ logs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/utilities/reports/:module', requireAuth, requireAnyPermission([
+  'view_reports',
+  'export_data'
+]), async (request, response, next) => {
+  try {
+    const definition = getUtilityModule(request.params.module);
+    if (!definition) return response.status(404).json({ message: 'Report module not found.' });
+    const records = await listDocuments(definition.entity, {
+      sort: '-updated_date',
+      limit: Math.min(Math.max(Number(request.query.limit) || 500, 1), 5000)
+    });
+    const scopedRecords = await scopeEntityRecords(request.user, definition.entity, records);
+    await auditAction({
+      user: request.user,
+      action: 'REPORT_PREVIEW',
+      entity: definition.entity,
+      entityId: request.params.module,
+      details: { module: request.params.module, rows: scopedRecords.length }
+    });
+    response.json({
+      module: { key: request.params.module, label: definition.label, entity: definition.entity },
+      rows: serializeReportRows(scopedRecords)
+    });
   } catch (error) {
     next(error);
   }
@@ -2797,10 +3026,11 @@ if (fs.existsSync(distDir)) {
 
 app.use((error, _request, response, _next) => {
   console.error(error);
-  response.status(500).json({ message: error.message || 'Internal server error' });
+  response.status(Number(error.status) || 500).json({ message: error.message || 'Internal server error' });
 });
 
 await initDatabaseWithRetry();
+await resumeBulkUploadQueue();
 
 app.listen(port, host, () => {
   console.log(`FoodPro server listening on ${host}:${port}`);

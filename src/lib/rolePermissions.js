@@ -156,6 +156,35 @@ export const ROLE_PERMISSION_SECTIONS = [
       { key: 'view_reports', label: 'View reports' },
       { key: 'export_data', label: 'Export report data' }
     ]
+  },
+  {
+    key: 'utilities',
+    title: 'Utilities',
+    description: 'Background data imports, reusable templates, and portable report exports.',
+    subsections: [
+      { page: 'BulkUploadCenter', key: 'access_bulk_upload_center', label: 'Bulk Upload Center', description: 'Upload large CSV files through responsive background batches.' },
+      { page: 'BulkUploadTemplates', key: 'access_bulk_upload_templates', label: 'Bulk Upload Templates', description: 'Download supported CSV templates for each application module.' },
+      { page: 'DataExports', key: 'access_data_exports', label: 'CSV / Excel / PDF Reports', description: 'Preview and export authorized operational data.' }
+    ],
+    capabilities: [
+      { key: 'manage_bulk_uploads', label: 'Manage background bulk uploads' },
+      { key: 'export_data', label: 'Export authorized data' }
+    ]
+  },
+  {
+    key: 'activity-logs',
+    title: 'Activity Logs',
+    description: 'Trace user actions, monitor upload jobs, and inspect report data.',
+    subsections: [
+      { page: 'AuditLogs', key: 'access_audit_logs', label: 'Audit Logs', description: 'Search security-safe user and data activity records.' },
+      { page: 'BulkUploadProgress', key: 'access_bulk_upload_progress', label: 'Bulk Upload Progress', description: 'Monitor queued, processing, completed, and failed upload jobs.' },
+      { page: 'ReportsPreview', key: 'access_reports_preview', label: 'Reports Preview', description: 'Inspect authorized report rows before exporting.' }
+    ],
+    capabilities: [
+      { key: 'view_audit_logs', label: 'View audit logs' },
+      { key: 'view_bulk_upload_progress', label: 'View bulk upload progress' },
+      { key: 'view_reports', label: 'Preview reports' }
+    ]
   }
 ];
 

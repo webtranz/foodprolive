@@ -314,6 +314,7 @@ export {
   getLocationScope,
   filterRecordsByLocation,
   assertPayloadLocationAccess,
+  createSiteGraph,
   buildSiteHierarchy,
   normalizeUserLocationPayload,
   normalizeRecipeLocationPayload,

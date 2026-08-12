@@ -51,7 +51,13 @@ const granularPagePermissionLabels = {
   access_cost_control: 'Open Cost Control',
   access_productivity_tracking: 'Open Productivity Tracking',
   access_production_calculator: 'Open Production Calculator',
-  access_calories_calculator: 'Open Calories Calculator'
+  access_calories_calculator: 'Open Calories Calculator',
+  access_bulk_upload_center: 'Open Bulk Upload Center',
+  access_bulk_upload_templates: 'Open Bulk Upload Templates',
+  access_data_exports: 'Open CSV / Excel / PDF Reports',
+  access_audit_logs: 'Open Audit Logs',
+  access_bulk_upload_progress: 'Open Bulk Upload Progress',
+  access_reports_preview: 'Open Reports Preview'
 };
 
 export const permissionCatalog = [
@@ -67,6 +73,9 @@ export const permissionCatalog = [
   { key: 'view_dashboard', label: 'View Dashboard' },
   { key: 'view_reports', label: 'View Reports' },
   { key: 'export_data', label: 'Export Data' },
+  { key: 'manage_bulk_uploads', label: 'Manage Background Bulk Uploads' },
+  { key: 'view_audit_logs', label: 'View Audit Logs' },
+  { key: 'view_bulk_upload_progress', label: 'View Bulk Upload Progress' },
   { key: 'manage_projects', label: 'Manage Projects' },
   { key: 'manage_ingredients', label: 'Manage Ingredients' },
   { key: 'manage_food_categories', label: 'Manage Food Categories' },
@@ -126,7 +135,8 @@ export const systemRoleDefinitions = {
     access_level: 'manager',
     description: 'Cross-functional operational management for assigned projects and kitchens.',
     permissions: [
-      'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
+      'view_dashboard', 'view_reports', 'export_data', 'manage_bulk_uploads',
+      'view_audit_logs', 'view_bulk_upload_progress', 'manage_projects',
       'manage_ingredients', 'manage_food_categories', 'manage_inventory', 'transfer_inventory', 'manage_recipes',
       'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event', 'edit_special_event',
       'submit_special_event', 'review_special_event', 'approve_special_event', 'reject_special_event',

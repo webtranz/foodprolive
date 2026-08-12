@@ -935,6 +935,251 @@ async function createAppLog({ page_name, user_id, user_email, payload = {} }) {
   return { id, page_name, user_id, user_email, payload };
 }
 
+async function createAuditLog({
+  actor_id = null,
+  actor_email = null,
+  actor_name = null,
+  role = null,
+  action,
+  entity,
+  entity_id = null,
+  site_id = null,
+  site_name = null,
+  details = {}
+}, executor = pool) {
+  const id = randomId('audit');
+  const createdAt = nowIso();
+  await query(
+    `INSERT INTO audit_logs (
+       id, actor_id, actor_email, actor_name, role, action, entity, entity_id,
+       site_id, site_name, details, created_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
+    [
+      id,
+      actor_id,
+      actor_email,
+      actor_name,
+      role,
+      action,
+      entity,
+      entity_id,
+      site_id,
+      site_name,
+      JSON.stringify(details || {}),
+      createdAt
+    ],
+    executor
+  );
+  return {
+    id,
+    actor_id,
+    actor_email,
+    actor_name,
+    role,
+    action,
+    entity,
+    entity_id,
+    site_id,
+    site_name,
+    details,
+    created_at: createdAt
+  };
+}
+
+async function listAuditLogs({
+  limit = 200,
+  offset = 0,
+  action = '',
+  entity = '',
+  search = '',
+  siteIds = null,
+  actorId = null
+} = {}, executor = pool) {
+  const conditions = [];
+  const values = [];
+  const bind = (value) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+
+  if (action) conditions.push(`action ILIKE ${bind(`%${action}%`)}`);
+  if (entity) conditions.push(`entity ILIKE ${bind(`%${entity}%`)}`);
+  if (search) {
+    const pattern = `%${search}%`;
+    const parameter = bind(pattern);
+    conditions.push(`(
+      actor_email ILIKE ${parameter}
+      OR actor_name ILIKE ${parameter}
+      OR action ILIKE ${parameter}
+      OR entity ILIKE ${parameter}
+      OR COALESCE(entity_id, '') ILIKE ${parameter}
+      OR details::text ILIKE ${parameter}
+    )`);
+  }
+  if (Array.isArray(siteIds)) {
+    const actorParameter = actorId ? bind(actorId) : null;
+    if (siteIds.length === 0) conditions.push(actorParameter ? `actor_id = ${actorParameter}` : 'FALSE');
+    else {
+      const siteParameter = bind(siteIds);
+      conditions.push(actorParameter
+        ? `(site_id = ANY(${siteParameter}::text[]) OR actor_id = ${actorParameter})`
+        : `site_id = ANY(${siteParameter}::text[])`);
+    }
+  }
+
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  values.push(safeLimit, safeOffset);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const result = await query(
+    `SELECT id, actor_id, actor_email, actor_name, role, action, entity, entity_id,
+            site_id, site_name, details, created_at
+     FROM audit_logs
+     ${where}
+     ORDER BY created_at DESC
+     LIMIT $${values.length - 1} OFFSET $${values.length}`,
+    values,
+    executor
+  );
+  return result.rows;
+}
+
+async function createBulkUploadJob({
+  module_key,
+  entity_name,
+  import_mode = 'keep_existing',
+  file_name = null,
+  file_path = null,
+  file_size = 0,
+  batch_size = 500,
+  actor = null,
+  site_id = null,
+  site_name = null
+}, executor = pool) {
+  const id = randomId('bulk');
+  const createdAt = nowIso();
+  const actorSnapshot = actor ? sanitizeUser(actor) : {};
+  await query(
+    `INSERT INTO bulk_upload_jobs (
+       id, module_key, entity_name, import_mode, file_name, file_path, file_size,
+       batch_size, actor_id, actor_email, actor_name, role, site_id, site_name,
+       actor_snapshot, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $16)`,
+    [
+      id,
+      module_key,
+      entity_name,
+      import_mode,
+      file_name,
+      file_path,
+      Number(file_size) || 0,
+      Number(batch_size) || 500,
+      actor?.id || null,
+      actor?.email || null,
+      actor?.full_name || actor?.email || 'System',
+      actor?.role || null,
+      site_id,
+      site_name,
+      JSON.stringify(actorSnapshot),
+      createdAt
+    ],
+    executor
+  );
+  return getBulkUploadJob(id, executor);
+}
+
+async function getBulkUploadJob(id, executor = pool) {
+  const result = await query('SELECT * FROM bulk_upload_jobs WHERE id = $1 LIMIT 1', [id], executor);
+  return result.rowCount ? result.rows[0] : null;
+}
+
+async function listBulkUploadJobs({ limit = 100, statuses = [], siteIds = null, actorId = null } = {}, executor = pool) {
+  const conditions = [];
+  const values = [];
+  const bind = (value) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+  if (Array.isArray(statuses) && statuses.length) {
+    conditions.push(`status = ANY(${bind(statuses)}::text[])`);
+  }
+  if (Array.isArray(siteIds)) {
+    const actorParameter = actorId ? bind(actorId) : null;
+    if (siteIds.length === 0) conditions.push(actorParameter ? `actor_id = ${actorParameter}` : 'FALSE');
+    else {
+      const siteParameter = bind(siteIds);
+      conditions.push(actorParameter
+        ? `(site_id = ANY(${siteParameter}::text[]) OR actor_id = ${actorParameter})`
+        : `site_id = ANY(${siteParameter}::text[])`);
+    }
+  }
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  values.push(safeLimit);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const result = await query(
+    `SELECT * FROM bulk_upload_jobs ${where} ORDER BY created_at DESC LIMIT $${values.length}`,
+    values,
+    executor
+  );
+  return result.rows;
+}
+
+async function updateBulkUploadJob(id, patch = {}, executor = pool) {
+  const fieldMap = {
+    status: 'status',
+    message: 'message',
+    total_rows: 'total_rows',
+    processed_rows: 'processed_rows',
+    applied_rows: 'applied_rows',
+    skipped_rows: 'skipped_rows',
+    failed_rows: 'failed_rows',
+    errors: 'errors',
+    started_at: 'started_at',
+    completed_at: 'completed_at'
+  };
+  const assignments = [];
+  const values = [];
+  Object.entries(fieldMap).forEach(([key, column]) => {
+    if (!Object.hasOwn(patch, key)) return;
+    const value = key === 'errors' ? JSON.stringify(patch[key] || []) : patch[key];
+    values.push(value);
+    assignments.push(`${column} = $${values.length}${key === 'errors' ? '::jsonb' : ''}`);
+  });
+  if (!assignments.length) return getBulkUploadJob(id, executor);
+  values.push(id);
+  await query(
+    `UPDATE bulk_upload_jobs
+     SET ${assignments.join(', ')}, updated_at = NOW()
+     WHERE id = $${values.length}`,
+    values,
+    executor
+  );
+  return getBulkUploadJob(id, executor);
+}
+
+async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
+  ensureKnownEntity(entity);
+  if (entity === 'User') {
+    const error = new Error('Users cannot be deleted through bulk upload.');
+    error.status = 400;
+    throw error;
+  }
+  if (Array.isArray(siteIds)) {
+    if (!siteIds.length) return 0;
+    const result = entity === 'Site'
+      ? await query('DELETE FROM entity_records WHERE entity_name = $1 AND id = ANY($2::text[])', [entity, siteIds], executor)
+      : await query(
+        `DELETE FROM entity_records
+         WHERE entity_name = $1 AND data->>'site_id' = ANY($2::text[])`,
+        [entity, siteIds],
+        executor
+      );
+    return result.rowCount;
+  }
+  const result = await query('DELETE FROM entity_records WHERE entity_name = $1', [entity], executor);
+  return result.rowCount;
+}
+
 async function createEmailLog(payload) {
   const id = randomId('email');
   await query(
@@ -963,5 +1208,12 @@ export {
   loginUser,
   inviteUser,
   createAppLog,
+  createAuditLog,
+  listAuditLogs,
+  createBulkUploadJob,
+  getBulkUploadJob,
+  listBulkUploadJobs,
+  updateBulkUploadJob,
+  clearDocumentsForBulk,
   createEmailLog
 };

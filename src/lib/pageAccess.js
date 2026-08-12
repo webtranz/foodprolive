@@ -20,7 +20,13 @@ export const pagePermissionMap = {
   ],
   FoodCategories: 'manage_food_categories',
   FoodWaste: 'manage_waste',
-  FoodWasteQR: 'manage_waste'
+  FoodWasteQR: 'manage_waste',
+  BulkUploadCenter: 'manage_bulk_uploads',
+  BulkUploadTemplates: 'manage_bulk_uploads',
+  DataExports: 'export_data',
+  AuditLogs: 'view_audit_logs',
+  BulkUploadProgress: 'view_bulk_upload_progress',
+  ReportsPreview: 'view_reports'
 };
 
 export function getRequiredPagePermission(pageName) {

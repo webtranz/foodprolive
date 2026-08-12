@@ -54,6 +54,7 @@ See `.env.example` for the full list. The most important values are:
 - `DATABASE_URL`
 - `POSTGRES_*`
 - `PUBLIC_APP_URL`
+- `BULK_UPLOAD_MAX_MB`, `BULK_UPLOAD_BATCH_SIZE`, and `BULK_UPLOAD_WORKERS` for background CSV processing
 - `OPENAI_API_KEY` for AI-assisted features
 - `SMTP_*` and `EMAIL_FROM` for real email delivery
 

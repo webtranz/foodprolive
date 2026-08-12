@@ -34,7 +34,9 @@ import {
   MapPin,
   LogOut,
   Cable,
-  ShieldAlert
+  ShieldAlert,
+  Upload,
+  Activity
 } from 'lucide-react';
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { usePermissions } from '@/components/auth/usePermissions';
@@ -159,7 +161,25 @@ function buildNavigation(t, can = () => true) {
     { name: n.procurement, href: 'ProcurementModule', icon: ShoppingCart },
     { name: n.posIntegration, href: 'POSIntegration', icon: Cable },
     { name: n.supplierPortal, href: 'SupplierPortal', icon: Building2 },
-    { name: n.userRoles, href: 'UserRoleManagement', icon: Shield }
+    { name: n.userRoles, href: 'UserRoleManagement', icon: Shield },
+    {
+      name: n.utilities || 'Utilities',
+      icon: Upload,
+      children: [
+        { name: n.bulkUploadCenter || 'Bulk Upload Center', href: 'BulkUploadCenter', icon: Upload, permission: 'manage_bulk_uploads' },
+        { name: n.bulkUploadTemplates || 'Bulk Upload Templates', href: 'BulkUploadTemplates', icon: FileText, permission: 'manage_bulk_uploads' },
+        { name: n.dataExports || 'CSV / Excel / PDF Reports', href: 'DataExports', icon: BarChart3, permission: 'export_data' }
+      ]
+    },
+    {
+      name: n.activityLogs || 'Activity Logs',
+      icon: Activity,
+      children: [
+        { name: n.auditLogs || 'Audit Logs', href: 'AuditLogs', icon: Shield, permission: 'view_audit_logs' },
+        { name: n.bulkUploadProgress || 'Bulk Upload Progress', href: 'BulkUploadProgress', icon: Activity, permission: 'view_bulk_upload_progress' },
+        { name: n.reportsPreview || 'Reports Preview', href: 'ReportsPreview', icon: BarChart3, permission: 'view_reports' }
+      ]
+    }
   ], can);
 }
 

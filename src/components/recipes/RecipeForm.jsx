@@ -14,7 +14,10 @@ import {
   validateRecipeComposition,
   wouldCreateRecipeCycle
 } from '../../../shared/recipeComposition.js';
-import { validateRecipeImageFile } from '../../../shared/recipeImage.js';
+import {
+  validateRecipeImageFile,
+  validateRecipeImageReference
+} from '../../../shared/recipeImage.js';
 import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
 
 const ALLERGEN_COLORS = {
@@ -266,7 +269,17 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     reader.onload = () => setImagePreview(String(reader.result || ''));
     reader.readAsDataURL(file);
     setImageFile(file);
+    setFormData((current) => ({ ...current, image_url: '' }));
     setFormError('');
+  };
+
+  const handleImageUrlChange = (value) => {
+    const nextValue = String(value || '').trimStart();
+    const validationError = validateRecipeImageReference(nextValue);
+    setImageFile(null);
+    setFormData((current) => ({ ...current, image_url: nextValue }));
+    setImagePreview(validationError ? '' : nextValue.trim());
+    setFormError(validationError);
   };
 
   const removeImage = () => {
@@ -278,6 +291,11 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const imageReferenceError = imageFile ? '' : validateRecipeImageReference(formData.image_url);
+    if (imageReferenceError) {
+      setFormError(imageReferenceError);
+      return;
+    }
     const normalizedSubRecipes = formData.sub_recipes.map((line) => ({
       ...line,
       quantity: parseFloat(line.quantity) || 0,
@@ -292,7 +310,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       return;
     }
     setFormError('');
-    let imageUrl = formData.image_url || '';
+    let imageUrl = String(formData.image_url || '').trim();
     if (imageFile) {
       try {
         setImageUploading(true);
@@ -450,7 +468,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                   <ImagePlus className="h-5 w-5 text-emerald-600" />
                   <Label className="text-base font-semibold">Recipe Picture</Label>
                 </div>
-                <p className="mt-1 text-sm text-slate-500">JPG, PNG, WebP, or GIF. Maximum file size: 1 MB.</p>
+                <p className="mt-1 text-sm text-slate-500">Upload a file up to 1 MB, or enter a public HTTPS image path.</p>
               </div>
               {imagePreview ? (
                 <Button type="button" variant="ghost" size="sm" onClick={removeImage} className="text-red-600 hover:bg-red-50 hover:text-red-700">
@@ -481,6 +499,19 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                 <ImagePlus className="mr-2 h-5 w-5" /> Choose Recipe Picture
               </Button>
             )}
+            <div className="mt-4">
+              <Label htmlFor="recipe_image_url">Secure HTTPS image path</Label>
+              <Input
+                id="recipe_image_url"
+                type="text"
+                inputMode="url"
+                value={formData.image_url}
+                onChange={(event) => handleImageUrlChange(event.target.value)}
+                placeholder="https://images.example.com/recipes/shrimp-curry.jpg"
+                className="mt-1 bg-white"
+              />
+              <p className="mt-1 text-xs text-slate-500">Only public HTTPS addresses are accepted. HTTP, local, private-network, and credential-bearing addresses are blocked.</p>
+            </div>
           </div>
 
           <div>

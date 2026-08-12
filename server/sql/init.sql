@@ -42,6 +42,51 @@ CREATE TABLE IF NOT EXISTS app_logs (
   visited_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  actor_email TEXT,
+  actor_name TEXT,
+  role TEXT,
+  action TEXT NOT NULL,
+  entity TEXT NOT NULL,
+  entity_id TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS bulk_upload_jobs (
+  id TEXT PRIMARY KEY,
+  module_key TEXT NOT NULL,
+  entity_name TEXT NOT NULL,
+  import_mode TEXT NOT NULL DEFAULT 'keep_existing',
+  file_name TEXT,
+  file_path TEXT,
+  file_size BIGINT NOT NULL DEFAULT 0,
+  batch_size INTEGER NOT NULL DEFAULT 500,
+  total_rows INTEGER NOT NULL DEFAULT 0,
+  processed_rows INTEGER NOT NULL DEFAULT 0,
+  applied_rows INTEGER NOT NULL DEFAULT 0,
+  skipped_rows INTEGER NOT NULL DEFAULT 0,
+  failed_rows INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'QUEUED',
+  message TEXT,
+  errors JSONB NOT NULL DEFAULT '[]'::jsonb,
+  actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  actor_email TEXT,
+  actor_name TEXT,
+  role TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  actor_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS email_logs (
   id TEXT PRIMARY KEY,
   recipient TEXT,
@@ -475,6 +520,13 @@ EXECUTE FUNCTION validate_supplier_invoice_chain();
 
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_app_logs_user ON app_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_site ON audit_logs(site_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_status ON bulk_upload_jobs(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_actor ON bulk_upload_jobs(actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_site ON bulk_upload_jobs(site_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_orders_source ON pos_sales_orders(source_id);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_items_order ON pos_sales_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_pos_recipe_mapping_source ON pos_recipe_mapping(source_id);

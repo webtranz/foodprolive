@@ -62,6 +62,31 @@ async function apiRequest(path, options = {}) {
   return payload;
 }
 
+async function apiBlobRequest(path, options = {}) {
+  const token = getStoredToken();
+  const headers = new Headers(options.headers || {});
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  let response;
+  try {
+    response = await fetch(path, { ...options, headers });
+  } catch (error) {
+    const networkError = new Error('Cannot reach the server. Check that the deployment is running and the domain points to the correct VPS.');
+    networkError.status = 503;
+    networkError.cause = error;
+    throw networkError;
+  }
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const error = new Error(payload.message || 'Download failed');
+    error.status = response.status;
+    error.data = payload;
+    throw error;
+  }
+  return response.blob();
+}
+
 const entityCacheKey = (entity) => `entity:${entity}`;
 
 function emitEntityChange(entity, detail = {}) {
@@ -164,6 +189,14 @@ export const base44 = {
       });
     },
     logout(redirectTo) {
+      const token = getStoredToken();
+      if (token) {
+        fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          keepalive: true
+        }).catch(() => {});
+      }
       clearStoredToken();
       if (redirectTo) {
         window.location.assign(redirectTo);
@@ -565,6 +598,41 @@ export const base44 = {
         method: 'POST',
         body: JSON.stringify({})
       });
+    }
+  },
+  utilities: {
+    listModules() {
+      return apiRequest('/api/utilities/modules');
+    },
+    downloadTemplate(moduleKey) {
+      return apiBlobRequest(`/api/utilities/templates/${encodeURIComponent(moduleKey)}`);
+    },
+    submitBulkUpload({ module, import_mode, file, site_id, site_name }) {
+      const formData = new FormData();
+      formData.append('module', module);
+      formData.append('import_mode', import_mode || 'keep_existing');
+      if (file) formData.append('file', file);
+      if (site_id) formData.append('site_id', site_id);
+      if (site_name) formData.append('site_name', site_name);
+      return apiRequest('/api/utilities/bulk-upload', {
+        method: 'POST',
+        body: formData,
+        headers: {}
+      });
+    },
+    getReport(moduleKey, limit = 500) {
+      return apiRequest(`/api/utilities/reports/${encodeURIComponent(moduleKey)}${buildQueryString({ limit })}`);
+    }
+  },
+  activity: {
+    listBulkUploadJobs(limit = 100) {
+      return apiRequest(`/api/activity/bulk-upload-jobs${buildQueryString({ limit })}`);
+    },
+    getBulkUploadJob(id) {
+      return apiRequest(`/api/activity/bulk-upload-jobs/${encodeURIComponent(id)}`);
+    },
+    listAuditLogs(filters = {}) {
+      return apiRequest(`/api/activity/audit-logs${buildQueryString(filters)}`);
     }
   },
   integrations: {
