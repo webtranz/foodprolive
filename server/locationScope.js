@@ -31,6 +31,10 @@ const LOCATION_SCOPED_ENTITIES = new Set([
   'User',
   'Site'
 ]);
+const siteScopeCacheTtlMs = Math.max(0, Number(process.env.SITE_SCOPE_CACHE_TTL_MS || 10000));
+let siteCatalogCache = null;
+let siteCatalogPromise = null;
+let siteCatalogGeneration = 0;
 
 function normalizeArray(value) {
   return Array.isArray(value)
@@ -130,13 +134,48 @@ function canAccessLocationRecord(user, record, accessibleSiteIds, accessibleTree
   return true;
 }
 
-async function getAllSites() {
-  return listDocuments('Site', { limit: 5000, sort: 'name' });
+export function isLocationScopedEntity(entity) {
+  return LOCATION_SCOPED_ENTITIES.has(entity);
+}
+
+export function invalidateLocationScopeCache() {
+  siteCatalogGeneration += 1;
+  siteCatalogCache = null;
+  siteCatalogPromise = null;
+}
+
+async function getSiteCatalog() {
+  if (siteScopeCacheTtlMs > 0 && siteCatalogCache?.expiresAt > Date.now()) {
+    return siteCatalogCache.value;
+  }
+
+  if (siteCatalogPromise) {
+    return siteCatalogPromise;
+  }
+
+  const generation = siteCatalogGeneration;
+  const loadingPromise = (async () => {
+    const sites = await listDocuments('Site', { limit: 5000, sort: 'name' });
+    const value = { sites, graph: createSiteGraph(sites) };
+    if (siteScopeCacheTtlMs > 0 && generation === siteCatalogGeneration) {
+      siteCatalogCache = {
+        value,
+        expiresAt: Date.now() + siteScopeCacheTtlMs
+      };
+    }
+    return value;
+  })();
+  siteCatalogPromise = loadingPromise;
+
+  try {
+    return await loadingPromise;
+  } finally {
+    if (siteCatalogPromise === loadingPromise) siteCatalogPromise = null;
+  }
 }
 
 async function getLocationScope(user) {
-  const sites = await getAllSites();
-  const graph = createSiteGraph(sites);
+  const { sites, graph } = await getSiteCatalog();
 
   if (hasUnrestrictedLocationAccess(user)) {
     const allIds = new Set(sites.map((site) => String(site.id)));

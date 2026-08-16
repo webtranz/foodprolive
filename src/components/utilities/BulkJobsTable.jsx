@@ -1,5 +1,5 @@
-import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,11 +26,15 @@ function jobProgress(job) {
 }
 
 export default function BulkJobsTable({ limit = 100, compact = false }) {
+  const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: ['bulk-upload-jobs', limit],
     queryFn: () => base44.activity.listBulkUploadJobs(limit),
-    refetchInterval: 2500
+    refetchInterval: 30000
   });
+  useEffect(() => base44.entities.BulkUploadJob.subscribe(() => {
+    queryClient.invalidateQueries({ queryKey: ['bulk-upload-jobs'] });
+  }), [queryClient]);
   const jobs = data?.jobs || [];
 
   if (isLoading) return <Card><CardContent className="p-6 text-sm text-slate-500">Loading upload jobs…</CardContent></Card>;

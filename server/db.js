@@ -9,6 +9,7 @@ import {
   validateEntityPayload,
   getSystemRoleDefinition
 } from './entities.js';
+import { buildEntityListQuery } from './entityQuery.js';
 
 const rootDir = path.resolve(process.cwd());
 const uploadsDir = path.join(rootDir, 'uploads');
@@ -16,6 +17,10 @@ const uploadsDir = path.join(rootDir, 'uploads');
 await fs.mkdir(uploadsDir, { recursive: true });
 
 const envValue = (key, fallback = '') => (process.env[key] || fallback).trim();
+const envInteger = (key, fallback, minimum = 0) => {
+  const parsed = Number.parseInt(process.env[key] || '', 10);
+  return Number.isFinite(parsed) ? Math.max(minimum, parsed) : fallback;
+};
 
 const connectionString = envValue('DATABASE_URL') || [
   `postgresql://${encodeURIComponent(envValue('POSTGRES_USER', 'foodpro'))}`,
@@ -27,7 +32,18 @@ const connectionString = envValue('DATABASE_URL') || [
 
 const pool = new Pool({
   connectionString,
-  ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false
+  ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false,
+  application_name: envValue('DB_APPLICATION_NAME', 'foodpro-api'),
+  max: envInteger('DB_POOL_MAX', 20, 1),
+  idleTimeoutMillis: envInteger('DB_POOL_IDLE_TIMEOUT_MS', 30000, 1000),
+  connectionTimeoutMillis: envInteger('DB_POOL_CONNECTION_TIMEOUT_MS', 5000, 100),
+  statement_timeout: envInteger('DB_STATEMENT_TIMEOUT_MS', 15000, 100),
+  query_timeout: envInteger('DB_QUERY_TIMEOUT_MS', 20000, 100),
+  maxLifetimeSeconds: envInteger('DB_POOL_MAX_LIFETIME_SECONDS', 1800, 0)
+});
+
+pool.on?.('error', (error) => {
+  console.error(`Unexpected idle PostgreSQL client error: ${error.message}`);
 });
 
 function getConnectionUrl() {
@@ -160,10 +176,31 @@ function normalizeRecord(entity, payload, existing = null) {
   };
 }
 
+const roleProfileCache = new Map();
+const roleProfileCacheTtlMs = envInteger('ROLE_PROFILE_CACHE_TTL_MS', 10000, 0);
+let roleProfileCacheGeneration = 0;
+
+function invalidateRoleProfileCache(roleKey = null) {
+  roleProfileCacheGeneration += 1;
+  const normalized = String(roleKey || '').trim().toLowerCase();
+  if (normalized) {
+    roleProfileCache.delete(normalized);
+    return;
+  }
+  roleProfileCache.clear();
+}
+
 async function findRoleProfileByKey(roleKey, executor = pool) {
   const normalized = String(roleKey || '').trim().toLowerCase();
   if (!normalized) {
     return null;
+  }
+
+  const canUseCache = executor === pool && roleProfileCacheTtlMs > 0;
+  const cacheGeneration = roleProfileCacheGeneration;
+  const cached = canUseCache ? roleProfileCache.get(normalized) : null;
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
   }
 
   const result = await query(
@@ -176,21 +213,24 @@ async function findRoleProfileByKey(roleKey, executor = pool) {
     executor
   );
 
-  if (result.rowCount) {
-    return result.rows[0].data;
+  let value = result.rowCount ? result.rows[0].data : null;
+  if (!value) {
+    const builtIn = getSystemRoleDefinition(normalized);
+    value = builtIn ? {
+      id: `role_${builtIn.role_key}`,
+      ...builtIn,
+      is_system: true,
+      is_active: true
+    } : null;
   }
 
-  const builtIn = getSystemRoleDefinition(normalized);
-  if (!builtIn) {
-    return null;
+  if (canUseCache && cacheGeneration === roleProfileCacheGeneration) {
+    roleProfileCache.set(normalized, {
+      value,
+      expiresAt: Date.now() + roleProfileCacheTtlMs
+    });
   }
-
-  return {
-    id: `role_${builtIn.role_key}`,
-    ...builtIn,
-    is_system: true,
-    is_active: true
-  };
+  return value;
 }
 
 async function hydrateUserRole(user, executor = pool) {
@@ -547,11 +587,23 @@ async function initDatabase() {
   await ensureDatabaseExists();
   const sqlPath = path.join(rootDir, 'server', 'sql', 'init.sql');
   const sql = await fs.readFile(sqlPath, 'utf8');
-  await query(sql);
-  await ensureAdminAccounts();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['foodpro_schema_initialization']);
+    await client.query('SET LOCAL statement_timeout = 0');
+    await client.query({ text: sql, query_timeout: 0 });
+    await ensureAdminAccounts(client);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
-async function ensureAdminAccounts() {
+async function ensureAdminAccounts(executor = pool) {
   const adminAccounts = [
     {
       email: process.env.ADMIN_EMAIL || 'humayoonkhizar12@gmail.com',
@@ -567,7 +619,7 @@ async function ensureAdminAccounts() {
 
   for (const admin of adminAccounts) {
     const passwordHash = bcrypt.hashSync(admin.password, 10);
-    const existingUser = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [admin.email]);
+    const existingUser = await query('SELECT id FROM users WHERE email = $1 LIMIT 1', [admin.email], executor);
 
     if (existingUser.rowCount > 0) {
       await query(
@@ -578,7 +630,8 @@ async function ensureAdminAccounts() {
              password_hash = $3,
              updated_at = NOW()
          WHERE email = $1`,
-        [admin.email, admin.fullName, passwordHash]
+        [admin.email, admin.fullName, passwordHash],
+        executor
       );
       continue;
     }
@@ -586,7 +639,8 @@ async function ensureAdminAccounts() {
     await query(
       `INSERT INTO users (id, email, full_name, role, status, password_hash, created_at, updated_at)
        VALUES ($1, $2, $3, 'admin', 'active', $4, NOW(), NOW())`,
-      [randomId('user'), admin.email, admin.fullName, passwordHash]
+      [randomId('user'), admin.email, admin.fullName, passwordHash],
+      executor
     );
   }
 
@@ -602,7 +656,8 @@ async function ensureAdminAccounts() {
   for (const seededUser of seededUsers) {
     const existingSeededUser = await query(
       'SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
-      [seededUser.email]
+      [seededUser.email],
+      executor
     );
 
     if (existingSeededUser.rowCount === 0) {
@@ -615,7 +670,8 @@ async function ensureAdminAccounts() {
           seededUser.fullName,
           seededUser.role,
           bcrypt.hashSync(seededUser.password, 10)
-        ]
+        ],
+        executor
       );
     }
   }
@@ -757,26 +813,76 @@ async function updateUser(id, patch, executor = pool) {
   return sanitizeUser(await findUserById(id, executor));
 }
 
-async function listDocuments(entity, { filters = {}, sort, limit, lock = false } = {}, executor = pool) {
+async function listDocuments(
+  entity,
+  { filters = {}, sort, limit, offset = 0, lock = false, location = null } = {},
+  executor = pool
+) {
   ensureKnownEntity(entity);
   if (entity === 'User') {
     const filtered = (await listUsers(executor)).filter((record) => matchesFilter(record, filters));
     const sorted = sortRecords(filtered, sort);
-    return typeof limit === 'number' ? sorted.slice(0, limit) : sorted;
+    const start = Math.max(0, Number(offset) || 0);
+    return typeof limit === 'number' ? sorted.slice(start, start + limit) : sorted.slice(start);
   }
 
-  const result = await query(
-    `SELECT data
-     FROM entity_records
-     WHERE entity_name = $1
-     ORDER BY updated_at DESC
-     ${lock ? 'FOR UPDATE' : ''}`,
-    [entity],
-    executor
-  );
-  const records = result.rows.map((row) => row.data).filter((record) => matchesFilter(record, filters));
-  const sorted = sortRecords(records, sort);
-  return typeof limit === 'number' ? sorted.slice(0, limit) : sorted;
+  const built = buildEntityListQuery({ entity, filters, sort, limit, offset, lock, location });
+  const result = await query(built.text, built.parameters, executor);
+  return result.rows.map((row) => row.data);
+}
+
+async function listDocumentsPage(
+  entity,
+  { filters = {}, sort, limit = 50, offset = 0, location = null } = {},
+  executor = pool
+) {
+  ensureKnownEntity(entity);
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+
+  if (entity === 'User') {
+    const filtered = (await listUsers(executor)).filter((record) => matchesFilter(record, filters));
+    const sorted = sortRecords(filtered, sort);
+    return {
+      items: sorted.slice(safeOffset, safeOffset + safeLimit),
+      total_count: sorted.length,
+      limit: safeLimit,
+      offset: safeOffset
+    };
+  }
+
+  const built = buildEntityListQuery({
+    entity,
+    filters,
+    sort,
+    limit: safeLimit,
+    offset: safeOffset,
+    location,
+    includeTotal: true
+  });
+  const result = await query(built.text, built.parameters, executor);
+  let totalCount = result.rowCount ? Number(result.rows[0].total_count) : 0;
+
+  if (!result.rowCount && safeOffset > 0) {
+    const countProbe = buildEntityListQuery({
+      entity,
+      filters,
+      sort,
+      limit: 1,
+      offset: 0,
+      location,
+      includeTotal: true
+    });
+    const probeResult = await query(countProbe.text, countProbe.parameters, executor);
+    totalCount = probeResult.rowCount ? Number(probeResult.rows[0].total_count) : 0;
+  }
+
+  return {
+    items: result.rows.map((row) => row.data),
+    total_count: totalCount,
+    limit: safeLimit,
+    offset: safeOffset
+  };
 }
 
 async function findDocument(entity, id, executor = pool, lock = false) {
@@ -1159,6 +1265,37 @@ async function updateBulkUploadJob(id, patch = {}, executor = pool) {
   return getBulkUploadJob(id, executor);
 }
 
+async function claimNextBulkUploadJob({ staleAfterMs = 15 * 60 * 1000 } = {}) {
+  return withTransaction(async (client) => {
+    const staleBefore = new Date(Date.now() - Math.max(60000, Number(staleAfterMs) || 0)).toISOString();
+    const result = await query(
+      `WITH candidate AS (
+         SELECT id
+         FROM bulk_upload_jobs
+         WHERE status = 'QUEUED'
+            OR (status = 'PROCESSING' AND updated_at < $1)
+         ORDER BY created_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+       )
+       UPDATE bulk_upload_jobs job
+       SET status = 'PROCESSING',
+           started_at = COALESCE(job.started_at, NOW()),
+           updated_at = NOW(),
+           message = CASE
+             WHEN job.status = 'PROCESSING' THEN 'Recovering a stale background upload job.'
+             ELSE 'Background worker claimed this upload job.'
+           END
+       FROM candidate
+       WHERE job.id = candidate.id
+       RETURNING job.*`,
+      [staleBefore],
+      client
+    );
+    return result.rowCount ? result.rows[0] : null;
+  });
+}
+
 async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
   ensureKnownEntity(entity);
   if (entity === 'User') {
@@ -1200,6 +1337,7 @@ export {
   uploadsDir,
   initDatabase,
   listDocuments,
+  listDocumentsPage,
   findDocument,
   createDocument,
   updateDocument,
@@ -1216,6 +1354,8 @@ export {
   getBulkUploadJob,
   listBulkUploadJobs,
   updateBulkUploadJob,
+  claimNextBulkUploadJob,
   clearDocumentsForBulk,
-  createEmailLog
+  createEmailLog,
+  invalidateRoleProfileCache
 };

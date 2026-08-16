@@ -148,7 +148,7 @@ export default function EventPlanning() {
     queryKey: ['recipes', 'event-planning', formData.site_id],
     queryFn: () => base44.specialEvents.listRecipes(formData.site_id),
     placeholderData: (previousData) => previousData,
-    refetchInterval: formOpen ? 30000 : false
+    refetchInterval: formOpen ? 300000 : false
   });
   const events = eventsQuery.data || [];
   const sites = sitesQuery.data || [];
@@ -164,8 +164,22 @@ export default function EventPlanning() {
     queryKey: ['specialEvent', selectedSummary?.id],
     queryFn: () => base44.specialEvents.get(selectedSummary.id),
     enabled: Boolean(selectedSummary?.id),
-    refetchInterval: 30000
+    refetchInterval: 300000
   });
+
+  useEffect(() => {
+    const unsubscribeEvents = base44.entities.MenuPlan.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ['specialEvents'] });
+      queryClient.invalidateQueries({ queryKey: ['specialEvent'] });
+    });
+    const unsubscribeRecipes = base44.entities.Recipe.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ['recipes', 'event-planning'] });
+    });
+    return () => {
+      unsubscribeEvents();
+      unsubscribeRecipes();
+    };
+  }, [queryClient]);
   const selected = eventDetailQuery.data || selectedSummary;
   const selectedSite = sites.find((site) => site.id === formData.site_id);
   const budgetContextQuery = useQuery({

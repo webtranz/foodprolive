@@ -22,8 +22,11 @@ import {
 } from './utilities.js';
 import { auditAction } from './audit.js';
 import { prepareEntityPayload } from './entityPreparation.js';
+import { materializeStoredReference, removeStoredReference } from './objectStorage.js';
 
 const MAX_RECORDED_ERRORS = 100;
+let materializedUpload = null;
+let stagedPathToCleanup = null;
 
 function isDuplicateError(error) {
   return error?.status === 409 || error?.code === '23505' || /already exists/i.test(error?.message || '');
@@ -232,8 +235,11 @@ async function run() {
     return;
   }
 
-  const stagedPath = `${job.file_path}.validated.jsonl`;
-  const validation = await validateToJsonLines(job, definition, stagedPath);
+  materializedUpload = await materializeStoredReference(job.file_path);
+  const processingJob = { ...job, file_path: materializedUpload.path };
+  const stagedPath = `${processingJob.file_path}.validated.jsonl`;
+  stagedPathToCleanup = stagedPath;
+  const validation = await validateToJsonLines(processingJob, definition, stagedPath);
   await updateBulkUploadJob(job.id, {
     total_rows: validation.totalRows,
     failed_rows: validation.invalidRows,
@@ -324,9 +330,8 @@ run()
   })
   .finally(async () => {
     const job = await getBulkUploadJob(workerData.jobId).catch(() => null);
-    if (job?.file_path) {
-      await fsPromises.unlink(job.file_path).catch(() => {});
-      await fsPromises.unlink(`${job.file_path}.validated.jsonl`).catch(() => {});
-    }
+    if (stagedPathToCleanup) await fsPromises.unlink(stagedPathToCleanup).catch(() => {});
+    await materializedUpload?.cleanup?.().catch(() => {});
+    if (job?.file_path) await removeStoredReference(job.file_path).catch(() => {});
     await pool.end().catch(() => {});
   });

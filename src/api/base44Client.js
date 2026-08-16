@@ -1,5 +1,9 @@
 const ACCESS_TOKEN_KEY = 'foodpro_access_token';
 const eventBus = new EventTarget();
+let realtimeController = null;
+let realtimeSubscribers = 0;
+const realtimeEntityTimers = new Map();
+const realtimeEntityDetails = new Map();
 
 const getStoredToken = () => (
   window.localStorage.getItem(ACCESS_TOKEN_KEY) ||
@@ -20,6 +24,8 @@ function setStoredToken(token, remember = true) {
 function clearStoredToken() {
   window.localStorage.removeItem(ACCESS_TOKEN_KEY);
   window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+  realtimeController?.abort();
+  realtimeController = null;
 }
 
 async function apiRequest(path, options = {}) {
@@ -93,6 +99,86 @@ function emitEntityChange(entity, detail = {}) {
   eventBus.dispatchEvent(new CustomEvent(entityCacheKey(entity), { detail }));
 }
 
+function scheduleRemoteEntityChange(entity, detail) {
+  realtimeEntityDetails.set(entity, detail);
+  if (realtimeEntityTimers.has(entity)) return;
+  const timer = setTimeout(() => {
+    realtimeEntityTimers.delete(entity);
+    const latest = realtimeEntityDetails.get(entity) || detail;
+    realtimeEntityDetails.delete(entity);
+    emitEntityChange(entity, latest);
+  }, 250 + Math.floor(Math.random() * 500));
+  realtimeEntityTimers.set(entity, timer);
+}
+
+function handleRealtimeFrame(frame) {
+  const lines = frame.split(/\r?\n/);
+  const eventName = lines.find((line) => line.startsWith('event:'))?.slice(6).trim() || 'message';
+  const data = lines
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n');
+  if (eventName !== 'entity-change' || !data) return;
+  try {
+    const event = JSON.parse(data);
+    if (event?.entity) scheduleRemoteEntityChange(event.entity, { ...event, remote: true });
+  } catch {
+    // Ignore malformed event frames and keep the stream alive.
+  }
+}
+
+async function runRealtimeStream(controller) {
+  while (!controller.signal.aborted && realtimeSubscribers > 0) {
+    const token = getStoredToken();
+    if (!token) return;
+    try {
+      const response = await fetch('/api/events', {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal
+      });
+      if (!response.ok || !response.body) throw new Error(`Realtime connection failed (${response.status})`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary >= 0) {
+          handleRealtimeFrame(buffer.slice(0, boundary));
+          buffer = buffer.slice(boundary + 2);
+          boundary = buffer.indexOf('\n\n');
+        }
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      console.warn(error.message || 'Realtime connection interrupted.');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+}
+
+function retainRealtimeConnection() {
+  realtimeSubscribers += 1;
+  if (!realtimeController && getStoredToken()) {
+    realtimeController = new AbortController();
+    runRealtimeStream(realtimeController).finally(() => {
+      if (realtimeController?.signal.aborted || realtimeSubscribers === 0) {
+        realtimeController = null;
+      }
+    });
+  }
+}
+
+function releaseRealtimeConnection() {
+  realtimeSubscribers = Math.max(0, realtimeSubscribers - 1);
+  if (realtimeSubscribers === 0) {
+    realtimeController?.abort();
+    realtimeController = null;
+  }
+}
+
 function buildQueryString(params = {}) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -116,6 +202,12 @@ function createEntityModule(entity) {
       return apiRequest(`/api/entities/${entity}/filter`, {
         method: 'POST',
         body: JSON.stringify({ filters, sort, limit })
+      });
+    },
+    page({ filters = {}, sort, page = 1, limit = 50 } = {}) {
+      return apiRequest(`/api/entities/${entity}/page`, {
+        method: 'POST',
+        body: JSON.stringify({ filters, sort, page, limit })
       });
     },
     create(data) {
@@ -147,7 +239,11 @@ function createEntityModule(entity) {
     subscribe(callback) {
       const handler = (event) => callback(event.detail);
       eventBus.addEventListener(entityCacheKey(entity), handler);
-      return () => eventBus.removeEventListener(entityCacheKey(entity), handler);
+      retainRealtimeConnection();
+      return () => {
+        eventBus.removeEventListener(entityCacheKey(entity), handler);
+        releaseRealtimeConnection();
+      };
     }
   };
 }

@@ -466,7 +466,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       try {
         setImageUploading(true);
         const uploadResult = await base44.integrations.Core.UploadRecipeImage({ file: imageFile });
-        imageUrl = uploadResult.file_url || uploadResult.public_file_url || '';
+        imageUrl = uploadResult.public_file_url || uploadResult.file_url || '';
       } catch (error) {
         setFormError(error.message || 'Recipe picture upload failed.');
         setImageUploading(false);

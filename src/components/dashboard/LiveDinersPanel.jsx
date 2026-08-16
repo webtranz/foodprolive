@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { QrCode } from 'lucide-react';
@@ -10,18 +10,32 @@ import { createPageUrl } from '@/utils';
 
 export default function LiveDinersPanel() {
   const today = format(new Date(), 'yyyy-MM-dd');
+  const queryClient = useQueryClient();
 
   const { data: allEvents = [] } = useQuery({
     queryKey: ['eventPlans'],
     queryFn: () => base44.entities.MenuPlan.list('-plan_date', 100),
-    refetchInterval: 10000
+    refetchInterval: 60000
   });
 
   const { data: allScans = [] } = useQuery({
     queryKey: ['dinerScans', 'today'],
     queryFn: () => base44.entities.DinerScan.filter({ plan_date: today }),
-    refetchInterval: 8000
+    refetchInterval: 60000
   });
+
+  useEffect(() => {
+    const unsubscribeEvents = base44.entities.MenuPlan.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ['eventPlans'] });
+    });
+    const unsubscribeScans = base44.entities.DinerScan.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ['dinerScans'] });
+    });
+    return () => {
+      unsubscribeEvents();
+      unsubscribeScans();
+    };
+  }, [queryClient]);
 
   const todayEvents = allEvents.filter(e => e.event_name && e.plan_date === today && e.service_style === 'dining_hall');
 

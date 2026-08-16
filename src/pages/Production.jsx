@@ -87,7 +87,7 @@ export default function Production() {
       ...(selectedSite && selectedSite !== 'all' ? { site_id: selectedSite } : {})
     }, '-production_date'),
     enabled: Boolean(selectedDate),
-    refetchInterval: 30000
+    refetchInterval: 300000
   });
 
   const { data: productionHistory = [] } = useQuery({
@@ -98,7 +98,7 @@ export default function Production() {
   const { data: materialRequests = [], error: materialRequestsError } = useQuery({
     queryKey: ['materialRequestsWorkflow'],
     queryFn: () => base44.materialRequests.list(),
-    refetchInterval: 30000
+    refetchInterval: 300000
   });
 
   const { data: foodWaste = [] } = useQuery({
@@ -129,8 +129,26 @@ export default function Production() {
   const { data: inventory = [], error: inventoryError } = useQuery({
     queryKey: ['inventory'],
     queryFn: () => base44.entities.Inventory.list(),
-    refetchInterval: 30000
+    refetchInterval: 300000
   });
+
+  useEffect(() => {
+    const unsubscribeProduction = base44.entities.Production.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+    });
+    const unsubscribeRequests = base44.entities.MaterialRequest.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+    });
+    const unsubscribeInventory = base44.entities.Inventory.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    });
+    return () => {
+      unsubscribeProduction();
+      unsubscribeRequests();
+      unsubscribeInventory();
+    };
+  }, [queryClient]);
 
   const visibleSites = useMemo(() => (
     isAdmin

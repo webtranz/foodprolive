@@ -20,7 +20,9 @@ import {
 } from '../shared/recipeImage.js';
 import {
   uploadsDir,
+  pool,
   listDocuments,
+  listDocumentsPage,
   findDocument,
   createDocument,
   updateDocument,
@@ -35,7 +37,8 @@ import {
   createBulkUploadJob,
   getBulkUploadJob,
   listBulkUploadJobs,
-  createEmailLog
+  createEmailLog,
+  invalidateRoleProfileCache
 } from './db.js';
 import { authorizeEntityAction, ensureKnownEntity } from './entities.js';
 import { getUserEffectiveRole, hasPermission } from './entities.js';
@@ -135,7 +138,10 @@ import {
 import {
   getLocationScope,
   filterRecordsByLocation,
-  assertPayloadLocationAccess
+  assertPayloadLocationAccess,
+  invalidateLocationScopeCache,
+  isLocationScopedEntity,
+  hasUnrestrictedLocationAccess
 } from './locationScope.js';
 import { prepareEntityPayload } from './entityPreparation.js';
 import { auditAction } from './audit.js';
@@ -145,8 +151,19 @@ import {
   listUtilityModules,
   serializeReportRows
 } from './utilities.js';
-import { enqueueBulkUpload, resumeBulkUploadQueue } from './bulkUploadQueue.js';
+import { enqueueBulkUpload, resumeBulkUploadQueue, stopBulkUploadQueue } from './bulkUploadQueue.js';
 import { getIngredientCostSnapshots, searchIngredients } from './ingredientSearch.js';
+import { closeRealtime, subscribeToEntityEvents } from './realtime.js';
+import {
+  createObjectKey,
+  getStoredObject,
+  objectReference,
+  objectStorageEnabled,
+  proxiedObjectPath,
+  publicObjectPath,
+  putStoredObject,
+  removeStoredReference
+} from './objectStorage.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -155,13 +172,35 @@ const rootDir = path.resolve(process.cwd());
 const distDir = path.join(rootDir, 'dist');
 const databaseInitAttempts = Number(process.env.DATABASE_INIT_ATTEMPTS || 30);
 const databaseInitDelayMs = Number(process.env.DATABASE_INIT_DELAY_MS || 2000);
+const costingCatalogCacheTtlMs = Math.max(0, Number(process.env.COSTING_CATALOG_CACHE_TTL_MS || 10000));
+let costingCatalogCache = null;
+let costingCatalogPromise = null;
+let costingCatalogGeneration = 0;
+const recipeDecorationCache = new Map();
+const maximumRecipeDecorationCacheEntries = 10000;
+const activeEventResponses = new Set();
 
 app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(uploadsDir));
+app.get('/files/*', async (request, response, next) => {
+  if (!objectStorageEnabled) return response.status(404).json({ message: 'File not found' });
+  try {
+    const key = request.params[0];
+    if (!key) return response.status(404).json({ message: 'File not found' });
+    const object = await getStoredObject(key);
+    response.setHeader('Content-Type', object.contentType);
+    response.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+    if (object.contentLength) response.setHeader('Content-Length', String(object.contentLength));
+    return response.send(object.buffer);
+  } catch (error) {
+    if (/\(404\)/.test(error.message || '')) return response.status(404).json({ message: 'File not found' });
+    return next(error);
+  }
+});
 
-const storage = multer.diskStorage({
+const localStorage = multer.diskStorage({
   destination: (_req, _file, callback) => callback(null, uploadsDir),
   filename: (_req, file, callback) => {
     const extension = path.extname(file.originalname || '');
@@ -169,16 +208,24 @@ const storage = multer.diskStorage({
     callback(null, `${Date.now()}-${baseName}${extension}`);
   }
 });
+const storage = objectStorageEnabled ? multer.memoryStorage() : localStorage;
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: Math.max(1, Number(process.env.GENERAL_UPLOAD_MAX_MB || 25)) * 1024 * 1024,
+    files: 1
+  }
+});
 
-const recipeImageStorage = multer.diskStorage({
+const localRecipeImageStorage = multer.diskStorage({
   destination: (_request, _file, callback) => callback(null, uploadsDir),
   filename: (_request, file, callback) => {
     const extension = RECIPE_IMAGE_MIME_TYPES[file.mimetype] || '';
     callback(null, `${Date.now()}-recipe-${Math.random().toString(36).slice(2, 10)}${extension}`);
   }
 });
+const recipeImageStorage = objectStorageEnabled ? multer.memoryStorage() : localRecipeImageStorage;
 
 const recipeImageUpload = multer({
   storage: recipeImageStorage,
@@ -204,6 +251,28 @@ const bulkUpload = multer({
     return callback(null, true);
   }
 });
+
+async function persistUploadedFile(file, prefix = 'uploads') {
+  if (!file) return null;
+  if (!objectStorageEnabled) {
+    const fileUrl = `/uploads/${file.filename}`;
+    return { reference: file.path, fileUrl };
+  }
+  const storageName = prefix === 'recipe-images'
+    ? `recipe${RECIPE_IMAGE_MIME_TYPES[file.mimetype] || ''}`
+    : file.originalname;
+  const key = createObjectKey(storageName, prefix);
+  await putStoredObject(key, file.buffer, file.mimetype || 'application/octet-stream');
+  return {
+    reference: objectReference(key),
+    fileUrl: proxiedObjectPath(key),
+    publicFileUrl: publicObjectPath(key)
+  };
+}
+
+function absoluteFileUrl(request, fileUrl) {
+  return /^https:\/\//i.test(fileUrl) ? fileUrl : `${resolvePublicBaseUrl(request)}${fileUrl}`;
+}
 
 const delay = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
@@ -275,19 +344,43 @@ function requireAnyPermission(permissions) {
   };
 }
 
-async function scopeEntityRecords(user, entity, records = []) {
+async function getEntityLocationContext(user, entity) {
+  if (!isLocationScopedEntity(entity) || hasUnrestrictedLocationAccess(user)) {
+    return { scope: null, location: null };
+  }
   const scope = await getLocationScope(user);
+  const location = {
+    unrestricted: false,
+    accessibleSiteIds: [...scope.accessibleSiteIds]
+  };
+  return { scope, location };
+}
+
+async function scopeEntityRecords(user, entity, records = [], existingScope = null) {
+  if (!isLocationScopedEntity(entity) || hasUnrestrictedLocationAccess(user)) {
+    return records;
+  }
+  const scope = existingScope || await getLocationScope(user);
   return filterRecordsByLocation(user, entity, records, scope);
+}
+
+function invalidateEntityAccessCaches(entity) {
+  if (entity === 'Site') invalidateLocationScopeCache();
+  if (entity === 'RoleProfile') invalidateRoleProfileCache();
+}
+
+function recordChanged(entity) {
+  invalidateEntityDataCaches(entity);
 }
 
 async function decorateRecipesWithServingWeights(records = []) {
   if (!Array.isArray(records) || records.length === 0) return records;
-  const [recipeCatalog, ingredients] = await Promise.all([
-    listDocuments('Recipe', { limit: 5000 }),
-    listDocuments('Ingredient', { limit: 5000 })
-  ]);
+  const { recipeCatalog, ingredients } = await getCostingCatalogs();
 
   return records.map((recipe) => {
+    const cacheKey = `${costingCatalogGeneration}:${recipe.id}:${recipe.updated_date || recipe.updated_at || ''}`;
+    const cached = costingCatalogCacheTtlMs > 0 ? recipeDecorationCache.get(cacheKey) : null;
+    if (cached) return cached;
     const weight = calculateRecipeServingWeight(recipe, recipeCatalog, ingredients);
     const costing = calculateRecipeCostingSnapshot(recipe, ingredients, recipeCatalog);
     const totalCost = recipe.total_cost ?? costing.total_cost;
@@ -301,7 +394,7 @@ async function decorateRecipesWithServingWeights(records = []) {
     const sellingPrice = recipe.target_selling_price === null || recipe.target_selling_price === undefined || recipe.target_selling_price === ''
       ? null
       : Number(recipe.target_selling_price);
-    return {
+    const decorated = {
       ...recipe,
       total_cost: totalCost,
       cost_per_serving: costPerServing,
@@ -319,7 +412,52 @@ async function decorateRecipesWithServingWeights(records = []) {
       serving_weight_basis: 'cooked_yield_adjusted',
       serving_weight_warnings: weight.warnings
     };
+    if (costingCatalogCacheTtlMs > 0) {
+      recipeDecorationCache.set(cacheKey, decorated);
+      if (recipeDecorationCache.size > maximumRecipeDecorationCacheEntries) {
+        recipeDecorationCache.delete(recipeDecorationCache.keys().next().value);
+      }
+    }
+    return decorated;
   });
+}
+
+async function getCostingCatalogs() {
+  if (costingCatalogCacheTtlMs > 0 && costingCatalogCache?.expiresAt > Date.now()) {
+    return costingCatalogCache.value;
+  }
+  if (costingCatalogPromise) return costingCatalogPromise;
+
+  const generation = costingCatalogGeneration;
+  const loadingPromise = Promise.all([
+    listDocuments('Recipe', { limit: 5000 }),
+    listDocuments('Ingredient', { limit: 5000 })
+  ]).then(([recipeCatalog, ingredients]) => {
+    const value = { recipeCatalog, ingredients };
+    if (costingCatalogCacheTtlMs > 0 && generation === costingCatalogGeneration) {
+      costingCatalogGeneration += 1;
+      recipeDecorationCache.clear();
+      costingCatalogCache = {
+        value,
+        expiresAt: Date.now() + costingCatalogCacheTtlMs
+      };
+    }
+    return value;
+  }).finally(() => {
+    if (costingCatalogPromise === loadingPromise) costingCatalogPromise = null;
+  });
+  costingCatalogPromise = loadingPromise;
+
+  return costingCatalogPromise;
+}
+
+function invalidateEntityDataCaches(entity) {
+  if (entity === 'Recipe' || entity === 'Ingredient') {
+    costingCatalogGeneration += 1;
+    costingCatalogCache = null;
+    costingCatalogPromise = null;
+    recipeDecorationCache.clear();
+  }
 }
 
 async function decorateEntityRecords(entity, records = []) {
@@ -327,6 +465,54 @@ async function decorateEntityRecords(entity, records = []) {
     ? decorateRecipesWithServingWeights(records)
     : records;
 }
+
+app.get('/api/events', requireAuth, async (request, response, next) => {
+  try {
+    const scope = hasUnrestrictedLocationAccess(request.user)
+      ? null
+      : await getLocationScope(request.user);
+    response.status(200);
+    response.setHeader('Content-Type', 'text/event-stream');
+    response.setHeader('Cache-Control', 'no-cache, no-transform');
+    response.setHeader('Connection', 'keep-alive');
+    response.setHeader('X-Accel-Buffering', 'no');
+    response.flushHeaders?.();
+    activeEventResponses.add(response);
+
+    const send = (eventName, payload) => {
+      if (response.writableEnded) return;
+      response.write(`event: ${eventName}\n`);
+      response.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+    const canReceive = (event) => {
+      if (!scope) return true;
+      const directSiteIds = [event.site_id, ...(Array.isArray(event.site_ids) ? event.site_ids : [])]
+        .filter(Boolean)
+        .map(String);
+      return directSiteIds.length === 0
+        || directSiteIds.some((siteId) => scope.accessibleSiteIds.has(siteId));
+    };
+    const unsubscribe = await subscribeToEntityEvents((event) => {
+      if (canReceive(event)) send('entity-change', event);
+    });
+    const heartbeat = setInterval(() => {
+      if (!response.writableEnded) response.write(': heartbeat\n\n');
+    }, 25000);
+    heartbeat.unref?.();
+
+    const close = () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      activeEventResponses.delete(response);
+      if (!response.writableEnded) response.end();
+    };
+    request.once('close', close);
+    send('ready', { connected: true, occurred_at: new Date().toISOString() });
+  } catch (error) {
+    if (!response.headersSent) return next(error);
+    return response.end();
+  }
+});
 
 function filterRowsByAccessibleSites(rows = [], scope, fields = ['site_id']) {
   if (scope?.unrestricted) {
@@ -2306,12 +2492,18 @@ app.get('/api/entities/:entity', requireAuth, async (request, response, next) =>
     ensureKnownEntity(entity);
     authorizeEntityAction(request.user, entity, 'list');
     const limit = request.query.limit ? Number(request.query.limit) : undefined;
+    const { scope, location } = await getEntityLocationContext(request.user, entity);
+    const shouldScopeUsersBeforeLimit = entity === 'User' && Boolean(scope && !scope.unrestricted);
     const records = await listDocuments(entity, {
       sort: request.query.sort,
-      limit
+      limit: shouldScopeUsersBeforeLimit ? undefined : limit,
+      location
     });
-    const scopedRecords = await scopeEntityRecords(request.user, entity, records);
-    response.json(await decorateEntityRecords(entity, scopedRecords));
+    const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
+    const limitedRecords = shouldScopeUsersBeforeLimit && Number.isFinite(limit)
+      ? scopedRecords.slice(0, Math.max(0, limit))
+      : scopedRecords;
+    response.json(await decorateEntityRecords(entity, limitedRecords));
   } catch (error) {
     next(error);
   }
@@ -2322,15 +2514,65 @@ app.post('/api/entities/:entity/filter', requireAuth, async (request, response, 
     const { entity } = request.params;
     ensureKnownEntity(entity);
     authorizeEntityAction(request.user, entity, 'filter');
+    const { scope, location } = await getEntityLocationContext(request.user, entity);
+    const requestedLimit = Number(request.body?.limit);
+    const shouldScopeUsersBeforeLimit = entity === 'User' && Boolean(scope && !scope.unrestricted);
     const records = await listDocuments(entity, {
       filters: request.body?.filters || {},
       sort: request.body?.sort,
-      limit: request.body?.limit
+      limit: shouldScopeUsersBeforeLimit ? undefined : request.body?.limit,
+      location
     });
-    const scopedRecords = await scopeEntityRecords(request.user, entity, records);
-    response.json(await decorateEntityRecords(entity, scopedRecords));
+    const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
+    const limitedRecords = shouldScopeUsersBeforeLimit && Number.isFinite(requestedLimit)
+      ? scopedRecords.slice(0, Math.max(0, requestedLimit))
+      : scopedRecords;
+    response.json(await decorateEntityRecords(entity, limitedRecords));
   } catch (error) {
     next(error);
+  }
+});
+
+app.post('/api/entities/:entity/page', requireAuth, async (request, response, next) => {
+  try {
+    const { entity } = request.params;
+    ensureKnownEntity(entity);
+    authorizeEntityAction(request.user, entity, 'filter');
+
+    const page = Math.max(1, Math.trunc(Number(request.body?.page) || 1));
+    const limit = Math.min(200, Math.max(1, Math.trunc(Number(request.body?.limit) || 50)));
+    const offset = (page - 1) * limit;
+    const filters = request.body?.filters || {};
+    const sort = request.body?.sort;
+    const { scope, location } = await getEntityLocationContext(request.user, entity);
+
+    let pageResult;
+    if (entity === 'User' && scope && !scope.unrestricted) {
+      const records = await listDocuments(entity, { filters, sort });
+      const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
+      pageResult = {
+        items: scopedRecords.slice(offset, offset + limit),
+        total_count: scopedRecords.length,
+        limit,
+        offset
+      };
+    } else {
+      pageResult = await listDocumentsPage(entity, { filters, sort, limit, offset, location });
+      pageResult.items = await scopeEntityRecords(request.user, entity, pageResult.items, scope);
+    }
+
+    const items = await decorateEntityRecords(entity, pageResult.items);
+    const totalPages = Math.ceil(pageResult.total_count / limit);
+    return response.json({
+      items,
+      total_count: pageResult.total_count,
+      page,
+      limit,
+      total_pages: totalPages,
+      has_more: page < totalPages
+    });
+  } catch (error) {
+    return next(error);
   }
 });
 
@@ -2363,6 +2605,8 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
     authorizeEntityAction(request.user, entity, 'create', request.body || {});
     const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {});
     let record = await createDocument(entity, preparedPayload);
+    invalidateEntityAccessCaches(entity);
+    recordChanged(entity);
 
     if (entity === 'Production' && ['draft', 'pending_approval', 'changes_requested'].includes(String(record.status || ''))) {
       await syncMaterialRequestForProduction(request.user, record, 'draft');
@@ -2401,6 +2645,8 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
     authorizeEntityAction(request.user, entity, 'update', request.body || {}, existing);
     const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {}, existing);
     let updated = await updateDocument(entity, request.params.id, preparedPayload);
+    invalidateEntityAccessCaches(entity);
+    recordChanged(entity);
 
     if (entity === 'Production') {
       const status = String(updated?.status || '');
@@ -2460,6 +2706,8 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
     if (!removed) {
       return response.status(404).json({ message: 'Record not found' });
     }
+    invalidateEntityAccessCaches(entity);
+    recordChanged(entity);
     await auditAction({
       user: request.user,
       action: `${entity.toUpperCase()}_DELETE`,
@@ -2513,8 +2761,9 @@ app.get('/api/utilities/templates/:module', requireAuth, requireAnyPermission([
 
 app.post('/api/utilities/bulk-upload', requireAuth, requirePermission('manage_bulk_uploads'), (request, response, next) => {
   bulkUpload.single('file')(request, response, async (uploadError) => {
-    const cleanupUploadedFile = () => request.file?.path
-      ? fs.promises.unlink(request.file.path).catch(() => {})
+    let cleanupReference = request.file?.path || null;
+    const cleanupUploadedFile = () => cleanupReference
+      ? removeStoredReference(cleanupReference).catch(() => {})
       : Promise.resolve();
     if (uploadError) {
       await cleanupUploadedFile();
@@ -2538,6 +2787,7 @@ app.post('/api/utilities/bulk-upload', requireAuth, requirePermission('manage_bu
       }
       if (importMode === 'delete_existing' && request.file) {
         await cleanupUploadedFile();
+        cleanupReference = null;
         request.file = undefined;
       }
       const scope = await getLocationScope(request.user);
@@ -2550,18 +2800,23 @@ app.post('/api/utilities/bulk-upload', requireAuth, requirePermission('manage_bu
         Math.max(Number(process.env.BULK_UPLOAD_BATCH_SIZE || 500), 50),
         1000
       );
+      const persistedUpload = request.file
+        ? await persistUploadedFile(request.file, 'bulk-uploads')
+        : null;
+      cleanupReference = persistedUpload?.reference || cleanupReference;
       const job = await createBulkUploadJob({
         module_key: moduleKey,
         entity_name: definition.entity,
         import_mode: importMode,
         file_name: request.file?.originalname || null,
-        file_path: request.file?.path || null,
+        file_path: persistedUpload?.reference || null,
         file_size: request.file?.size || 0,
         batch_size: batchSize,
         actor: request.user,
         site_id: requestedSiteId,
         site_name: String(request.body?.site_name || '').trim() || null
       });
+      cleanupReference = null;
       await auditAction({
         user: request.user,
         action: 'BULK_UPLOAD_QUEUED',
@@ -2666,16 +2921,21 @@ app.get('/api/utilities/reports/:module', requireAuth, requireAnyPermission([
   }
 });
 
-app.post('/api/integrations/upload', requireAuth, upload.single('file'), (request, response) => {
-  const fileUrl = `/uploads/${request.file.filename}`;
-  response.json({
-    file_url: fileUrl,
-    public_file_url: `${resolvePublicBaseUrl(request)}${fileUrl}`
-  });
+app.post('/api/integrations/upload', requireAuth, upload.single('file'), async (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ message: 'Select a file to upload.' });
+    const stored = await persistUploadedFile(request.file, 'integration-uploads');
+    return response.json({
+      file_url: stored.fileUrl,
+      public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl)
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
-app.post('/api/integrations/recipe-image', requireAuth, (request, response) => {
-  recipeImageUpload.single('file')(request, response, (error) => {
+app.post('/api/integrations/recipe-image', requireAuth, (request, response, next) => {
+  recipeImageUpload.single('file')(request, response, async (error) => {
     if (error) {
       const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
       const message = error.code === 'LIMIT_FILE_SIZE'
@@ -2686,11 +2946,15 @@ app.post('/api/integrations/recipe-image', requireAuth, (request, response) => {
     if (!request.file) {
       return response.status(400).json({ message: 'Select an image to upload.' });
     }
-    const fileUrl = `/uploads/${request.file.filename}`;
-    return response.json({
-      file_url: fileUrl,
-      public_file_url: `${resolvePublicBaseUrl(request)}${fileUrl}`
-    });
+    try {
+      const stored = await persistUploadedFile(request.file, 'recipe-images');
+      return response.json({
+        file_url: stored.fileUrl,
+        public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl)
+      });
+    } catch (storageError) {
+      return next(storageError);
+    }
   });
 });
 
@@ -2736,15 +3000,17 @@ app.post('/api/integrations/invoke-llm', requireAuth, async (request, response, 
 app.post('/api/integrations/extract-file', requireAuth, async (request, response, next) => {
   try {
     const { file_url: fileUrl, json_schema: jsonSchema } = request.body || {};
-    const localPath = fileUrl?.startsWith('/uploads/')
-      ? path.join(uploadsDir, path.basename(fileUrl))
-      : null;
-
-    if (!localPath || !fs.existsSync(localPath)) {
-      return response.status(404).json({ message: 'Uploaded file not found' });
+    let content = null;
+    if (fileUrl?.startsWith('/uploads/')) {
+      const localPath = path.join(uploadsDir, path.basename(fileUrl));
+      if (fs.existsSync(localPath)) content = fs.readFileSync(localPath, 'utf8');
+    } else if (objectStorageEnabled && fileUrl?.startsWith('/files/')) {
+      const key = decodeURIComponent(fileUrl.slice('/files/'.length));
+      const object = await getStoredObject(key);
+      content = object.buffer.toString('utf8');
     }
 
-    const content = fs.readFileSync(localPath, 'utf8');
+    if (content === null) return response.status(404).json({ message: 'Uploaded file not found' });
     const rows = projectToSchema(parseCsv(content), jsonSchema);
     response.json({
       status: 'success',
@@ -3391,6 +3657,19 @@ app.get('/api/health', (_request, response) => {
   response.json({ status: 'ok' });
 });
 
+app.get('/api/health/live', (_request, response) => {
+  response.json({ status: 'ok' });
+});
+
+app.get('/api/health/ready', async (_request, response) => {
+  try {
+    await pool.query('SELECT 1');
+    return response.json({ status: 'ready' });
+  } catch (error) {
+    return response.status(503).json({ status: 'not_ready', message: error.message });
+  }
+});
+
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir));
   app.get('*', (request, response, next) => {
@@ -3407,8 +3686,35 @@ app.use((error, _request, response, _next) => {
 });
 
 await initDatabaseWithRetry();
+const stopCacheInvalidationListener = await subscribeToEntityEvents((event) => {
+  if (!event?.entity) return;
+  invalidateEntityDataCaches(event.entity);
+  invalidateEntityAccessCaches(event.entity);
+});
 await resumeBulkUploadQueue();
 
-app.listen(port, host, () => {
+const httpServer = app.listen(port, host, () => {
   console.log(`FoodPro server listening on ${host}:${port}`);
 });
+
+let shutdownStarted = false;
+async function shutdown(signal) {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  console.log(`${signal} received; stopping FoodPro gracefully.`);
+  const forceExit = setTimeout(() => process.exit(1), 30000);
+  forceExit.unref?.();
+  const serverClosed = new Promise((resolve) => httpServer.close(resolve));
+  activeEventResponses.forEach((response) => response.end());
+  activeEventResponses.clear();
+  await serverClosed;
+  await stopBulkUploadQueue();
+  stopCacheInvalidationListener();
+  await closeRealtime();
+  await pool.end();
+  clearTimeout(forceExit);
+  process.exit(0);
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));

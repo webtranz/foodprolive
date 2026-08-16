@@ -23,6 +23,47 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
   expires_at TIMESTAMPTZ
 );
 
+CREATE OR REPLACE FUNCTION notify_foodpro_user_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  user_row users%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    user_row := OLD;
+  ELSE
+    user_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'User',
+      'action', LOWER(TG_OP),
+      'id', NULL,
+      'site_id', user_row.site_id,
+      'site_ids', '[]'::jsonb,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $trigger$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'users_realtime_change' AND tgrelid = 'users'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER users_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON users
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_user_change()';
+  END IF;
+END;
+$trigger$;
+
 CREATE TABLE IF NOT EXISTS entity_records (
   id TEXT PRIMARY KEY,
   entity_name TEXT NOT NULL,
@@ -33,6 +74,56 @@ CREATE TABLE IF NOT EXISTS entity_records (
 
 CREATE INDEX IF NOT EXISTS idx_entity_records_entity_name ON entity_records(entity_name);
 CREATE INDEX IF NOT EXISTS idx_entity_records_entity_updated_at ON entity_records(entity_name, updated_at DESC);
+
+CREATE OR REPLACE FUNCTION notify_foodpro_entity_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  record_data JSONB;
+  record_id TEXT;
+  entity_value TEXT;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    record_data := OLD.data;
+    record_id := OLD.id;
+    entity_value := OLD.entity_name;
+  ELSE
+    record_data := NEW.data;
+    record_id := NEW.id;
+    entity_value := NEW.entity_name;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', entity_value,
+      'action', LOWER(TG_OP),
+      'id', NULL,
+      'site_id', COALESCE(record_data->>'site_id', CASE
+        WHEN entity_value = 'Site' THEN record_id
+        ELSE NULL
+      END),
+      'site_ids', '[]'::jsonb,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $trigger$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'entity_records_realtime_change' AND tgrelid = 'entity_records'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER entity_records_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON entity_records
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_entity_change()';
+  END IF;
+END;
+$trigger$;
 
 CREATE TABLE IF NOT EXISTS app_logs (
   id TEXT PRIMARY KEY,
@@ -87,6 +178,37 @@ CREATE TABLE IF NOT EXISTS bulk_upload_jobs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE OR REPLACE FUNCTION notify_foodpro_bulk_job_change()
+RETURNS TRIGGER AS $$
+BEGIN
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'BulkUploadJob',
+      'action', LOWER(TG_OP),
+      'id', NULL,
+      'site_id', NEW.site_id,
+      'site_ids', '[]'::jsonb,
+      'occurred_at', NOW()
+    )::text
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $trigger$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'bulk_upload_jobs_realtime_change' AND tgrelid = 'bulk_upload_jobs'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER bulk_upload_jobs_realtime_change
+      AFTER INSERT OR UPDATE ON bulk_upload_jobs
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_bulk_job_change()';
+  END IF;
+END;
+$trigger$;
 
 CREATE TABLE IF NOT EXISTS email_logs (
   id TEXT PRIMARY KEY,
@@ -520,6 +642,8 @@ FOR EACH ROW
 EXECUTE FUNCTION validate_supplier_invoice_chain();
 
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_users_site_status ON users(site_id, status);
+CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status);
 CREATE INDEX IF NOT EXISTS idx_app_logs_user ON app_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id, created_at DESC);
@@ -605,8 +729,12 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_lookup
   ON entity_records ((data->>'site_id'), (data->>'ingredient_id'), (data->>'batch_number'))
   WHERE entity_name = 'InventoryLot';
 
-CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_site_date_status
-  ON entity_records ((data->>'site_id'), (data->>'plan_date'), (data->>'status'))
+CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_site_date_status_ci
+  ON entity_records (
+    (data->>'site_id'),
+    LOWER(COALESCE(data->>'plan_date', '')),
+    LOWER(COALESCE(data->>'status', ''))
+  )
   WHERE entity_name = 'MenuPlan';
 
 CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_event_lookup
@@ -616,6 +744,57 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_event_lookup
 CREATE INDEX IF NOT EXISTS idx_entity_records_production_event_recipe
   ON entity_records ((data->>'source_event_id'), (data->>'source_event_recipe_id'))
   WHERE entity_name = 'Production' AND COALESCE(data->>'source_event_id', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_production_site_date_status_ci
+  ON entity_records (
+    (data->>'site_id'),
+    LOWER(COALESCE(data->>'production_date', '')),
+    LOWER(COALESCE(data->>'status', ''))
+  )
+  WHERE entity_name = 'Production';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_production_status_date_ci
+  ON entity_records (
+    LOWER(COALESCE(data->>'status', '')),
+    LOWER(COALESCE(data->>'production_date', ''))
+  )
+  WHERE entity_name = 'Production';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_material_request_site_date_status_ci
+  ON entity_records (
+    (data->>'site_id'),
+    LOWER(COALESCE(data->>'request_date', '')),
+    LOWER(COALESCE(data->>'status', ''))
+  )
+  WHERE entity_name = 'MaterialRequest';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_transaction_site_date_ci
+  ON entity_records (
+    (data->>'site_id'),
+    LOWER(COALESCE(data->>'transaction_date', '')),
+    LOWER(COALESCE(data->>'transaction_type', ''))
+  )
+  WHERE entity_name = 'InventoryTransaction';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_site_expiry
+  ON entity_records ((data->>'site_id'), (data->>'expiry_date'), (data->>'status'))
+  WHERE entity_name = 'InventoryLot';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_attendance_site_date_status_ci
+  ON entity_records (
+    (data->>'site_id'),
+    LOWER(COALESCE(data->>'attendance_date', '')),
+    LOWER(COALESCE(data->>'attendance_status', ''))
+  )
+  WHERE entity_name = 'AttendanceRecord';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_recipe_scope_name
+  ON entity_records ((data->>'site_scope'), LOWER(COALESCE(data->>'name', '')))
+  WHERE entity_name = 'Recipe';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_recipe_site_ids
+  ON entity_records USING GIN ((data->'site_ids'))
+  WHERE entity_name = 'Recipe';
 
 CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_event_handoffs
   ON entity_records ((data->>'procurement_pr_id'), (data->>'production_plan_status'))
