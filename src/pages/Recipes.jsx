@@ -50,6 +50,11 @@ export default function Recipes() {
     queryFn: () => base44.entities.Ingredient.list()
   });
 
+  const { data: recipeInventory = [], isSuccess: recipeInventoryLoaded } = useQuery({
+    queryKey: ['recipe-ingredient-stock'],
+    queryFn: () => base44.entities.Inventory.list()
+  });
+
   const { data: sites = [] } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
@@ -256,6 +261,8 @@ export default function Recipes() {
           recipe={editingRecipe}
           recipes={recipes}
           ingredients={ingredients}
+          inventory={recipeInventory}
+          inventoryLoaded={recipeInventoryLoaded}
           sites={sites}
           isLoading={createMutation.isPending || updateMutation.isPending}
         />

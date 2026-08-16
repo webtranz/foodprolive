@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { formatCurrency } from '@/lib/currency';
+import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import {
   AlertTriangle,
   Building2,
@@ -41,6 +42,7 @@ const supplierFormTemplate = {
 
 const requestItemTemplate = {
   ingredient_id: '',
+  ingredient_name: '',
   requested_quantity: '',
   unit: '',
   estimated_unit_price: '',
@@ -362,7 +364,7 @@ export default function ProcurementModule() {
       const supplier = suppliers.find((entry) => entry.id === item.preferred_supplier_id);
       return {
         ingredient_id: item.ingredient_id,
-        ingredient_name: ingredient?.name || '',
+        ingredient_name: ingredient?.name || item.ingredient_name || '',
         requested_quantity: Number(item.requested_quantity || 0),
         unit: item.unit || ingredient?.unit || '',
         estimated_unit_price: Number(item.estimated_unit_price || ingredient?.cost_per_unit || 0),
@@ -854,16 +856,13 @@ export default function ProcurementModule() {
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Supplier Price Comparison</CardTitle>
                 <div className="w-full max-w-sm">
-                  <select
-                    className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
-                    value={priceIngredientId || 'all'}
-                    onChange={(event) => setPriceIngredientId(event.target.value === 'all' ? '' : event.target.value)}
-                  >
-                    <option value="all">All ingredients</option>
-                    {ingredients.map((ingredient) => (
-                      <option key={ingredient.id} value={ingredient.id}>{ingredient.name}</option>
-                    ))}
-                  </select>
+                  <IngredientSearchCombobox
+                    value={priceIngredientId}
+                    selectedIngredient={ingredients.find((ingredient) => ingredient.id === priceIngredientId)}
+                    allowClear
+                    clearLabel="All ingredients"
+                    onValueChange={(value) => setPriceIngredientId(value)}
+                  />
                 </div>
               </CardHeader>
               <CardContent>
@@ -1026,21 +1025,24 @@ export default function ProcurementModule() {
               <div key={`request-item-${index}`} className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 p-4 md:grid-cols-5">
                 <div>
                   <Label>Ingredient</Label>
-                  <select className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" value={item.ingredient_id || 'none'} onChange={(event) => {
-                    const ingredient = ingredients.find((entry) => entry.id === event.target.value);
+                  <IngredientSearchCombobox
+                    className="mt-2"
+                    value={item.ingredient_id}
+                    selectedIngredient={ingredients.find((ingredient) => ingredient.id === item.ingredient_id) || (item.ingredient_id ? { id: item.ingredient_id, name: item.ingredient_name } : null)}
+                    siteId={requestForm.site_id}
+                    onValueChange={(value, ingredient) => {
                     setRequestForm((current) => ({
                       ...current,
                       items: current.items.map((entry, entryIndex) => entryIndex === index ? {
                         ...entry,
-                        ingredient_id: event.target.value === 'none' ? '' : event.target.value,
+                        ingredient_id: value,
+                        ingredient_name: ingredient?.name || '',
                         unit: ingredient?.unit || entry.unit,
-                        estimated_unit_price: entry.estimated_unit_price || String(ingredient?.cost_per_unit || '')
+                        estimated_unit_price: entry.estimated_unit_price || String(ingredient?.last_cost ?? ingredient?.cost_per_unit ?? '')
                       } : entry)
                     }));
-                  }}>
-                    <option value="none">Select ingredient</option>
-                    {ingredients.map((ingredient) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name}</option>)}
-                  </select>
+                    }}
+                  />
                 </div>
                 <div><Label>Quantity</Label><Input type="number" min="0" step="0.01" value={item.requested_quantity} onChange={(event) => setRequestForm((current) => ({ ...current, items: current.items.map((entry, entryIndex) => entryIndex === index ? { ...entry, requested_quantity: event.target.value } : entry) }))} /></div>
                 <div><Label>Unit</Label><Input value={item.unit} onChange={(event) => setRequestForm((current) => ({ ...current, items: current.items.map((entry, entryIndex) => entryIndex === index ? { ...entry, unit: event.target.value } : entry) }))} /></div>

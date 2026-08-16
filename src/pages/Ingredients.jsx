@@ -5,6 +5,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import EmptyState from '@/components/ui/EmptyState';
 import IngredientForm from '@/components/ingredients/IngredientForm';
 import IngredientCard from '@/components/ingredients/IngredientCard';
+import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import InventoryAlerts from '@/components/inventory/InventoryAlerts';
 import InventoryTransactionDialog from '@/components/inventory/InventoryTransactionDialog';
 import InventoryEditDialog from '@/components/inventory/InventoryEditDialog';
@@ -89,6 +90,7 @@ export default function Ingredients() {
   const [editDialog, setEditDialog] = useState({ open: false, item: null });
   const [historyDialog, setHistoryDialog] = useState({ open: false, item: null });
   const [stockForm, setStockForm] = useState({ site_id: '', ingredient_id: '', quantity: '', min_stock_level: '', max_stock_level: '', expiry_date: '' });
+  const [selectedStockIngredient, setSelectedStockIngredient] = useState(null);
 
   const queryClient = useQueryClient();
 
@@ -134,7 +136,10 @@ export default function Ingredients() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['inventory'] }); setStockFormOpen(false); resetStockForm(); }
   });
 
-  const resetStockForm = () => setStockForm({ site_id: '', ingredient_id: '', quantity: '', min_stock_level: '', max_stock_level: '', expiry_date: '' });
+  const resetStockForm = () => {
+    setStockForm({ site_id: '', ingredient_id: '', quantity: '', min_stock_level: '', max_stock_level: '', expiry_date: '' });
+    setSelectedStockIngredient(null);
+  };
 
   // Filtered data
   const filteredIngredients = ingredients.filter(ing => {
@@ -170,7 +175,7 @@ export default function Ingredients() {
   const handleStockSubmit = (e) => {
     e.preventDefault();
     const site = sites.find(s => s.id === stockForm.site_id);
-    const ing = ingredients.find(i => i.id === stockForm.ingredient_id);
+    const ing = selectedStockIngredient || ingredients.find(i => i.id === stockForm.ingredient_id);
     const qty = parseFloat(stockForm.quantity) || 0;
     const min = parseFloat(stockForm.min_stock_level) || 0;
     let status = 'in_stock';
@@ -531,13 +536,19 @@ export default function Ingredients() {
                   <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label>Ingredient *</Label>
-                <Select value={stockForm.ingredient_id} onValueChange={(v) => setStockForm({ ...stockForm, ingredient_id: v })}>
-                  <SelectTrigger className="mt-1"><SelectValue placeholder="Select ingredient" /></SelectTrigger>
-                  <SelectContent>{ingredients.map(i => <SelectItem key={i.id} value={i.id}>{i.name}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
+                <div>
+                  <Label>Ingredient *</Label>
+                  <IngredientSearchCombobox
+                    className="mt-1"
+                    value={stockForm.ingredient_id}
+                    selectedIngredient={selectedStockIngredient || ingredients.find((item) => item.id === stockForm.ingredient_id)}
+                    siteId={stockForm.site_id}
+                    onValueChange={(value, ingredient) => {
+                      setSelectedStockIngredient(ingredient);
+                      setStockForm((current) => ({ ...current, ingredient_id: value }));
+                    }}
+                  />
+                </div>
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <Label>Quantity *</Label>

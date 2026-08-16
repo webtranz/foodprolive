@@ -1,4 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -552,6 +553,47 @@ CREATE INDEX IF NOT EXISTS idx_supplier_price_history_lookup ON supplier_price_h
 CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lookup
   ON entity_records ((data->>'site_id'), (data->>'ingredient_id'))
   WHERE entity_name = 'Inventory';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_name_search
+  ON entity_records USING GIN (LOWER(COALESCE(data->>'name', '')) gin_trgm_ops)
+  WHERE entity_name = 'Ingredient';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_sku_search
+  ON entity_records USING GIN ((
+    LOWER(COALESCE(data->>'sku', '') || ' ' || COALESCE(data->>'ingredient_code', '') || ' ' || COALESCE(data->>'item_code', ''))
+  ) gin_trgm_ops)
+  WHERE entity_name = 'Ingredient';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_category_search
+  ON entity_records USING GIN (LOWER(COALESCE(data->>'category', '')) gin_trgm_ops)
+  WHERE entity_name = 'Ingredient';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_alias_search
+  ON entity_records USING GIN ((
+    LOWER(COALESCE(data->>'alias', '') || ' ' || COALESCE(data->>'aliases', '') || ' ' ||
+      COALESCE(data->>'alternative_name', '') || ' ' || COALESCE(data->>'alternative_names', ''))
+  ) gin_trgm_ops)
+  WHERE entity_name = 'Ingredient';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_supplier_name_search
+  ON entity_records USING GIN ((
+    LOWER(COALESCE(data->>'supplier_item_name', '') || ' ' || COALESCE(data->>'supplier_item_names', ''))
+  ) gin_trgm_ops)
+  WHERE entity_name = 'Ingredient';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_search_document
+  ON entity_records USING GIN ((
+    LOWER(
+      COALESCE(data->>'name', '') || ' ' || COALESCE(data->>'sku', '') || ' ' ||
+      COALESCE(data->>'ingredient_code', '') || ' ' || COALESCE(data->>'item_code', '') || ' ' ||
+      COALESCE(data->>'category', '') || ' ' || COALESCE(data->>'alias', '') || ' ' ||
+      COALESCE(data->>'aliases', '') || ' ' || COALESCE(data->>'alternative_name', '') || ' ' ||
+      COALESCE(data->>'alternative_names', '') || ' ' || COALESCE(data->>'supplier_item_name', '') || ' ' ||
+      COALESCE(data->>'supplier_item_names', '')
+    )
+  ) gin_trgm_ops)
+  WHERE entity_name = 'Ingredient'
+    AND COALESCE(LOWER(NULLIF(BTRIM(data->>'is_active'), '')), 'true') NOT IN ('false', '0', 'no', 'inactive');
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_inventory_site_ingredient_unique
   ON entity_records ((data->>'site_id'), (data->>'ingredient_id'))

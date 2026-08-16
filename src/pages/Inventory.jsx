@@ -28,6 +28,7 @@ import InventoryAlerts from '@/components/inventory/InventoryAlerts';
 import InventoryTransactionDialog from '@/components/inventory/InventoryTransactionDialog';
 import InventoryEditDialog from '@/components/inventory/InventoryEditDialog';
 import InventoryHistory from '@/components/inventory/InventoryHistory';
+import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -395,18 +396,18 @@ function InventoryTransferDialog({
                     return (
                       <TableRow key={`${item.ingredient_id}-${index}`}>
                         <TableCell>
-                          <Select value={item.ingredient_id} onValueChange={(value) => updateItem(index, 'ingredient_id', value)}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select ingredient" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {availableInventory.map((entry) => (
-                                <SelectItem key={entry.ingredient_id} value={entry.ingredient_id}>
-                                  {entry.ingredient_name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <IngredientSearchCombobox
+                            value={item.ingredient_id}
+                            selectedIngredient={selectedInventory ? {
+                              id: selectedInventory.ingredient_id,
+                              name: selectedInventory.ingredient_name,
+                              unit: selectedInventory.unit,
+                              current_stock: selectedInventory.quantity
+                            } : null}
+                            siteId={formData.from_site_id}
+                            stockOnly
+                            onValueChange={(value) => updateItem(index, 'ingredient_id', value)}
+                          />
                         </TableCell>
                         <TableCell className="text-sm text-slate-600">
                           {selectedInventory ? `${formatQuantity(selectedInventory.quantity)} ${selectedInventory.unit}` : '-'}
@@ -483,6 +484,7 @@ export default function Inventory() {
     valuation_method: 'fifo',
     notes: ''
   });
+  const [selectedStockIngredient, setSelectedStockIngredient] = useState(null);
 
   const queryClient = useQueryClient();
 
@@ -652,6 +654,7 @@ export default function Inventory() {
         valuation_method: 'fifo',
         notes: ''
       });
+      setSelectedStockIngredient(null);
     }
   });
 
@@ -697,7 +700,7 @@ export default function Inventory() {
     }
   });
 
-  const selectedIngredient = ingredients.find((ingredient) => ingredient.id === stockForm.ingredient_id);
+  const selectedIngredient = selectedStockIngredient || ingredients.find((ingredient) => ingredient.id === stockForm.ingredient_id);
   const parsedBulkImport = useMemo(
     () => buildBulkInventoryRows(bulkRows, stockSites, ingredients, bulkSiteId),
     [bulkRows, stockSites, ingredients, bulkSiteId]
@@ -706,7 +709,7 @@ export default function Inventory() {
   const handleReceiveStock = (event) => {
     event.preventDefault();
     const site = sites.find((entry) => entry.id === stockForm.site_id);
-    const ingredient = ingredients.find((entry) => entry.id === stockForm.ingredient_id);
+    const ingredient = selectedIngredient;
     if (!site || !ingredient) return;
 
     receiveStockMutation.mutate({
@@ -1277,16 +1280,20 @@ export default function Inventory() {
                 </div>
                 <div>
                   <Label>Ingredient</Label>
-                  <Select value={stockForm.ingredient_id} onValueChange={(value) => setStockForm((current) => ({ ...current, ingredient_id: value }))}>
-                    <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="Select ingredient" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ingredients.map((ingredient) => (
-                        <SelectItem key={ingredient.id} value={ingredient.id}>{ingredient.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <IngredientSearchCombobox
+                    className="mt-1"
+                    value={stockForm.ingredient_id}
+                    selectedIngredient={selectedIngredient}
+                    siteId={stockForm.site_id}
+                    onValueChange={(value, ingredient) => {
+                      setSelectedStockIngredient(ingredient);
+                      setStockForm((current) => ({
+                        ...current,
+                        ingredient_id: value,
+                        unit_cost: current.unit_cost || String(ingredient?.last_cost ?? ingredient?.cost_per_unit ?? '')
+                      }));
+                    }}
+                  />
                 </div>
               </div>
 

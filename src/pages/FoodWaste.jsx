@@ -35,6 +35,7 @@ import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/expo
 import { formatCurrency } from '@/lib/currency';
 import { calculateIngredientCost } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
+import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import {
   AlertTriangle,
   Brain,
@@ -1673,15 +1674,19 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                 </div>
                 <div>
                   <Label>Ingredient</Label>
-                  <Select value={formData.ingredient_id} onValueChange={(value) => setFormData((current) => ({ ...current, ingredient_id: value }))}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No ingredient</SelectItem>
-                      {ingredients.map((item) => (
-                        <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <IngredientSearchCombobox
+                    className="mt-1"
+                    value={formData.ingredient_id === 'none' ? '' : formData.ingredient_id}
+                    selectedIngredient={formData.ingredient_id === 'none' ? null : ingredientMap.get(formData.ingredient_id)}
+                    siteId={formData.site_id}
+                    allowClear
+                    clearLabel="No ingredient"
+                    onValueChange={(value, ingredient) => setFormData((current) => ({
+                      ...current,
+                      ingredient_id: value || 'none',
+                      unit: ingredient?.unit || current.unit
+                    }))}
+                  />
                 </div>
                 <div>
                   <Label>Recipe</Label>

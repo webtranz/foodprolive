@@ -168,6 +168,11 @@ async function ensureAuth() {
 
 export const base44 = {
   entities,
+  ingredients: {
+    search(filters = {}) {
+      return apiRequest(`/api/ingredients/search${buildQueryString(filters)}`);
+    }
+  },
   auth: {
     async login(email, password, options = {}) {
       const session = await apiRequest('/api/auth/login', {

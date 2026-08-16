@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Trash2, Flame, Calculator, RotateCcw } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
+import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 
 const MACRO_COLORS = {
   protein: '#10b981',
@@ -68,6 +69,22 @@ export default function CaloriesCalculator() {
         }]);
       }
     }
+  };
+
+  const addIngredient = (ingredient) => {
+    if (!ingredient?.id || selectedItems.some((item) => item.type === 'ingredient' && item.id === ingredient.id)) return;
+    setSelectedItems((current) => [...current, {
+      type: 'ingredient',
+      id: ingredient.id,
+      name: ingredient.name || ingredient.data?.name,
+      quantity: 100,
+      unit: 'g',
+      calories_per_100g: ingredient.calories_per_100g || ingredient.data?.calories_per_100g || 0,
+      protein_per_100g: ingredient.protein_per_100g || ingredient.data?.protein_per_100g || 0,
+      carbs_per_100g: ingredient.carbs_per_100g || ingredient.data?.carbs_per_100g || 0,
+      fat_per_100g: ingredient.fat_per_100g || ingredient.data?.fat_per_100g || 0,
+      fiber_per_100g: ingredient.fiber_per_100g || ingredient.data?.fiber_per_100g || 0
+    }]);
   };
 
   const updateItemQuantity = (index, quantity) => {
@@ -150,18 +167,7 @@ export default function CaloriesCalculator() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                   <div>
                     <Label className="mb-2 block">Add Ingredient</Label>
-                    <Select onValueChange={(value) => addItem('ingredient', value)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select ingredient" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ingredients.map(ing => (
-                          <SelectItem key={ing.id} value={ing.id}>
-                            {ing.name || ing.data?.name} ({ing.calories_per_100g || ing.data?.calories_per_100g || 0} cal/100g)
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <IngredientSearchCombobox value="" onValueChange={(_value, ingredient) => addIngredient(ingredient)} />
                   </div>
                   <div>
                     <Label className="mb-2 block">Add Recipe</Label>

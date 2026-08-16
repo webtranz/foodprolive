@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, ArrowRight, Package, CheckCircle2, Truck, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
@@ -309,21 +310,21 @@ export default function ProductionTransfer() {
                       {selectedItems.map((item, idx) => (
                         <TableRow key={idx}>
                           <TableCell>
-                            <Select
+                            <IngredientSearchCombobox
                               value={item.ingredient_id}
-                              onValueChange={(v) => updateItem(idx, 'ingredient_id', v)}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {availableInventory.map(inv => (
-                                  <SelectItem key={inv.ingredient_id} value={inv.ingredient_id}>
-                                    {inv.ingredient_name} ({inv.quantity} {inv.unit})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                              selectedIngredient={(() => {
+                                const stock = availableInventory.find((entry) => entry.ingredient_id === item.ingredient_id);
+                                return stock ? {
+                                  id: stock.ingredient_id,
+                                  name: stock.ingredient_name,
+                                  unit: stock.unit,
+                                  current_stock: stock.quantity
+                                } : null;
+                              })()}
+                              siteId={formData.from_site_id}
+                              stockOnly
+                              onValueChange={(value) => updateItem(idx, 'ingredient_id', value)}
+                            />
                           </TableCell>
                           <TableCell>
                             <Input

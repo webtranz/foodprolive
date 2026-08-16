@@ -137,6 +137,7 @@ import {
   serializeReportRows
 } from './utilities.js';
 import { enqueueBulkUpload, resumeBulkUploadQueue } from './bulkUploadQueue.js';
+import { searchIngredients } from './ingredientSearch.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -1955,6 +1956,33 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
     const preparedPayload = await prepareEntityPayload(request.user, 'FoodWaste', merged, existing);
     const updated = await updateDocument('FoodWaste', request.params.id, preparedPayload);
     return response.json(buildApiObjectResponse(decorateFoodWasteRecord(updated), { action: approvalOnly ? 'approval' : 'update' }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/ingredients/search', requireAuth, async (request, response, next) => {
+  try {
+    authorizeEntityAction(request.user, 'Ingredient', 'list');
+    const scope = await getLocationScope(request.user);
+    const requestedSiteId = request.query.site_id ? String(request.query.site_id) : '';
+    if (requestedSiteId && !scope.unrestricted && !scope.accessibleSiteIds.has(requestedSiteId)) {
+      return response.status(403).json({ message: 'You do not have access to this site' });
+    }
+
+    const siteIds = requestedSiteId
+      ? [requestedSiteId]
+      : scope.unrestricted
+        ? null
+        : [...scope.accessibleSiteIds];
+    const result = await searchIngredients({
+      query: request.query.q || '',
+      page: request.query.page,
+      limit: request.query.limit,
+      siteIds,
+      stockOnly: ['1', 'true'].includes(String(request.query.stock_only || '').toLowerCase())
+    });
+    return response.json(result);
   } catch (error) {
     return next(error);
   }

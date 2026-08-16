@@ -9,6 +9,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Plus, Trash2, Flame, ShieldAlert, GitBranch, ImagePlus, X } from 'lucide-react';
+import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
+import { formatCurrency, formatNumber } from '@/lib/currency';
+import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
+import { cn } from '@/lib/utils';
+import { quantityInIngredientBaseUnit } from '../../../shared/ingredientUnits.js';
 import {
   expandRecipeIngredients,
   validateRecipeComposition,
@@ -52,12 +57,13 @@ function roundValue(value) {
   return Math.round((Number(value) || 0) * 10) / 10;
 }
 
-export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = [], ingredients = [], sites = [], isLoading }) {
+export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, sites = [], isLoading }) {
   const imageInputRef = useRef(null);
   const [formError, setFormError] = useState('');
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
   const [imageUploading, setImageUploading] = useState(false);
+  const [selectedIngredientsById, setSelectedIngredientsById] = useState({});
   const [formData, setFormData] = useState({
     name: '',
     recipe_code: '',
@@ -121,7 +127,34 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     setImageFile(null);
     setImagePreview(recipe?.image_url || '');
     setImageUploading(false);
+    setSelectedIngredientsById({});
   }, [recipe, open]);
+
+  const ingredientCatalog = useMemo(() => {
+    const scopedSiteIds = formData.site_scope === 'specific' ? new Set(formData.site_ids) : null;
+    const stockByIngredient = new Map();
+    inventory.forEach((stock) => {
+      if (!stock?.ingredient_id || (scopedSiteIds && !scopedSiteIds.has(stock.site_id))) return;
+      stockByIngredient.set(
+        stock.ingredient_id,
+        (stockByIngredient.get(stock.ingredient_id) || 0) + (Number(stock.quantity) || 0)
+      );
+    });
+    const merged = new Map(ingredients.map((ingredient) => [ingredient.id, {
+      ...ingredient,
+      ...(inventoryLoaded ? { current_stock: stockByIngredient.get(ingredient.id) || 0 } : {})
+    }]));
+    Object.values(selectedIngredientsById).forEach((ingredient) => {
+      if (!ingredient?.id) return;
+      const existing = merged.get(ingredient.id) || {};
+      merged.set(ingredient.id, {
+        ...existing,
+        ...ingredient,
+        cost_per_unit: ingredient.last_cost ?? ingredient.cost_per_unit ?? existing.cost_per_unit
+      });
+    });
+    return [...merged.values()];
+  }, [formData.site_ids, formData.site_scope, ingredients, inventory, inventoryLoaded, selectedIngredientsById]);
 
   const availableSubRecipes = useMemo(() => recipes.filter((recipeOption) => (
     recipeOption?.id
@@ -144,12 +177,12 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     const expanded = expandRecipeIngredients(
       { ...formData, id: recipe?.id || null },
       recipes,
-      ingredients,
+      ingredientCatalog,
       { aggregate: false }
     );
 
     expanded.ingredients.forEach((ingredientLine) => {
-      const ingredientData = ingredients.find((item) => item.id === ingredientLine.ingredient_id);
+      const ingredientData = ingredientCatalog.find((item) => item.id === ingredientLine.ingredient_id);
       if (!ingredientData) {
         return;
       }
@@ -185,16 +218,44 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       sugar_per_serving: roundValue(totals.sugar / servings),
       allergens: Array.from(allergenSet).sort()
     };
-  }, [formData, ingredients, recipe?.id, recipes]);
+  }, [formData, ingredientCatalog, recipe?.id, recipes]);
 
   const calculatedServingWeight = useMemo(
     () => calculateRecipeServingWeight(
       { ...formData, id: recipe?.id || null },
       recipes,
-      ingredients
+      ingredientCatalog
     ),
-    [formData, ingredients, recipe?.id, recipes]
+    [formData, ingredientCatalog, recipe?.id, recipes]
   );
+
+  const ingredientCostRows = useMemo(() => formData.ingredients.map((line) => {
+    const ingredient = ingredientCatalog.find((item) => item.id === line.ingredient_id) || null;
+    const quantityInBaseUnit = ingredient
+      ? quantityInIngredientBaseUnit(line.quantity, line.unit || ingredient.unit, ingredient)
+      : 0;
+    const unitCost = Number(ingredient?.last_cost ?? ingredient?.cost_per_unit);
+    const hasCost = Number.isFinite(unitCost) && unitCost >= 0;
+    const hasStock = ingredient && Object.prototype.hasOwnProperty.call(ingredient, 'current_stock');
+    const currentStock = hasStock ? Number(ingredient.current_stock) || 0 : null;
+    return {
+      ingredient,
+      quantityInBaseUnit,
+      unitCost: hasCost ? unitCost : null,
+      amount: hasCost ? quantityInBaseUnit * unitCost : null,
+      currentStock,
+      shortage: currentStock === null ? null : Math.max(0, quantityInBaseUnit - currentStock)
+    };
+  }), [formData.ingredients, ingredientCatalog]);
+
+  const recipeCost = useMemo(() => calculateRecipeCostSnapshot(
+    { ...formData, id: recipe?.id || null },
+    ingredientCatalog,
+    recipes
+  ), [formData, ingredientCatalog, recipe?.id, recipes]);
+
+  const stockShortageCount = ingredientCostRows.filter((row) => Number(row.shortage) > 0).length;
+  const knownStockLineCount = ingredientCostRows.filter((row) => row.currentStock !== null).length;
 
   const addIngredient = () => {
     setFormData((prev) => ({
@@ -224,6 +285,21 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       }
 
       return { ...prev, ingredients: nextIngredients };
+    });
+  };
+
+  const selectIngredient = (index, ingredient) => {
+    if (!ingredient?.id) return;
+    setSelectedIngredientsById((current) => ({ ...current, [ingredient.id]: ingredient }));
+    setFormData((current) => {
+      const nextIngredients = [...current.ingredients];
+      nextIngredients[index] = {
+        ...nextIngredients[index],
+        ingredient_id: ingredient.id,
+        ingredient_name: ingredient.name,
+        unit: ingredient.unit || nextIngredients[index]?.unit || 'g'
+      };
+      return { ...current, ingredients: nextIngredients };
     });
   };
 
@@ -330,6 +406,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       cook_time_minutes: formData.cook_time_minutes ? parseInt(formData.cook_time_minutes, 10) : null,
       servings: formData.servings ? parseInt(formData.servings, 10) : 1,
       ...calculatedNutrition,
+      total_cost: recipeCost.has_cost ? Number(recipeCost.total_cost.toFixed(4)) : null,
+      cost_per_serving: recipeCost.has_cost ? Number(recipeCost.cost_per_serving.toFixed(4)) : null,
+      costing_updated_at: new Date().toISOString(),
       site_scope: formData.site_scope,
       site_ids: formData.site_scope === 'specific' ? formData.site_ids : [],
       ingredients: formData.ingredients.map((ingredientLine) => ({
@@ -524,26 +603,26 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
             </div>
 
             <div className="space-y-3">
-              {formData.ingredients.map((ingredientLine, index) => (
-                <div key={index} className="grid grid-cols-1 gap-3 rounded-lg bg-slate-50 p-3 md:grid-cols-[1fr_120px_120px_48px]">
+              {formData.ingredients.map((ingredientLine, index) => {
+                const costRow = ingredientCostRows[index];
+                const selectedIngredient = costRow?.ingredient || (
+                  ingredientLine.ingredient_id
+                    ? { id: ingredientLine.ingredient_id, name: ingredientLine.ingredient_name || 'Selected ingredient', unit: ingredientLine.unit }
+                    : null
+                );
+                return (
+                  <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-[minmax(250px,1fr)_90px_90px_100px_120px_40px]">
                   <div>
-                    <Select
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 md:hidden">Ingredient</p>
+                    <IngredientSearchCombobox
                       value={ingredientLine.ingredient_id}
-                      onValueChange={(value) => updateIngredient(index, 'ingredient_id', value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select ingredient" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ingredients.map((ingredientOption) => (
-                          <SelectItem key={ingredientOption.id} value={ingredientOption.id}>
-                            {ingredientOption.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      selectedIngredient={selectedIngredient}
+                      siteId={formData.site_scope === 'specific' ? formData.site_ids[0] || '' : ''}
+                      onValueChange={(_value, ingredient) => selectIngredient(index, ingredient)}
+                    />
                   </div>
                   <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Quantity</p>
                     <Input
                       type="number"
                       step="0.1"
@@ -553,6 +632,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     />
                   </div>
                   <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Unit</p>
                     <Select
                       value={ingredientLine.unit}
                       onValueChange={(value) => updateIngredient(index, 'unit', value)}
@@ -569,17 +649,37 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                       </SelectContent>
                     </Select>
                   </div>
+                  <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Last cost</p>
+                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700">
+                      {costRow?.unitCost == null ? '—' : formatCurrency(costRow.unitCost)}
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">Amount {costRow?.amount == null ? '—' : formatCurrency(costRow.amount)}</p>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Stock impact</p>
+                    <div className={cn(
+                      'flex h-10 items-center rounded-md border bg-white px-2 text-sm font-medium',
+                      Number(costRow?.shortage) > 0 ? 'border-red-300 text-red-700' : 'border-slate-200 text-slate-700'
+                    )}>
+                      {costRow?.currentStock === null || typeof costRow?.currentStock === 'undefined'
+                        ? '—'
+                        : `${formatNumber(costRow.currentStock, 2)} ${costRow.ingredient?.unit || ''}`}
+                    </div>
+                    {Number(costRow?.shortage) > 0 ? <p className="mt-1 text-[11px] font-medium text-red-600">Short {formatNumber(costRow.shortage, 2)}</p> : null}
+                  </div>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
                     onClick={() => removeIngredient(index)}
-                    className="text-red-500 hover:bg-red-50 hover:text-red-600"
+                    className="mt-5 text-red-500 hover:bg-red-50 hover:text-red-600"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
-                </div>
-              ))}
+                  </div>
+                );
+              })}
 
               {formData.ingredients.length === 0 ? (
                 <p className="py-4 text-center text-slate-500">
@@ -590,6 +690,28 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
             {formData.ingredients.length > 0 || formData.sub_recipes.length > 0 ? (
               <div className="mt-4 space-y-4 rounded-xl border border-orange-100 bg-orange-50 p-4">
+                <div className="grid grid-cols-2 gap-3 rounded-lg border border-emerald-200 bg-white p-3 md:grid-cols-4">
+                  <div>
+                    <p className="text-xs text-slate-500">Recipe cost</p>
+                    <p className="font-semibold text-slate-900">{recipeCost.has_cost ? formatCurrency(recipeCost.total_cost) : 'Missing cost'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Cost / serving</p>
+                    <p className="font-semibold text-slate-900">{recipeCost.has_cost ? formatCurrency(recipeCost.cost_per_serving) : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Ingredient lines</p>
+                    <p className="font-semibold text-slate-900">{formData.ingredients.length}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Stock impact</p>
+                    <p className={cn('font-semibold', stockShortageCount ? 'text-red-700' : knownStockLineCount ? 'text-emerald-700' : 'text-slate-600')}>
+                      {stockShortageCount
+                        ? `${stockShortageCount} shortage${stockShortageCount === 1 ? '' : 's'}`
+                        : knownStockLineCount ? 'No known shortage' : 'Select an ingredient'}
+                    </p>
+                  </div>
+                </div>
                 <div className="flex items-center gap-2">
                   <Flame className="h-5 w-5 text-orange-500" />
                   <span className="font-medium text-orange-900">Nutrition Summary</span>

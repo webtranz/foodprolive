@@ -41,6 +41,9 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
   const [formData, setFormData] = useState({
     name: '',
     item_code: '',
+    sku: '',
+    aliases: '',
+    supplier_item_name: '',
     category: 'other',
     unit: 'kg',
     conversion_unit: '',
@@ -67,6 +70,9 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
       setFormData({
         name: ingredient.name || '',
         item_code: ingredient.item_code || '',
+        sku: ingredient.sku || '',
+        aliases: Array.isArray(ingredient.aliases) ? ingredient.aliases.join(', ') : ingredient.aliases || '',
+        supplier_item_name: ingredient.supplier_item_name || '',
         category: ingredient.category || 'other',
         unit: ingredient.unit || 'kg',
         conversion_unit: ingredient.conversion_unit || '',
@@ -91,6 +97,9 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
       setFormData({
         name: '',
         item_code: '',
+        sku: '',
+        aliases: '',
+        supplier_item_name: '',
         category: 'other',
         unit: 'kg',
         conversion_unit: '',
@@ -147,6 +156,7 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
       sodium_per_100g: formData.sodium_per_100g ? parseFloat(formData.sodium_per_100g) : null,
       sugar_per_100g: formData.sugar_per_100g ? parseFloat(formData.sugar_per_100g) : null,
       allergens: formData.allergens,
+      aliases: String(formData.aliases || '').split(',').map((value) => value.trim()).filter(Boolean),
       conversion_factor: formData.conversion_factor ? parseFloat(formData.conversion_factor) : null,
       cost_per_unit: formData.cost_per_unit ? parseFloat(formData.cost_per_unit) : null
     };
@@ -191,6 +201,39 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
                     value={formData.item_code}
                     onChange={(e) => setFormData({ ...formData, item_code: e.target.value })}
                     placeholder="e.g., ITM-001"
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="sku">SKU Code</Label>
+                  <Input
+                    id="sku"
+                    value={formData.sku}
+                    onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                    placeholder="e.g., SKU-00421"
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="aliases">Aliases / Alternative Names</Label>
+                  <Input
+                    id="aliases"
+                    value={formData.aliases}
+                    onChange={(e) => setFormData({ ...formData, aliases: e.target.value })}
+                    placeholder="Comma separated, e.g., maize, sweetcorn"
+                    className="mt-1"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <Label htmlFor="supplier_item_name">Supplier Item Name</Label>
+                  <Input
+                    id="supplier_item_name"
+                    value={formData.supplier_item_name}
+                    onChange={(e) => setFormData({ ...formData, supplier_item_name: e.target.value })}
+                    placeholder="Name used in the supplier catalog"
                     className="mt-1"
                   />
                 </div>
