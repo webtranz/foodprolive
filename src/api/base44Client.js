@@ -389,6 +389,9 @@ export const base44 = {
     }
   },
   menuPlanning: {
+    getWeek(siteId, weekStart) {
+      return apiRequest(`/api/menu-plans/week${buildQueryString({ site_id: siteId, week_start: weekStart })}`);
+    },
     getByDate(siteId, planDate) {
       return apiRequest(`/api/menu-plans/by-date${buildQueryString({ site_id: siteId, plan_date: planDate })}`);
     },

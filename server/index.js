@@ -94,6 +94,8 @@ import {
 } from './menuPlanningProcurement.js';
 import {
   buildApiObjectResponse,
+  buildMenuPlanWeekRange,
+  filterMenuPlansForWeek,
   summarizeMenuPlanCostPreview,
   validateSiteAndDateInput,
   validateMenuPlanPayload,
@@ -588,6 +590,24 @@ async function findScopedOperationalMenuPlan(user, siteId, planDate) {
   });
   const scopedRecords = await scopeEntityRecords(user, 'MenuPlan', records.filter(isOperationalMenuPlan));
   return scopedRecords[0] || null;
+}
+
+async function listScopedOperationalMenuPlansForWeek(user, siteId, weekStart) {
+  const range = buildMenuPlanWeekRange(weekStart);
+  if (!range) {
+    return null;
+  }
+
+  const records = await listDocuments('MenuPlan', {
+    filters: { site_id: siteId },
+    sort: 'plan_date'
+  });
+  const weeklyRecords = filterMenuPlansForWeek(records, siteId, weekStart);
+
+  return {
+    ...range,
+    plans: await scopeEntityRecords(user, 'MenuPlan', weeklyRecords)
+  };
 }
 
 async function findScopedSpecialEventById(user, eventId) {
@@ -1142,6 +1162,23 @@ app.get('/api/menu-plans/by-date', requireAuth, requirePermission('manage_menu_p
       plan: plan || null,
       ...budgetContext
     }, { site_id: siteId, plan_date: planDate }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/menu-plans/week', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const siteId = String(request.query.site_id || '').trim();
+    const weekStart = String(request.query.week_start || '').trim();
+    const errors = validateSiteAndDateInput({ siteId, planDate: weekStart });
+    if (errors.length) {
+      const normalizedErrors = errors.map((error) => error.replace('plan_date', 'week_start'));
+      return response.status(400).json({ message: normalizedErrors[0], errors: normalizedErrors });
+    }
+
+    const result = await listScopedOperationalMenuPlansForWeek(request.user, siteId, weekStart);
+    return response.json(buildApiObjectResponse(result, { site_id: siteId, week_start: weekStart }));
   } catch (error) {
     return next(error);
   }

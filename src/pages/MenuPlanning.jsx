@@ -24,9 +24,11 @@ import {
   createEmptyMealEntry,
   createMealEntryFromRecipe,
   createEmptyDailyMenuState,
+  hasMenuCalendarChanges,
   moveMealEntry,
   reorderMealEntries,
   summarizeDailyMenuCosts,
+  summarizeMenuCalendarDay,
   summarizeMenuPlanMeals,
   validateDailyMenuState
 } from '@/lib/menuPlanning';
@@ -121,19 +123,21 @@ export default function MenuPlanning() {
     queryFn: () => base44.entities.Ingredient.list()
   });
 
+  const weekStartKey = format(currentWeekStart, 'yyyy-MM-dd');
   const {
-    data: menuPlans = [],
+    data: weekPlanResponse,
     isLoading: menuPlansLoading,
     error: menuPlansError
   } = useQuery({
-    queryKey: ['menuPlans', selectedSite],
-    queryFn: () => base44.entities.MenuPlan.list('-plan_date', 300),
+    queryKey: ['menuPlansByWeek', selectedSite, weekStartKey],
+    queryFn: () => base44.menuPlanning.getWeek(selectedSite, weekStartKey),
     enabled: !!selectedSite
   });
 
   const {
     data: selectedPlanResponse,
-    isLoading: selectedPlanLoading
+    isLoading: selectedPlanLoading,
+    error: selectedPlanError
   } = useQuery({
     queryKey: ['menuPlanByDate', selectedSite, selectedDate],
     queryFn: () => base44.menuPlanning.getByDate(selectedSite, selectedDate),
@@ -157,6 +161,7 @@ export default function MenuPlanning() {
     mutationFn: (payload) => base44.menuPlanning.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
+      queryClient.invalidateQueries({ queryKey: ['menuPlansByWeek'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
       setMessage('Menu plan saved successfully.');
     },
@@ -167,6 +172,7 @@ export default function MenuPlanning() {
     mutationFn: ({ id, payload }) => base44.menuPlanning.update(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
+      queryClient.invalidateQueries({ queryKey: ['menuPlansByWeek'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
       setMessage('Menu plan updated successfully.');
     },
@@ -177,6 +183,7 @@ export default function MenuPlanning() {
     mutationFn: (id) => base44.menuPlanning.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
+      queryClient.invalidateQueries({ queryKey: ['menuPlansByWeek'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
       setFormData(createEmptyDailyMenuState());
       setMessage('Menu plan cleared for the selected date.');
@@ -247,10 +254,10 @@ export default function MenuPlanning() {
   }, [prGenerationContext?.schedule]);
 
   const operationalPlans = useMemo(() => (
-    menuPlans
+    (Array.isArray(weekPlanResponse?.plans) ? weekPlanResponse.plans : [])
       .filter((plan) => plan.site_id === selectedSite)
       .filter(isOperationalMenuPlan)
-  ), [menuPlans, selectedSite]);
+  ), [weekPlanResponse?.plans, selectedSite]);
 
   const selectedSiteRecord = useMemo(
     () => sites.find((site) => site.id === selectedSite) || null,
@@ -321,10 +328,29 @@ export default function MenuPlanning() {
     return operationalPlans.find((plan) => plan.plan_date === dayKey);
   };
 
+  const getCalendarDaySummary = (date) => {
+    const dayKey = format(date, 'yyyy-MM-dd');
+    const plan = getPlanForDay(date);
+    const isSelected = dayKey === selectedDate;
+    return {
+      plan,
+      isSelected,
+      isLoading: isSelected && selectedPlanLoading,
+      hasUnsavedChanges: isSelected
+        && !selectedPlanLoading
+        && hasMenuCalendarChanges(formData, selectedPlan),
+      summary: summarizeMenuCalendarDay({
+        plan,
+        formState: isSelected && !selectedPlanLoading ? formData : null,
+        recipes: availableRecipes
+      })
+    };
+  };
+
   const prSchedule = prGenerationContext?.schedule || null;
   const prCurrentCycleRun = prGenerationContext?.current_cycle_run || null;
   const prRecentRuns = Array.isArray(prGenerationContext?.recent_runs) ? prGenerationContext.recent_runs.slice(0, 5) : [];
-  const bootstrapError = sitesError || recipesError || ingredientsError || menuPlansError;
+  const bootstrapError = sitesError || recipesError || ingredientsError || menuPlansError || selectedPlanError;
   const bootstrapLoading = sitesLoading || recipesLoading || ingredientsLoading || (Boolean(selectedSite) && menuPlansLoading);
 
   const getRecipesForMeal = (mealType) => (
@@ -584,6 +610,8 @@ export default function MenuPlanning() {
                   queryClient.invalidateQueries({ queryKey: ['recipes'] });
                   queryClient.invalidateQueries({ queryKey: ['ingredients'] });
                   queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
+                  queryClient.invalidateQueries({ queryKey: ['menuPlansByWeek'] });
+                  queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
                 }}
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
@@ -651,9 +679,26 @@ export default function MenuPlanning() {
                   </div>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
                     {weekDays.map((day) => {
-                      const plan = getPlanForDay(day);
                       const dayKey = format(day, 'yyyy-MM-dd');
-                      const isSelected = dayKey === selectedDate;
+                      const {
+                        plan,
+                        isSelected,
+                        isLoading,
+                        hasUnsavedChanges,
+                        summary
+                      } = getCalendarDaySummary(day);
+                      const savedStatus = String(plan?.status || 'planned').trim().replace(/_/g, ' ');
+                      const statusText = isLoading
+                        ? 'Loading menu…'
+                        : !summary.has_core_meals && hasUnsavedChanges
+                          ? 'Unsaved changes · no meals'
+                          : !summary.has_core_meals
+                          ? 'No core meals planned'
+                          : summary.incomplete_items > 0
+                            ? `${summary.incomplete_items} item${summary.incomplete_items === 1 ? '' : 's'} need details`
+                            : hasUnsavedChanges
+                              ? `${summary.total_recipes} recipe${summary.total_recipes === 1 ? '' : 's'} ready to save`
+                              : `${savedStatus} · ${summary.total_expected_servings} servings`;
 
                       return (
                         <button
@@ -666,19 +711,29 @@ export default function MenuPlanning() {
                           <p className={`text-lg font-bold ${isSelected ? 'text-emerald-700' : 'text-slate-900'}`}>{format(day, 'd')}</p>
                           <div className="mt-2 space-y-1">
                             {CORE_MENU_MEAL_TYPES.map((mealType) => {
-                              const meals = plan?.meals?.filter((entry) => entry.meal_type === mealType) || [];
-                              return meals.length > 0 ? (
+                              const mealSummary = summary.meals[mealType];
+                              return mealSummary.item_count > 0 ? (
                                 <div key={mealType} className={`rounded-lg border px-2 py-1 text-[11px] ${MEAL_BADGES[mealType]}`}>
                                   <p className="font-medium">{MEAL_LABELS[mealType]}</p>
                                   <p className="truncate">
-                                    {meals.length === 1 ? meals[0].recipe_name : `${meals.length} recipes planned`}
+                                    {mealSummary.recipe_count === 1 && mealSummary.item_count === 1
+                                      ? (mealSummary.entries[0].recipe_name || 'Recipe selected')
+                                      : mealSummary.incomplete_count > 0
+                                        ? `${mealSummary.item_count} item${mealSummary.item_count === 1 ? '' : 's'} · ${mealSummary.incomplete_count} incomplete`
+                                        : `${mealSummary.recipe_count} recipes planned`}
                                   </p>
                                 </div>
                               ) : null;
                             })}
-                            {!plan ? (
-                              <p className="pt-4 text-center text-[11px] text-slate-400">No core meals planned</p>
-                            ) : null}
+                            <p className={`pt-2 text-center text-[11px] ${
+                              isLoading
+                                ? 'text-slate-400'
+                                : summary.incomplete_items > 0 || hasUnsavedChanges
+                                  ? 'font-medium text-amber-700'
+                                  : summary.has_core_meals
+                                    ? 'font-medium capitalize text-emerald-700'
+                                    : 'text-slate-400'
+                            }`}>{statusText}</p>
                           </div>
                         </button>
                       );

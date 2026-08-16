@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 
 import {
   buildApiObjectResponse,
+  buildMenuPlanWeekRange,
+  filterMenuPlansForWeek,
   summarizeMenuPlanCostPreview,
   validateSiteAndDateInput,
   validateMenuPlanPayload,
@@ -64,6 +66,41 @@ const cases = [
         validateSiteAndDateInput({ siteId: 'site-1', planDate: '13/05/2026' }),
         ['plan_date must be provided in YYYY-MM-DD format']
       );
+    }
+  },
+  {
+    name: 'builds a seven day menu planning range without timezone drift',
+    run() {
+      assert.deepEqual(buildMenuPlanWeekRange('2026-08-10'), {
+        start_date: '2026-08-10',
+        end_date: '2026-08-16'
+      });
+      assert.deepEqual(buildMenuPlanWeekRange('2026-12-28'), {
+        start_date: '2026-12-28',
+        end_date: '2027-01-03'
+      });
+      assert.equal(buildMenuPlanWeekRange('16/08/2026'), null);
+      assert.equal(buildMenuPlanWeekRange('2026-02-30'), null);
+    }
+  },
+  {
+    name: 'keeps the weekly calendar isolated to its project and operational dates',
+    run() {
+      const records = [
+        { id: 'before', site_id: 'site-1', plan_date: '2026-08-09', meals: [] },
+        { id: 'monday', site_id: 'site-1', plan_date: '2026-08-10', meals: [] },
+        { id: 'friday', site_id: 'site-1', plan_date: '2026-08-14', meals: [] },
+        { id: 'event', site_id: 'site-1', plan_date: '2026-08-14', event_name: 'VIP Dinner', meals: [] },
+        { id: 'other-site', site_id: 'site-2', plan_date: '2026-08-14', meals: [] },
+        { id: 'sunday', site_id: 'site-1', plan_date: '2026-08-16', meals: [] },
+        { id: 'after', site_id: 'site-1', plan_date: '2026-08-17', meals: [] }
+      ];
+
+      assert.deepEqual(
+        filterMenuPlansForWeek(records, 'site-1', '2026-08-10').map((record) => record.id),
+        ['monday', 'friday', 'sunday']
+      );
+      assert.deepEqual(filterMenuPlansForWeek(records, '', '2026-08-10'), []);
     }
   },
   {

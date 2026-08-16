@@ -9,9 +9,11 @@ import {
   createEmptyMealEntry,
   createMealEntryFromRecipe,
   createEmptyDailyMenuState,
+  hasMenuCalendarChanges,
   moveMealEntry,
   reorderMealEntries,
   summarizeDailyMenuCosts,
+  summarizeMenuCalendarDay,
   summarizeMenuPlanMeals,
   validateDailyMenuState
 } from '../src/lib/menuPlanning.js';
@@ -86,6 +88,71 @@ const cases = [
           dinner: [{ recipe_id: '', expected_servings: '' }]
         }
       );
+    }
+  },
+  {
+    name: 'summarizes live calendar meals from the daily editor',
+    run() {
+      const summary = summarizeMenuCalendarDay({
+        plan: null,
+        formState: {
+          breakfast: [{ recipe_id: 'recipe-breakfast', expected_servings: '25' }],
+          lunch: [
+            { recipe_id: 'recipe-lunch', expected_servings: '50' },
+            { recipe_id: 'recipe-breakfast', expected_servings: '10' }
+          ],
+          dinner: [{ recipe_id: '', expected_servings: '' }]
+        },
+        recipes: sampleRecipes
+      });
+
+      assert.equal(summary.has_core_meals, true);
+      assert.equal(summary.total_recipes, 3);
+      assert.equal(summary.total_expected_servings, 85);
+      assert.equal(summary.incomplete_items, 0);
+      assert.equal(summary.meals.breakfast.entries[0].recipe_name, 'Eggs');
+      assert.equal(summary.meals.lunch.recipe_count, 2);
+    }
+  },
+  {
+    name: 'marks partial calendar entries as incomplete instead of empty',
+    run() {
+      const summary = summarizeMenuCalendarDay({
+        formState: {
+          breakfast: [{ recipe_id: 'recipe-breakfast', expected_servings: '' }],
+          lunch: [{ recipe_id: '', expected_servings: '20' }],
+          dinner: [{ recipe_id: '', expected_servings: '' }]
+        },
+        recipes: sampleRecipes
+      });
+
+      assert.equal(summary.has_core_meals, true);
+      assert.equal(summary.total_items, 2);
+      assert.equal(summary.incomplete_items, 2);
+      assert.equal(summary.total_expected_servings, 0);
+    }
+  },
+  {
+    name: 'detects saved and unsaved calendar editor states',
+    run() {
+      const plan = {
+        meals: [
+          { meal_type: 'Breakfast', recipe_id: 'recipe-breakfast', expected_servings: 25 },
+          { meal_type: 'lunch', recipe_id: 'recipe-lunch', expected_servings: 50 }
+        ]
+      };
+      const matchingState = buildDailyMenuState(plan);
+
+      assert.equal(hasMenuCalendarChanges(createEmptyDailyMenuState(), null), false);
+      assert.equal(hasMenuCalendarChanges(matchingState, plan), false);
+      assert.equal(hasMenuCalendarChanges({
+        ...matchingState,
+        lunch: [{ recipe_id: 'recipe-lunch', expected_servings: '60' }]
+      }, plan), true);
+
+      const summary = summarizeMenuCalendarDay({ plan, recipes: sampleRecipes });
+      assert.equal(summary.meals.breakfast.recipe_count, 1);
+      assert.equal(summary.total_expected_servings, 75);
     }
   },
   {

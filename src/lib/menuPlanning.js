@@ -91,7 +91,7 @@ export function buildDailyMenuState(plan) {
   const meals = Array.isArray(plan?.meals) ? plan.meals : [];
 
   CORE_MENU_MEAL_TYPES.forEach((mealType) => {
-    const matchingMeals = meals.filter((entry) => entry.meal_type === mealType);
+    const matchingMeals = meals.filter((entry) => String(entry?.meal_type || '').trim().toLowerCase() === mealType);
     if (matchingMeals.length === 0) {
       return;
     }
@@ -103,6 +103,88 @@ export function buildDailyMenuState(plan) {
   });
 
   return nextState;
+}
+
+function normalizeCalendarMeal(mealType, meal = {}, recipes = []) {
+  const recipeId = String(meal?.recipe_id || '').trim();
+  const rawServings = meal?.expected_servings;
+  const hasServings = rawServings !== '' && rawServings !== null && typeof rawServings !== 'undefined';
+  const expectedServings = hasServings ? safeNumber(rawServings, 0) : 0;
+  const recipe = recipes.find((entry) => entry.id === recipeId);
+
+  return {
+    meal_type: mealType,
+    recipe_id: recipeId,
+    recipe_name: String(meal?.recipe_name || recipe?.name || '').trim(),
+    expected_servings: expectedServings,
+    has_recipe: Boolean(recipeId),
+    has_servings: hasServings,
+    is_complete: Boolean(recipeId) && expectedServings > 0
+  };
+}
+
+function getCalendarMealRows(plan, formState, recipes) {
+  if (formState) {
+    return CORE_MENU_MEAL_TYPES.flatMap((mealType) => (
+      (Array.isArray(formState[mealType]) ? formState[mealType] : [])
+        .map((meal) => normalizeCalendarMeal(mealType, meal, recipes))
+        .filter((meal) => meal.has_recipe || meal.has_servings)
+    ));
+  }
+
+  return (Array.isArray(plan?.meals) ? plan.meals : [])
+    .map((meal) => {
+      const mealType = String(meal?.meal_type || '').trim().toLowerCase();
+      return CORE_MENU_MEAL_TYPES.includes(mealType)
+        ? normalizeCalendarMeal(mealType, meal, recipes)
+        : null;
+    })
+    .filter((meal) => meal && (meal.has_recipe || meal.has_servings));
+}
+
+export function summarizeMenuCalendarDay({ plan = null, formState = null, recipes = [] } = {}) {
+  const entries = getCalendarMealRows(plan, formState, recipes);
+  const meals = Object.fromEntries(CORE_MENU_MEAL_TYPES.map((mealType) => {
+    const mealEntries = entries.filter((entry) => entry.meal_type === mealType);
+    return [mealType, {
+      entries: mealEntries,
+      item_count: mealEntries.length,
+      recipe_count: mealEntries.filter((entry) => entry.has_recipe).length,
+      complete_count: mealEntries.filter((entry) => entry.is_complete).length,
+      incomplete_count: mealEntries.filter((entry) => !entry.is_complete).length,
+      expected_servings: mealEntries.reduce(
+        (total, entry) => total + (entry.is_complete ? entry.expected_servings : 0),
+        0
+      )
+    }];
+  }));
+
+  return {
+    meals,
+    has_core_meals: entries.length > 0,
+    total_items: entries.length,
+    total_recipes: entries.filter((entry) => entry.has_recipe).length,
+    complete_items: entries.filter((entry) => entry.is_complete).length,
+    incomplete_items: entries.filter((entry) => !entry.is_complete).length,
+    total_expected_servings: entries.reduce(
+      (total, entry) => total + (entry.is_complete ? entry.expected_servings : 0),
+      0
+    )
+  };
+}
+
+function calendarMealFingerprint(plan, formState) {
+  return getCalendarMealRows(plan, formState, [])
+    .map((entry) => ({
+      meal_type: entry.meal_type,
+      recipe_id: entry.recipe_id,
+      expected_servings: entry.has_servings ? entry.expected_servings : null
+    }));
+}
+
+export function hasMenuCalendarChanges(formState, plan = null) {
+  return JSON.stringify(calendarMealFingerprint(null, formState))
+    !== JSON.stringify(calendarMealFingerprint(plan, null));
 }
 
 export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], existingPlan = null) {

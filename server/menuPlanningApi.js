@@ -14,7 +14,39 @@ function normalizeText(value) {
 
 function normalizeDateOnly(value) {
   const normalized = normalizeText(value);
-  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return '';
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === normalized
+    ? normalized
+    : '';
+}
+
+function addUtcDays(dateOnly, days) {
+  const date = new Date(`${dateOnly}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function buildMenuPlanWeekRange(weekStart) {
+  const startDate = normalizeDateOnly(weekStart);
+  if (!startDate) return null;
+  return {
+    start_date: startDate,
+    end_date: addUtcDays(startDate, 6)
+  };
+}
+
+function filterMenuPlansForWeek(records = [], siteId, weekStart) {
+  const range = buildMenuPlanWeekRange(weekStart);
+  const normalizedSiteId = normalizeText(siteId);
+  if (!range || !normalizedSiteId) return [];
+
+  return (Array.isArray(records) ? records : []).filter((record) => (
+    normalizeText(record?.site_id) === normalizedSiteId
+      && !normalizeText(record?.event_name)
+      && normalizeDateOnly(record?.plan_date) >= range.start_date
+      && normalizeDateOnly(record?.plan_date) <= range.end_date
+  ));
 }
 
 function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
@@ -211,6 +243,8 @@ function validateFoodWasteContextInput({ siteId, wasteDate, mealType, token = ''
 
 export {
   buildApiObjectResponse,
+  buildMenuPlanWeekRange,
+  filterMenuPlansForWeek,
   summarizeMenuPlanCostPreview,
   validateSiteAndDateInput,
   validateMenuPlanPayload,
