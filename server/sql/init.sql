@@ -613,6 +613,14 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_event_lookup
   ON entity_records ((data->>'site_id'), (data->>'event_date'), (data->>'status'))
   WHERE entity_name = 'MenuPlan' AND COALESCE(data->>'event_name', '') <> '';
 
+CREATE INDEX IF NOT EXISTS idx_entity_records_production_event_recipe
+  ON entity_records ((data->>'source_event_id'), (data->>'source_event_recipe_id'))
+  WHERE entity_name = 'Production' AND COALESCE(data->>'source_event_id', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_event_handoffs
+  ON entity_records ((data->>'procurement_pr_id'), (data->>'production_plan_status'))
+  WHERE entity_name = 'MenuPlan' AND COALESCE(data->>'event_name', '') <> '';
+
 CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_budget_lookup
   ON entity_records ((data->>'budget_id'), (data->>'site_id'), (data->>'plan_date'))
   WHERE entity_name = 'MenuPlan' AND COALESCE(data->>'budget_id', '') <> '';

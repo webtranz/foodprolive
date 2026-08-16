@@ -9,6 +9,12 @@ import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { roundStandardDecimal } from '../shared/recipeNumbers.js';
 import {
+  assertEventReadyForSubmission,
+  buildEventProductionPlanPayloads,
+  buildEventPurchaseRequestItems,
+  calculateEventPlanningSnapshot
+} from '../shared/specialEventPlanning.js';
+import {
   MAX_RECIPE_IMAGE_BYTES,
   RECIPE_IMAGE_MIME_TYPES
 } from '../shared/recipeImage.js';
@@ -54,6 +60,7 @@ import {
   updateSupplier,
   deleteSupplier,
   listPurchaseRequests,
+  getPurchaseRequestById,
   createPurchaseRequest,
   approvePurchaseRequest,
   autoGeneratePurchaseRequestFromLowStock,
@@ -139,7 +146,7 @@ import {
   serializeReportRows
 } from './utilities.js';
 import { enqueueBulkUpload, resumeBulkUploadQueue } from './bulkUploadQueue.js';
-import { searchIngredients } from './ingredientSearch.js';
+import { getIngredientCostSnapshots, searchIngredients } from './ingredientSearch.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -663,17 +670,101 @@ async function getSpecialEventBudgetContext(user, planLike = {}) {
   });
 }
 
+async function calculateSpecialEventPlanning(user, record) {
+  const [recipes, ingredients, inventoryRows] = await Promise.all([
+    listDocuments('Recipe', { limit: 5000 }),
+    listDocuments('Ingredient', { limit: 5000 }),
+    listDocuments('Inventory', { filters: { site_id: record.site_id }, limit: 5000 })
+  ]);
+  const scope = await getLocationScope(user);
+  const scopedRecipes = filterRecordsByLocation(user, 'Recipe', recipes, scope)
+    .filter((recipe) => recipe.is_active !== false)
+    .filter((recipe) => recipe.site_scope !== 'specific'
+      || !record.site_id
+      || (Array.isArray(recipe.site_ids) && recipe.site_ids.includes(record.site_id)));
+  const costSnapshots = await getIngredientCostSnapshots({
+    ingredientIds: ingredients.map((ingredient) => ingredient.id),
+    siteIds: record.site_id ? [record.site_id] : null
+  });
+  const costingIngredients = ingredients.map((ingredient) => ({
+    ...ingredient,
+    last_cost: costSnapshots[ingredient.id]?.last_cost ?? ingredient.last_cost ?? ingredient.cost_per_unit,
+    average_cost: costSnapshots[ingredient.id]?.average_cost ?? ingredient.average_cost ?? ingredient.cost_per_unit,
+    standard_cost: ingredient.standard_cost ?? ingredient.cost_per_unit
+  }));
+  const scopedInventory = await scopeEntityRecords(user, 'Inventory', inventoryRows);
+  return calculateEventPlanningSnapshot(record, scopedRecipes, costingIngredients, scopedInventory);
+}
+
+function mergeSpecialEventSnapshot(record, snapshot) {
+  const automaticCost = snapshot.total_event_cost;
+  return {
+    ...record,
+    linked_recipes: snapshot.linked_recipes,
+    ingredient_requirements: snapshot.ingredient_requirements,
+    estimated_cost: automaticCost ?? 0,
+    total_planned_cost: automaticCost ?? 0,
+    cost_per_guest: snapshot.cost_per_guest,
+    average_item_cost: snapshot.average_item_cost,
+    budget_remaining: snapshot.budget_remaining,
+    food_cost_percent: snapshot.food_cost_percent,
+    margin_per_guest: snapshot.margin_per_guest,
+    estimated_procurement_spend: snapshot.estimated_procurement_spend,
+    shortage_items: snapshot.shortage_items,
+    missing_recipe_ids: snapshot.missing_recipe_ids,
+    approval_checklist: snapshot.checklist,
+    ready_to_submit: snapshot.ready_to_submit
+  };
+}
+
 function canEditSpecialEvent(record) {
   return ['draft', 'rejected'].includes(String(record?.status || '').toLowerCase());
 }
 
 async function buildSpecialEventResponse(user, record) {
-  const budgetContext = await getSpecialEventBudgetContext(user, record);
-  return {
+  const initialBudgetContext = await getSpecialEventBudgetContext(user, record);
+  const pricedRecord = {
     ...record,
+    event_budget: numericMatch(initialBudgetContext.linked_budget?.budget_amount ?? record.event_budget, 0)
+  };
+  const snapshot = await calculateSpecialEventPlanning(user, pricedRecord);
+  const hydratedRecord = mergeSpecialEventSnapshot(pricedRecord, snapshot);
+  const budgetContext = await getSpecialEventBudgetContext(user, hydratedRecord);
+  const [purchaseRequest, productionPlans] = await Promise.all([
+    hydratedRecord.procurement_pr_id ? getPurchaseRequestById(hydratedRecord.procurement_pr_id) : null,
+    Array.isArray(hydratedRecord.production_plan_ids) && hydratedRecord.production_plan_ids.length > 0
+      ? listDocuments('Production', { filters: { source_event_id: hydratedRecord.id }, limit: 500 })
+      : []
+  ]);
+  const productionByRecipe = new Map(productionPlans.map((plan) => [String(plan.source_event_recipe_id), plan]));
+  const linkedRecipes = hydratedRecord.linked_recipes.map((link) => ({
+    ...link,
+    production_status: productionByRecipe.get(String(link.recipe_id))?.status || link.production_status
+  }));
+  const productionStatuses = productionPlans.map((plan) => String(plan.status || 'planned'));
+  const productionPlanStatus = productionStatuses.length === 0
+    ? hydratedRecord.production_plan_status
+    : productionStatuses.every((status) => status === 'completed')
+      ? 'completed'
+      : productionStatuses.some((status) => ['in_progress', 'completed'].includes(status))
+        ? 'in_progress'
+        : 'generated';
+  return {
+    ...hydratedRecord,
+    linked_recipes: linkedRecipes,
+    procurement_pr_status: purchaseRequest?.status || hydratedRecord.procurement_pr_status,
+    procurement_request: purchaseRequest,
+    production_plan_status: productionPlanStatus,
     linked_budget: budgetContext.linked_budget,
     budget_candidates: budgetContext.budget_candidates,
-    budget_comparison: budgetContext.budget_comparison
+    budget_comparison: {
+      ...budgetContext.budget_comparison,
+      planned_cost: numericMatch(snapshot.total_event_cost, 0),
+      remaining_budget: Math.max(0, numericMatch(hydratedRecord.event_budget, 0) - numericMatch(snapshot.total_event_cost, 0)),
+      exceeded_amount: Math.max(0, numericMatch(snapshot.total_event_cost, 0) - numericMatch(hydratedRecord.event_budget, 0)),
+      is_over_budget: numericMatch(hydratedRecord.event_budget, 0) > 0
+        && numericMatch(snapshot.total_event_cost, 0) > numericMatch(hydratedRecord.event_budget, 0)
+    }
   };
 }
 
@@ -1442,6 +1533,9 @@ app.get('/api/special-events', requireAuth, requireAnyPermission([
 ]), async (request, response, next) => {
   try {
     const events = await listScopedSpecialEvents(request.user, Number(request.query.limit || 300));
+    if (String(request.query.details || 'true').toLowerCase() === 'false') {
+      return response.json(events);
+    }
     const payload = await Promise.all(events.map((event) => buildSpecialEventResponse(request.user, event)));
     return response.json(payload);
   } catch (error) {
@@ -1477,6 +1571,30 @@ app.get('/api/special-events/budgets', requireAuth, requireAnyPermission([
     });
 
     return response.json(budgetContext);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/special-events/recipes', requireAuth, requireAnyPermission([
+  'manage_menu_planning',
+  'create_special_event',
+  'edit_special_event',
+  'submit_special_event',
+  'review_special_event',
+  'approve_special_event',
+  'reject_special_event'
+]), async (request, response, next) => {
+  try {
+    const siteId = String(request.query.site_id || '').trim();
+    const scope = await getLocationScope(request.user);
+    const recipes = await listDocuments('Recipe', { sort: 'name', limit: 5000 });
+    const scopedRecipes = filterRecordsByLocation(request.user, 'Recipe', recipes, scope)
+      .filter((recipe) => recipe.is_active !== false)
+      .filter((recipe) => recipe.site_scope !== 'specific'
+        || !siteId
+        || (Array.isArray(recipe.site_ids) && recipe.site_ids.includes(siteId)));
+    return response.json(await decorateRecipesWithServingWeights(scopedRecipes));
   } catch (error) {
     return next(error);
   }
@@ -1534,6 +1652,9 @@ app.post('/api/special-events', requireAuth, requirePermission('create_special_e
     }
     payload.status = SPECIAL_EVENT_STATUSES.draft;
 
+    const initialSnapshot = await calculateSpecialEventPlanning(request.user, payload);
+    Object.assign(payload, mergeSpecialEventSnapshot(payload, initialSnapshot));
+
     let budgetContext = await getSpecialEventBudgetContext(request.user, payload);
     if (!payload.budget_id && budgetContext.linked_budget) {
       payload.budget_id = budgetContext.linked_budget.id;
@@ -1548,6 +1669,9 @@ app.post('/api/special-events', requireAuth, requirePermission('create_special_e
       payload.budget_amount = numericMatch(budgetContext.linked_budget?.budget_amount, 0);
       payload.remaining_budget = numericMatch(budgetContext.budget_comparison.remaining_budget, 0);
       payload.exceeded_budget_by = numericMatch(budgetContext.budget_comparison.exceeded_amount, 0);
+    }
+    if (budgetContext.linked_budget) {
+      payload.event_budget = numericMatch(budgetContext.linked_budget.budget_amount, 0);
     }
 
     authorizeEntityAction(request.user, 'MenuPlan', 'create', payload);
@@ -1572,6 +1696,8 @@ app.patch('/api/special-events/:id', requireAuth, requirePermission('edit_specia
 
     const payload = buildSpecialEventWritePayload(request.body || {}, existing);
     payload.status = existing.status;
+    const initialSnapshot = await calculateSpecialEventPlanning(request.user, payload);
+    Object.assign(payload, mergeSpecialEventSnapshot(payload, initialSnapshot));
     let budgetContext = await getSpecialEventBudgetContext(request.user, payload);
     if (!payload.budget_id && budgetContext.linked_budget) {
       payload.budget_id = budgetContext.linked_budget.id;
@@ -1587,11 +1713,135 @@ app.patch('/api/special-events/:id', requireAuth, requirePermission('edit_specia
     payload.budget_amount = numericMatch(budgetContext.linked_budget?.budget_amount, 0);
     payload.remaining_budget = numericMatch(budgetContext.budget_comparison.remaining_budget, 0);
     payload.exceeded_budget_by = numericMatch(budgetContext.budget_comparison.exceeded_amount, 0);
+    if (budgetContext.linked_budget) {
+      payload.event_budget = numericMatch(budgetContext.linked_budget.budget_amount, 0);
+    }
 
     authorizeEntityAction(request.user, 'MenuPlan', 'update', payload, existing);
     const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload, existing);
     const updated = await updateDocument('MenuPlan', request.params.id, preparedPayload);
     return response.json(buildApiObjectResponse(await buildSpecialEventResponse(request.user, updated), { action: 'update' }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/special-events/:id/generate-production', requireAuth, requireAnyPermission([
+  'edit_special_event',
+  'manage_production',
+  'create_production_request'
+]), async (request, response, next) => {
+  try {
+    const existing = await findScopedSpecialEventById(request.user, request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Special event not found' });
+    }
+
+    const [recipes, ingredients] = await Promise.all([
+      listDocuments('Recipe', { limit: 5000 }),
+      listDocuments('Ingredient', { limit: 5000 })
+    ]);
+    const snapshot = await calculateSpecialEventPlanning(request.user, existing);
+    assertEventReadyForSubmission(existing, snapshot);
+    const currentPlans = await listDocuments('Production', {
+      filters: { source_event_id: existing.id },
+      limit: 500
+    });
+    const productionIds = [];
+    let duplicateCount = 0;
+    const productionPayloads = buildEventProductionPlanPayloads(existing, snapshot, recipes, ingredients);
+
+    for (const productionPayload of productionPayloads) {
+      const duplicate = currentPlans.find((plan) => String(plan.source_event_recipe_id) === String(productionPayload.recipe_id));
+      if (duplicate) {
+        duplicateCount += 1;
+        productionIds.push(duplicate.id);
+        continue;
+      }
+      const prepared = await prepareEntityPayload(request.user, 'Production', productionPayload);
+      const created = await createDocument('Production', prepared);
+      productionIds.push(created.id);
+    }
+
+    const linkedRecipes = snapshot.linked_recipes.map((link) => ({ ...link, production_status: 'planned' }));
+    const updated = await updateDocument('MenuPlan', existing.id, {
+      production_plan_status: 'generated',
+      production_plan_ids: productionIds,
+      linked_recipes: linkedRecipes,
+      prep_start_date: request.body?.prep_start_date || existing.prep_start_date || existing.event_date || existing.plan_date,
+      production_generated_at: new Date().toISOString(),
+      production_generated_by: request.user.email || null
+    });
+    return response.status(201).json(buildApiObjectResponse({
+      event: await buildSpecialEventResponse(request.user, updated),
+      production_plan_ids: productionIds,
+      duplicate_count: duplicateCount
+    }, { action: 'generate_production' }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/special-events/:id/create-pr', requireAuth, requireAnyPermission([
+  'edit_special_event',
+  'manage_procurement',
+  'create_material_request'
+]), async (request, response, next) => {
+  try {
+    const existing = await findScopedSpecialEventById(request.user, request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Special event not found' });
+    }
+    if (existing.procurement_pr_id) {
+      return response.json(buildApiObjectResponse({
+        event: await buildSpecialEventResponse(request.user, existing),
+        duplicate_prevented: true,
+        purchase_request_id: existing.procurement_pr_id
+      }, { action: 'create_pr' }));
+    }
+
+    const snapshot = await calculateSpecialEventPlanning(request.user, existing);
+    assertEventReadyForSubmission(existing, snapshot);
+    if (!snapshot.shortage_items.length) {
+      const updated = await updateDocument('MenuPlan', existing.id, {
+        procurement_pr_status: 'not_required',
+        estimated_procurement_spend: 0
+      });
+      return response.json(buildApiObjectResponse({
+        event: await buildSpecialEventResponse(request.user, updated),
+        duplicate_prevented: false,
+        no_shortage: true
+      }, { action: 'create_pr' }));
+    }
+
+    const requestRecord = await createPurchaseRequest({
+      request_number: `PR-EVT-${Date.now()}`,
+      site_id: existing.site_id,
+      site_name: existing.site_name,
+      request_date: new Date().toISOString().slice(0, 10),
+      needed_by: existing.prep_start_date || existing.event_date || existing.plan_date,
+      priority: 'high',
+      status: 'pending',
+      approval_role: 'manager',
+      auto_generated: true,
+      source_type: 'special_event',
+      notes: `Auto-generated for event ${existing.event_name}`,
+      items: buildEventPurchaseRequestItems(snapshot, existing.event_name)
+    }, request.user);
+
+    const updated = await updateDocument('MenuPlan', existing.id, {
+      procurement_pr_status: requestRecord.status || 'pending',
+      procurement_pr_id: requestRecord.id,
+      procurement_pr_number: requestRecord.request_number,
+      estimated_procurement_spend: snapshot.estimated_procurement_spend,
+      procurement_generated_at: new Date().toISOString(),
+      procurement_generated_by: request.user.email || null
+    });
+    return response.status(201).json(buildApiObjectResponse({
+      event: await buildSpecialEventResponse(request.user, updated),
+      duplicate_prevented: false,
+      purchase_request: requestRecord
+    }, { action: 'create_pr' }));
   } catch (error) {
     return next(error);
   }
@@ -1609,6 +1859,9 @@ app.post('/api/special-events/:id/submit', requireAuth, requirePermission('submi
     }
 
     const payload = buildSpecialEventWritePayload(existing, existing);
+    const snapshot = await calculateSpecialEventPlanning(request.user, payload);
+    assertEventReadyForSubmission(payload, snapshot);
+    Object.assign(payload, mergeSpecialEventSnapshot(payload, snapshot));
     const budgetContext = await getSpecialEventBudgetContext(request.user, payload);
     const linkedBudget = budgetContext.linked_budget;
     if (!linkedBudget) {
@@ -1630,6 +1883,12 @@ app.post('/api/special-events/:id/submit', requireAuth, requirePermission('submi
       budget_amount: numericMatch(linkedBudget.budget_amount, 0),
       remaining_budget: numericMatch(budgetContext.budget_comparison.remaining_budget, 0),
       exceeded_budget_by: numericMatch(budgetContext.budget_comparison.exceeded_amount, 0),
+      estimated_cost: numericMatch(snapshot.total_event_cost, 0),
+      total_planned_cost: numericMatch(snapshot.total_event_cost, 0),
+      linked_recipes: snapshot.linked_recipes,
+      ingredient_requirements: snapshot.ingredient_requirements,
+      estimated_procurement_spend: snapshot.estimated_procurement_spend,
+      approval_checklist: snapshot.checklist,
       submitted_by: request.user.email || null,
       submitted_by_name: request.user.full_name || request.user.email || null,
       submitted_at: new Date().toISOString(),
@@ -1653,8 +1912,11 @@ app.post('/api/special-events/:id/approve', requireAuth, requirePermission('appr
       return response.status(400).json({ message: 'Only submitted special events can be approved.' });
     }
 
-    const budgetContext = await getSpecialEventBudgetContext(request.user, existing);
-    assertSpecialEventBudgetApproval(existing, budgetContext);
+    const snapshot = await calculateSpecialEventPlanning(request.user, existing);
+    assertEventReadyForSubmission(existing, snapshot);
+    const pricedEvent = mergeSpecialEventSnapshot(existing, snapshot);
+    const budgetContext = await getSpecialEventBudgetContext(request.user, pricedEvent);
+    assertSpecialEventBudgetApproval(pricedEvent, budgetContext);
 
     const historyEntry = createApprovalHistoryEntry({
       action: 'approved',
@@ -1671,6 +1933,11 @@ app.post('/api/special-events/:id/approve', requireAuth, requirePermission('appr
       budget_amount: numericMatch(budgetContext.linked_budget.budget_amount, 0),
       remaining_budget: numericMatch(budgetContext.budget_comparison.remaining_budget, 0),
       exceeded_budget_by: numericMatch(budgetContext.budget_comparison.exceeded_amount, 0),
+      estimated_cost: numericMatch(snapshot.total_event_cost, 0),
+      total_planned_cost: numericMatch(snapshot.total_event_cost, 0),
+      linked_recipes: snapshot.linked_recipes,
+      ingredient_requirements: snapshot.ingredient_requirements,
+      approval_checklist: snapshot.checklist,
       approved_by: request.user.email || null,
       approved_by_name: request.user.full_name || request.user.email || null,
       approved_at: new Date().toISOString(),

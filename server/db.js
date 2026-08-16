@@ -330,6 +330,7 @@ const singleReferenceTargets = new Map([
   ['recipe_id', 'Recipe'],
   ['budget_id', 'Budget'],
   ['menu_plan_id', 'MenuPlan'],
+  ['source_event_id', 'MenuPlan'],
   ['production_id', 'Production'],
   ['source_production_id', 'Production'],
   ['linked_material_request_id', 'MaterialRequest'],
@@ -340,7 +341,8 @@ const singleReferenceTargets = new Map([
 
 const arrayReferenceTargets = new Map([
   ['site_ids', 'Site'],
-  ['allowed_site_ids', 'Site']
+  ['allowed_site_ids', 'Site'],
+  ['production_plan_ids', 'Production']
 ]);
 
 const opaqueDocumentFields = new Set([

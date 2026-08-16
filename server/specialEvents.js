@@ -7,6 +7,20 @@ function trimString(value) {
   return String(value || '').trim();
 }
 
+function normalizeLinkedRecipes(links = []) {
+  return (Array.isArray(links) ? links : [])
+    .filter((link) => link?.recipe_id)
+    .map((link) => ({
+      recipe_id: trimString(link.recipe_id),
+      recipe_name: trimString(link.recipe_name),
+      course_name: trimString(link.course_name || link.recipe_name),
+      meal_period: trimString(link.meal_period || 'lunch').toLowerCase(),
+      portion_requirement: Math.max(0.01, numericMatch(link.portion_requirement, 1)),
+      kitchen_station: trimString(link.kitchen_station || 'Unassigned'),
+      production_status: trimString(link.production_status || 'not_generated')
+    }));
+}
+
 export const SPECIAL_EVENT_STATUSES = {
   draft: 'draft',
   pendingApproval: 'pending_approval',
@@ -89,6 +103,21 @@ export function buildSpecialEventWritePayload(body = {}, existing = null) {
     total_calories: numericMatch(summary.total_calories, 0),
     estimated_cost: estimatedCost,
     total_planned_cost: estimatedCost,
+    event_location: trimString(body.event_location ?? existing?.event_location),
+    meal_period: trimString(body.meal_period ?? existing?.meal_period ?? explicitMealTypes[0] ?? 'lunch').toLowerCase(),
+    menu_package_name: trimString(body.menu_package_name ?? existing?.menu_package_name ?? 'Custom menu package'),
+    linked_recipes: normalizeLinkedRecipes(body.linked_recipes ?? existing?.linked_recipes),
+    event_budget: numericMatch(body.event_budget ?? existing?.event_budget ?? body.budget_amount ?? existing?.budget_amount, 0),
+    selling_price_per_guest: numericMatch(body.selling_price_per_guest ?? existing?.selling_price_per_guest, 0),
+    prep_start_date: trimString(body.prep_start_date ?? existing?.prep_start_date),
+    kitchen_assignment: trimString(body.kitchen_assignment ?? existing?.kitchen_assignment),
+    production_plan_status: trimString(body.production_plan_status ?? existing?.production_plan_status ?? 'not_generated'),
+    production_plan_ids: Array.isArray(body.production_plan_ids)
+      ? body.production_plan_ids
+      : (Array.isArray(existing?.production_plan_ids) ? existing.production_plan_ids : []),
+    procurement_pr_status: trimString(body.procurement_pr_status ?? existing?.procurement_pr_status ?? 'not_created'),
+    procurement_pr_id: body.procurement_pr_id ?? existing?.procurement_pr_id ?? null,
+    procurement_pr_number: body.procurement_pr_number ?? existing?.procurement_pr_number ?? null,
     event_duration_hours: numericMatch(body.event_duration_hours ?? existing?.event_duration_hours, 1),
     consumption_per_person_g: numericMatch(body.consumption_per_person_g ?? existing?.consumption_per_person_g, 550),
     buffer_percent: numericMatch(body.buffer_percent ?? existing?.buffer_percent, 10),

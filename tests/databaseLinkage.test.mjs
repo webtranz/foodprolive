@@ -23,13 +23,17 @@ const cases = [
         ingredients: [
           { ingredient_id: 'ingredient-1' }
         ],
-        site_ids: ['site-1', 'site-2']
+        site_ids: ['site-1', 'site-2'],
+        source_event_id: 'event-1',
+        production_plan_ids: ['production-1']
       });
 
       assert.deepEqual(
         references.map(({ targetEntity, id }) => `${targetEntity}:${id}`).sort(),
         [
           'Ingredient:ingredient-1',
+          'MenuPlan:event-1',
+          'Production:production-1',
           'Recipe:recipe-1',
           'Site:site-1',
           'Site:site-1',

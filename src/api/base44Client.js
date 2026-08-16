@@ -451,14 +451,17 @@ export const base44 = {
     }
   },
   specialEvents: {
-    list(limit = 300) {
-      return apiRequest(`/api/special-events${buildQueryString({ limit })}`);
+    list(limit = 300, details = true) {
+      return apiRequest(`/api/special-events${buildQueryString({ limit, details })}`);
     },
     get(id) {
       return apiRequest(`/api/special-events/${id}`);
     },
     getHistory(id) {
       return apiRequest(`/api/special-events/${id}/history`);
+    },
+    listRecipes(siteId = '') {
+      return apiRequest(`/api/special-events/recipes${buildQueryString({ site_id: siteId })}`);
     },
     getBudgetContext(siteId, eventDate, eventName, budgetId, estimatedCost) {
       return apiRequest(`/api/special-events/budgets${buildQueryString({
@@ -479,6 +482,18 @@ export const base44 = {
       return apiRequest(`/api/special-events/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data)
+      });
+    },
+    generateProduction(id, data = {}) {
+      return apiRequest(`/api/special-events/${id}/generate-production`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    createPurchaseRequest(id) {
+      return apiRequest(`/api/special-events/${id}/create-pr`, {
+        method: 'POST',
+        body: JSON.stringify({})
       });
     },
     submit(id, note) {
