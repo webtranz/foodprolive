@@ -13,6 +13,8 @@ import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/currency';
 import { calculateIngredientCost } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
+import { calculateYieldAdjustedQuantity } from '../../shared/ingredientYield.js';
+import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
 
 export default function ProductionCalculator() {
   const [selectedRecipe, setSelectedRecipe] = useState('');
@@ -56,11 +58,8 @@ export default function ProductionCalculator() {
     if (calculationMode === 'servings' && targetServings) {
       multiplier = parseFloat(targetServings) / (recipeData.servings || 1);
     } else if (calculationMode === 'weight' && targetWeight) {
-      const totalRecipeWeight = recipeIngredients.reduce((sum, ing) => {
-        let grams = ing.quantity || 0;
-        if (ing.unit === 'kg') grams = ing.quantity * 1000;
-        return sum + grams;
-      }, 0);
+      const recipeWeight = calculateRecipeServingWeight(recipeData, recipes, ingredients);
+      const totalRecipeWeight = recipeWeight.raw_total_grams || 0;
       if (totalRecipeWeight > 0) {
         multiplier = (parseFloat(targetWeight) * 1000) / totalRecipeWeight;
       }
@@ -74,18 +73,19 @@ export default function ProductionCalculator() {
     const calculatedIngredients = recipeIngredients.map(ing => {
       const ingredientData = ingredients.find(i => i.id === ing.ingredient_id);
       const ingData = ingredientData?.data || ingredientData;
-      const baseQuantity = (ing.quantity || 0) * multiplier;
-      const shrinkagePercent = ingData?.shrinkage_percent || 0;
-      const adjustedQuantity = baseQuantity * (1 + shrinkagePercent / 100);
-      const estimatedCost = calculateIngredientCost(adjustedQuantity, ing.unit, ingData);
+      const netQuantity = (ing.quantity || 0) * multiplier;
+      const yieldAdjustment = calculateYieldAdjustedQuantity(netQuantity, ingData);
+      const rawRequiredQuantity = yieldAdjustment.required_raw_quantity;
+      const estimatedCost = calculateIngredientCost(rawRequiredQuantity, ing.unit, ingData);
       
       return {
         id: ing.ingredient_id,
         name: ing.ingredient_name,
-        baseQuantity: Math.round(baseQuantity * 100) / 100,
-        adjustedQuantity: Math.round(adjustedQuantity * 100) / 100,
+        netQuantity: Number(netQuantity.toFixed(4)),
+        rawRequiredQuantity: Number(rawRequiredQuantity.toFixed(4)),
         unit: ing.unit,
-        shrinkagePercent,
+        yieldPercent: Number(yieldAdjustment.yield_percent.toFixed(2)),
+        yieldSource: yieldAdjustment.yield_source,
         estimatedCost: Math.round(estimatedCost * 100) / 100,
         category: ingData?.category,
         sourceRecipeNames: ing.source_recipe_names || []
@@ -183,7 +183,7 @@ export default function ProductionCalculator() {
                 </div>
               ) : (
                 <div>
-                  <Label>Target Weight (kg)</Label>
+                  <Label>Target Finished Weight (kg)</Label>
                   <Input
                     type="number"
                     min="0.1"
@@ -200,7 +200,7 @@ export default function ProductionCalculator() {
                 <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
                   <p className="text-sm text-blue-700 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4" />
-                    Quantities are adjusted for cooking shrinkage
+                    Raw issue quantities are calculated from each ingredient's cooking yield
                   </p>
                 </div>
               )}
@@ -257,9 +257,9 @@ export default function ProductionCalculator() {
                           <TableRow>
                             <TableHead>Ingredient</TableHead>
                             <TableHead>Category</TableHead>
-                            <TableHead>Base Qty</TableHead>
-                            <TableHead>Shrinkage</TableHead>
-                            <TableHead>Adjusted Qty</TableHead>
+                            <TableHead>Net Recipe Qty</TableHead>
+                            <TableHead>Yield</TableHead>
+                            <TableHead>Raw Required</TableHead>
                             <TableHead>Est. Cost</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -272,16 +272,10 @@ export default function ProductionCalculator() {
                                   {ing.category || 'other'}
                                 </Badge>
                               </TableCell>
-                              <TableCell>{ing.baseQuantity} {ing.unit}</TableCell>
-                              <TableCell>
-                                {ing.shrinkagePercent > 0 ? (
-                                  <span className="text-amber-600">+{ing.shrinkagePercent}%</span>
-                                ) : (
-                                  <span className="text-slate-400">-</span>
-                                )}
-                              </TableCell>
+                              <TableCell>{ing.netQuantity} {ing.unit}</TableCell>
+                              <TableCell>{ing.yieldPercent}%</TableCell>
                               <TableCell className="font-semibold text-emerald-600">
-                                {ing.adjustedQuantity} {ing.unit}
+                                {ing.rawRequiredQuantity} {ing.unit}
                               </TableCell>
                               <TableCell>{formatCurrency(ing.estimatedCost)}</TableCell>
                             </TableRow>
@@ -302,7 +296,7 @@ export default function ProductionCalculator() {
                   <CardContent className="p-6">
                     <h3 className="font-semibold text-emerald-900 mb-3">Production Tips</h3>
                     <ul className="space-y-2 text-sm text-emerald-800">
-                      <li>• Adjusted quantities account for cooking shrinkage and loss</li>
+                      <li>• Raw requirements use net recipe quantity ÷ ingredient cooking yield</li>
                       <li>• Verify inventory levels before starting production</li>
                       <li>• Track actual usage vs. planned for waste analysis</li>
                       <li>• Prep time: {calculations.recipe.prep_time_minutes || 0} min, Cook time: {calculations.recipe.cook_time_minutes || 0} min</li>

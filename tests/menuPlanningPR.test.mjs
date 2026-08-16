@@ -59,7 +59,7 @@ const sampleRecipes = [
 const sampleIngredients = [
   { id: 'ingredient-eggs', name: 'Eggs', unit: 'pieces', cost_per_unit: 1.5 },
   { id: 'ingredient-bread', name: 'Bread', unit: 'pieces', cost_per_unit: 1 },
-  { id: 'ingredient-rice', name: 'Rice', unit: 'kg', cost_per_unit: 8 }
+  { id: 'ingredient-rice', name: 'Rice', unit: 'kg', cost_per_unit: 8, cooking_yield_percent: 75 }
 ];
 
 const cases = [
@@ -111,7 +111,9 @@ const cases = [
       assert.equal(result.items.length, 3);
       assert.equal(eggs.requested_quantity, 40);
       assert.equal(bread.requested_quantity, 20);
-      assert.equal(rice.requested_quantity, 9);
+      assert.equal(rice.net_requested_quantity, 9);
+      assert.equal(rice.requested_quantity, 12);
+      assert.equal(rice.yield_percent, 75);
       assert.equal(rice.estimated_unit_price, 8);
       assert.deepEqual(result.missing_recipe_ids, []);
       assert.deepEqual(result.missing_ingredient_ids, []);

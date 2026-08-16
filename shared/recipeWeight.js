@@ -1,5 +1,6 @@
 import { normalizeIngredientUnit } from './ingredientUnits.js';
 import { expandRecipeIngredients } from './recipeComposition.js';
+import { resolveIngredientYieldMultiplier } from './ingredientYield.js';
 
 const WEIGHT_IN_GRAMS = Object.freeze({ kg: 1000, g: 1 });
 const VOLUME_IN_MILLILITRES = Object.freeze({ l: 1000, ml: 1 });
@@ -38,26 +39,6 @@ function quantityInBaseUnit(quantity, fromUnit, ingredient = {}) {
   return null;
 }
 
-function resolveYieldMultiplier(ingredient = {}) {
-  const rawWeight = finiteNumber(ingredient.raw_weight_per_unit);
-  const cookedWeight = finiteNumber(ingredient.cooked_weight_per_unit);
-  if (rawWeight > 0 && cookedWeight !== null && cookedWeight >= 0) {
-    return cookedWeight / rawWeight;
-  }
-
-  const cookingYield = finiteNumber(ingredient.cooking_yield_percent);
-  if (cookingYield !== null && cookingYield >= 0) {
-    return cookingYield / 100;
-  }
-
-  const shrinkage = finiteNumber(ingredient.shrinkage_percent);
-  if (shrinkage !== null && shrinkage >= 0) {
-    return Math.max(0, 1 - (shrinkage / 100));
-  }
-
-  return 1;
-}
-
 function calculateIngredientLineWeight(line = {}, ingredient = {}) {
   const quantity = finiteNumber(line.quantity, 0);
   if (quantity < 0) return null;
@@ -71,7 +52,7 @@ function calculateIngredientLineWeight(line = {}, ingredient = {}) {
     const rawGrams = baseQuantity * rawWeightPerUnit;
     const cookedGrams = cookedWeightPerUnit !== null && cookedWeightPerUnit >= 0
       ? baseQuantity * cookedWeightPerUnit
-      : rawGrams * resolveYieldMultiplier(ingredient);
+      : rawGrams * resolveIngredientYieldMultiplier(ingredient);
     return { rawGrams, cookedGrams };
   }
 
@@ -93,7 +74,7 @@ function calculateIngredientLineWeight(line = {}, ingredient = {}) {
   if (rawGrams === null) return null;
   return {
     rawGrams,
-    cookedGrams: rawGrams * resolveYieldMultiplier(ingredient)
+    cookedGrams: rawGrams * resolveIngredientYieldMultiplier(ingredient)
   };
 }
 

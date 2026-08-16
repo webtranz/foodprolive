@@ -23,6 +23,7 @@ import {
   convertIngredientQuantity
 } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
+import { calculateYieldAdjustedQuantity } from '../../shared/ingredientYield.js';
 import { formatRecipeQuantity, getRecipeQuantityPrecision, roundStandardDecimal } from '../../shared/recipeNumbers.js';
 
 const MEAL_TYPES = [
@@ -210,8 +211,8 @@ export default function Production() {
         const calculated = expandedRecipe.ingredients.map(ing => {
           const ingredientData = ingredients.find(i => i.id === ing.ingredient_id);
           const plannedQty = ing.quantity || 0;
-          const shrinkage = ingredientData?.shrinkage_percent || 0;
-          const adjustedQty = plannedQty * (1 + shrinkage / 100);
+          const yieldAdjustment = calculateYieldAdjustedQuantity(plannedQty, ingredientData);
+          const adjustedQty = yieldAdjustment.required_raw_quantity;
           
           const invItem = siteInventory.find(i => i.ingredient_id === ing.ingredient_id);
           const inventoryUnit = invItem?.unit || ingredientData?.unit || ing.unit;
@@ -245,7 +246,10 @@ export default function Production() {
             inventory_unit: inventoryUnit,
             cost_quantity: Number(costQuantity.toFixed(4)),
             cost_unit: costUnit,
-            shrinkage_percent: shrinkage,
+            yield_multiplier: Number(yieldAdjustment.yield_multiplier.toFixed(6)),
+            yield_percent: Number(yieldAdjustment.yield_percent.toFixed(2)),
+            yield_source: yieldAdjustment.yield_source,
+            shrinkage_percent: toNumber(ingredientData?.shrinkage_percent, 0),
             sufficient: currentStock >= requiredInventoryQty,
             unit_cost: Number(unitCost.toFixed(2)),
             estimated_cost: Number(estimatedCost.toFixed(2))
@@ -386,7 +390,13 @@ export default function Production() {
         ingredient_id: ing.ingredient_id,
         ingredient_name: ing.ingredient_name,
         source_recipe_names: ing.source_recipe_names,
+        net_quantity: ing.planned_quantity,
         planned_quantity: ing.adjusted_quantity,
+        required_quantity: ing.adjusted_quantity,
+        yield_adjusted_quantity: ing.adjusted_quantity,
+        yield_multiplier: ing.yield_multiplier,
+        yield_percent: ing.yield_percent,
+        yield_source: ing.yield_source,
         actual_quantity: null,
         unit: ing.unit,
         cost_quantity: ing.cost_quantity,
@@ -613,7 +623,7 @@ export default function Production() {
             }
           }}
         >
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingProduction ? 'Edit Production Request' : 'Plan New Production'}</DialogTitle>
             </DialogHeader>
@@ -775,7 +785,9 @@ export default function Production() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Ingredient</TableHead>
-                        <TableHead>Required</TableHead>
+                        <TableHead>Net Recipe Qty</TableHead>
+                        <TableHead>Yield</TableHead>
+                        <TableHead>Raw Required</TableHead>
                         <TableHead>Unit Cost</TableHead>
                         <TableHead>Est. Cost</TableHead>
                         <TableHead>In Stock</TableHead>
@@ -786,6 +798,8 @@ export default function Production() {
                       {calculatedIngredients.map((ing, idx) => (
                         <TableRow key={idx}>
                           <TableCell>{ing.ingredient_name}</TableCell>
+                          <TableCell>{formatRecipeQuantity(ing.planned_quantity, ing.unit)} {ing.unit}</TableCell>
+                          <TableCell>{ing.yield_percent.toFixed(2)}%</TableCell>
                           <TableCell className="font-medium">{formatRecipeQuantity(ing.adjusted_quantity, ing.unit)} {ing.unit}</TableCell>
                           <TableCell>{formatCurrency(toNumber(ing.unit_cost, 0))} / {ing.cost_unit}</TableCell>
                           <TableCell>{formatCurrency(toNumber(ing.estimated_cost, 0))}</TableCell>

@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
+import {
+  calculateYieldAdjustedQuantity,
+  resolveIngredientYield
+} from '../shared/ingredientYield.js';
 
 const ingredients = [
   {
@@ -84,5 +88,32 @@ const emptyRecipe = calculateRecipeServingWeight({ id: 'empty', servings: 1 }, [
 assert.equal(emptyRecipe.is_complete, false);
 assert.equal(emptyRecipe.grams_per_serving, null);
 assert.match(emptyRecipe.warnings[0], /no ingredients/i);
+
+const shrinkageAdjusted = calculateYieldAdjustedQuantity(10, { shrinkage_percent: 20 });
+assert.equal(shrinkageAdjusted.required_raw_quantity, 12.5);
+assert.equal(shrinkageAdjusted.yield_percent, 80);
+assert.equal(shrinkageAdjusted.yield_source, 'shrinkage_percent');
+
+const explicitYieldAdjusted = calculateYieldAdjustedQuantity(10, {
+  cooking_yield_percent: 80,
+  shrinkage_percent: 30
+});
+assert.equal(explicitYieldAdjusted.required_raw_quantity, 12.5);
+assert.equal(explicitYieldAdjusted.yield_source, 'cooking_yield_percent');
+
+const gainingYield = calculateYieldAdjustedQuantity(26, {
+  raw_weight_per_unit: 1000,
+  cooked_weight_per_unit: 2600,
+  cooking_yield_percent: 200
+});
+assert.equal(gainingYield.required_raw_quantity, 10);
+assert.equal(gainingYield.yield_percent, 260);
+assert.equal(gainingYield.yield_source, 'weight_ratio');
+
+assert.deepEqual(resolveIngredientYield({ cooking_yield_percent: 0, shrinkage_percent: 100 }), {
+  multiplier: 1,
+  percent: 100,
+  source: 'default'
+});
 
 console.log('Recipe serving weight tests passed.');

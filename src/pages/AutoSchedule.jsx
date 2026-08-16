@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
+import { calculateYieldAdjustedQuantity } from '../../shared/ingredientYield.js';
+import { calculateIngredientCost, convertIngredientQuantity } from '../../shared/ingredientUnits.js';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -81,7 +83,9 @@ export default function AutoSchedule() {
   }, [siteInventory]);
 
   const createProductionMutation = useMutation({
-    mutationFn: (productionData) => base44.entities.Production.bulkCreate(productionData),
+    mutationFn: (productionData) => Promise.all(
+      productionData.map((production) => base44.entities.Production.create(production))
+    ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
     }
@@ -228,6 +232,53 @@ Provide production schedule in JSON format:`;
     schedule.schedule.forEach(day => {
       day.productions.forEach(prod => {
         if (prod.recipe_id) {
+          const recipe = prod.recipe || recipes.find((candidate) => candidate.id === prod.recipe_id);
+          const targetServings = Number(prod.target_servings) || 0;
+          const multiplier = targetServings / Math.max(1, Number(recipe?.servings) || 1);
+          const expanded = expandRecipeIngredients(
+            recipe,
+            recipes,
+            ingredients,
+            { multiplier, aggregate: true }
+          ).ingredients;
+          const productionIngredients = expanded.map((line) => {
+            const ingredient = ingredients.find((candidate) => candidate.id === line.ingredient_id) || {};
+            const unit = ingredient.unit || line.unit || 'unit';
+            const yieldAdjustment = calculateYieldAdjustedQuantity(line.quantity, ingredient);
+            const netQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
+            const rawQuantity = convertIngredientQuantity(
+              yieldAdjustment.required_raw_quantity,
+              line.unit || unit,
+              unit,
+              ingredient
+            );
+            const unitCost = Number(
+              ingredient.cost_per_unit ?? ingredient.last_cost ?? ingredient.average_cost ?? 0
+            ) || 0;
+            return {
+              ingredient_id: line.ingredient_id,
+              ingredient_name: ingredient.name || line.ingredient_name,
+              net_quantity: Number(netQuantity.toFixed(4)),
+              planned_quantity: Number(rawQuantity.toFixed(4)),
+              required_quantity: Number(rawQuantity.toFixed(4)),
+              yield_adjusted_quantity: Number(rawQuantity.toFixed(4)),
+              yield_multiplier: Number(yieldAdjustment.yield_multiplier.toFixed(6)),
+              yield_percent: Number(yieldAdjustment.yield_percent.toFixed(2)),
+              yield_source: yieldAdjustment.yield_source,
+              unit,
+              unit_cost: unitCost,
+              estimated_cost: Number(calculateIngredientCost(
+                yieldAdjustment.required_raw_quantity,
+                line.unit || unit,
+                ingredient,
+                unitCost
+              ).toFixed(2))
+            };
+          });
+          const estimatedBatchCost = productionIngredients.reduce(
+            (total, line) => total + Number(line.estimated_cost || 0),
+            0
+          );
           productionsToCreate.push({
             site_id: selectedSite,
             site_name: site.name,
@@ -235,7 +286,13 @@ Provide production schedule in JSON format:`;
             meal_type: prod.meal_type,
             recipe_id: prod.recipe_id,
             recipe_name: prod.recipe_name,
-            target_servings: prod.target_servings,
+            target_servings: targetServings,
+            kitchen_station: recipe?.kitchen_station || 'Unassigned',
+            ingredients_used: productionIngredients,
+            estimated_batch_cost: Number(estimatedBatchCost.toFixed(2)),
+            estimated_cost_per_serving: targetServings > 0
+              ? Number((estimatedBatchCost / targetServings).toFixed(2))
+              : 0,
             status: 'planned',
             notes: `Auto-scheduled: ${prod.reasoning}`
           });

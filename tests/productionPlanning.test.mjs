@@ -70,7 +70,14 @@ const productions = [
     status: 'approved',
     notes: 'Hold ten portions for late service.',
     ingredients_used: [
-      { ingredient_id: 'rice', ingredient_name: 'Basmati Rice', planned_quantity: 6, unit: 'kg' }
+      {
+        ingredient_id: 'rice',
+        ingredient_name: 'Basmati Rice',
+        net_quantity: 5,
+        planned_quantity: 6,
+        yield_percent: 83.33,
+        unit: 'kg'
+      }
     ]
   },
   {
@@ -193,7 +200,9 @@ assert.equal(exportRows[0].portion_size, '1,000 g');
 assert.equal(exportRows[0].kitchen_station, 'Hot Line');
 assert.equal(exportRows[0].prep_status, 'At Risk');
 assert.match(exportRows[0].shortages, /Basmati Rice: 3 kg/);
-assert.equal(exportRows[0].ingredient_quantities, 'Basmati Rice: 5 kg');
+assert.equal(exportRows[0].net_recipe_quantities, 'Basmati Rice: 5 kg');
+assert.equal(exportRows[0].ingredient_quantities, 'Basmati Rice: 6 kg');
+assert.equal(exportRows[0].yield_details, 'Basmati Rice: 83.33%');
 
 const statusDashboard = buildProductionPlanningDashboard({
   productions: [

@@ -391,6 +391,20 @@ async function syncMaterialRequestForProduction(user, production, mode = 'draft'
     return null;
   }
 
+  if (
+    production.yield_adjustment_applied !== true
+    && production.recipe_id
+    && String(production.status || '').toLowerCase() !== 'completed'
+  ) {
+    const yieldPreparedProduction = await prepareEntityPayload(
+      user,
+      'Production',
+      { ingredients_used: production.ingredients_used || [] },
+      production
+    );
+    production = await updateDocument('Production', production.id, yieldPreparedProduction);
+  }
+
   const normalizedMode = String(mode || 'draft').toLowerCase();
   const isDraftMode = normalizedMode === 'draft';
 
@@ -1739,8 +1753,9 @@ app.post('/api/special-events/:id/generate-production', requireAuth, requireAnyP
 
     const [recipes, ingredients] = await Promise.all([
       listDocuments('Recipe', { limit: 5000 }),
-      listDocuments('Ingredient', { limit: 5000 })
+      listDocuments('Ingredient', { limit: 10000 })
     ]);
+    const preparationScope = await getLocationScope(request.user);
     const snapshot = await calculateSpecialEventPlanning(request.user, existing);
     assertEventReadyForSubmission(existing, snapshot);
     const currentPlans = await listDocuments('Production', {
@@ -1758,7 +1773,13 @@ app.post('/api/special-events/:id/generate-production', requireAuth, requireAnyP
         productionIds.push(duplicate.id);
         continue;
       }
-      const prepared = await prepareEntityPayload(request.user, 'Production', productionPayload);
+      const prepared = await prepareEntityPayload(
+        request.user,
+        'Production',
+        productionPayload,
+        null,
+        { scope: preparationScope, recipeCatalog: recipes, ingredientCatalog: ingredients }
+      );
       const created = await createDocument('Production', prepared);
       productionIds.push(created.id);
     }

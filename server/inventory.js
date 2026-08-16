@@ -10,6 +10,8 @@ import {
   calculateIngredientCost,
   convertIngredientQuantity
 } from '../shared/ingredientUnits.js';
+import { expandRecipeIngredients } from '../shared/recipeComposition.js';
+import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
 
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const nowIso = () => new Date().toISOString();
@@ -588,20 +590,92 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
     throw error;
   }
 
-  const [ingredientCatalog, inventoryCatalog] = await Promise.all([
-    listDocuments('Ingredient', { limit: 5000 }, executor),
+  const [ingredientCatalog, inventoryCatalog, recipeCatalog] = await Promise.all([
+    listDocuments('Ingredient', { limit: 10000 }, executor),
     listDocuments('Inventory', {
       filters: { site_id: production.site_id },
-      limit: 5000
-    }, executor)
+      limit: 10000
+    }, executor),
+    production.yield_adjustment_applied === true
+      ? Promise.resolve([])
+      : listDocuments('Recipe', { limit: 5000 }, executor)
   ]);
   const ingredientMap = new Map(ingredientCatalog.map((ingredient) => [ingredient.id, ingredient]));
   const inventoryMap = new Map(inventoryCatalog.map((item) => [item.ingredient_id, item]));
+  let productionIngredients = Array.isArray(production.ingredients_used) ? production.ingredients_used : [];
+  let upgradedLegacyYield = false;
+
+  if (production.yield_adjustment_applied !== true && production.recipe_id) {
+    const recipe = recipeCatalog.find((candidate) => String(candidate.id) === String(production.recipe_id));
+    if (recipe) {
+      const multiplier = Math.max(0, toNumber(production.target_servings, 0))
+        / Math.max(1, toNumber(recipe.servings, 1));
+      const submittedLineMap = new Map(
+        productionIngredients.map((line) => [String(line?.ingredient_id || ''), line])
+      );
+      const expanded = expandRecipeIngredients(
+        recipe,
+        recipeCatalog,
+        ingredientCatalog,
+        { multiplier, aggregate: true }
+      ).ingredients;
+
+      productionIngredients = expanded.map((line) => {
+        const ingredientData = ingredientMap.get(line.ingredient_id) || {};
+        const submitted = submittedLineMap.get(String(line.ingredient_id)) || {};
+        const unit = ingredientData.unit || line.unit || 'unit';
+        const yieldAdjustment = calculateYieldAdjustedQuantity(line.quantity, ingredientData);
+        const netQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredientData);
+        const rawQuantity = convertIngredientQuantity(
+          yieldAdjustment.required_raw_quantity,
+          line.unit || unit,
+          unit,
+          ingredientData
+        );
+        const submittedActual = submitted.actual_quantity;
+        const actualQuantity = submittedActual === null || submittedActual === undefined || submittedActual === ''
+          ? null
+          : convertIngredientQuantity(
+            submittedActual,
+            submitted.unit || unit,
+            unit,
+            ingredientData
+          );
+        const unitCost = toNumber(
+          ingredientData.cost_per_unit
+            ?? ingredientData.last_cost
+            ?? ingredientData.average_cost
+            ?? submitted.unit_cost,
+          0
+        );
+        return {
+          ingredient_id: line.ingredient_id,
+          ingredient_name: ingredientData.name || line.ingredient_name,
+          source_recipe_names: line.source_recipe_names || [],
+          net_quantity: Number(netQuantity.toFixed(4)),
+          planned_quantity: Number(rawQuantity.toFixed(4)),
+          required_quantity: Number(rawQuantity.toFixed(4)),
+          yield_adjusted_quantity: Number(rawQuantity.toFixed(4)),
+          yield_multiplier: Number(yieldAdjustment.yield_multiplier.toFixed(6)),
+          yield_percent: Number(yieldAdjustment.yield_percent.toFixed(2)),
+          yield_source: yieldAdjustment.yield_source,
+          actual_quantity: actualQuantity === null ? null : Number(actualQuantity.toFixed(4)),
+          unit,
+          cost_quantity: Number(rawQuantity.toFixed(4)),
+          cost_unit: unit,
+          unit_cost: Number(unitCost.toFixed(2)),
+          estimated_cost: Number(calculateIngredientCost(rawQuantity, unit, ingredientData, unitCost).toFixed(2))
+        };
+      });
+      upgradedLegacyYield = true;
+    }
+  }
+
   const consumptionSummary = [];
   let totalProductionCost = 0;
   let totalShortageQuantity = 0;
 
-  for (const ingredient of production.ingredients_used || []) {
+  for (const ingredient of productionIngredients) {
     const ingredientData = ingredientMap.get(ingredient.ingredient_id);
     const sourceQuantity = toNumber(
       ingredient.actual_quantity ?? ingredient.planned_quantity ?? ingredient.adjusted_quantity,
@@ -664,7 +738,13 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
     production_cost_total: Number(totalProductionCost.toFixed(2)),
     cost_per_serving: Number((totalProductionCost / servings).toFixed(2)),
     total_shortage_quantity: Number(totalShortageQuantity.toFixed(3)),
-    completion_lines: consumptionSummary
+    completion_lines: consumptionSummary,
+    ...(upgradedLegacyYield ? {
+      ingredients_used: productionIngredients,
+      yield_adjustment_applied: true,
+      yield_adjustment_version: 1,
+      yield_adjustment_updated_at: nowIso()
+    } : {})
   }, executor);
 }
 

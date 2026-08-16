@@ -284,25 +284,43 @@ export function buildProductionPlanningDashboard({
 }
 
 export function buildProductionPlanExportRows(dashboard) {
-  return (dashboard?.items || []).map((item) => ({
-    production_date: item.production.production_date || '',
-    site: item.production.site_name || '',
-    meal_period: item.meal_type,
-    dish_name: item.recipe_name,
-    required_portions: item.required_portions,
-    portion_size: item.portion_size.label,
-    batch_yield: item.batch_yield,
-    batches_required: item.batches_required,
-    estimated_batch_cost: item.estimated_batch_cost,
-    kitchen_station: item.station,
-    prep_status: item.prep_status.label,
-    workflow_status: item.workflow_status,
-    shortages: item.shortages.map((shortage) => (
-      `${shortage.ingredient_name}: ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit}`
-    )).join('; '),
-    ingredient_quantities: (item.recipe?.ingredients || []).map((line) => (
-      `${line.ingredient_name || line.ingredient_id || 'Ingredient'}: ${formatRecipeQuantity(line.quantity, line.unit)} ${line.unit || ''}`.trim()
-    )).join('; '),
-    notes: item.notes
-  }));
+  return (dashboard?.items || []).map((item) => {
+    const productionIngredients = Array.isArray(item.production?.ingredients_used)
+      ? item.production.ingredients_used
+      : [];
+    return {
+      production_date: item.production.production_date || '',
+      site: item.production.site_name || '',
+      meal_period: item.meal_type,
+      dish_name: item.recipe_name,
+      required_portions: item.required_portions,
+      portion_size: item.portion_size.label,
+      batch_yield: item.batch_yield,
+      batches_required: item.batches_required,
+      estimated_batch_cost: item.estimated_batch_cost,
+      kitchen_station: item.station,
+      prep_status: item.prep_status.label,
+      workflow_status: item.workflow_status,
+      shortages: item.shortages.map((shortage) => (
+        `${shortage.ingredient_name}: ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit}`
+      )).join('; '),
+      net_recipe_quantities: productionIngredients
+        .filter((line) => line.net_quantity !== null && line.net_quantity !== undefined)
+        .map((line) => (
+        `${line.ingredient_name || line.ingredient_id || 'Ingredient'}: ${formatRecipeQuantity(line.net_quantity ?? 0, line.unit)} ${line.unit || ''}`.trim()
+        )).join('; '),
+      ingredient_quantities: productionIngredients.map((line) => (
+        `${line.ingredient_name || line.ingredient_id || 'Ingredient'}: ${formatRecipeQuantity(
+          line.actual_quantity ?? line.planned_quantity ?? line.yield_adjusted_quantity ?? line.required_quantity ?? 0,
+          line.unit
+        )} ${line.unit || ''}`.trim()
+      )).join('; '),
+      yield_details: productionIngredients
+        .filter((line) => line.yield_percent !== null && line.yield_percent !== undefined)
+        .map((line) => (
+          `${line.ingredient_name || line.ingredient_id || 'Ingredient'}: ${formatRecipeQuantity(line.yield_percent, 'percent')}%`
+        )).join('; '),
+      notes: item.notes
+    };
+  });
 }

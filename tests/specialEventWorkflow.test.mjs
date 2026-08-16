@@ -24,7 +24,14 @@ const linkedRecipe = {
   costing_method: 'average_cost',
   ingredients: [{ ingredient_id: 'ingredient-main', ingredient_name: 'Main ingredient', quantity: 2, unit: 'kg' }]
 };
-const eventIngredients = [{ id: 'ingredient-main', name: 'Main ingredient', unit: 'kg', average_cost: 5, cost_per_unit: 5 }];
+const eventIngredients = [{
+  id: 'ingredient-main',
+  name: 'Main ingredient',
+  unit: 'kg',
+  average_cost: 5,
+  cost_per_unit: 5,
+  cooking_yield_percent: 80
+}];
 const linkedEvent = {
   event_name: 'Corporate Gala',
   event_date: '2026-05-24',
@@ -52,10 +59,12 @@ const cases = [
       assert.equal(plans.length, 1);
       assert.equal(plans[0].source_event_id, 'event-1');
       assert.equal(plans[0].target_servings, 250);
-      assert.equal(plans[0].ingredients_used[0].planned_quantity, 50);
+      assert.equal(plans[0].ingredients_used[0].net_quantity, 50);
+      assert.equal(plans[0].ingredients_used[0].planned_quantity, 62.5);
+      assert.equal(plans[0].ingredients_used[0].yield_percent, 80);
       const prItems = buildEventPurchaseRequestItems(snapshot, event.event_name);
       assert.equal(prItems.length, 1);
-      assert.equal(prItems[0].requested_quantity, 10);
+      assert.equal(prItems[0].requested_quantity, 22.5);
       assert.equal(prItems[0].estimated_unit_price, 5);
     }
   },
@@ -72,9 +81,10 @@ const cases = [
       assert.equal(snapshot.linked_recipes[0].item_cost, 1);
       assert.equal(snapshot.total_event_cost, 250);
       assert.equal(snapshot.cost_per_guest, 1);
-      assert.equal(snapshot.ingredient_requirements[0].required_quantity, 50);
-      assert.equal(snapshot.ingredient_requirements[0].shortage_quantity, 10);
-      assert.equal(snapshot.estimated_procurement_spend, 50);
+      assert.equal(snapshot.ingredient_requirements[0].net_required_quantity, 50);
+      assert.equal(snapshot.ingredient_requirements[0].required_quantity, 62.5);
+      assert.equal(snapshot.ingredient_requirements[0].shortage_quantity, 22.5);
+      assert.equal(snapshot.estimated_procurement_spend, 112.5);
       assert.equal(snapshot.checklist.menu_and_costing, true);
     }
   },

@@ -1,6 +1,7 @@
 import { convertIngredientQuantity } from './ingredientUnits.js';
 import { expandRecipeIngredients } from './recipeComposition.js';
 import { calculateRecipeCostingSnapshot } from './recipeCosting.js';
+import { calculateYieldAdjustedQuantity } from './ingredientYield.js';
 
 function number(value, fallback = 0) {
   const parsed = Number(value);
@@ -61,16 +62,28 @@ export function calculateEventPlanningSnapshot(event = {}, recipes = [], ingredi
     expanded.ingredients.forEach((line) => {
       const ingredient = ingredientMap.get(String(line.ingredient_id)) || {};
       const unit = ingredient.unit || line.unit || 'unit';
-      const requiredQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
+      const yieldAdjustment = calculateYieldAdjustedQuantity(line.quantity, ingredient);
+      const netRequiredQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
+      const requiredQuantity = convertIngredientQuantity(
+        yieldAdjustment.required_raw_quantity,
+        line.unit || unit,
+        unit,
+        ingredient
+      );
       const key = String(line.ingredient_id);
       const current = requirements.get(key) || {
         ingredient_id: line.ingredient_id,
         ingredient_name: ingredient.name || line.ingredient_name || 'Unnamed ingredient',
+        net_required_quantity: 0,
         required_quantity: 0,
         unit,
+        yield_multiplier: yieldAdjustment.yield_multiplier,
+        yield_percent: yieldAdjustment.yield_percent,
+        yield_source: yieldAdjustment.yield_source,
         estimated_unit_cost: number(ingredient.last_cost ?? ingredient.cost_per_unit ?? ingredient.average_cost),
         linked_recipe_ids: new Set()
       };
+      current.net_required_quantity += netRequiredQuantity;
       current.required_quantity += requiredQuantity;
       current.linked_recipe_ids.add(recipe.id);
       requirements.set(key, current);
@@ -97,7 +110,10 @@ export function calculateEventPlanningSnapshot(event = {}, recipes = [], ingredi
     const shortage = Math.max(0, requirement.required_quantity - available);
     return {
       ...requirement,
+      net_required_quantity: rounded(requirement.net_required_quantity, 4),
       required_quantity: rounded(requirement.required_quantity, 4),
+      yield_multiplier: rounded(requirement.yield_multiplier, 6),
+      yield_percent: rounded(requirement.yield_percent, 2),
       available_stock: rounded(available, 4),
       shortage_quantity: rounded(shortage, 4),
       estimated_procurement_spend: rounded(shortage * requirement.estimated_unit_cost),
@@ -193,12 +209,26 @@ export function buildEventProductionPlanPayloads(event = {}, snapshot = {}, reci
       ingredients_used: expanded.ingredients.map((line) => {
         const ingredient = ingredientMap.get(String(line.ingredient_id)) || {};
         const requirement = requirementMap.get(String(line.ingredient_id));
+        const unit = ingredient.unit || line.unit || 'unit';
+        const yieldAdjustment = calculateYieldAdjustedQuantity(line.quantity, ingredient);
+        const netQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
+        const rawQuantity = convertIngredientQuantity(
+          yieldAdjustment.required_raw_quantity,
+          line.unit || unit,
+          unit,
+          ingredient
+        );
         return {
           ingredient_id: line.ingredient_id,
           ingredient_name: ingredient.name || line.ingredient_name,
-          planned_quantity: number(line.quantity),
-          required_quantity: number(line.quantity),
-          unit: ingredient.unit || line.unit || 'unit',
+          net_quantity: rounded(netQuantity, 4),
+          planned_quantity: rounded(rawQuantity, 4),
+          required_quantity: rounded(rawQuantity, 4),
+          yield_adjusted_quantity: rounded(rawQuantity, 4),
+          yield_multiplier: rounded(yieldAdjustment.yield_multiplier, 6),
+          yield_percent: rounded(yieldAdjustment.yield_percent, 2),
+          yield_source: yieldAdjustment.yield_source,
+          unit,
           unit_cost: number(requirement?.estimated_unit_cost ?? ingredient.last_cost ?? ingredient.cost_per_unit ?? ingredient.average_cost)
         };
       }),
