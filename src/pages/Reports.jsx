@@ -14,6 +14,7 @@ import StatCard from '@/components/ui/StatCard';
 import { format, subDays } from 'date-fns';
 import { downloadCSV } from '../components/utils/exportData';
 import { formatCurrency } from '@/lib/currency';
+import { formatRecipeQuantity } from '../../shared/recipeNumbers.js';
 
 export default function Reports() {
   const [selectedSite, setSelectedSite] = useState('all');
@@ -66,9 +67,9 @@ export default function Reports() {
   }, [foodWaste, selectedSite, dateFilter]);
 
   // Calculate stats
-  const totalServings = filteredProductions.reduce((sum, p) => sum + (p.actual_servings || p.target_servings || 0), 0);
-  const totalWaste = filteredWaste.reduce((sum, w) => sum + (w.quantity || 0), 0);
-  const totalWasteCost = filteredWaste.reduce((sum, w) => sum + (w.estimated_cost || 0), 0);
+  const totalServings = filteredProductions.reduce((sum, p) => sum + (Number(p.actual_servings ?? p.target_servings) || 0), 0);
+  const totalWaste = filteredWaste.reduce((sum, w) => sum + (Number(w.quantity) || 0), 0);
+  const totalWasteCost = filteredWaste.reduce((sum, w) => sum + (Number(w.estimated_cost) || 0), 0);
   const completedProductions = filteredProductions.filter(p => p.status === 'completed').length;
 
   // Production by day chart data
@@ -79,7 +80,7 @@ export default function Reports() {
       if (!grouped[date]) {
         grouped[date] = { date, servings: 0, count: 0 };
       }
-      grouped[date].servings += p.target_servings || 0;
+      grouped[date].servings += Number(p.target_servings) || 0;
       grouped[date].count += 1;
     });
     return Object.values(grouped)
@@ -99,8 +100,8 @@ export default function Reports() {
       if (!grouped[cat]) {
         grouped[cat] = { category: cat, quantity: 0, cost: 0 };
       }
-      grouped[cat].quantity += w.quantity || 0;
-      grouped[cat].cost += w.estimated_cost || 0;
+      grouped[cat].quantity += Number(w.quantity) || 0;
+      grouped[cat].cost += Number(w.estimated_cost) || 0;
     });
     return Object.values(grouped).map(g => ({
       ...g,
@@ -124,7 +125,7 @@ export default function Reports() {
               unit: ing.unit
             };
           }
-          usage[ing.ingredient_id].totalUsed += ing.actual_quantity || ing.planned_quantity || 0;
+          usage[ing.ingredient_id].totalUsed += Number(ing.actual_quantity ?? ing.planned_quantity) || 0;
         });
       }
     });
@@ -146,7 +147,7 @@ export default function Reports() {
           totalCount: 0
         };
       }
-      perf[p.site_id].totalServings += p.target_servings || 0;
+      perf[p.site_id].totalServings += Number(p.target_servings) || 0;
       perf[p.site_id].totalCount += 1;
       if (p.status === 'completed') perf[p.site_id].completedCount += 1;
     });
@@ -154,7 +155,7 @@ export default function Reports() {
     filteredWaste.forEach(w => {
       if (perf[w.site_id]) {
         if (!perf[w.site_id].totalWaste) perf[w.site_id].totalWaste = 0;
-        perf[w.site_id].totalWaste += w.quantity || 0;
+        perf[w.site_id].totalWaste += Number(w.quantity) || 0;
       }
     });
 
@@ -313,7 +314,7 @@ export default function Reports() {
                       {wasteByCategory.map((cat, idx) => (
                         <TableRow key={idx}>
                           <TableCell className="font-medium capitalize">{cat.label}</TableCell>
-                          <TableCell>{cat.quantity} kg</TableCell>
+                          <TableCell>{formatRecipeQuantity(cat.quantity, 'kg')} kg</TableCell>
                           <TableCell>{formatCurrency(cat.cost)}</TableCell>
                         </TableRow>
                       ))}
@@ -347,7 +348,7 @@ export default function Reports() {
                           <Badge variant="outline">{idx + 1}</Badge>
                         </TableCell>
                         <TableCell className="font-medium">{ing.name}</TableCell>
-                        <TableCell>{Math.round(ing.totalUsed * 100) / 100}</TableCell>
+                        <TableCell>{formatRecipeQuantity(ing.totalUsed, ing.unit)}</TableCell>
                         <TableCell>{ing.unit}</TableCell>
                       </TableRow>
                     ))}
@@ -397,7 +398,7 @@ export default function Reports() {
                             {site.efficiency}%
                           </Badge>
                         </TableCell>
-                        <TableCell>{site.totalWaste} kg</TableCell>
+                        <TableCell>{formatRecipeQuantity(site.totalWaste, 'kg')} kg</TableCell>
                       </TableRow>
                     ))}
                     {sitePerformance.length === 0 && (

@@ -4,7 +4,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { MoreVertical, Pencil, Trash2, Clock, Users, Flame, ShieldAlert, Candy, Droplets } from 'lucide-react';
+import { formatCurrency } from '@/lib/currency';
 import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
+import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 
 const CATEGORY_COLORS = {
   breakfast: 'bg-amber-100 text-amber-700',
@@ -27,9 +29,13 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
     [ingredients, recipe, recipes]
   );
   const formattedServingWeight = servingWeight.is_complete
-    ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(servingWeight.grams_per_serving)
+    ? formatRecipeQuantity(servingWeight.grams_per_serving, 'g')
     : '—';
   const servingCount = Number(recipe.servings) || 1;
+  const ingredientMap = useMemo(
+    () => new Map(ingredients.map((ingredient) => [ingredient.id, ingredient])),
+    [ingredients]
+  );
   const servingWeightTitle = servingWeight.is_complete
     ? 'Yield-adjusted cooked weight per serving'
     : servingWeight.warnings.join(' ') || 'Add ingredient weights and units to calculate grams per serving.';
@@ -91,7 +97,7 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <div className="flex items-center gap-1 text-slate-600">
             <Users className="w-4 h-4 text-slate-400" />
-            <span>{servingCount} serving{servingCount === 1 ? '' : 's'}</span>
+            <span>{formatRecipeQuantity(servingCount, 'servings')} serving{servingCount === 1 ? '' : 's'}</span>
             <span className={servingWeight.is_complete ? 'font-medium text-emerald-700' : 'text-slate-400'} title={servingWeightTitle}>
               · {formattedServingWeight} g
             </span>
@@ -111,6 +117,23 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
             </div>
           )}
         </div>
+
+        {recipe.total_cost !== null && recipe.total_cost !== undefined ? (
+          <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 text-xs">
+            <div>
+              <p className="text-slate-500">Total cost</p>
+              <p className="font-semibold text-slate-900">{formatCurrency(recipe.total_cost)}</p>
+            </div>
+            <div>
+              <p className="text-slate-500">Per serving</p>
+              <p className="font-semibold text-slate-900">{recipe.cost_per_serving == null ? '—' : formatCurrency(recipe.cost_per_serving)}</p>
+            </div>
+            <div>
+              <p className="text-slate-500">Per 100 g</p>
+              <p className="font-semibold text-slate-900">{recipe.cost_per_100g == null ? '—' : formatCurrency(recipe.cost_per_100g)}</p>
+            </div>
+          </div>
+        ) : null}
 
         {(recipe.protein_per_serving || recipe.carbs_per_serving || recipe.fat_per_serving || recipe.sodium_per_serving || recipe.sugar_per_serving) && (
           <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
@@ -141,16 +164,27 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
         {recipe.ingredients && recipe.ingredients.length > 0 && (
           <div className="mt-3 pt-3 border-t border-slate-100">
             <p className="text-xs text-slate-400 mb-1">{recipe.ingredients.length} ingredients</p>
-            <p className="text-xs text-slate-500 truncate">
-              {recipe.ingredients.map(i => i.ingredient_name).join(', ')}
-            </p>
+            <div className="space-y-1">
+              {recipe.ingredients.slice(0, 3).map((line, index) => {
+                const ingredient = ingredientMap.get(line.ingredient_id);
+                const unit = line.unit || ingredient?.unit || '';
+                return (
+                  <p key={`${line.ingredient_id || line.ingredient_name}-${index}`} className="truncate text-xs text-slate-500">
+                    {line.ingredient_name || ingredient?.name || 'Ingredient'} · {formatRecipeQuantity(line.quantity, unit)} {unit}
+                  </p>
+                );
+              })}
+              {recipe.ingredients.length > 3 ? <p className="text-xs text-slate-400">+{recipe.ingredients.length - 3} more</p> : null}
+            </div>
           </div>
         )}
 
         {subRecipes.length > 0 && (
           <div className="mt-2 rounded-lg bg-indigo-50 px-3 py-2">
             <p className="text-xs font-semibold text-indigo-700">{subRecipes.length} sub-recipe{subRecipes.length === 1 ? '' : 's'}</p>
-            <p className="truncate text-xs text-indigo-600">{subRecipes.map((item) => item.recipe_name).join(', ')}</p>
+            <p className="truncate text-xs text-indigo-600">
+              {subRecipes.map((item) => `${item.recipe_name} · ${formatRecipeQuantity(item.quantity, item.unit || 'batch')} ${item.unit || 'batch'}`).join(', ')}
+            </p>
           </div>
         )}
 

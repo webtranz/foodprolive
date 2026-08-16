@@ -1,4 +1,7 @@
-export const SAR_SYMBOL = '\u20C1';
+// U+FDFC is the Riyal sign required by the product design. Keep every visible
+// monetary value on this one symbol so exports and screens cannot drift back
+// to currency codes or unrelated symbols.
+export const SAR_SYMBOL = '\uFDFC';
 export const SAR_CODE = 'SAR';
 export const SAR_NAME = 'Saudi Riyal';
 
@@ -18,8 +21,7 @@ export function formatCurrency(value, options = {}) {
   const {
     locale = 'en-US',
     minimumFractionDigits = 2,
-    maximumFractionDigits = 2,
-    showCode = false
+    maximumFractionDigits = 2
   } = options;
 
   const numeric = toSafeNumber(value, 0);
@@ -29,13 +31,11 @@ export function formatCurrency(value, options = {}) {
     maximumFractionDigits
   }).format(absolute);
   const prefix = numeric < 0 ? '-' : '';
-  const symbol = showCode ? SAR_CODE : SAR_SYMBOL;
-
-  return `${prefix}${symbol} ${formatted}`;
+  return `${prefix}${SAR_SYMBOL} ${formatted}`;
 }
 
 export function getCurrencyLabel({ code = false } = {}) {
-  return code ? SAR_CODE : SAR_NAME;
+  return code ? SAR_SYMBOL : SAR_NAME;
 }
 
 export function replaceVisibleUSDCurrency(text) {
@@ -51,9 +51,9 @@ export function replaceVisibleUSDCurrency(text) {
   });
 
   const replaced = protectedText
-    .replace(/\bUSD\b/g, SAR_CODE)
-    .replace(/\bDollar\b/gi, SAR_NAME)
-    .replace(/(^|[^\w{])\$\s*(?=\d)/g, (_, prefix) => `${prefix}${SAR_SYMBOL} `);
+    .replace(/\b(?:USD|AED|SAR)\b/gi, SAR_SYMBOL)
+    .replace(/\b(?:US\s+)?Dollars?\b/gi, SAR_SYMBOL)
+    .replace(/(?:₹|\$)\s*(?=\d)/g, `${SAR_SYMBOL} `);
 
   return placeholders.reduce(
     (result, original, index) => result.replace(`__TPL_${index}__`, original),

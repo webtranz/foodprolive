@@ -35,6 +35,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatCurrency } from '@/lib/currency';
 import { buildProductionPlanningDashboard } from '@/lib/productionPlanning';
+import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 
 const MEAL_STYLES = {
   breakfast: {
@@ -172,9 +173,9 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2 2xl:grid-cols-3">
-          <Metric icon={Users} label="Portions" value={item.required_portions.toLocaleString()} />
+          <Metric icon={Users} label="Portions" value={formatRecipeQuantity(item.required_portions, 'servings')} />
           <Metric icon={Scale} label="Portion size" value={item.portion_size.label} title={portionTitle} />
-          <Metric icon={Layers3} label="Batch yield" value={`${item.batch_yield} portions`} />
+          <Metric icon={Layers3} label="Batch yield" value={`${formatRecipeQuantity(item.batch_yield, 'servings')} portions`} />
           <Metric icon={Factory} label="Batches" value={item.batches_required.toLocaleString()} />
           <Metric icon={WalletCards} label="Est. batch cost" value={formatCurrency(item.estimated_batch_cost)} />
           <Metric icon={MapPin} label="Station" value={item.station} />
@@ -188,7 +189,7 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
             </div>
             <p className="mt-1 line-clamp-2">
               {item.shortages.map((shortage) => (
-                `${shortage.ingredient_name} ${shortage.shortage_quantity} ${shortage.unit} short`
+                `${shortage.ingredient_name} ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit} short`
               )).join(' · ')}
             </p>
           </div>
@@ -304,9 +305,9 @@ function PlanSummary({ dashboard }) {
                       <p className="truncate text-slate-500">{shortage.recipe_names.join(', ')}</p>
                       {shortage.site_name ? <p className="text-slate-400">{shortage.site_name}</p> : null}
                     </div>
-                    <span className="whitespace-nowrap font-semibold text-red-600">-{shortage.shortage_quantity} {shortage.unit}</span>
+                    <span className="whitespace-nowrap font-semibold text-red-600">-{formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} {shortage.unit}</span>
                   </div>
-                  <p className="mt-1 text-[10px] text-slate-400">Required {shortage.required_quantity} · Available {shortage.available_quantity} {shortage.unit}</p>
+                  <p className="mt-1 text-[10px] text-slate-400">Required {formatRecipeQuantity(shortage.required_quantity, shortage.unit)} · Available {formatRecipeQuantity(shortage.available_quantity, shortage.unit)} {shortage.unit}</p>
                 </div>
               ))}
             </div>
@@ -384,7 +385,7 @@ function MasterRecipeSheet({ open, onOpenChange, dashboard }) {
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
                     <div><p className="text-slate-400">Portion size</p><p className="font-semibold text-slate-800">{item.portion_size.label}</p></div>
-                    <div><p className="text-slate-400">Batch yield</p><p className="font-semibold text-slate-800">{item.batch_yield} portions</p></div>
+                    <div><p className="text-slate-400">Batch yield</p><p className="font-semibold text-slate-800">{formatRecipeQuantity(item.batch_yield, 'servings')} portions</p></div>
                     <div><p className="text-slate-400">Prep time</p><p className="font-semibold text-slate-800">{item.recipe?.prep_time_minutes || 0} min</p></div>
                     <div><p className="text-slate-400">Cook time</p><p className="font-semibold text-slate-800">{item.recipe?.cook_time_minutes || 0} min</p></div>
                   </div>
@@ -396,7 +397,7 @@ function MasterRecipeSheet({ open, onOpenChange, dashboard }) {
                   <ul className="mt-2 space-y-1 text-sm text-slate-700">
                     {(item.recipe?.ingredients || []).length > 0 ? item.recipe.ingredients.map((ingredient, index) => (
                       <li key={`${ingredient.ingredient_id || ingredient.ingredient_name}-${index}`}>
-                        {ingredient.ingredient_name || 'Ingredient'} — {ingredient.quantity} {ingredient.unit}
+                        {ingredient.ingredient_name || 'Ingredient'} — {formatRecipeQuantity(ingredient.quantity, ingredient.unit)} {ingredient.unit}
                       </li>
                     )) : <li className="text-slate-400">No direct ingredients recorded.</li>}
                   </ul>

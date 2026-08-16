@@ -4,6 +4,7 @@ import { quantityInIngredientBaseUnit } from '../shared/ingredientUnits.js';
 const CORE_MENU_MEAL_TYPES = new Set(['breakfast', 'lunch', 'dinner']);
 
 function toNumber(value, fallback = 0) {
+  if (value === null || value === undefined || value === '') return fallback;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
 }

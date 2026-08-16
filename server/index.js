@@ -6,6 +6,8 @@ import multer from 'multer';
 import nodemailer from 'nodemailer';
 import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
+import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
+import { roundStandardDecimal } from '../shared/recipeNumbers.js';
 import {
   MAX_RECIPE_IMAGE_BYTES,
   RECIPE_IMAGE_MIME_TYPES
@@ -280,8 +282,30 @@ async function decorateRecipesWithServingWeights(records = []) {
 
   return records.map((recipe) => {
     const weight = calculateRecipeServingWeight(recipe, recipeCatalog, ingredients);
+    const costing = calculateRecipeCostingSnapshot(recipe, ingredients, recipeCatalog);
+    const totalCost = recipe.total_cost ?? costing.total_cost;
+    const servings = Math.max(1, Number(recipe.servings) || 1);
+    const costPerServing = recipe.cost_per_serving
+      ?? (totalCost === null ? null : roundStandardDecimal(totalCost / servings, 4));
+    const costPer100g = recipe.cost_per_100g
+      ?? (totalCost !== null && weight.cooked_total_grams > 0
+        ? roundStandardDecimal((totalCost / weight.cooked_total_grams) * 100, 4)
+        : null);
+    const sellingPrice = recipe.target_selling_price === null || recipe.target_selling_price === undefined || recipe.target_selling_price === ''
+      ? null
+      : Number(recipe.target_selling_price);
     return {
       ...recipe,
+      total_cost: totalCost,
+      cost_per_serving: costPerServing,
+      cost_per_100g: costPer100g,
+      total_recipe_weight_grams: recipe.total_recipe_weight_grams ?? costing.total_recipe_weight_grams,
+      margin_per_serving: recipe.margin_per_serving
+        ?? (sellingPrice === null || costPerServing === null ? null : roundStandardDecimal(sellingPrice - costPerServing, 4)),
+      food_cost_percent: recipe.food_cost_percent
+        ?? (sellingPrice === null || sellingPrice <= 0 || costPerServing === null
+          ? null
+          : roundStandardDecimal((costPerServing / sellingPrice) * 100, 2)),
       grams_per_serving: weight.grams_per_serving,
       raw_grams_per_serving: weight.raw_grams_per_serving,
       serving_weight_complete: weight.is_complete,

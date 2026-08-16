@@ -193,6 +193,7 @@ assert.equal(exportRows[0].portion_size, '1,000 g');
 assert.equal(exportRows[0].kitchen_station, 'Hot Line');
 assert.equal(exportRows[0].prep_status, 'At Risk');
 assert.match(exportRows[0].shortages, /Basmati Rice: 3 kg/);
+assert.equal(exportRows[0].ingredient_quantities, 'Basmati Rice: 5 kg');
 
 const statusDashboard = buildProductionPlanningDashboard({
   productions: [

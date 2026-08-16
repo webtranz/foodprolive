@@ -2,15 +2,17 @@ import { format } from 'date-fns';
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 import { replaceVisibleUSDCurrency } from '@/lib/currency';
+import { normalizeQuantityFieldsForExport } from '../../../shared/recipeNumbers.js';
 
-function normalizeExportRows(data) {
+export function normalizeExportRows(data) {
   if (!data || data.length === 0) {
     return [];
   }
 
   return data.map((row) => {
+    const canonicalRow = normalizeQuantityFieldsForExport(row);
     const normalized = {};
-    Object.entries(row || {}).forEach(([key, value]) => {
+    Object.entries(canonicalRow || {}).forEach(([key, value]) => {
       if (key.startsWith('_') || key === 'id' || key === 'created_by_id' || key === 'entity_name' || key === 'app_id') {
         return;
       }
@@ -158,7 +160,7 @@ export function exportToCSV(data, filename, customHeaders = null) {
   
   let csv = headers.map((header) => replaceVisibleUSDCurrency(header)).join(',') + '\n';
   
-  data.forEach(row => {
+  data.map((row) => normalizeQuantityFieldsForExport(row)).forEach(row => {
     const values = headers.map(header => {
       let value = row[header] ?? '';
       

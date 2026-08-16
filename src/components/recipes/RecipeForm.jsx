@@ -8,12 +8,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Trash2, Flame, ShieldAlert, GitBranch, ImagePlus, X } from 'lucide-react';
+import { Plus, Trash2, Flame, ShieldAlert, GitBranch, ImagePlus, X, CircleCheck, CircleAlert, RefreshCw } from 'lucide-react';
 import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
+import StandardDecimalInput from '@/components/recipes/StandardDecimalInput';
 import { formatCurrency, formatNumber } from '@/lib/currency';
-import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 import { cn } from '@/lib/utils';
-import { quantityInIngredientBaseUnit } from '../../../shared/ingredientUnits.js';
+import { normalizeIngredientUnit } from '../../../shared/ingredientUnits.js';
 import {
   expandRecipeIngredients,
   validateRecipeComposition,
@@ -24,6 +24,16 @@ import {
   validateRecipeImageReference
 } from '../../../shared/recipeImage.js';
 import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
+import {
+  calculateRecipeCostingSnapshot,
+  calculateRecipeIngredientLineCost,
+  RECIPE_COSTING_METHODS
+} from '../../../shared/recipeCosting.js';
+import {
+  formatRecipeQuantity,
+  normalizeRecipeNumericFields,
+  standardizeDecimalValue
+} from '../../../shared/recipeNumbers.js';
 
 const ALLERGEN_COLORS = {
   dairy: 'bg-sky-100 text-sky-700',
@@ -64,6 +74,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
   const [imagePreview, setImagePreview] = useState('');
   const [imageUploading, setImageUploading] = useState(false);
   const [selectedIngredientsById, setSelectedIngredientsById] = useState({});
+  const [numericValidation, setNumericValidation] = useState({});
   const [formData, setFormData] = useState({
     name: '',
     recipe_code: '',
@@ -73,7 +84,11 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     description: '',
     prep_time_minutes: '',
     cook_time_minutes: '',
-    servings: '1',
+    servings: 1,
+    portion_size_grams: null,
+    batch_yield: 1,
+    costing_method: 'average_cost',
+    target_selling_price: null,
     instructions: '',
     image_url: '',
     ingredients: [],
@@ -94,11 +109,23 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
         description: recipe.description || '',
         prep_time_minutes: recipe.prep_time_minutes || '',
         cook_time_minutes: recipe.cook_time_minutes || '',
-        servings: recipe.servings || '1',
+        servings: Number(recipe.servings) || 1,
+        portion_size_grams: Number(recipe.portion_size_grams) || null,
+        batch_yield: Number(recipe.batch_yield) || 1,
+        costing_method: recipe.costing_method || 'average_cost',
+        target_selling_price: recipe.target_selling_price === null || recipe.target_selling_price === undefined
+          ? null
+          : Number(recipe.target_selling_price),
         instructions: recipe.instructions || '',
         image_url: recipe.image_url || '',
-        ingredients: recipe.ingredients || [],
-        sub_recipes: Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [],
+        ingredients: (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).map((line) => ({
+          ...line,
+          quantity: Number.isFinite(Number(line.quantity)) ? Number(line.quantity) : null
+        })),
+        sub_recipes: (Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : []).map((line) => ({
+          ...line,
+          quantity: Number.isFinite(Number(line.quantity)) ? Number(line.quantity) : null
+        })),
         is_active: recipe.is_active !== false,
         site_scope: recipe.site_scope || 'global',
         site_ids: Array.isArray(recipe.site_ids) ? recipe.site_ids : []
@@ -113,7 +140,11 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
         description: '',
         prep_time_minutes: '',
         cook_time_minutes: '',
-        servings: '1',
+        servings: 1,
+        portion_size_grams: null,
+        batch_yield: 1,
+        costing_method: 'average_cost',
+        target_selling_price: null,
         instructions: '',
         image_url: '',
         ingredients: [],
@@ -128,29 +159,54 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     setImagePreview(recipe?.image_url || '');
     setImageUploading(false);
     setSelectedIngredientsById({});
+    setNumericValidation({});
   }, [recipe, open]);
 
   const ingredientCatalog = useMemo(() => {
     const scopedSiteIds = formData.site_scope === 'specific' ? new Set(formData.site_ids) : null;
     const stockByIngredient = new Map();
+    const averageCostByIngredient = new Map();
     inventory.forEach((stock) => {
       if (!stock?.ingredient_id || (scopedSiteIds && !scopedSiteIds.has(stock.site_id))) return;
+      const quantity = Number(stock.quantity) || 0;
       stockByIngredient.set(
         stock.ingredient_id,
-        (stockByIngredient.get(stock.ingredient_id) || 0) + (Number(stock.quantity) || 0)
+        (stockByIngredient.get(stock.ingredient_id) || 0) + quantity
       );
+      const rawUnitCost = stock.average_unit_cost ?? stock.unit_cost ?? stock.cost_per_unit;
+      const unitCost = rawUnitCost === null || rawUnitCost === undefined || rawUnitCost === ''
+        ? NaN
+        : Number(rawUnitCost);
+      if (quantity > 0 && Number.isFinite(unitCost) && unitCost >= 0) {
+        const aggregate = averageCostByIngredient.get(stock.ingredient_id) || { quantity: 0, value: 0 };
+        aggregate.quantity += quantity;
+        aggregate.value += quantity * unitCost;
+        averageCostByIngredient.set(stock.ingredient_id, aggregate);
+      }
     });
-    const merged = new Map(ingredients.map((ingredient) => [ingredient.id, {
-      ...ingredient,
-      ...(inventoryLoaded ? { current_stock: stockByIngredient.get(ingredient.id) || 0 } : {})
-    }]));
+    const merged = new Map(ingredients.map((ingredient) => {
+      const averageAggregate = averageCostByIngredient.get(ingredient.id);
+      const catalogCost = ingredient.cost_per_unit;
+      return [ingredient.id, {
+        ...ingredient,
+        standard_cost: ingredient.standard_cost ?? catalogCost,
+        last_cost: ingredient.last_cost ?? catalogCost,
+        average_cost: averageAggregate?.quantity > 0
+          ? averageAggregate.value / averageAggregate.quantity
+          : ingredient.average_cost ?? catalogCost,
+        ...(inventoryLoaded ? { current_stock: stockByIngredient.get(ingredient.id) || 0 } : {})
+      }];
+    }));
     Object.values(selectedIngredientsById).forEach((ingredient) => {
       if (!ingredient?.id) return;
       const existing = merged.get(ingredient.id) || {};
       merged.set(ingredient.id, {
         ...existing,
         ...ingredient,
-        cost_per_unit: ingredient.last_cost ?? ingredient.cost_per_unit ?? existing.cost_per_unit
+        cost_per_unit: existing.cost_per_unit ?? ingredient.cost_per_unit ?? ingredient.last_cost,
+        standard_cost: ingredient.standard_cost ?? existing.standard_cost ?? existing.cost_per_unit,
+        last_cost: ingredient.last_cost ?? existing.last_cost ?? existing.cost_per_unit,
+        average_cost: ingredient.average_cost ?? existing.average_cost ?? existing.cost_per_unit
       });
     });
     return [...merged.values()];
@@ -229,26 +285,37 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     [formData, ingredientCatalog, recipe?.id, recipes]
   );
 
-  const ingredientCostRows = useMemo(() => formData.ingredients.map((line) => {
+  const ingredientCostRows = useMemo(() => formData.ingredients.map((line, index) => {
     const ingredient = ingredientCatalog.find((item) => item.id === line.ingredient_id) || null;
-    const quantityInBaseUnit = ingredient
-      ? quantityInIngredientBaseUnit(line.quantity, line.unit || ingredient.unit, ingredient)
-      : 0;
-    const unitCost = Number(ingredient?.last_cost ?? ingredient?.cost_per_unit);
-    const hasCost = Number.isFinite(unitCost) && unitCost >= 0;
+    const costing = ingredient
+      ? calculateRecipeIngredientLineCost(line, ingredient, formData.costing_method)
+      : { normalized_quantity: Number(line.quantity) || 0, item_cost: null, line_cost: null };
     const hasStock = ingredient && Object.prototype.hasOwnProperty.call(ingredient, 'current_stock');
     const currentStock = hasStock ? Number(ingredient.current_stock) || 0 : null;
+    const normalizedUnit = normalizeIngredientUnit(line.unit || ingredient?.unit);
+    const quantityValidation = standardizeDecimalValue(line.quantity, {
+      unit: normalizedUnit,
+      min: 0,
+      allowZero: false,
+      label: `Ingredient ${line.ingredient_name || 'quantity'}`
+    });
+    const validationError = numericValidation[`ingredient-${index}`]?.error
+      || (!line.ingredient_id ? 'Select an ingredient.' : '')
+      || (!quantityValidation.valid ? quantityValidation.error : '')
+      || (!['kg', 'g', 'l', 'ml', 'pieces'].includes(normalizedUnit) ? 'Choose a supported unit.' : '')
+      || (costing.item_cost === null ? `${RECIPE_COSTING_METHODS[formData.costing_method]} is unavailable.` : '');
     return {
       ingredient,
-      quantityInBaseUnit,
-      unitCost: hasCost ? unitCost : null,
-      amount: hasCost ? quantityInBaseUnit * unitCost : null,
+      quantityInBaseUnit: costing.normalized_quantity,
+      unitCost: costing.item_cost,
+      amount: costing.line_cost,
       currentStock,
-      shortage: currentStock === null ? null : Math.max(0, quantityInBaseUnit - currentStock)
+      shortage: currentStock === null ? null : Math.max(0, costing.normalized_quantity - currentStock),
+      validationError
     };
-  }), [formData.ingredients, ingredientCatalog]);
+  }), [formData.costing_method, formData.ingredients, ingredientCatalog, numericValidation]);
 
-  const recipeCost = useMemo(() => calculateRecipeCostSnapshot(
+  const recipeCost = useMemo(() => calculateRecipeCostingSnapshot(
     { ...formData, id: recipe?.id || null },
     ingredientCatalog,
     recipes
@@ -260,7 +327,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
   const addIngredient = () => {
     setFormData((prev) => ({
       ...prev,
-      ingredients: [...prev.ingredients, { ingredient_id: '', ingredient_name: '', quantity: '', unit: 'g' }]
+      ingredients: [...prev.ingredients, { ingredient_id: '', ingredient_name: '', quantity: null, unit: 'g' }]
     }));
   };
 
@@ -269,6 +336,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       ...prev,
       ingredients: prev.ingredients.filter((_, i) => i !== index)
     }));
+    setNumericValidation((current) => Object.fromEntries(
+      Object.entries(current).filter(([key]) => !key.startsWith('ingredient-'))
+    ));
   };
 
   const updateIngredient = (index, field, value) => {
@@ -308,7 +378,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       ...prev,
       sub_recipes: [
         ...prev.sub_recipes,
-        { recipe_id: '', recipe_name: '', quantity: '1', unit: 'batch' }
+        { recipe_id: '', recipe_name: '', quantity: 1, unit: 'batch' }
       ]
     }));
   };
@@ -318,6 +388,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       ...prev,
       sub_recipes: prev.sub_recipes.filter((_, itemIndex) => itemIndex !== index)
     }));
+    setNumericValidation((current) => Object.fromEntries(
+      Object.entries(current).filter(([key]) => !key.startsWith('sub-recipe-'))
+    ));
   };
 
   const updateSubRecipe = (index, field, value) => {
@@ -372,13 +445,15 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       setFormError(imageReferenceError);
       return;
     }
-    const normalizedSubRecipes = formData.sub_recipes.map((line) => ({
-      ...line,
-      quantity: parseFloat(line.quantity) || 0,
-      unit: line.unit || 'batch'
-    }));
+    const numericResult = normalizeRecipeNumericFields(formData);
+    if (numericResult.errors.length > 0) {
+      setFormError(numericResult.errors[0]);
+      return;
+    }
+    const normalizedForm = numericResult.recipe;
+    const normalizedSubRecipes = normalizedForm.sub_recipes.map((line) => ({ ...line, unit: line.unit || 'batch' }));
     const compositionErrors = validateRecipeComposition(
-      { ...formData, id: recipe?.id || null, sub_recipes: normalizedSubRecipes },
+      { ...normalizedForm, id: recipe?.id || null, sub_recipes: normalizedSubRecipes },
       recipes
     );
     if (compositionErrors.length > 0) {
@@ -399,22 +474,27 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       }
       setImageUploading(false);
     }
+    const finalCost = calculateRecipeCostingSnapshot(
+      { ...normalizedForm, id: recipe?.id || null },
+      ingredientCatalog,
+      recipes
+    );
     const submitData = {
-      ...formData,
+      ...normalizedForm,
       image_url: imageUrl,
       prep_time_minutes: formData.prep_time_minutes ? parseInt(formData.prep_time_minutes, 10) : null,
       cook_time_minutes: formData.cook_time_minutes ? parseInt(formData.cook_time_minutes, 10) : null,
-      servings: formData.servings ? parseInt(formData.servings, 10) : 1,
       ...calculatedNutrition,
-      total_cost: recipeCost.has_cost ? Number(recipeCost.total_cost.toFixed(4)) : null,
-      cost_per_serving: recipeCost.has_cost ? Number(recipeCost.cost_per_serving.toFixed(4)) : null,
+      total_cost: finalCost.total_cost,
+      cost_per_serving: finalCost.cost_per_serving,
+      cost_per_100g: finalCost.cost_per_100g,
+      total_recipe_weight_grams: finalCost.total_recipe_weight_grams,
+      margin_per_serving: finalCost.margin_per_serving,
+      food_cost_percent: finalCost.food_cost_percent,
       costing_updated_at: new Date().toISOString(),
       site_scope: formData.site_scope,
       site_ids: formData.site_scope === 'specific' ? formData.site_ids : [],
-      ingredients: formData.ingredients.map((ingredientLine) => ({
-        ...ingredientLine,
-        quantity: parseFloat(ingredientLine.quantity) || 0
-      })),
+      ingredients: normalizedForm.ingredients,
       sub_recipes: normalizedSubRecipes
     };
     onSubmit(submitData);
@@ -422,7 +502,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[92vh] max-w-[1400px] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl font-semibold">
             {recipe ? 'Edit Recipe' : 'Create New Recipe'}
@@ -430,8 +510,8 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="md:col-span-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="md:col-span-2 xl:col-span-4">
               <Label htmlFor="name">Recipe Name *</Label>
               <Input
                 id="name"
@@ -516,18 +596,90 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
             <div>
               <Label htmlFor="servings">Servings *</Label>
-              <Input
+              <StandardDecimalInput
                 id="servings"
-                type="number"
-                min="1"
                 value={formData.servings}
-                onChange={(e) => setFormData({ ...formData, servings: e.target.value })}
+                unit="servings"
+                precision={0}
+                min={0}
+                allowZero={false}
+                allowEmpty={false}
+                label="Servings"
+                onValueChange={(value) => setFormData((current) => ({ ...current, servings: value }))}
+                onValidationChange={(status) => setNumericValidation((current) => ({ ...current, servings: status }))}
                 className="mt-1"
                 required
               />
+              {numericValidation.servings?.error ? <p className="mt-1 text-xs text-red-600">{numericValidation.servings.error}</p> : null}
             </div>
 
-            <div className="md:col-span-2">
+            <div>
+              <Label htmlFor="portion_size_grams">Portion Size (g)</Label>
+              <StandardDecimalInput
+                id="portion_size_grams"
+                value={formData.portion_size_grams}
+                unit="g"
+                min={0}
+                allowZero={false}
+                label="Portion size"
+                onValueChange={(value) => setFormData((current) => ({ ...current, portion_size_grams: value }))}
+                onValidationChange={(status) => setNumericValidation((current) => ({ ...current, portion_size_grams: status }))}
+                className="mt-1"
+                placeholder={calculatedServingWeight.is_complete ? formatRecipeQuantity(calculatedServingWeight.grams_per_serving, 'g') : 'e.g., 250'}
+              />
+              {numericValidation.portion_size_grams?.error ? <p className="mt-1 text-xs text-red-600">{numericValidation.portion_size_grams.error}</p> : null}
+            </div>
+
+            <div>
+              <Label htmlFor="batch_yield">Batch Yield</Label>
+              <StandardDecimalInput
+                id="batch_yield"
+                value={formData.batch_yield}
+                unit="batch"
+                min={0}
+                allowZero={false}
+                allowEmpty={false}
+                label="Batch yield"
+                onValueChange={(value) => setFormData((current) => ({ ...current, batch_yield: value }))}
+                onValidationChange={(status) => setNumericValidation((current) => ({ ...current, batch_yield: status }))}
+                className="mt-1"
+              />
+              {numericValidation.batch_yield?.error ? <p className="mt-1 text-xs text-red-600">{numericValidation.batch_yield.error}</p> : null}
+            </div>
+
+            <div>
+              <Label>Costing Method</Label>
+              <Select
+                value={formData.costing_method}
+                onValueChange={(value) => setFormData((current) => ({ ...current, costing_method: value }))}
+              >
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(RECIPE_COSTING_METHODS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="target_selling_price">Target Selling Price (﷼ / serving)</Label>
+              <StandardDecimalInput
+                id="target_selling_price"
+                value={formData.target_selling_price}
+                precision={2}
+                min={0}
+                allowZero
+                label="Target selling price"
+                onValueChange={(value) => setFormData((current) => ({ ...current, target_selling_price: value }))}
+                onValidationChange={(status) => setNumericValidation((current) => ({ ...current, target_selling_price: status }))}
+                className="mt-1"
+                placeholder="0.00"
+              />
+              {numericValidation.target_selling_price?.error ? <p className="mt-1 text-xs text-red-600">{numericValidation.target_selling_price.error}</p> : null}
+            </div>
+
+            <div className="md:col-span-2 xl:col-span-4">
               <Label htmlFor="description">Description</Label>
               <Textarea
                 id="description"
@@ -537,6 +689,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                 className="mt-1"
                 rows={2}
               />
+            </div>
+            <div className="md:col-span-2 xl:col-span-4 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+              Quantities are stored as standardized decimal numbers. Costs recalculate immediately when an ingredient, quantity, unit, serving count, or costing method changes.
             </div>
           </div>
 
@@ -603,17 +758,30 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
             </div>
 
             <div className="space-y-3">
+              {formData.ingredients.length > 0 ? (
+                <div className="hidden grid-cols-[minmax(230px,1.6fr)_100px_90px_120px_120px_130px_150px_42px] gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 xl:grid">
+                  <span>Ingredient</span>
+                  <span>Quantity</span>
+                  <span>Unit</span>
+                  <span>Item Cost</span>
+                  <span>Line Cost</span>
+                  <span>Stock Impact</span>
+                  <span>Validation</span>
+                  <span aria-hidden="true" />
+                </div>
+              ) : null}
               {formData.ingredients.map((ingredientLine, index) => {
                 const costRow = ingredientCostRows[index];
+                const numericStatus = numericValidation[`ingredient-${index}`] || {};
                 const selectedIngredient = costRow?.ingredient || (
                   ingredientLine.ingredient_id
                     ? { id: ingredientLine.ingredient_id, name: ingredientLine.ingredient_name || 'Selected ingredient', unit: ingredientLine.unit }
                     : null
                 );
                 return (
-                  <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-[minmax(250px,1fr)_90px_90px_100px_120px_40px]">
-                  <div>
-                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 md:hidden">Ingredient</p>
+                  <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[minmax(230px,1.6fr)_100px_90px_120px_120px_130px_150px_42px]">
+                  <div className="md:col-span-2 xl:col-span-1">
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Ingredient</p>
                     <IngredientSearchCombobox
                       value={ingredientLine.ingredient_id}
                       selectedIngredient={selectedIngredient}
@@ -622,17 +790,21 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     />
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Quantity</p>
-                    <Input
-                      type="number"
-                      step="0.1"
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Quantity</p>
+                    <StandardDecimalInput
                       value={ingredientLine.quantity}
-                      onChange={(e) => updateIngredient(index, 'quantity', e.target.value)}
+                      unit={ingredientLine.unit}
+                      min={0}
+                      allowZero={false}
+                      label={`${ingredientLine.ingredient_name || 'Ingredient'} quantity`}
+                      onValueChange={(value) => updateIngredient(index, 'quantity', value)}
+                      onValidationChange={(status) => setNumericValidation((current) => ({ ...current, [`ingredient-${index}`]: status }))}
+                      className={cn(costRow?.validationError && 'border-red-300 focus-visible:ring-red-200')}
                       placeholder="Qty"
                     />
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Unit</p>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Unit</p>
                     <Select
                       value={ingredientLine.unit}
                       onValueChange={(value) => updateIngredient(index, 'unit', value)}
@@ -650,30 +822,58 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     </Select>
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Last cost</p>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Cost</p>
                     <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700">
                       {costRow?.unitCost == null ? '—' : formatCurrency(costRow.unitCost)}
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-500">Amount {costRow?.amount == null ? '—' : formatCurrency(costRow.amount)}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">per {costRow?.ingredient?.unit || ingredientLine.unit}</p>
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">Stock impact</p>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Line Cost</p>
+                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-900">
+                      {costRow?.amount == null ? '—' : formatCurrency(costRow.amount)}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Stock Impact</p>
                     <div className={cn(
                       'flex h-10 items-center rounded-md border bg-white px-2 text-sm font-medium',
                       Number(costRow?.shortage) > 0 ? 'border-red-300 text-red-700' : 'border-slate-200 text-slate-700'
                     )}>
-                      {costRow?.currentStock === null || typeof costRow?.currentStock === 'undefined'
-                        ? '—'
-                        : `${formatNumber(costRow.currentStock, 2)} ${costRow.ingredient?.unit || ''}`}
+                      {costRow?.ingredient
+                        ? `↓ ${formatRecipeQuantity(costRow.quantityInBaseUnit, costRow.ingredient.unit)} ${costRow.ingredient.unit || ''}`
+                        : '—'}
                     </div>
-                    {Number(costRow?.shortage) > 0 ? <p className="mt-1 text-[11px] font-medium text-red-600">Short {formatNumber(costRow.shortage, 2)}</p> : null}
+                    {costRow?.currentStock !== null && typeof costRow?.currentStock !== 'undefined' ? (
+                      <p className={cn('mt-1 text-[11px]', Number(costRow.shortage) > 0 ? 'font-medium text-red-600' : 'text-slate-500')}>
+                        {Number(costRow.shortage) > 0
+                          ? `Short ${formatRecipeQuantity(costRow.shortage, costRow.ingredient?.unit)} ${costRow.ingredient?.unit || ''}`
+                          : `${formatRecipeQuantity(costRow.currentStock, costRow.ingredient?.unit)} ${costRow.ingredient?.unit || ''} available`}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Validation</p>
+                    <div className={cn(
+                      'flex min-h-10 items-center gap-1.5 rounded-md border bg-white px-2 text-xs font-medium',
+                      costRow?.validationError || Number(costRow?.shortage) > 0
+                        ? 'border-red-200 text-red-700'
+                        : numericStatus.notice
+                          ? 'border-amber-200 text-amber-700'
+                          : 'border-emerald-200 text-emerald-700'
+                    )}>
+                      {costRow?.validationError || Number(costRow?.shortage) > 0 ? <CircleAlert className="h-4 w-4 shrink-0" /> : <CircleCheck className="h-4 w-4 shrink-0" />}
+                      <span className="line-clamp-2">
+                        {costRow?.validationError || (Number(costRow?.shortage) > 0 ? 'Insufficient stock' : numericStatus.notice || 'Valid')}
+                      </span>
+                    </div>
                   </div>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
                     onClick={() => removeIngredient(index)}
-                    className="mt-5 text-red-500 hover:bg-red-50 hover:text-red-600"
+                    className="text-red-500 hover:bg-red-50 hover:text-red-600 xl:mt-0"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -689,28 +889,49 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
             </div>
 
             {formData.ingredients.length > 0 || formData.sub_recipes.length > 0 ? (
-              <div className="mt-4 space-y-4 rounded-xl border border-orange-100 bg-orange-50 p-4">
-                <div className="grid grid-cols-2 gap-3 rounded-lg border border-emerald-200 bg-white p-3 md:grid-cols-4">
+              <div className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold text-slate-900">Live Cost Summary</p>
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                    <RefreshCw className="h-3.5 w-3.5" /> Updating in real time
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 rounded-lg border border-emerald-200 bg-white p-3 md:grid-cols-3 xl:grid-cols-6">
                   <div>
-                    <p className="text-xs text-slate-500">Recipe cost</p>
+                    <p className="text-xs text-slate-500">Total Recipe Cost</p>
                     <p className="font-semibold text-slate-900">{recipeCost.has_cost ? formatCurrency(recipeCost.total_cost) : 'Missing cost'}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500">Cost / serving</p>
+                    <p className="text-xs text-slate-500">Cost per Serving</p>
                     <p className="font-semibold text-slate-900">{recipeCost.has_cost ? formatCurrency(recipeCost.cost_per_serving) : '—'}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500">Ingredient lines</p>
-                    <p className="font-semibold text-slate-900">{formData.ingredients.length}</p>
+                    <p className="text-xs text-slate-500">Cost per 100 g</p>
+                    <p className="font-semibold text-slate-900">{recipeCost.cost_per_100g == null ? '—' : formatCurrency(recipeCost.cost_per_100g)}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500">Stock impact</p>
-                    <p className={cn('font-semibold', stockShortageCount ? 'text-red-700' : knownStockLineCount ? 'text-emerald-700' : 'text-slate-600')}>
-                      {stockShortageCount
-                        ? `${stockShortageCount} shortage${stockShortageCount === 1 ? '' : 's'}`
-                        : knownStockLineCount ? 'No known shortage' : 'Select an ingredient'}
+                    <p className="text-xs text-slate-500">Target / Serving</p>
+                    <p className="font-semibold text-slate-900">{recipeCost.target_selling_price == null ? '—' : formatCurrency(recipeCost.target_selling_price)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Margin</p>
+                    <p className={cn('font-semibold', Number(recipeCost.margin_per_serving) < 0 ? 'text-red-700' : 'text-emerald-700')}>
+                      {recipeCost.margin_per_serving == null ? '—' : formatCurrency(recipeCost.margin_per_serving)}
                     </p>
                   </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Food Cost %</p>
+                    <p className="font-semibold text-slate-900">{recipeCost.food_cost_percent == null ? '—' : `${formatNumber(recipeCost.food_cost_percent, 2)}%`}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-600">
+                  <span>{formData.ingredients.length} direct ingredient line{formData.ingredients.length === 1 ? '' : 's'}</span>
+                  <span>{recipeCost.missing_cost_count ? `${recipeCost.missing_cost_count} missing cost${recipeCost.missing_cost_count === 1 ? '' : 's'}` : 'All item costs available'}</span>
+                  <span className={cn(stockShortageCount ? 'font-medium text-red-700' : knownStockLineCount ? 'text-emerald-700' : '')}>
+                    {stockShortageCount
+                      ? `${stockShortageCount} stock shortage${stockShortageCount === 1 ? '' : 's'}`
+                      : knownStockLineCount ? 'No known stock shortage' : 'Stock availability pending'}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Flame className="h-5 w-5 text-orange-500" />
@@ -753,7 +974,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                       {Math.max(1, Number(formData.servings) || 1)}
                       {' · '}
                       {calculatedServingWeight.is_complete
-                        ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(calculatedServingWeight.grams_per_serving)
+                        ? formatRecipeQuantity(calculatedServingWeight.grams_per_serving, 'g')
                         : '—'} g each
                     </p>
                   </div>
@@ -798,7 +1019,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
             <div className="space-y-3">
               {formData.sub_recipes.map((subRecipeLine, index) => (
-                <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border border-indigo-100 bg-white p-3 md:grid-cols-[1fr_120px_140px_48px]">
+                <div key={`${subRecipeLine.recipe_id || 'new'}-${index}`} className="grid grid-cols-1 gap-3 rounded-lg border border-indigo-100 bg-white p-3 md:grid-cols-[1fr_120px_140px_48px]">
                   <Select
                     value={subRecipeLine.recipe_id}
                     onValueChange={(value) => updateSubRecipe(index, 'recipe_id', value)}
@@ -814,14 +1035,21 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                       ))}
                     </SelectContent>
                   </Select>
-                  <Input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={subRecipeLine.quantity}
-                    onChange={(event) => updateSubRecipe(index, 'quantity', event.target.value)}
-                    placeholder="Qty"
-                  />
+                  <div>
+                    <StandardDecimalInput
+                      value={subRecipeLine.quantity}
+                      unit={subRecipeLine.unit || 'batch'}
+                      min={0}
+                      allowZero={false}
+                      label={`${subRecipeLine.recipe_name || 'Sub-recipe'} quantity`}
+                      onValueChange={(value) => updateSubRecipe(index, 'quantity', value)}
+                      onValidationChange={(status) => setNumericValidation((current) => ({ ...current, [`sub-recipe-${index}`]: status }))}
+                      placeholder="Qty"
+                    />
+                    {numericValidation[`sub-recipe-${index}`]?.error ? (
+                      <p className="mt-1 text-xs text-red-600">{numericValidation[`sub-recipe-${index}`].error}</p>
+                    ) : null}
+                  </div>
                   <Select
                     value={subRecipeLine.unit || 'batch'}
                     onValueChange={(value) => updateSubRecipe(index, 'unit', value)}

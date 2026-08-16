@@ -585,7 +585,7 @@ export const entityRegistry = {
     defaults: { status: 'pending' }
   },
   Recipe: {
-    defaults: { is_active: true, ingredients: [], sub_recipes: [] },
+    defaults: { is_active: true, ingredients: [], sub_recipes: [], costing_method: 'average_cost', batch_yield: 1 },
     unique: [
       { fields: ['name'], label: 'recipe name' },
       { fields: ['recipe_code'], label: 'recipe code', ignoreEmpty: true }
@@ -596,6 +596,10 @@ export const entityRegistry = {
       cuisine_type: stringOptional,
       category: stringOptional,
       servings: numberOptional,
+      portion_size_grams: numberOptional,
+      batch_yield: numberOptional,
+      costing_method: z.enum(['average_cost', 'last_cost', 'standard_cost']).optional().nullable(),
+      target_selling_price: numberOptional,
       ingredients: arrayOptional,
       sub_recipes: arrayOptional,
       instructions: stringOptional,
@@ -615,6 +619,10 @@ export const entityRegistry = {
       total_sugar: numberOptional,
       total_cost: numberOptional,
       cost_per_serving: numberOptional,
+      cost_per_100g: numberOptional,
+      total_recipe_weight_grams: numberOptional,
+      margin_per_serving: numberOptional,
+      food_cost_percent: numberOptional,
       costing_updated_at: stringOptional,
       allergens: arrayOptional,
       is_active: booleanOptional,

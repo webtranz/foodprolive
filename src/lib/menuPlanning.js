@@ -9,6 +9,7 @@ export const createMealEntryFromRecipe = (recipe) => ({
 });
 
 function safeNumber(value, fallback = '') {
+  if (value === null || value === undefined || value === '') return fallback;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
 }

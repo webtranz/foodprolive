@@ -3,6 +3,7 @@ import {
   convertIngredientQuantity
 } from '../../shared/ingredientUnits.js';
 import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
+import { formatRecipeQuantity } from '../../shared/recipeNumbers.js';
 
 export const PRODUCTION_MEAL_PERIODS = Object.freeze([
   { key: 'breakfast', label: 'Breakfast', time_range: '7:00 AM – 10:00 AM' },
@@ -69,7 +70,7 @@ function resolvePortionSize(production, recipe, recipes, ingredients) {
   );
   if (Number.isFinite(explicitGrams) && explicitGrams > 0) {
     return {
-      label: `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(explicitGrams)} g`,
+      label: `${formatRecipeQuantity(explicitGrams, 'g')} g`,
       grams: round(explicitGrams),
       is_complete: true,
       warnings: []
@@ -81,7 +82,7 @@ function resolvePortionSize(production, recipe, recipes, ingredients) {
     : { is_complete: false, grams_per_serving: null, warnings: ['Recipe master data is unavailable.'] };
   return {
     label: servingWeight.is_complete
-      ? `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(servingWeight.grams_per_serving)} g`
+      ? `${formatRecipeQuantity(servingWeight.grams_per_serving, 'g')} g`
       : 'Not available',
     grams: servingWeight.is_complete ? round(servingWeight.grams_per_serving) : null,
     is_complete: servingWeight.is_complete,
@@ -297,7 +298,10 @@ export function buildProductionPlanExportRows(dashboard) {
     prep_status: item.prep_status.label,
     workflow_status: item.workflow_status,
     shortages: item.shortages.map((shortage) => (
-      `${shortage.ingredient_name}: ${shortage.shortage_quantity} ${shortage.unit}`
+      `${shortage.ingredient_name}: ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit}`
+    )).join('; '),
+    ingredient_quantities: (item.recipe?.ingredients || []).map((line) => (
+      `${line.ingredient_name || line.ingredient_id || 'Ingredient'}: ${formatRecipeQuantity(line.quantity, line.unit)} ${line.unit || ''}`.trim()
     )).join('; '),
     notes: item.notes
   }));

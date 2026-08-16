@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 
 import {
-  SAR_CODE,
   SAR_SYMBOL,
   formatCurrency,
   replaceVisibleUSDCurrency
@@ -37,8 +36,16 @@ const cases = [
     run() {
       assert.equal(
         replaceVisibleUSDCurrency('Total: $123.45 (USD)'),
-        `Total: ${SAR_SYMBOL} 123.45 (${SAR_CODE})`
+        `Total: ${SAR_SYMBOL} 123.45 (${SAR_SYMBOL})`
       );
+    }
+  },
+  {
+    name: 'never substitutes a currency code or unrelated symbol',
+    run() {
+      const display = replaceVisibleUSDCurrency('SAR 10, AED 20, USD 30, ₹40, $50');
+      assert.equal(display, `${SAR_SYMBOL} 10, ${SAR_SYMBOL} 20, ${SAR_SYMBOL} 30, ${SAR_SYMBOL} 40, ${SAR_SYMBOL} 50`);
+      assert.equal(formatCurrency(10, { showCode: true }), `${SAR_SYMBOL} 10.00`);
     }
   },
   {

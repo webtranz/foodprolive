@@ -145,3 +145,67 @@ export async function searchIngredients(options = {}) {
     elapsed_ms: Math.max(1, Math.round(performance.now() - startedAt))
   };
 }
+
+/** Resolve the same latest and weighted-average costs used by the picker. */
+export async function getIngredientCostSnapshots(options = {}) {
+  const ingredientIds = [...new Set((options.ingredientIds || []).filter(Boolean).map(String))];
+  if (ingredientIds.length === 0) return {};
+  const siteIds = normalizeSiteIds(options.siteIds ?? null);
+  const result = await pool.query(
+    `WITH requested AS (
+       SELECT UNNEST($1::text[]) AS ingredient_id
+     ),
+     inventory_costs AS (
+       SELECT
+         inventory.data->>'ingredient_id' AS ingredient_id,
+         SUM(
+           CASE WHEN COALESCE(inventory.data->>'quantity', '') ~ '^[0-9]+([.][0-9]+)?$'
+             THEN (inventory.data->>'quantity')::numeric ELSE 0 END
+         ) AS total_quantity,
+         SUM(
+           (CASE WHEN COALESCE(inventory.data->>'quantity', '') ~ '^[0-9]+([.][0-9]+)?$'
+             THEN (inventory.data->>'quantity')::numeric ELSE 0 END)
+           *
+           (CASE WHEN COALESCE(
+             inventory.data->>'average_unit_cost',
+             inventory.data->>'unit_cost',
+             inventory.data->>'cost_per_unit',
+             ''
+           ) ~ '^[0-9]+([.][0-9]+)?$'
+             THEN COALESCE(
+               inventory.data->>'average_unit_cost',
+               inventory.data->>'unit_cost',
+               inventory.data->>'cost_per_unit'
+             )::numeric ELSE 0 END)
+         ) AS total_value
+       FROM entity_records inventory
+       JOIN requested ON requested.ingredient_id = inventory.data->>'ingredient_id'
+       WHERE inventory.entity_name = 'Inventory'
+         AND ($2::text[] IS NULL OR inventory.data->>'site_id' = ANY($2::text[]))
+       GROUP BY inventory.data->>'ingredient_id'
+     )
+     SELECT
+       requested.ingredient_id,
+       latest.unit_price AS last_cost,
+       CASE WHEN inventory.total_quantity > 0
+         THEN inventory.total_value / inventory.total_quantity
+         ELSE NULL
+       END AS average_cost
+     FROM requested
+     LEFT JOIN inventory_costs inventory USING (ingredient_id)
+     LEFT JOIN LATERAL (
+       SELECT history.unit_price
+       FROM supplier_price_history history
+       WHERE history.ingredient_id = requested.ingredient_id
+         AND ($2::text[] IS NULL OR history.site_id IS NULL OR history.site_id = ANY($2::text[]))
+       ORDER BY history.effective_date DESC, history.created_at DESC
+       LIMIT 1
+     ) latest ON TRUE`,
+    [ingredientIds, siteIds]
+  );
+
+  return Object.fromEntries(result.rows.map((row) => [row.ingredient_id, {
+    last_cost: row.last_cost === null ? null : Number(row.last_cost),
+    average_cost: row.average_cost === null ? null : Number(row.average_cost)
+  }]));
+}

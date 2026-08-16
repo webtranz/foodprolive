@@ -16,12 +16,14 @@ import { format } from 'date-fns';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { formatCurrency } from '@/lib/currency';
+import StandardDecimalInput from '@/components/recipes/StandardDecimalInput';
 import { buildProductionPlanExportRows } from '@/lib/productionPlanning';
 import {
   calculateIngredientCost,
   convertIngredientQuantity
 } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
+import { formatRecipeQuantity, getRecipeQuantityPrecision, roundStandardDecimal } from '../../shared/recipeNumbers.js';
 
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -46,7 +48,7 @@ export default function Production() {
     production_date: format(new Date(), 'yyyy-MM-dd'),
     meal_type: 'lunch',
     recipe_id: '',
-    target_servings: '',
+    target_servings: null,
     kitchen_station: '',
     notes: ''
   });
@@ -175,7 +177,7 @@ export default function Production() {
       production_date: format(new Date(), 'yyyy-MM-dd'),
       meal_type: 'lunch',
       recipe_id: '',
-      target_servings: '',
+      target_servings: null,
       kitchen_station: '',
       notes: ''
     });
@@ -195,8 +197,8 @@ export default function Production() {
           || (Array.isArray(recipe.sub_recipes) && recipe.sub_recipes.length > 0));
       if (hasRecipeComponents) {
         const multiplier = recipe.servings > 0
-          ? parseFloat(formData.target_servings) / recipe.servings
-          : parseFloat(formData.target_servings) || 1;
+          ? Number(formData.target_servings) / recipe.servings
+          : Number(formData.target_servings) || 1;
         const siteInventory = inventory.filter(i => i.site_id === formData.site_id);
         const expandedRecipe = expandRecipeIngredients(
           recipe,
@@ -235,10 +237,10 @@ export default function Production() {
             ingredient_id: ing.ingredient_id,
             ingredient_name: ing.ingredient_name,
             source_recipe_names: ing.source_recipe_names || [],
-            planned_quantity: Math.round(plannedQty * 100) / 100,
-            adjusted_quantity: Math.round(adjustedQty * 100) / 100,
-            current_stock: Math.round(currentStock * 100) / 100,
-            shortage: Math.round(shortage * 100) / 100,
+            planned_quantity: roundStandardDecimal(plannedQty, getRecipeQuantityPrecision(ing.unit)),
+            adjusted_quantity: roundStandardDecimal(adjustedQty, getRecipeQuantityPrecision(ing.unit)),
+            current_stock: roundStandardDecimal(currentStock, getRecipeQuantityPrecision(inventoryUnit)),
+            shortage: roundStandardDecimal(shortage, getRecipeQuantityPrecision(inventoryUnit)),
             unit: ing.unit,
             inventory_unit: inventoryUnit,
             cost_quantity: Number(costQuantity.toFixed(4)),
@@ -379,7 +381,7 @@ export default function Production() {
       ...formData,
       site_name: site?.name || '',
       recipe_name: recipe?.name || '',
-      target_servings: parseInt(formData.target_servings) || 0,
+      target_servings: Number(formData.target_servings) || 0,
       ingredients_used: calculatedIngredients.map(ing => ({
         ingredient_id: ing.ingredient_id,
         ingredient_name: ing.ingredient_name,
@@ -393,7 +395,7 @@ export default function Production() {
         estimated_cost: ing.estimated_cost
       })),
       total_calories: recipe?.calories_per_serving 
-        ? recipe.calories_per_serving * parseInt(formData.target_servings)
+        ? recipe.calories_per_serving * Number(formData.target_servings)
         : 0,
       estimated_batch_cost: estimatedBatchCost,
       estimated_cost_per_serving: estimatedCostPerServing,
@@ -461,9 +463,9 @@ export default function Production() {
       return {
         ingredient_id: ing.ingredient_id,
         ingredient_name: ing.ingredient_name,
-        adjusted_quantity: Math.round(requiredQuantity * 100) / 100,
-        current_stock: Math.round(currentStock * 100) / 100,
-        shortage: Math.round(shortage * 100) / 100,
+        adjusted_quantity: roundStandardDecimal(requiredQuantity, getRecipeQuantityPrecision(inventoryUnit)),
+        current_stock: roundStandardDecimal(currentStock, getRecipeQuantityPrecision(inventoryUnit)),
+        shortage: roundStandardDecimal(shortage, getRecipeQuantityPrecision(inventoryUnit)),
         unit: inventoryUnit,
         inventory_unit: inventoryUnit,
         sufficient: currentStock >= requiredQuantity
@@ -485,7 +487,7 @@ export default function Production() {
       production_date: production.production_date || format(new Date(), 'yyyy-MM-dd'),
       meal_type: production.meal_type || 'lunch',
       recipe_id: production.recipe_id || '',
-      target_servings: String(production.target_servings || ''),
+      target_servings: Number(production.target_servings) || null,
       kitchen_station: production.kitchen_station || production.assigned_station || production.station || '',
       notes: production.notes || ''
     });
@@ -699,12 +701,16 @@ export default function Production() {
 
                 <div>
                   <Label htmlFor="servings">Target Servings *</Label>
-                  <Input
+                  <StandardDecimalInput
                     id="servings"
-                    type="number"
-                    min="1"
                     value={formData.target_servings}
-                    onChange={(e) => setFormData({ ...formData, target_servings: e.target.value })}
+                    unit="servings"
+                    precision={0}
+                    min={0}
+                    allowZero={false}
+                    allowEmpty={false}
+                    label="Target servings"
+                    onValueChange={(value) => setFormData((current) => ({ ...current, target_servings: value }))}
                     placeholder="Number of servings to produce"
                     className="mt-1"
                     required
@@ -780,15 +786,15 @@ export default function Production() {
                       {calculatedIngredients.map((ing, idx) => (
                         <TableRow key={idx}>
                           <TableCell>{ing.ingredient_name}</TableCell>
-                          <TableCell className="font-medium">{ing.adjusted_quantity} {ing.unit}</TableCell>
+                          <TableCell className="font-medium">{formatRecipeQuantity(ing.adjusted_quantity, ing.unit)} {ing.unit}</TableCell>
                           <TableCell>{formatCurrency(toNumber(ing.unit_cost, 0))} / {ing.cost_unit}</TableCell>
                           <TableCell>{formatCurrency(toNumber(ing.estimated_cost, 0))}</TableCell>
-                          <TableCell>{ing.current_stock} {ing.inventory_unit}</TableCell>
+                          <TableCell>{formatRecipeQuantity(ing.current_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
                           <TableCell>
                             {ing.sufficient ? (
                               <Badge className="bg-green-600">Sufficient</Badge>
                             ) : (
-                              <Badge className="bg-red-600">Short {ing.shortage} {ing.inventory_unit}</Badge>
+                              <Badge className="bg-red-600">Short {formatRecipeQuantity(ing.shortage, ing.inventory_unit)} {ing.inventory_unit}</Badge>
                             )}
                           </TableCell>
                         </TableRow>
@@ -867,7 +873,7 @@ export default function Production() {
                   <p>Recipe: {selectedProduction?.recipe_name}</p>
                   <p>Site: {selectedProduction?.site_name}</p>
                   <p>Date: {selectedProduction?.production_date}</p>
-                  <p>Servings: {selectedProduction?.target_servings}</p>
+                  <p>Servings: {formatRecipeQuantity(selectedProduction?.target_servings, 'servings')}</p>
                 </div>
               </div>
 
@@ -886,13 +892,13 @@ export default function Production() {
                     {inventoryCheck.map((ing, idx) => (
                       <TableRow key={idx}>
                         <TableCell>{ing.ingredient_name}</TableCell>
-                        <TableCell>{ing.adjusted_quantity} {ing.unit}</TableCell>
-                        <TableCell>{ing.current_stock} {ing.inventory_unit}</TableCell>
+                        <TableCell>{formatRecipeQuantity(ing.adjusted_quantity, ing.unit)} {ing.unit}</TableCell>
+                        <TableCell>{formatRecipeQuantity(ing.current_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
                         <TableCell>
                           {ing.sufficient ? (
                             <Badge className="bg-green-600">✓ OK</Badge>
                           ) : (
-                            <Badge className="bg-red-600">Short {ing.shortage} {ing.inventory_unit}</Badge>
+                            <Badge className="bg-red-600">Short {formatRecipeQuantity(ing.shortage, ing.inventory_unit)} {ing.inventory_unit}</Badge>
                           )}
                         </TableCell>
                       </TableRow>
