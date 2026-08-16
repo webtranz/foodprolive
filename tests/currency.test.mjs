@@ -8,7 +8,7 @@ import {
 
 const cases = [
   {
-    name: 'formats integer amounts with Saudi Riyal sign',
+    name: 'formats integer amounts with the official Saudi Riyal symbol',
     run() {
       assert.equal(
         formatCurrency(123, { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
@@ -17,18 +17,24 @@ const cases = [
     }
   },
   {
-    name: 'formats decimal amounts with Saudi Riyal sign',
+    name: 'formats decimal amounts with the official Saudi Riyal symbol',
     run() {
       assert.equal(formatCurrency(123.45), `${SAR_SYMBOL} 123.45`);
     }
   },
   {
-    name: 'formats negative amounts with Saudi Riyal sign',
+    name: 'formats negative amounts with the official Saudi Riyal symbol',
     run() {
       assert.equal(
         formatCurrency(-50, { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
         `-${SAR_SYMBOL} 50`
       );
+    }
+  },
+  {
+    name: 'replaces the legacy Riyal sign in exported display text',
+    run() {
+      assert.equal(replaceVisibleUSDCurrency('Total: ﷼ 123.45'), `Total: ${SAR_SYMBOL} 123.45`);
     }
   },
   {

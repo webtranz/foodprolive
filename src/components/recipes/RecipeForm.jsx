@@ -663,7 +663,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
             </div>
 
             <div>
-              <Label htmlFor="target_selling_price">Target Selling Price (﷼ / serving)</Label>
+              <Label htmlFor="target_selling_price">Target Selling Price (⃁ / serving)</Label>
               <StandardDecimalInput
                 id="target_selling_price"
                 value={formData.target_selling_price}

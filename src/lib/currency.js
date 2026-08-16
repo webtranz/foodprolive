@@ -1,7 +1,7 @@
-// U+FDFC is the Riyal sign required by the product design. Keep every visible
-// monetary value on this one symbol so exports and screens cannot drift back
-// to currency codes or unrelated symbols.
-export const SAR_SYMBOL = '\uFDFC';
+// U+20C1 is the official Saudi Riyal symbol required by the product design.
+// Keep every visible monetary value on this one symbol so exports and screens
+// cannot drift back to legacy or unrelated currency signs.
+export const SAR_SYMBOL = '\u20C1';
 export const SAR_CODE = 'SAR';
 export const SAR_NAME = 'Saudi Riyal';
 
@@ -53,7 +53,7 @@ export function replaceVisibleUSDCurrency(text) {
   const replaced = protectedText
     .replace(/\b(?:USD|AED|SAR)\b/gi, SAR_SYMBOL)
     .replace(/\b(?:US\s+)?Dollars?\b/gi, SAR_SYMBOL)
-    .replace(/(?:₹|\$)\s*(?=\d)/g, `${SAR_SYMBOL} `);
+    .replace(/(?:﷼|₹|\$)\s*(?=\d)/g, `${SAR_SYMBOL} `);
 
   return placeholders.reduce(
     (result, original, index) => result.replace(`__TPL_${index}__`, original),
