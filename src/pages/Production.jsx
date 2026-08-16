@@ -1,27 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import PageHeader from '@/components/ui/PageHeader';
-import EmptyState from '@/components/ui/EmptyState';
+import ProductionPlanningDashboard from '@/components/production/ProductionPlanningDashboard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Factory, AlertCircle, Download, CheckCircle2, XCircle, Brain } from 'lucide-react';
+import { AlertCircle, CheckCircle2, XCircle, Brain } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
-import { Skeleton } from '@/components/ui/skeleton';
 import { format } from 'date-fns';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { formatCurrency } from '@/lib/currency';
+import { buildProductionPlanExportRows } from '@/lib/productionPlanning';
 import {
   calculateIngredientCost,
-  calculateProductionIngredientCost,
   convertIngredientQuantity
 } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
@@ -33,27 +30,9 @@ const MEAL_TYPES = [
   { value: 'snack', label: 'Snack' }
 ];
 
-const STATUS_COLORS = {
-  draft: 'bg-slate-100 text-slate-700',
-  pending_approval: 'bg-amber-100 text-amber-700',
-  approved: 'bg-green-100 text-green-700',
-  changes_requested: 'bg-orange-100 text-orange-700',
-  rejected: 'bg-red-100 text-red-700',
-  planned: 'bg-blue-100 text-blue-700',
-  in_progress: 'bg-purple-100 text-purple-700',
-  completed: 'bg-emerald-100 text-emerald-700',
-  cancelled: 'bg-red-100 text-red-700'
-};
-
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
-}
-
-function titleCase(value) {
-  return String(value || '')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 export default function Production() {
@@ -68,6 +47,7 @@ export default function Production() {
     meal_type: 'lunch',
     recipe_id: '',
     target_servings: '',
+    kitchen_station: '',
     notes: ''
   });
   const [calculatedIngredients, setCalculatedIngredients] = useState([]);
@@ -82,29 +62,40 @@ export default function Production() {
 
   const queryClient = useQueryClient();
 
-  const { data: sites = [] } = useQuery({
+  const { data: sites = [], error: sitesError } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
 
-  const { data: recipes = [] } = useQuery({
+  const { data: recipes = [], error: recipesError } = useQuery({
     queryKey: ['recipes'],
     queryFn: () => base44.entities.Recipe.list()
   });
 
-  const { data: ingredients = [] } = useQuery({
+  const { data: ingredients = [], error: ingredientsError } = useQuery({
     queryKey: ['ingredients'],
     queryFn: () => base44.entities.Ingredient.list()
   });
 
-  const { data: productions = [], isLoading } = useQuery({
+  const { data: productions = [], isLoading, error: productionsError } = useQuery({
     queryKey: ['productions', selectedSite, selectedDate],
-    queryFn: () => base44.entities.Production.list('-production_date', 100)
+    queryFn: () => base44.entities.Production.filter({
+      production_date: selectedDate,
+      ...(selectedSite && selectedSite !== 'all' ? { site_id: selectedSite } : {})
+    }, '-production_date'),
+    enabled: Boolean(selectedDate),
+    refetchInterval: 30000
   });
 
-  const { data: materialRequests = [] } = useQuery({
+  const { data: productionHistory = [] } = useQuery({
+    queryKey: ['productionHistoryForWasteInsights'],
+    queryFn: () => base44.entities.Production.list('-production_date', 1000)
+  });
+
+  const { data: materialRequests = [], error: materialRequestsError } = useQuery({
     queryKey: ['materialRequestsWorkflow'],
-    queryFn: () => base44.materialRequests.list()
+    queryFn: () => base44.materialRequests.list(),
+    refetchInterval: 30000
   });
 
   const { data: foodWaste = [] } = useQuery({
@@ -120,6 +111,7 @@ export default function Production() {
     ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       setFormOpen(false);
       setEditingProduction(null);
@@ -131,14 +123,17 @@ export default function Production() {
     }
   });
 
-  const { data: inventory = [] } = useQuery({
+  const { data: inventory = [], error: inventoryError } = useQuery({
     queryKey: ['inventory'],
-    queryFn: () => base44.entities.Inventory.list()
+    queryFn: () => base44.entities.Inventory.list(),
+    refetchInterval: 30000
   });
 
-  const visibleSites = isAdmin
-    ? sites
-    : sites.filter((site) => allowedSiteIds.includes(site.id));
+  const visibleSites = useMemo(() => (
+    isAdmin
+      ? sites
+      : sites.filter((site) => allowedSiteIds.includes(site.id))
+  ), [allowedSiteIds, isAdmin, sites]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -154,7 +149,7 @@ export default function Production() {
   }, [isAdmin, assignedSiteId, visibleSites]);
 
   const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status, production }) => {
+    mutationFn: async ({ id, status }) => {
       if (status === 'completed') {
         await base44.inventory.completeProduction(id);
         return;
@@ -164,6 +159,7 @@ export default function Production() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
       setActionError('');
@@ -180,6 +176,7 @@ export default function Production() {
       meal_type: 'lunch',
       recipe_id: '',
       target_servings: '',
+      kitchen_station: '',
       notes: ''
     });
     setEditingProduction(null);
@@ -283,7 +280,7 @@ export default function Production() {
   const recipeWasteInsights = useMemo(() => {
     const insights = new Map();
 
-    productions.forEach((production) => {
+    productionHistory.forEach((production) => {
       const key = `${production.site_id || 'unknown'}::${production.recipe_id || 'unknown'}::${production.meal_type || 'unspecified'}`;
       if (!insights.has(key)) {
         insights.set(key, {
@@ -303,7 +300,9 @@ export default function Production() {
     });
 
     foodWaste.forEach((waste) => {
-      const relatedProduction = waste.production_id ? productions.find((production) => production.id === waste.production_id) : null;
+      const relatedProduction = waste.production_id
+        ? productionHistory.find((production) => production.id === waste.production_id)
+        : null;
       const siteId = waste.site_id || relatedProduction?.site_id || 'unknown';
       const recipeId = waste.recipe_id || relatedProduction?.recipe_id || 'unknown';
       const mealType = relatedProduction?.meal_type || 'unspecified';
@@ -330,7 +329,7 @@ export default function Production() {
     });
 
     return insights;
-  }, [foodWaste, productions]);
+  }, [foodWaste, productionHistory]);
 
   const selectedRecipeInsight = useMemo(() => {
     if (!formData.recipe_id || !formData.site_id) return null;
@@ -372,32 +371,6 @@ export default function Production() {
     };
   }, [formData.meal_type, formData.recipe_id, formData.site_id, recipeWasteInsights, recipes]);
 
-  const getProductionShortages = (production) => {
-    const siteInventory = inventory.filter((item) => item.site_id === production.site_id);
-    return (production.ingredients_used || []).map((ingredient) => {
-      const stockItem = siteInventory.find((item) => item.ingredient_id === ingredient.ingredient_id);
-      const ingredientData = ingredients.find((item) => item.id === ingredient.ingredient_id);
-      const requiredQuantity = toNumber(ingredient.planned_quantity ?? ingredient.adjusted_quantity, 0);
-      const inventoryUnit = stockItem?.unit || ingredientData?.unit || ingredient.unit;
-      const requiredInventoryQty = convertIngredientQuantity(
-        requiredQuantity,
-        ingredient.unit,
-        inventoryUnit,
-        ingredientData
-      );
-      const currentStock = toNumber(stockItem?.quantity, 0);
-      const shortage = Math.max(0, requiredInventoryQty - currentStock);
-
-      return {
-        ...ingredient,
-        inventory_unit: inventoryUnit,
-        current_stock: Number(currentStock.toFixed(2)),
-        shortage: Number(shortage.toFixed(2)),
-        sufficient: shortage <= 0
-      };
-    }).filter((ingredient) => ingredient.shortage > 0);
-  };
-
   const buildSubmitData = (status) => {
     const site = visibleSites.find((s) => s.id === formData.site_id) || sites.find((s) => s.id === formData.site_id);
     const recipe = recipes.find(r => r.id === formData.recipe_id);
@@ -430,37 +403,43 @@ export default function Production() {
 
   const handleSubmit = (e, status = 'draft') => {
     e.preventDefault();
+    const form = e.currentTarget?.form || e.currentTarget;
+    if (typeof form?.checkValidity === 'function' && !form.checkValidity()) {
+      form.reportValidity();
+      return;
+    }
+    if (!formData.site_id || !formData.production_date || !formData.recipe_id || !formData.kitchen_station.trim()) {
+      setActionError('Complete the site, production date, recipe, servings, and kitchen station before saving.');
+      return;
+    }
+    setActionError('');
     createMutation.mutate(buildSubmitData(status));
   };
 
   const handleReview = async (action) => {
     if (!selectedProduction) return;
 
-    if (action === 'approve') {
+    try {
+      const status = action === 'approve'
+        ? 'approved'
+        : action === 'request_changes'
+          ? 'changes_requested'
+          : 'rejected';
       await base44.entities.Production.update(selectedProduction.id, {
-        status: 'approved',
+        status,
         review_notes: reviewNotes || null,
         reviewed_at: new Date().toISOString()
       });
-    } else if (action === 'request_changes') {
-      await base44.entities.Production.update(selectedProduction.id, {
-        status: 'changes_requested',
-        review_notes: reviewNotes || null,
-        reviewed_at: new Date().toISOString()
-      });
-    } else {
-      await base44.entities.Production.update(selectedProduction.id, {
-        status: 'rejected',
-        review_notes: reviewNotes || null,
-        reviewed_at: new Date().toISOString()
-      });
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      setShowApprovalDialog(false);
+      setSelectedProduction(null);
+      setReviewNotes('');
+      setActionError('');
+    } catch (error) {
+      setActionError(error.message || 'Unable to review the production request.');
     }
-
-    queryClient.invalidateQueries({ queryKey: ['productions'] });
-    queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
-    setShowApprovalDialog(false);
-    setSelectedProduction(null);
-    setReviewNotes('');
   };
 
   const openApprovalDialog = (production) => {
@@ -468,27 +447,38 @@ export default function Production() {
     
     const check = production.ingredients_used?.map(ing => {
       const invItem = siteInventory.find(i => i.ingredient_id === ing.ingredient_id);
-      const currentStock = invItem?.quantity || 0;
-      const shortage = Math.max(0, ing.planned_quantity - currentStock);
+      const ingredientData = ingredients.find((ingredient) => ingredient.id === ing.ingredient_id);
+      const inventoryUnit = invItem?.unit || ingredientData?.unit || ing.unit;
+      const requiredQuantity = convertIngredientQuantity(
+        ing.actual_quantity ?? ing.planned_quantity ?? ing.adjusted_quantity ?? 0,
+        ing.unit || inventoryUnit,
+        inventoryUnit,
+        ingredientData
+      );
+      const currentStock = toNumber(invItem?.quantity, 0);
+      const shortage = Math.max(0, requiredQuantity - currentStock);
       
       return {
         ingredient_id: ing.ingredient_id,
         ingredient_name: ing.ingredient_name,
-        adjusted_quantity: ing.planned_quantity,
+        adjusted_quantity: Math.round(requiredQuantity * 100) / 100,
         current_stock: Math.round(currentStock * 100) / 100,
         shortage: Math.round(shortage * 100) / 100,
-        unit: ing.unit,
-        sufficient: currentStock >= ing.planned_quantity
+        unit: inventoryUnit,
+        inventory_unit: inventoryUnit,
+        sufficient: currentStock >= requiredQuantity
       };
     }) || [];
     
     setInventoryCheck(check);
+    setActionError('');
     setSelectedProduction(production);
     setReviewNotes(production.review_notes || '');
     setShowApprovalDialog(true);
   };
 
   const openEditDialog = (production) => {
+    setActionError('');
     setEditingProduction(production);
     setFormData({
       site_id: production.site_id || '',
@@ -496,6 +486,7 @@ export default function Production() {
       meal_type: production.meal_type || 'lunch',
       recipe_id: production.recipe_id || '',
       target_servings: String(production.target_servings || ''),
+      kitchen_station: production.kitchen_station || production.assigned_station || production.station || '',
       notes: production.notes || ''
     });
     setFormOpen(true);
@@ -506,280 +497,129 @@ export default function Production() {
     return String(linkedMaterialRequest.status || '').toLowerCase() === 'acknowledged';
   };
 
-  return (
-    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
-      <div className="max-w-[1600px] mx-auto">
-        <PageHeader 
-          title="Production" 
-          description="Plan and track food production"
+  const renderProductionActions = (production, linkedMaterialRequest) => (
+    <div className="flex flex-wrap gap-2">
+      {['draft', 'changes_requested'].includes(production.status) && can('edit_production_request') ? (
+        <Button size="sm" variant="outline" onClick={() => openEditDialog(production)}>
+          Edit Request
+        </Button>
+      ) : null}
+      {['draft', 'changes_requested'].includes(production.status) && can('submit_production_request') ? (
+        <Button
+          size="sm"
+          className="bg-amber-600 hover:bg-amber-700"
+          onClick={() => updateStatusMutation.mutate({
+            id: production.id,
+            status: 'pending_approval',
+            production
+          })}
+          disabled={updateStatusMutation.isPending}
         >
-          <Button 
-            variant="outline"
-            onClick={() => downloadCSV(filteredProductions, 'production')}
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export
-          </Button>
-          <Button 
-            onClick={() => {
-              resetForm();
-              setFormOpen(true);
-            }}
-            className="bg-emerald-600 hover:bg-emerald-700"
-            disabled={!can('create_production_request')}
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            New Production
-          </Button>
-        </PageHeader>
+          Submit for Approval
+        </Button>
+      ) : null}
+      {production.status === 'pending_approval' && can('review_production_request') ? (
+        <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => openApprovalDialog(production)}>
+          Review Request
+        </Button>
+      ) : null}
+      {production.status === 'approved' && can('start_production') ? (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => updateStatusMutation.mutate({
+            id: production.id,
+            status: 'in_progress',
+            production
+          })}
+          disabled={!canStartWithMaterialRequest(linkedMaterialRequest) || updateStatusMutation.isPending}
+        >
+          Start Production
+        </Button>
+      ) : null}
+      {production.status === 'in_progress' && can('complete_production') ? (
+        <Button
+          size="sm"
+          className="bg-emerald-600 hover:bg-emerald-700"
+          onClick={() => updateStatusMutation.mutate({
+            id: production.id,
+            status: 'completed',
+            production
+          })}
+          disabled={updateStatusMutation.isPending}
+        >
+          {updateStatusMutation.isPending ? 'Completing...' : 'Complete'}
+        </Button>
+      ) : null}
+    </div>
+  );
 
-        {/* Filters */}
-        <div className="bg-white rounded-xl border border-slate-100 p-4 mb-6">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div>
-              <Label className="mb-1 block text-sm">Date</Label>
-              <Input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-[180px]"
-              />
-            </div>
-            <div>
-              <Label className="mb-1 block text-sm">Project / Site</Label>
-              <Select value={selectedSite} onValueChange={setSelectedSite}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {isAdmin ? <SelectItem value="all">All Sites</SelectItem> : null}
-                  {visibleSites.map(site => (
-                    <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </div>
+  const loadError = actionError
+    || productionsError?.message
+    || sitesError?.message
+    || recipesError?.message
+    || ingredientsError?.message
+    || inventoryError?.message
+    || materialRequestsError?.message
+    || '';
+  const siteOptions = isAdmin
+    ? [{ id: 'all', name: 'All Sites' }, ...visibleSites]
+    : visibleSites;
 
-        {/* Content */}
-        {actionError ? (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {actionError}
-          </div>
-        ) : null}
-
-        {isLoading ? (
-          <div className="space-y-4">
-            {[...Array(3)].map((_, i) => (
-              <Skeleton key={i} className="h-32 rounded-xl" />
-            ))}
-          </div>
-        ) : filteredProductions.length === 0 ? (
-          <EmptyState
-            icon={Factory}
-            title="No production planned"
-            description="Start planning production for this date"
-            actionLabel="New Production"
-            onAction={() => setFormOpen(true)}
-          />
-        ) : (
-          <div className="space-y-4">
-            {filteredProductions.map(production => (
-              <Card key={production.id} className="border-slate-100 shadow-sm">
-                <CardContent className="p-6">
-                  {(() => {
-                    const linkedMaterialRequest = materialRequestMap[production.id] || null;
-                    const shortages = getProductionShortages(production);
-                    const requiresMaterialRequest = true;
-                    const canStartProduction = canStartWithMaterialRequest(linkedMaterialRequest);
-                    const recalculatedEstimate = (production.ingredients_used || []).reduce((sum, ingredient) => {
-                      const ingredientData = ingredients.find((item) => item.id === ingredient.ingredient_id);
-                      return sum + calculateProductionIngredientCost(ingredient, ingredientData);
-                    }, 0);
-                    const isCompleted = production.status === 'completed';
-                    const totalCost = isCompleted
-                      ? toNumber(
-                        production.production_cost_total ?? production.ingredient_cost_total,
-                        recalculatedEstimate
-                      )
-                      : recalculatedEstimate;
-                    const servings = Math.max(1, toNumber(production.target_servings, 0));
-                    const costPerServing = isCompleted
-                      ? toNumber(production.cost_per_serving, totalCost / servings)
-                      : totalCost / servings;
-
-                    const wasteInsightKey = `${production.site_id || 'unknown'}::${production.recipe_id || 'unknown'}::${production.meal_type || 'unspecified'}`;
-                    const wasteInsight = recipeWasteInsights.get(wasteInsightKey);
-                    const historicalWasteRate = wasteInsight?.produced_servings > 0
-                      ? (wasteInsight.waste_servings / wasteInsight.produced_servings) * 100
-                      : 0;
-
-                    return (
-                      <>
-                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center">
-                        <Factory className="w-6 h-6 text-emerald-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-slate-900">{production.recipe_name}</h3>
-                        <div className="flex flex-wrap items-center gap-2 mt-1">
-                          <Badge className={STATUS_COLORS[production.status]}>
-                            {production.status?.replace(/_/g, ' ')}
-                          </Badge>
-                          {linkedMaterialRequest ? (
-                            <Badge variant="outline" className="border-indigo-200 text-indigo-700">
-                              MR {linkedMaterialRequest.request_number} • {String(linkedMaterialRequest.status || '').replace(/_/g, ' ')}
-                            </Badge>
-                          ) : null}
-                          <span className="text-sm text-slate-500">{production.site_name}</span>
-                          <span className="text-sm text-slate-500">•</span>
-                          <span className="text-sm text-slate-500 capitalize">{production.meal_type}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-6">
-                      <div className="text-center">
-                        <p className="text-2xl font-bold text-slate-900">{production.target_servings}</p>
-                        <p className="text-xs text-slate-500">Target</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-2xl font-bold text-emerald-700">{formatCurrency(totalCost)}</p>
-                        <p className="text-xs text-slate-500">{production.status === 'completed' ? 'Production Cost' : 'Est. Batch Cost'}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-2xl font-bold text-slate-900">{formatCurrency(costPerServing)}</p>
-                        <p className="text-xs text-slate-500">Cost / Serving</p>
-                      </div>
-                      {production.total_calories > 0 && (
-                        <div className="text-center">
-                          <p className="text-2xl font-bold text-orange-600">{production.total_calories}</p>
-                          <p className="text-xs text-slate-500">Total Cal</p>
-                        </div>
-                      )}
-                      <div className="flex gap-2">
-                        {['draft', 'changes_requested'].includes(production.status) && can('edit_production_request') && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openEditDialog(production)}
-                          >
-                            Edit Request
-                          </Button>
-                        )}
-                        {['draft', 'changes_requested'].includes(production.status) && can('submit_production_request') && (
-                          <Button
-                            size="sm"
-                            className="bg-amber-600 hover:bg-amber-700"
-                            onClick={() => updateStatusMutation.mutate({
-                              id: production.id,
-                              status: 'pending_approval',
-                              production
-                            })}
-                          >
-                            Submit for Approval
-                          </Button>
-                        )}
-                        {production.status === 'pending_approval' && can('review_production_request') && (
-                          <Button 
-                            size="sm" 
-                            className="bg-green-600 hover:bg-green-700"
-                            onClick={() => openApprovalDialog(production)}
-                          >
-                            Review Request
-                          </Button>
-                        )}
-                        {production.status === 'approved' && can('start_production') && (
-                          <Button 
-                            size="sm" 
-                            variant="outline"
-                            onClick={() => updateStatusMutation.mutate({ 
-                              id: production.id, 
-                              status: 'in_progress',
-                              production 
-                            })}
-                            disabled={!canStartProduction || updateStatusMutation.isPending}
-                          >
-                            Start Production
-                          </Button>
-                        )}
-                        {production.status === 'in_progress' && can('complete_production') && (
-                          <Button 
-                            size="sm" 
-                            className="bg-emerald-600 hover:bg-emerald-700"
-                            onClick={() => updateStatusMutation.mutate({ 
-                              id: production.id, 
-                              status: 'completed',
-                              production
-                            })}
-                            disabled={updateStatusMutation.isPending}
-                          >
-                            {updateStatusMutation.isPending ? 'Completing...' : 'Complete'}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {production.ingredients_used && production.ingredients_used.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-slate-100">
-                      <p className="text-sm font-medium text-slate-700 mb-2">Required Ingredients:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {production.ingredients_used.map((ing, idx) => {
-                          const ingredientData = ingredients.find((item) => item.id === ing.ingredient_id);
-                          const lineCost = calculateProductionIngredientCost(ing, ingredientData);
-                          return (
-                            <Badge key={idx} variant="outline" className="font-normal">
-                              {ing.ingredient_name}: {ing.planned_quantity} {ing.unit} {lineCost > 0 ? `• ${formatCurrency(lineCost)}` : ''}
-                            </Badge>
-                          );
-                        })}
-                      </div>
-                      {linkedMaterialRequest ? (
-                        <p className="mt-3 text-sm text-indigo-700">
-                          Linked material request: {linkedMaterialRequest.request_number} ({String(linkedMaterialRequest.status || '').replace(/_/g, ' ')})
-                        </p>
-                      ) : null}
-                      {production.status === 'approved' && linkedMaterialRequest && String(linkedMaterialRequest.status || '').toLowerCase() !== 'acknowledged' ? (
-                        <p className="mt-3 text-sm text-amber-700">
-                          Procurement must acknowledge the material request before production can start.
-                        </p>
-                      ) : null}
-                      {production.review_notes ? (
-                        <p className="mt-2 text-sm text-slate-600">
-                          Review Notes: {production.review_notes}
-                        </p>
-                      ) : null}
-                      {wasteInsight ? (
-                        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
-                          <div className="flex items-center gap-2 text-sm font-medium text-amber-900">
-                            <Brain className="w-4 h-4" />
-                            Historical Waste Signal
-                          </div>
-                          <p className="mt-1 text-sm text-amber-800">
-                            Historical waste for this recipe is {historicalWasteRate.toFixed(1)}% with {wasteInsight.waste_servings.toFixed(1)} wasted servings and {formatCurrency(wasteInsight.waste_cost)} waste cost.
-                          </p>
-                        </div>
-                      ) : null}
-                    </div>
-                  )}
-                      </>
-                    );
-                  })()}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+  return (
+    <>
+      <ProductionPlanningDashboard
+        productions={filteredProductions}
+        recipes={recipes}
+        ingredients={ingredients}
+        inventory={inventory}
+        sites={siteOptions}
+        selectedDate={selectedDate}
+        selectedSite={selectedSite}
+        onDateChange={setSelectedDate}
+        onSiteChange={setSelectedSite}
+        materialRequestMap={materialRequestMap}
+        isLoading={isLoading}
+        errorMessage={loadError}
+        canCreate={can('create_production_request')}
+        onNewProduction={() => {
+          resetForm();
+          setActionError('');
+          setFormData((current) => ({
+            ...current,
+            production_date: selectedDate,
+            site_id: selectedSite === 'all' ? '' : selectedSite
+          }));
+          setFormOpen(true);
+        }}
+        onExport={(dashboard) => downloadCSV(
+          buildProductionPlanExportRows(dashboard),
+          `production_plan_${selectedDate}`
         )}
+        onPrint={() => window.print()}
+        renderActions={renderProductionActions}
+      />
 
         {/* Form Dialog */}
-        <Dialog open={formOpen} onOpenChange={setFormOpen}>
+        <Dialog
+          open={formOpen}
+          onOpenChange={(open) => {
+            setFormOpen(open);
+            if (!open) {
+              resetForm();
+              setActionError('');
+            }
+          }}
+        >
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingProduction ? 'Edit Production Request' : 'Plan New Production'}</DialogTitle>
             </DialogHeader>
+            {actionError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {actionError}
+              </div>
+            ) : null}
             <form onSubmit={(event) => handleSubmit(event, editingProduction ? editingProduction.status || 'draft' : 'draft')} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -788,7 +628,7 @@ export default function Production() {
                     value={formData.site_id}
                     onValueChange={(value) => setFormData({ ...formData, site_id: value })}
                   >
-                    <SelectTrigger className="mt-1">
+                    <SelectTrigger id="site" className="mt-1">
                       <SelectValue placeholder="Select site" />
                     </SelectTrigger>
                     <SelectContent>
@@ -802,6 +642,7 @@ export default function Production() {
                 <div>
                   <Label htmlFor="date">Production Date *</Label>
                   <Input
+                    id="date"
                     type="date"
                     value={formData.production_date}
                     onChange={(e) => setFormData({ ...formData, production_date: e.target.value })}
@@ -816,7 +657,7 @@ export default function Production() {
                     value={formData.meal_type}
                     onValueChange={(value) => setFormData({ ...formData, meal_type: value })}
                   >
-                    <SelectTrigger className="mt-1">
+                    <SelectTrigger id="meal_type" className="mt-1">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -831,9 +672,19 @@ export default function Production() {
                   <Label htmlFor="recipe">Recipe *</Label>
                   <Select
                     value={formData.recipe_id}
-                    onValueChange={(value) => setFormData({ ...formData, recipe_id: value })}
+                    onValueChange={(value) => {
+                      const selectedRecipe = recipes.find((recipe) => recipe.id === value);
+                      setFormData({
+                        ...formData,
+                        recipe_id: value,
+                        kitchen_station: formData.kitchen_station
+                          || selectedRecipe?.kitchen_station
+                          || selectedRecipe?.station
+                          || ''
+                      });
+                    }}
                   >
-                    <SelectTrigger className="mt-1">
+                    <SelectTrigger id="recipe" className="mt-1">
                       <SelectValue placeholder="Select recipe" />
                     </SelectTrigger>
                     <SelectContent>
@@ -846,14 +697,27 @@ export default function Production() {
                   </Select>
                 </div>
 
-                <div className="col-span-2">
+                <div>
                   <Label htmlFor="servings">Target Servings *</Label>
                   <Input
+                    id="servings"
                     type="number"
                     min="1"
                     value={formData.target_servings}
                     onChange={(e) => setFormData({ ...formData, target_servings: e.target.value })}
                     placeholder="Number of servings to produce"
+                    className="mt-1"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="kitchen_station">Kitchen Station *</Label>
+                  <Input
+                    id="kitchen_station"
+                    value={formData.kitchen_station}
+                    onChange={(event) => setFormData({ ...formData, kitchen_station: event.target.value })}
+                    placeholder="e.g. Hot Line, Grill, Cold Prep"
                     className="mt-1"
                     required
                   />
@@ -944,6 +808,7 @@ export default function Production() {
               <div>
                 <Label htmlFor="notes">Notes</Label>
                 <Textarea
+                  id="notes"
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   placeholder="Additional notes..."
@@ -979,11 +844,22 @@ export default function Production() {
         </Dialog>
 
         {/* Approval Dialog */}
-        <Dialog open={showApprovalDialog} onOpenChange={setShowApprovalDialog}>
+        <Dialog
+          open={showApprovalDialog}
+          onOpenChange={(open) => {
+            setShowApprovalDialog(open);
+            if (!open) setActionError('');
+          }}
+        >
           <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle>Review Production Request</DialogTitle>
             </DialogHeader>
+            {actionError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {actionError}
+              </div>
+            ) : null}
             <div className="space-y-4">
               <div className="bg-slate-50 rounded-lg p-4">
                 <p className="text-sm font-medium mb-2">Production Details</p>
@@ -1079,7 +955,6 @@ export default function Production() {
             </div>
           </DialogContent>
         </Dialog>
-      </div>
-    </div>
+    </>
   );
 }

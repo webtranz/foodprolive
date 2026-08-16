@@ -86,3 +86,54 @@
     @apply bg-background text-foreground;
   }
 }
+
+@media print {
+  @page {
+    size: landscape;
+    margin: 8mm;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .production-plan-page,
+  .production-plan-page * {
+    visibility: visible;
+  }
+
+  .production-plan-page {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    min-height: auto !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+
+  .production-plan-no-print {
+    display: none !important;
+  }
+
+  .production-plan-layout {
+    display: block !important;
+  }
+
+  .production-meal-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .production-plan-summary {
+    position: static !important;
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px !important;
+    margin-top: 12px;
+  }
+
+  .production-meal-section,
+  .production-plan-summary > * {
+    break-inside: avoid;
+  }
+}

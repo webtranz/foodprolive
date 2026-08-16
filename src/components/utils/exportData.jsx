@@ -49,7 +49,7 @@ export function downloadCSV(data, filename) {
   
   normalizedRows.forEach(row => {
     const values = headers.map(header => {
-      let value = row[header] || row.data?.[header] || '';
+      let value = row[header] ?? row.data?.[header] ?? '';
       
       // Handle arrays and objects
       if (Array.isArray(value)) {
@@ -81,6 +81,7 @@ export function downloadCSV(data, filename) {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export function downloadExcel(data, filename, sheetName = 'Report') {
