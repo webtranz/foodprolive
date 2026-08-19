@@ -15,6 +15,7 @@ import { calculateIngredientCost } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 import { calculateYieldAdjustedQuantity } from '../../shared/ingredientYield.js';
 import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
+import { getItemCode } from '../../shared/itemCode.js';
 
 export default function ProductionCalculator() {
   const [selectedRecipe, setSelectedRecipe] = useState('');
@@ -80,6 +81,7 @@ export default function ProductionCalculator() {
       
       return {
         id: ing.ingredient_id,
+        itemCode: getItemCode(ingData, getItemCode(ing)),
         name: ing.ingredient_name,
         netQuantity: Number(netQuantity.toFixed(4)),
         rawRequiredQuantity: Number(rawRequiredQuantity.toFixed(4)),
@@ -255,7 +257,8 @@ export default function ProductionCalculator() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Ingredient</TableHead>
+                            <TableHead>Item Code</TableHead>
+                            <TableHead>Item Name</TableHead>
                             <TableHead>Category</TableHead>
                             <TableHead>Net Recipe Qty</TableHead>
                             <TableHead>Yield</TableHead>
@@ -266,6 +269,7 @@ export default function ProductionCalculator() {
                         <TableBody>
                           {calculations.ingredients.map((ing, index) => (
                             <TableRow key={index}>
+                              <TableCell className="font-mono text-xs text-slate-600">{ing.itemCode}</TableCell>
                               <TableCell className="font-medium">{ing.name}</TableCell>
                               <TableCell>
                                 <Badge variant="outline" className="capitalize">

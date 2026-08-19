@@ -31,6 +31,7 @@ export default function YieldUpload({ onSuccess }) {
               items: {
                 type: "object",
                 properties: {
+                  item_code: { type: "string" },
                   name: { type: "string" },
                   cuisine_type: { type: "string" },
                   category: { type: "string" },

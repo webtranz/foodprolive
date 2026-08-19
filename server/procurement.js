@@ -9,6 +9,7 @@ import {
   validateDocumentRelationships
 } from './db.js';
 import { receiveStock } from './inventory.js';
+import { enrichIngredientItemCodes } from './itemCodes.js';
 
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const nowIso = () => new Date().toISOString();
@@ -168,7 +169,7 @@ async function getRequestItems(requestIds = [], executor = pool) {
     [requestIds],
     executor
   );
-  return result.rows;
+  return enrichIngredientItemCodes(result.rows, executor);
 }
 
 async function listPurchaseRequests(executor = pool) {
@@ -418,7 +419,7 @@ async function getOrderItems(orderIds = [], executor = pool, lock = false) {
     [orderIds],
     executor
   );
-  return result.rows;
+  return enrichIngredientItemCodes(result.rows, executor);
 }
 
 async function listPurchaseOrders(executor = pool) {
@@ -679,7 +680,7 @@ async function getReceiptItems(receiptIds = [], executor = pool) {
     [receiptIds],
     executor
   );
-  return result.rows;
+  return enrichIngredientItemCodes(result.rows, executor);
 }
 
 async function listGoodsReceipts(executor = pool) {
@@ -1018,7 +1019,7 @@ async function listSupplierPriceComparison({ ingredientId = '', supplierId = '' 
      ORDER BY COALESCE(ingredient_id, ingredient_name), COALESCE(supplier_id, supplier_name), effective_date DESC, created_at DESC`,
     params
   );
-  return result.rows;
+  return enrichIngredientItemCodes(result.rows);
 }
 
 async function getSupplierPerformanceDashboard() {

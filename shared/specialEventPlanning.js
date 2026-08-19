@@ -2,6 +2,7 @@ import { convertIngredientQuantity } from './ingredientUnits.js';
 import { expandRecipeIngredients } from './recipeComposition.js';
 import { calculateRecipeCostingSnapshot } from './recipeCosting.js';
 import { calculateYieldAdjustedQuantity } from './ingredientYield.js';
+import { getItemCode } from './itemCode.js';
 
 function number(value, fallback = 0) {
   const parsed = Number(value);
@@ -73,6 +74,7 @@ export function calculateEventPlanningSnapshot(event = {}, recipes = [], ingredi
       const key = String(line.ingredient_id);
       const current = requirements.get(key) || {
         ingredient_id: line.ingredient_id,
+        item_code: getItemCode(ingredient, getItemCode(line, null)),
         ingredient_name: ingredient.name || line.ingredient_name || 'Unnamed ingredient',
         net_required_quantity: 0,
         required_quantity: 0,
@@ -220,6 +222,7 @@ export function buildEventProductionPlanPayloads(event = {}, snapshot = {}, reci
         );
         return {
           ingredient_id: line.ingredient_id,
+          item_code: getItemCode(ingredient, getItemCode(line, null)),
           ingredient_name: ingredient.name || line.ingredient_name,
           net_quantity: rounded(netQuantity, 4),
           planned_quantity: rounded(rawQuantity, 4),
@@ -246,6 +249,7 @@ export function buildEventPurchaseRequestItems(snapshot = {}, eventName = '') {
     .filter((item) => number(item.shortage_quantity) > 0)
     .map((item) => ({
       ingredient_id: item.ingredient_id,
+      item_code: getItemCode(item, null),
       ingredient_name: item.ingredient_name,
       description: `Event shortage for ${eventName}`,
       requested_quantity: number(item.shortage_quantity),

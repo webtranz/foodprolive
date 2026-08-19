@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { PlusCircle, MinusCircle, SlidersHorizontal } from 'lucide-react';
+import { getItemCode } from '../../../shared/itemCode.js';
 import { format } from 'date-fns';
 
 export default function InventoryTransactionDialog({ 
@@ -100,17 +101,17 @@ export default function InventoryTransactionDialog({
             {isAddition ? (
               <>
                 <PlusCircle className="w-5 h-5 text-green-600" />
-                Add Stock - {inventoryItem?.ingredient_name}
+                Add Stock — {getItemCode(inventoryItem)} · {inventoryItem?.ingredient_name || '—'}
               </>
             ) : transactionType === 'adjustment' ? (
               <>
                 <SlidersHorizontal className="w-5 h-5 text-blue-600" />
-                Adjust Stock - {inventoryItem?.ingredient_name}
+                Adjust Stock — {getItemCode(inventoryItem)} · {inventoryItem?.ingredient_name || '—'}
               </>
             ) : (
               <>
                 <MinusCircle className="w-5 h-5 text-red-600" />
-                Issue Stock - {inventoryItem?.ingredient_name}
+                Issue Stock — {getItemCode(inventoryItem)} · {inventoryItem?.ingredient_name || '—'}
               </>
             )}
           </DialogTitle>

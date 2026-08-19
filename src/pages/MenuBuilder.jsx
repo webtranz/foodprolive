@@ -49,6 +49,7 @@ export default function MenuBuilder() {
     setMenuItems(prev => [...prev, {
       ...itemForm,
       id: Date.now(),
+      item_code: recipe?.recipe_code || '—',
       recipe_name: recipe?.name || '',
       portion: parseFloat(itemForm.portion),
       cost_per_unit: parseFloat(itemForm.cost_per_unit) || 0,
@@ -84,8 +85,9 @@ export default function MenuBuilder() {
 
   const exportMenu = () => {
     const data = projection.map(i => ({
+      item_code: i.item_code || '—',
+      item_name: i.item_name,
       category: i.category,
-      item: i.item_name,
       portion: `${i.portion} ${i.unit}`,
       covers: numCovers,
       required: `${i.required} ${i.unit}`,
@@ -196,7 +198,8 @@ export default function MenuBuilder() {
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead>Item</TableHead>
+                              <TableHead>Item Code</TableHead>
+                              <TableHead>Item Name</TableHead>
                               <TableHead>Portion</TableHead>
                               {numCovers > 0 && <TableHead>Required ({numCovers} covers)</TableHead>}
                               {numCovers > 0 && <TableHead>Raw Qty</TableHead>}
@@ -209,6 +212,7 @@ export default function MenuBuilder() {
                               const proj = projection.find(p => p.id === item.id);
                               return (
                                 <TableRow key={item.id}>
+                                  <TableCell className="font-mono text-xs text-slate-600">{item.item_code || '—'}</TableCell>
                                   <TableCell className="font-medium">{item.item_name}</TableCell>
                                   <TableCell>{item.portion} {item.unit}</TableCell>
                                   {numCovers > 0 && <TableCell className="font-semibold text-emerald-700">{proj?.required.toFixed(1)} {item.unit}</TableCell>}
@@ -241,7 +245,8 @@ export default function MenuBuilder() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Item</TableHead>
+                            <TableHead>Item Code</TableHead>
+                            <TableHead>Item Name</TableHead>
                             <TableHead>Category</TableHead>
                             <TableHead>Portion</TableHead>
                             <TableHead>Covers</TableHead>
@@ -255,6 +260,7 @@ export default function MenuBuilder() {
                             const cat = getCatInfo(item.category);
                             return (
                               <TableRow key={item.id}>
+                                <TableCell className="font-mono text-xs text-slate-600">{item.item_code || '—'}</TableCell>
                                 <TableCell className="font-medium">{item.item_name}</TableCell>
                                 <TableCell><Badge className={`text-xs ${cat.color}`}>{cat.icon} {cat.label}</Badge></TableCell>
                                 <TableCell>{item.portion} {item.unit}</TableCell>

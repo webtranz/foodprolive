@@ -612,6 +612,7 @@ async function getDailySalesSummary({ startDate, endDate, locationId }) {
        COALESCE(o.site_id, i.site_id) AS site_id,
        COALESCE(o.site_name, i.site_name, o.location_name, 'Unknown') AS site_name,
        COALESCE(o.site_name, i.site_name, o.location_name, 'Unknown') AS location_name,
+       i.pos_item_code,
        i.pos_item_name,
        SUM(i.quantity) AS total_quantity,
        SUM(i.total_price) AS total_value
@@ -624,6 +625,7 @@ async function getDailySalesSummary({ startDate, endDate, locationId }) {
        o.business_date,
        COALESCE(o.site_id, i.site_id),
        COALESCE(o.site_name, i.site_name, o.location_name, 'Unknown'),
+       i.pos_item_code,
        i.pos_item_name
      ORDER BY o.business_date DESC, location_name ASC, total_quantity DESC`,
     [startDate || null, endDate || null, locationId || null]
@@ -643,6 +645,7 @@ async function getSalesProductionVariance({ startDate, endDate, locationId }) {
        COALESCE(o.site_name, i.site_name, o.location_name, 'Unknown') AS site_name,
        COALESCE(i.recipe_id, i.pos_item_name) AS item_key,
        COALESCE(i.recipe_name, i.pos_item_name) AS item_name,
+       MAX(NULLIF(i.pos_item_code, '')) AS pos_item_code,
        SUM(i.quantity) AS sales_quantity
      FROM pos_sales_orders o
      JOIN pos_sales_items i ON i.order_id = o.id
@@ -658,7 +661,11 @@ async function getSalesProductionVariance({ startDate, endDate, locationId }) {
     [startDate || null, endDate || null, locationId || null]
   );
 
-  const productionRows = await listDocuments('Production', { sort: '-production_date', limit: 1000 });
+  const [productionRows, recipes] = await Promise.all([
+    listDocuments('Production', { sort: '-production_date', limit: 1000 }),
+    listDocuments('Recipe', { sort: 'name', limit: 5000 })
+  ]);
+  const recipeMap = new Map(recipes.map((recipe) => [String(recipe.id), recipe]));
   const productionMap = {};
 
   productionRows.forEach((production) => {
@@ -679,6 +686,7 @@ async function getSalesProductionVariance({ startDate, endDate, locationId }) {
         site_id: production.site_id || '',
         site_name: production.site_name || 'Unknown',
         item_key: production.recipe_id || production.recipe_name || '',
+        item_code: production.recipe_code || recipeMap.get(String(production.recipe_id || ''))?.recipe_code || '',
         item_name: production.recipe_name || 'Unknown Recipe',
         production_quantity: 0
       };
@@ -695,6 +703,7 @@ async function getSalesProductionVariance({ startDate, endDate, locationId }) {
       site_id: row.site_id || '',
       site_name: row.site_name || 'Unknown',
       item_key: row.item_key || '',
+      item_code: row.pos_item_code || productionMap[key]?.item_code || '',
       item_name: row.item_name || 'Unknown Item',
       sales_quantity: toNumber(row.sales_quantity),
       production_quantity: productionMap[key]?.production_quantity || 0
@@ -708,6 +717,7 @@ async function getSalesProductionVariance({ startDate, endDate, locationId }) {
         site_id: production.site_id,
         site_name: production.site_name,
         item_key: production.item_key,
+        item_code: production.item_code,
         item_name: production.item_name,
         sales_quantity: 0,
         production_quantity: production.production_quantity

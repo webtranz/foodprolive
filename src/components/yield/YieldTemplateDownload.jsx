@@ -7,10 +7,10 @@ export default function YieldTemplateDownload({ onUpload }) {
   const downloadTemplate = (type) => {
     const templates = {
       ingredients: {
-        headers: ['name', 'cuisine_type', 'category', 'unit', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'cooking_yield_percent', 'shrinkage_percent', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'cost_per_unit', 'supplier'],
+        headers: ['item_code', 'name', 'cuisine_type', 'category', 'unit', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'cooking_yield_percent', 'shrinkage_percent', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'cost_per_unit', 'supplier'],
         sample: [
-          ['Chicken Breast', 'universal', 'proteins_poultry', 'kg', '1000', '750', '75', '25', '165', '31', '0', '3.6', '8', 'Local Supplier'],
-          ['Basmati Rice', 'desi', 'grains_cereals', 'kg', '1000', '2100', '210', '0', '350', '7.5', '78', '0.5', '3.5', 'Rice Imports']
+          ['ING-0001', 'Chicken Breast', 'universal', 'proteins_poultry', 'kg', '1000', '750', '75', '25', '165', '31', '0', '3.6', '8', 'Local Supplier'],
+          ['ING-0002', 'Basmati Rice', 'desi', 'grains_cereals', 'kg', '1000', '2100', '210', '0', '350', '7.5', '78', '0.5', '3.5', 'Rice Imports']
         ]
       },
       recipes: {

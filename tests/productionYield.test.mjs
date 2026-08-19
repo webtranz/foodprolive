@@ -16,6 +16,7 @@ const recipe = {
 };
 const ingredient = {
   id: 'ingredient-1',
+  item_code: 'ITEM-PROTEIN-001',
   name: 'Test Protein',
   unit: 'kg',
   cost_per_unit: 5,
@@ -45,6 +46,7 @@ assert.equal(prepared.ingredients_used[0].net_quantity, 2);
 assert.equal(prepared.ingredients_used[0].planned_quantity, 2.5);
 assert.equal(prepared.ingredients_used[0].required_quantity, 2.5);
 assert.equal(prepared.ingredients_used[0].yield_percent, 80);
+assert.equal(prepared.ingredients_used[0].item_code, 'ITEM-PROTEIN-001');
 assert.equal(prepared.estimated_batch_cost, 12.5);
 assert.equal(prepared.estimated_cost_per_serving, 1.25);
 

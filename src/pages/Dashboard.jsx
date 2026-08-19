@@ -60,6 +60,7 @@ import {
   ADMIN_DASHBOARD_VIEW_ORDER,
   DASHBOARD_VIEWS
 } from '../../shared/managementDashboardRoles.js';
+import { getItemCodeFromRecords } from '../../shared/itemCode.js';
 
 const STATUS_COLORS = {
   draft: '#94a3b8',
@@ -594,6 +595,7 @@ function DefaultDashboard() {
         lowStockItems: lowStockItems
           .map((item) => ({
             id: item.id,
+            item_code: getItemCodeFromRecords([ingredientMap[item.ingredient_id], item]),
             ingredient: ingredientMap[item.ingredient_id]?.name || item.ingredient_name || 'Unknown Ingredient',
             site: siteMap[item.site_id]?.name || item.site_name || 'Unknown Site',
             quantity: safeNumber(item.quantity),
@@ -990,6 +992,7 @@ function DefaultDashboard() {
                     <div key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.item_code}</p>
                           <p className="font-medium text-slate-900">{item.ingredient}</p>
                           <p className="text-sm text-slate-500">{item.site}</p>
                         </div>

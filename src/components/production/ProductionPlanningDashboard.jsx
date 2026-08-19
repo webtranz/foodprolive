@@ -36,6 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatCurrency } from '@/lib/currency';
 import { buildProductionPlanningDashboard } from '@/lib/productionPlanning';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
+import { getItemCodeFromRecords } from '../../../shared/itemCode.js';
 
 const MEAL_STYLES = {
   breakfast: {
@@ -188,9 +189,10 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
               Ingredient shortage
             </div>
             <p className="mt-1 line-clamp-2">
-              {item.shortages.map((shortage) => (
-                `${shortage.ingredient_name} ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit} short`
-              )).join(' · ')}
+              {item.shortages.map((shortage) => {
+                const code = shortage.item_code && shortage.item_code !== '—' ? `${shortage.item_code} ` : '';
+                return `${code}${shortage.ingredient_name} ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit} short`;
+              }).join(' · ')}
             </p>
           </div>
         ) : null}
@@ -301,6 +303,7 @@ function PlanSummary({ dashboard }) {
                 <div key={`${shortage.site_id}-${shortage.ingredient_id}`} className="text-xs">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
+                      <p className="truncate font-mono text-[10px] text-slate-500">{shortage.item_code}</p>
                       <p className="truncate font-medium text-slate-800">{shortage.ingredient_name}</p>
                       <p className="truncate text-slate-500">{shortage.recipe_names.join(', ')}</p>
                       {shortage.site_name ? <p className="text-slate-400">{shortage.site_name}</p> : null}
@@ -356,7 +359,11 @@ function PlanSummary({ dashboard }) {
   );
 }
 
-function MasterRecipeSheet({ open, onOpenChange, dashboard }) {
+function MasterRecipeSheet({ open, onOpenChange, dashboard, ingredients = [] }) {
+  const ingredientMap = useMemo(
+    () => new Map(ingredients.map((ingredient) => [String(ingredient.id), ingredient])),
+    [ingredients]
+  );
   const recipes = useMemo(() => {
     const seen = new Set();
     return dashboard.items.filter((item) => {
@@ -395,11 +402,18 @@ function MasterRecipeSheet({ open, onOpenChange, dashboard }) {
                 <div>
                   <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ingredients</h4>
                   <ul className="mt-2 space-y-1 text-sm text-slate-700">
-                    {(item.recipe?.ingredients || []).length > 0 ? item.recipe.ingredients.map((ingredient, index) => (
-                      <li key={`${ingredient.ingredient_id || ingredient.ingredient_name}-${index}`}>
-                        {ingredient.ingredient_name || 'Ingredient'} — {formatRecipeQuantity(ingredient.quantity, ingredient.unit)} {ingredient.unit}
-                      </li>
-                    )) : <li className="text-slate-400">No direct ingredients recorded.</li>}
+                    {(item.recipe?.ingredients || []).length > 0 ? item.recipe.ingredients.map((ingredient, index) => {
+                      const itemCode = getItemCodeFromRecords([
+                        ingredientMap.get(String(ingredient.ingredient_id || '')),
+                        ingredient
+                      ], '');
+                      return (
+                        <li key={`${ingredient.ingredient_id || ingredient.ingredient_name}-${index}`}>
+                          {itemCode ? <span className="mr-2 font-mono text-xs text-slate-500">{itemCode}</span> : null}
+                          {ingredient.ingredient_name || 'Ingredient'} — {formatRecipeQuantity(ingredient.quantity, ingredient.unit)} {ingredient.unit}
+                        </li>
+                      );
+                    }) : <li className="text-slate-400">No direct ingredients recorded.</li>}
                   </ul>
                 </div>
                 <div>
@@ -543,7 +557,7 @@ export default function ProductionPlanningDashboard({
         </footer>
       </div>
 
-      <MasterRecipeSheet open={recipeSheetOpen} onOpenChange={setRecipeSheetOpen} dashboard={dashboard} />
+      <MasterRecipeSheet open={recipeSheetOpen} onOpenChange={setRecipeSheetOpen} dashboard={dashboard} ingredients={ingredients} />
     </div>
   );
 }

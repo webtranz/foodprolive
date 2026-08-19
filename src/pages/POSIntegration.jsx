@@ -721,7 +721,8 @@ export default function POSIntegration() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>POS Item</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Recipe</TableHead>
                         <TableHead>Scope</TableHead>
                         <TableHead>Deduction</TableHead>
@@ -732,10 +733,8 @@ export default function POSIntegration() {
                     <TableBody>
                       {mappings.map((mapping) => (
                         <TableRow key={mapping.id}>
-                          <TableCell>
-                            <p className="font-medium text-slate-900">{mapping.pos_item_name}</p>
-                            <p className="text-xs text-slate-500">{mapping.pos_item_code || 'No code provided'}</p>
-                          </TableCell>
+                          <TableCell className="font-mono text-xs text-slate-600">{mapping.pos_item_code || '—'}</TableCell>
+                          <TableCell className="font-medium text-slate-900">{mapping.pos_item_name || '—'}</TableCell>
                           <TableCell>
                             <p className="font-medium text-slate-900">{mapping.recipe_name}</p>
                             <p className="text-xs text-slate-500">{formatNumber(mapping.servings_per_sale, 2)} serving(s) per sale</p>
@@ -769,7 +768,7 @@ export default function POSIntegration() {
                       ))}
                       {mappings.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="py-10 text-center text-sm text-slate-500">
+                            <TableCell colSpan={7} className="py-10 text-center text-sm text-slate-500">
                             No POS item mappings yet.
                           </TableCell>
                         </TableRow>
@@ -910,9 +909,10 @@ export default function POSIntegration() {
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead>Item Code</TableHead>
+                          <TableHead>Item Name</TableHead>
                           <TableHead>Date</TableHead>
                           <TableHead>Location</TableHead>
-                          <TableHead>Menu Item</TableHead>
                           <TableHead>Quantity</TableHead>
                           <TableHead>Value</TableHead>
                         </TableRow>
@@ -920,16 +920,17 @@ export default function POSIntegration() {
                       <TableBody>
                         {salesSummary.map((row, index) => (
                           <TableRow key={`${row.business_date}-${row.location_name}-${row.pos_item_name}-${index}`}>
+                            <TableCell className="font-mono text-xs text-slate-600">{row.pos_item_code || row.item_code || '—'}</TableCell>
+                            <TableCell className="font-medium">{row.pos_item_name || row.item_name || '—'}</TableCell>
                             <TableCell>{row.business_date}</TableCell>
                             <TableCell>{row.location_name}</TableCell>
-                            <TableCell>{row.pos_item_name}</TableCell>
                             <TableCell>{formatNumber(row.total_quantity, 2)}</TableCell>
                             <TableCell>{formatCurrency(row.total_value)}</TableCell>
                           </TableRow>
                         ))}
                         {salesSummary.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={5} className="py-10 text-center text-sm text-slate-500">
+                            <TableCell colSpan={6} className="py-10 text-center text-sm text-slate-500">
                               No sales data found for the selected filters.
                             </TableCell>
                           </TableRow>
@@ -1000,9 +1001,10 @@ export default function POSIntegration() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Location</TableHead>
-                        <TableHead>Recipe / Item</TableHead>
                         <TableHead>Sales Qty</TableHead>
                         <TableHead>Production Qty</TableHead>
                         <TableHead>Variance</TableHead>
@@ -1011,9 +1013,10 @@ export default function POSIntegration() {
                     <TableBody>
                       {varianceReport.map((row, index) => (
                         <TableRow key={`${row.business_date}-${row.item_key}-${index}`}>
+                          <TableCell className="font-mono text-xs text-slate-600">{row.pos_item_code || row.item_code || '—'}</TableCell>
+                          <TableCell className="font-medium">{row.item_name || '—'}</TableCell>
                           <TableCell>{row.business_date}</TableCell>
                           <TableCell>{row.site_name}</TableCell>
-                          <TableCell>{row.item_name}</TableCell>
                           <TableCell>{formatNumber(row.sales_quantity, 2)}</TableCell>
                           <TableCell>{formatNumber(row.production_quantity, 2)}</TableCell>
                           <TableCell>
@@ -1025,7 +1028,7 @@ export default function POSIntegration() {
                       ))}
                       {varianceReport.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="py-10 text-center text-sm text-slate-500">
+                          <TableCell colSpan={7} className="py-10 text-center text-sm text-slate-500">
                             No variance data found for the selected filters.
                           </TableCell>
                         </TableRow>

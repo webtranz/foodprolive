@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Calendar, Zap, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { format, addDays, parseISO } from 'date-fns';
+import { getItemCodeFromRecords } from '../../shared/itemCode.js';
 
 export default function AutoSchedule() {
   const [selectedSite, setSelectedSite] = useState('');
@@ -40,6 +41,11 @@ export default function AutoSchedule() {
     queryKey: ['ingredients'],
     queryFn: () => base44.entities.Ingredient.list()
   });
+
+  const ingredientMap = useMemo(
+    () => new Map(ingredients.map((ingredient) => [ingredient.id, ingredient])),
+    [ingredients]
+  );
 
   const { data: menuPlans = [] } = useQuery({
     queryKey: ['menuPlans'],
@@ -72,15 +78,19 @@ export default function AutoSchedule() {
       return expiryDate <= threshold && i.quantity > 0;
     }).map(i => ({
       ...i,
+      item_code: getItemCodeFromRecords([ingredientMap.get(i.ingredient_id), i]),
       daysUntilExpiry: Math.ceil((parseISO(i.expiry_date) - today) / (1000 * 60 * 60 * 24))
     })).sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry);
-  }, [siteInventory]);
+  }, [ingredientMap, siteInventory]);
 
   const lowStockItems = useMemo(() => {
     return siteInventory.filter(i => 
       i.status === 'low_stock' || i.status === 'out_of_stock'
-    );
-  }, [siteInventory]);
+    ).map((item) => ({
+      ...item,
+      item_code: getItemCodeFromRecords([ingredientMap.get(item.ingredient_id), item])
+    }));
+  }, [ingredientMap, siteInventory]);
 
   const createProductionMutation = useMutation({
     mutationFn: (productionData) => Promise.all(
@@ -107,6 +117,7 @@ export default function AutoSchedule() {
       const inventoryContext = siteInventory.map(i => {
         const ing = ingredients.find(ing => ing.id === i.ingredient_id);
         return {
+          item_code: getItemCodeFromRecords([ing, i]),
           name: i.ingredient_name,
           quantity: i.quantity,
           unit: i.unit,
@@ -133,13 +144,13 @@ Capacity: ${site.capacity} servings/day
 Forecast Period: ${forecastDays} days
 
 Current Inventory Status:
-${inventoryContext.slice(0, 20).map(i => `- ${i.name}: ${i.quantity} ${i.unit} (${i.status})${i.expiry_date ? ` - expires: ${i.expiry_date}` : ''}`).join('\n')}
+${inventoryContext.slice(0, 20).map(i => `- ${i.item_code} ${i.name}: ${i.quantity} ${i.unit} (${i.status})${i.expiry_date ? ` - expires: ${i.expiry_date}` : ''}`).join('\n')}
 
 Priority Ingredients (MUST USE - Expiring Soon):
-${expiringIngredients.map(i => `- ${i.ingredient_name}: expires in ${i.daysUntilExpiry} days, quantity: ${i.quantity} ${i.unit}`).join('\n') || 'None'}
+${expiringIngredients.map(i => `- ${i.item_code} ${i.ingredient_name}: expires in ${i.daysUntilExpiry} days, quantity: ${i.quantity} ${i.unit}`).join('\n') || 'None'}
 
 Low Stock Warnings:
-${lowStockItems.map(i => `- ${i.ingredient_name}: ${i.quantity} ${i.unit}`).join('\n') || 'None'}
+${lowStockItems.map(i => `- ${i.item_code} ${i.ingredient_name}: ${i.quantity} ${i.unit}`).join('\n') || 'None'}
 
 Available Recipes:
 ${recipesContext.slice(0, 15).map(r => `- ${r.name} (${r.cuisine_type}, ${r.category}) - serves ${r.servings}`).join('\n')}
@@ -256,6 +267,7 @@ Provide production schedule in JSON format:`;
               ingredient.cost_per_unit ?? ingredient.last_cost ?? ingredient.average_cost ?? 0
             ) || 0;
             return {
+              item_code: getItemCodeFromRecords([ingredient, line]),
               ingredient_id: line.ingredient_id,
               ingredient_name: ingredient.name || line.ingredient_name,
               net_quantity: Number(netQuantity.toFixed(4)),
@@ -328,7 +340,7 @@ Provide production schedule in JSON format:`;
                 </span>
                 <p className="text-sm text-amber-700 mt-1">
                   {expiringIngredients.slice(0, 3).map(i => 
-                    `${i.ingredient_name} (${i.daysUntilExpiry}d)`
+                    `${i.item_code} · ${i.ingredient_name} (${i.daysUntilExpiry}d)`
                   ).join(', ')}
                 </p>
               </AlertDescription>
@@ -343,7 +355,9 @@ Provide production schedule in JSON format:`;
                   {lowStockItems.length} low stock items
                 </span>
                 <p className="text-sm text-red-700 mt-1">
-                  Consider restocking before scheduling production
+                  {lowStockItems.slice(0, 3).map((item) => (
+                    `${item.item_code} · ${item.ingredient_name}`
+                  )).join(', ')}
                 </p>
               </AlertDescription>
             </Alert>

@@ -18,6 +18,7 @@ import {
   calculateProductionIngredientCost,
   quantityInIngredientBaseUnit
 } from '../../shared/ingredientUnits.js';
+import { getItemCode } from '../../shared/itemCode.js';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
@@ -61,7 +62,13 @@ export default function CostControl() {
         const quantityInBaseUnit = quantityInIngredientBaseUnit(qty, ing.unit, ingData);
         const cost = calculateProductionIngredientCost(ing, ingData);
         if (!costMap[ing.ingredient_id]) {
-          costMap[ing.ingredient_id] = { name: ing.ingredient_name, totalQty: 0, totalCost: 0, unit: ingData?.unit || ing.unit };
+          costMap[ing.ingredient_id] = {
+            item_code: getItemCode(ingData, getItemCode(ing)),
+            item_name: ing.ingredient_name || ingData?.name || 'Unnamed item',
+            totalQty: 0,
+            totalCost: 0,
+            unit: ingData?.unit || ing.unit
+          };
         }
         costMap[ing.ingredient_id].totalQty += quantityInBaseUnit;
         costMap[ing.ingredient_id].totalCost += cost;
@@ -123,7 +130,7 @@ export default function CostControl() {
 
   // Ingredient cost pie
   const topIngCosts = ingredientCosts.slice(0, 6).map((i, idx) => ({
-    name: i.name.length > 15 ? i.name.substring(0, 15) + '…' : i.name,
+    name: i.item_name.length > 15 ? i.item_name.substring(0, 15) + '…' : i.item_name,
     value: Math.round(i.totalCost * 100) / 100
   }));
 
@@ -272,7 +279,8 @@ export default function CostControl() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Ingredient</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Qty Used</TableHead>
                         <TableHead>Total Cost</TableHead>
                         <TableHead>% of Budget</TableHead>
@@ -281,7 +289,8 @@ export default function CostControl() {
                     <TableBody>
                       {ingredientCosts.slice(0, 10).map((ing, idx) => (
                         <TableRow key={idx}>
-                          <TableCell className="font-medium">{ing.name}</TableCell>
+                          <TableCell className="font-mono text-xs text-slate-600">{ing.item_code}</TableCell>
+                          <TableCell className="font-medium">{ing.item_name}</TableCell>
                           <TableCell>{ing.totalQty.toFixed(1)} {ing.unit}</TableCell>
                           <TableCell>{formatCurrency(ing.totalCost)}</TableCell>
                           <TableCell>
@@ -297,7 +306,7 @@ export default function CostControl() {
                         </TableRow>
                       ))}
                       {ingredientCosts.length === 0 && (
-                        <TableRow><TableCell colSpan={4} className="text-center text-slate-500 py-8">No cost data available</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={5} className="text-center text-slate-500 py-8">No cost data available</TableCell></TableRow>
                       )}
                     </TableBody>
                   </Table>

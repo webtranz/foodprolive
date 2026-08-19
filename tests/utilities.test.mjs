@@ -9,6 +9,7 @@ import {
 
 assert.deepEqual(parseCsvLine('"Shrimp, frozen",43,"dairy|seafood"'), ['Shrimp, frozen', '43', 'dairy|seafood']);
 assert.match(createTemplateCsv('recipes'), /^name,/);
+assert.match(createTemplateCsv('ingredients'), /^item_code,name,/, 'ingredient templates put Item Code before Item Name');
 assert.equal(listUtilityModules().some((module) => module.key === 'recipes'), true);
 assert.deepEqual(validateCsvHeaders('recipes', ['recipe_code']), ['Missing required column: name']);
 

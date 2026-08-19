@@ -15,6 +15,7 @@ import { format, subDays } from 'date-fns';
 import { downloadCSV } from '../components/utils/exportData';
 import { formatCurrency } from '@/lib/currency';
 import { formatRecipeQuantity } from '../../shared/recipeNumbers.js';
+import { getItemCode } from '../../shared/itemCode.js';
 
 export default function Reports() {
   const [selectedSite, setSelectedSite] = useState('all');
@@ -117,10 +118,12 @@ export default function Reports() {
     filteredProductions.forEach(p => {
       if (p.ingredients_used) {
         p.ingredients_used.forEach(ing => {
+          const ingredient = ingredients.find((item) => item.id === ing.ingredient_id);
           if (!usage[ing.ingredient_id]) {
             usage[ing.ingredient_id] = {
+              item_code: getItemCode(ingredient, getItemCode(ing)),
+              item_name: ing.ingredient_name || ingredient?.name || 'Unnamed item',
               id: ing.ingredient_id,
-              name: ing.ingredient_name,
               totalUsed: 0,
               unit: ing.unit
             };
@@ -132,7 +135,7 @@ export default function Reports() {
     return Object.values(usage)
       .sort((a, b) => b.totalUsed - a.totalUsed)
       .slice(0, 10);
-  }, [filteredProductions]);
+  }, [filteredProductions, ingredients]);
 
   // Site performance
   const sitePerformance = useMemo(() => {
@@ -335,8 +338,9 @@ export default function Reports() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Item Name</TableHead>
                       <TableHead>Rank</TableHead>
-                      <TableHead>Ingredient</TableHead>
                       <TableHead>Total Used</TableHead>
                       <TableHead>Unit</TableHead>
                     </TableRow>
@@ -344,17 +348,18 @@ export default function Reports() {
                   <TableBody>
                     {ingredientUsage.map((ing, idx) => (
                       <TableRow key={ing.id}>
+                        <TableCell className="font-mono text-xs text-slate-600">{ing.item_code}</TableCell>
+                        <TableCell className="font-medium">{ing.item_name}</TableCell>
                         <TableCell>
                           <Badge variant="outline">{idx + 1}</Badge>
                         </TableCell>
-                        <TableCell className="font-medium">{ing.name}</TableCell>
                         <TableCell>{formatRecipeQuantity(ing.totalUsed, ing.unit)}</TableCell>
                         <TableCell>{ing.unit}</TableCell>
                       </TableRow>
                     ))}
                     {ingredientUsage.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center text-slate-500 py-8">
+                        <TableCell colSpan={5} className="text-center text-slate-500 py-8">
                           No ingredient usage data for selected period
                         </TableCell>
                       </TableRow>

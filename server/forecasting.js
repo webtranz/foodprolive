@@ -1,5 +1,7 @@
 import { createAppLog, createDocument, findDocument, listDocuments, updateDocument } from './db.js';
 import { getDailySalesSummary, getSalesProductionVariance } from './pos.js';
+import { enrichIngredientItemCodes } from './itemCodes.js';
+import { getItemCodeFromRecords } from '../shared/itemCode.js';
 
 function safeNumber(value, fallback = 0) {
   const numeric = Number(value);
@@ -70,6 +72,21 @@ function deriveCategoryForItem(name = '', recipes = []) {
   const normalizedName = normalizeText(name).toLowerCase();
   const recipe = recipes.find((item) => normalizeText(item.name).toLowerCase() === normalizedName);
   return recipe?.category || 'uncategorized';
+}
+
+function resolveForecastItemCode(records = []) {
+  const canonicalCode = getItemCodeFromRecords(records, '');
+  if (canonicalCode) return canonicalCode;
+
+  for (const record of records) {
+    if (!record || typeof record !== 'object') continue;
+    const alternateCode = String(
+      record.pos_item_code || record.recipe_code || record.menu_item_code || ''
+    ).trim();
+    if (alternateCode) return alternateCode;
+  }
+
+  return '—';
 }
 
 function summarizeRows(rows = []) {
@@ -154,10 +171,28 @@ async function buildForecastSummary({
   });
 
   const itemMap = new Map();
-  const ensureRow = (locationName, itemName, siteId, explicitCategory) => {
-    const key = `${siteId || locationName}::${itemName}`;
+  const nameAliases = new Map();
+  const ensureRow = (locationName, itemName, siteId, explicitCategory, itemCodeRecords = []) => {
+    const itemCode = resolveForecastItemCode(itemCodeRecords);
+    const locationKey = normalizeText(siteId || locationName).toLowerCase();
+    const nameAliasKey = `${locationKey}::name:${normalizeText(itemName).toLowerCase()}`;
+    const codeKey = itemCode === '—'
+      ? ''
+      : `${locationKey}::code:${normalizeText(itemCode).toLowerCase()}`;
+
+    let key = codeKey || nameAliases.get(nameAliasKey) || nameAliasKey;
+    if (codeKey && !itemMap.has(codeKey) && nameAliases.get(nameAliasKey) === nameAliasKey && itemMap.has(nameAliasKey)) {
+      const legacyRow = itemMap.get(nameAliasKey);
+      itemMap.delete(nameAliasKey);
+      legacyRow.item_code = itemCode;
+      itemMap.set(codeKey, legacyRow);
+      nameAliases.set(nameAliasKey, codeKey);
+      key = codeKey;
+    }
+
     if (!itemMap.has(key)) {
       itemMap.set(key, {
+        item_code: itemCode,
         site_id: siteId || '',
         location: locationName || 'Unknown',
         item: itemName,
@@ -169,6 +204,11 @@ async function buildForecastSummary({
         waste_history: [],
         attendance_history: []
       });
+      if (!nameAliases.has(nameAliasKey)) {
+        nameAliases.set(nameAliasKey, key);
+      }
+    } else if (itemMap.get(key).item_code === '—' && itemCode !== '—') {
+      itemMap.get(key).item_code = resolveForecastItemCode(itemCodeRecords);
     }
     return itemMap.get(key);
   };
@@ -180,20 +220,20 @@ async function buildForecastSummary({
     if (!matchesAllowedSites(row.site_id || row.location_id, accessibleSiteIds)) {
       return;
     }
-    const item = ensureRow(row.location_name || row.site_name, row.pos_item_name || row.item_name, row.site_id || row.location_id, deriveCategoryForItem(row.pos_item_name || row.item_name, recipes));
+    const item = ensureRow(row.location_name || row.site_name, row.pos_item_name || row.item_name, row.site_id || row.location_id, deriveCategoryForItem(row.pos_item_name || row.item_name, recipes), [row]);
     item.sales_history.push(safeNumber(row.total_quantity));
   });
 
   varianceRows.forEach((row) => {
     if (!matchesAllowedSites(row.site_id, accessibleSiteIds)) return;
     if (!matchesLocation(row.site_id, locationId, siteMeta)) return;
-    const item = ensureRow(row.site_name, row.item_name, row.site_id, deriveCategoryForItem(row.item_name, recipes));
+    const item = ensureRow(row.site_name, row.item_name, row.site_id, deriveCategoryForItem(row.item_name, recipes), [row, recipes.find((recipe) => recipe.name === row.item_name)]);
     item.production_history.push(safeNumber(row.production_quantity));
   });
 
   filteredProductions.forEach((production) => {
     const recipe = recipes.find((item) => item.id === production.recipe_id);
-    const item = ensureRow(production.site_name, production.recipe_name || recipe?.name || 'Unknown', production.site_id, production.menu_category || recipe?.category);
+    const item = ensureRow(production.site_name, production.recipe_name || recipe?.name || 'Unknown', production.site_id, production.menu_category || recipe?.category, [production, recipe]);
     item.production_history.push(safeNumber(production.actual_servings || production.target_servings));
   });
 
@@ -201,7 +241,7 @@ async function buildForecastSummary({
     (plan.meals || []).forEach((meal) => {
       const rowCategory = deriveCategoryForItem(meal.recipe_name, recipes);
       if (category !== 'all' && rowCategory !== category) return;
-      const item = ensureRow(plan.site_name, meal.recipe_name || 'Unknown', plan.site_id, rowCategory);
+      const item = ensureRow(plan.site_name, meal.recipe_name || 'Unknown', plan.site_id, rowCategory, [meal, recipes.find((recipe) => recipe.id === meal.recipe_id || recipe.name === meal.recipe_name)]);
       item.menu_plan_history.push(safeNumber(meal.expected_servings));
     });
   });
@@ -210,14 +250,14 @@ async function buildForecastSummary({
     (plan.meals || []).forEach((meal) => {
       const rowCategory = deriveCategoryForItem(meal.recipe_name, recipes);
       if (category !== 'all' && rowCategory !== category) return;
-      const item = ensureRow(plan.site_name, meal.recipe_name || 'Unknown', plan.site_id, rowCategory);
+      const item = ensureRow(plan.site_name, meal.recipe_name || 'Unknown', plan.site_id, rowCategory, [meal, recipes.find((recipe) => recipe.id === meal.recipe_id || recipe.name === meal.recipe_name)]);
       item.meal_plan_history.push(safeNumber(meal.portions));
     });
   });
 
   filteredWaste.forEach((entry) => {
     const itemName = entry.recipe_name || entry.ingredient_name || 'Waste Item';
-    const row = ensureRow(entry.site_name, itemName, entry.site_id, entry.category || deriveCategoryForItem(itemName, recipes));
+    const row = ensureRow(entry.site_name, itemName, entry.site_id, entry.category || deriveCategoryForItem(itemName, recipes), [entry, recipes.find((recipe) => recipe.id === entry.recipe_id || recipe.name === entry.recipe_name)]);
     row.waste_history.push(safeNumber(entry.quantity));
   });
 
@@ -271,6 +311,7 @@ async function buildForecastSummary({
       const riskLevel = confidence < 55 || wasteRate > 12 ? 'high' : (confidence < 72 || wasteRate > 6 ? 'medium' : 'low');
 
       return {
+        item_code: row.item_code,
         site_id: row.site_id,
         location: row.location,
         item: row.item,
@@ -296,6 +337,7 @@ async function buildForecastSummary({
   summary.horizon_days = horizonDays;
 
   const chart = rows.slice(0, 12).map((row) => ({
+    item_code: row.item_code,
     location: row.location,
     item: row.item,
     forecast_quantity: row.forecast_quantity,
@@ -303,10 +345,12 @@ async function buildForecastSummary({
     confidence_score: row.confidence_score
   }));
 
-  const inventoryCoverage = inventory
+  const inventoryWithItemCodes = await enrichIngredientItemCodes(inventory);
+  const inventoryCoverage = inventoryWithItemCodes
     .filter((item) => matchesLocation(item.site_id, locationId, siteMeta))
     .filter((item) => matchesAllowedSites(item.site_id, accessibleSiteIds))
     .map((item) => ({
+      item_code: resolveForecastItemCode([item]),
       site_id: item.site_id,
       location: item.site_name || siteMeta.byId.get(String(item.site_id))?.name || 'Unknown',
       ingredient: item.ingredient_name,

@@ -35,6 +35,7 @@ import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/expo
 import { formatCurrency } from '@/lib/currency';
 import { calculateIngredientCost } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
+import { getItemCodeFromRecords } from '../../shared/itemCode.js';
 import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import {
   AlertTriangle,
@@ -825,13 +826,18 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
 
   const exportWastePackage = (type = 'csv') => {
     const wasteRows = filteredWaste.map((item) => ({
+      item_code: getItemCodeFromRecords([
+        ingredientMap.get(item.ingredient_id),
+        item,
+        { item_code: recipeMap.get(item.recipe_id || productionMap.get(item.production_id)?.recipe_id)?.recipe_code }
+      ]),
+      item_name: item.ingredient_name || item.recipe_name || item.batch_reference || 'Waste Record',
       waste_date: item.waste_date,
       meal_type: titleCase(item.meal_type),
       site_name: item.site_name,
       waste_category: item.waste_category,
       reason: item.reason,
       avoidable_type: item.avoidable_type,
-      ingredient_name: item.ingredient_name,
       recipe_name: item.recipe_name,
       batch_reference: item.batch_reference,
       quantity: item.quantity,
@@ -1442,12 +1448,13 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Item Code</TableHead>
+                  <TableHead>Item Name</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Meal</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead>Reason</TableHead>
-                  <TableHead>Item / Batch</TableHead>
                   <TableHead>Quantity</TableHead>
                   <TableHead>Cost</TableHead>
                   <TableHead>Recording Window</TableHead>
@@ -1458,10 +1465,18 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
               <TableBody>
                 {filteredWaste.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
+                    <TableCell colSpan={12} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
                   </TableRow>
                 ) : filteredWaste.slice(0, 30).map((item) => (
                   <TableRow key={item.id}>
+                    <TableCell className="font-mono text-xs text-slate-600">
+                      {getItemCodeFromRecords([
+                        ingredientMap.get(item.ingredient_id),
+                        item,
+                        { item_code: recipeMap.get(item.recipe_id || productionMap.get(item.production_id)?.recipe_id)?.recipe_code }
+                      ])}
+                    </TableCell>
+                    <TableCell>{item.ingredient_name || item.recipe_name || item.batch_reference || '-'}</TableCell>
                     <TableCell className="font-medium">{item.waste_date}</TableCell>
                     <TableCell>{titleCase(item.meal_type || '-')}</TableCell>
                     <TableCell>{item.site_name}</TableCell>
@@ -1471,7 +1486,6 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                       </Badge>
                     </TableCell>
                     <TableCell>{item.reason || getReasonMeta(item.reason_code)?.label || '-'}</TableCell>
-                    <TableCell>{item.ingredient_name || item.recipe_name || item.batch_reference || '-'}</TableCell>
                     <TableCell>{safeNumber(item.quantity).toFixed(2)} {item.unit}</TableCell>
                     <TableCell>{formatCurrency(item.estimated_cost)}</TableCell>
                     <TableCell>

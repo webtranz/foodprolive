@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { formatCurrency } from '@/lib/currency';
 import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
+import { getItemCode } from '../../shared/itemCode.js';
 import {
   AlertTriangle,
   Building2,
@@ -42,6 +43,7 @@ const supplierFormTemplate = {
 
 const requestItemTemplate = {
   ingredient_id: '',
+  item_code: '',
   ingredient_name: '',
   requested_quantity: '',
   unit: '',
@@ -134,6 +136,7 @@ export default function ProcurementModule() {
   const [receiptQuantities, setReceiptQuantities] = useState({});
   const [invoiceForm, setInvoiceForm] = useState(invoiceFormTemplate);
   const [priceIngredientId, setPriceIngredientId] = useState('');
+  const [priceIngredient, setPriceIngredient] = useState(null);
 
   const { data: suppliers = [] } = useQuery({
     queryKey: ['procurementSuppliers'],
@@ -171,10 +174,7 @@ export default function ProcurementModule() {
     queryFn: () => base44.entities.Site.list()
   });
 
-  const { data: ingredients = [] } = useQuery({
-    queryKey: ['ingredients'],
-    queryFn: () => base44.entities.Ingredient.list()
-  });
+  const resolveProcurementItemCode = (item) => getItemCode(item);
 
   const { data: inventory = [] } = useQuery({
     queryKey: ['inventory'],
@@ -360,14 +360,14 @@ export default function ProcurementModule() {
   const submitRequest = () => {
     const site = sites.find((entry) => entry.id === requestForm.site_id);
     const items = requestForm.items.map((item) => {
-      const ingredient = ingredients.find((entry) => entry.id === item.ingredient_id);
       const supplier = suppliers.find((entry) => entry.id === item.preferred_supplier_id);
       return {
         ingredient_id: item.ingredient_id,
-        ingredient_name: ingredient?.name || item.ingredient_name || '',
+        item_code: getItemCode(item, ''),
+        ingredient_name: item.ingredient_name || '',
         requested_quantity: Number(item.requested_quantity || 0),
-        unit: item.unit || ingredient?.unit || '',
-        estimated_unit_price: Number(item.estimated_unit_price || ingredient?.cost_per_unit || 0),
+        unit: item.unit || '',
+        estimated_unit_price: Number(item.estimated_unit_price || 0),
         preferred_supplier_id: supplier?.id || null,
         preferred_supplier_name: supplier?.name || null
       };
@@ -605,7 +605,8 @@ export default function ProcurementModule() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Ingredient</TableHead>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Item Name</TableHead>
                       <TableHead>Site</TableHead>
                       <TableHead>Stock</TableHead>
                       <TableHead>Min Level</TableHead>
@@ -615,6 +616,7 @@ export default function ProcurementModule() {
                   <TableBody>
                     {lowStockItems.slice(0, 12).map((item) => (
                       <TableRow key={item.id}>
+                        <TableCell className="font-mono text-xs text-slate-600">{resolveProcurementItemCode(item)}</TableCell>
                         <TableCell>{item.ingredient_name}</TableCell>
                         <TableCell>{item.site_name || '-'}</TableCell>
                         <TableCell>{formatNumber(item.quantity, 2)} {item.unit}</TableCell>
@@ -624,7 +626,7 @@ export default function ProcurementModule() {
                     ))}
                     {lowStockItems.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="py-10 text-center text-sm text-slate-500">
+                        <TableCell colSpan={6} className="py-10 text-center text-sm text-slate-500">
                           No low stock inventory lines right now.
                         </TableCell>
                       </TableRow>
@@ -858,10 +860,13 @@ export default function ProcurementModule() {
                 <div className="w-full max-w-sm">
                   <IngredientSearchCombobox
                     value={priceIngredientId}
-                    selectedIngredient={ingredients.find((ingredient) => ingredient.id === priceIngredientId)}
+                    selectedIngredient={priceIngredient?.id === priceIngredientId ? priceIngredient : null}
                     allowClear
                     clearLabel="All ingredients"
-                    onValueChange={(value) => setPriceIngredientId(value)}
+                    onValueChange={(value, ingredient) => {
+                      setPriceIngredientId(value);
+                      setPriceIngredient(ingredient || null);
+                    }}
                   />
                 </div>
               </CardHeader>
@@ -869,7 +874,8 @@ export default function ProcurementModule() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Ingredient</TableHead>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Item Name</TableHead>
                       <TableHead>Supplier</TableHead>
                       <TableHead>Latest Unit Price</TableHead>
                       <TableHead>Currency</TableHead>
@@ -880,6 +886,7 @@ export default function ProcurementModule() {
                   <TableBody>
                     {priceComparison.map((entry) => (
                       <TableRow key={entry.id}>
+                        <TableCell className="font-mono text-xs text-slate-600">{resolveProcurementItemCode(entry)}</TableCell>
                         <TableCell>{entry.ingredient_name}</TableCell>
                         <TableCell>{entry.supplier_name || '-'}</TableCell>
                         <TableCell>{formatCurrency(entry.unit_price)}</TableCell>
@@ -890,7 +897,7 @@ export default function ProcurementModule() {
                     ))}
                     {priceComparison.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="py-10 text-center text-sm text-slate-500">
+                        <TableCell colSpan={7} className="py-10 text-center text-sm text-slate-500">
                           Price history will appear after purchase orders are created.
                         </TableCell>
                       </TableRow>
@@ -1022,13 +1029,22 @@ export default function ProcurementModule() {
               </Button>
             </div>
             {requestForm.items.map((item, index) => (
-              <div key={`request-item-${index}`} className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 p-4 md:grid-cols-5">
+              <div key={`request-item-${index}`} className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 p-4 md:grid-cols-6">
                 <div>
-                  <Label>Ingredient</Label>
+                  <Label>Item Code</Label>
+                  <Input className="mt-2 font-mono" value={resolveProcurementItemCode(item)} disabled />
+                </div>
+                <div>
+                  <Label>Item Name</Label>
                   <IngredientSearchCombobox
                     className="mt-2"
                     value={item.ingredient_id}
-                    selectedIngredient={ingredients.find((ingredient) => ingredient.id === item.ingredient_id) || (item.ingredient_id ? { id: item.ingredient_id, name: item.ingredient_name } : null)}
+                    selectedIngredient={item.ingredient_id ? {
+                      id: item.ingredient_id,
+                      item_code: item.item_code,
+                      name: item.ingredient_name,
+                      unit: item.unit
+                    } : null}
                     siteId={requestForm.site_id}
                     onValueChange={(value, ingredient) => {
                     setRequestForm((current) => ({
@@ -1036,6 +1052,7 @@ export default function ProcurementModule() {
                       items: current.items.map((entry, entryIndex) => entryIndex === index ? {
                         ...entry,
                         ingredient_id: value,
+                        item_code: getItemCode(ingredient, ''),
                         ingredient_name: ingredient?.name || '',
                         unit: ingredient?.unit || entry.unit,
                         estimated_unit_price: entry.estimated_unit_price || String(ingredient?.last_cost ?? ingredient?.cost_per_unit ?? '')
@@ -1099,13 +1116,25 @@ export default function ProcurementModule() {
           {selectedRequestForOrder ? (
             <div className="rounded-2xl border border-slate-200 p-4">
               <p className="mb-3 text-sm font-medium text-slate-900">Request Items</p>
-              <div className="space-y-2 text-sm text-slate-600">
-                {selectedRequestForOrder.items.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between">
-                    <span>{item.ingredient_name}</span>
-                    <span>{formatNumber(item.approved_quantity || item.requested_quantity, 2)} {item.unit}</span>
-                  </div>
-                ))}
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Item Name</TableHead>
+                      <TableHead className="text-right">Approved Quantity</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedRequestForOrder.items.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="font-mono text-xs text-slate-600">{resolveProcurementItemCode(item)}</TableCell>
+                        <TableCell className="font-medium text-slate-900">{item.ingredient_name}</TableCell>
+                        <TableCell className="text-right">{formatNumber(item.approved_quantity || item.requested_quantity, 2)} {item.unit}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
             </div>
           ) : null}
@@ -1134,20 +1163,41 @@ export default function ProcurementModule() {
             <div><Label>Receipt Date</Label><Input type="date" value={receiptDate} onChange={(event) => setReceiptDate(event.target.value)} /></div>
           </div>
           {selectedOrderForReceipt ? (
-            <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
-              {selectedOrderForReceipt.items.map((item) => {
-                const remaining = Math.max(0, Number(item.ordered_quantity || 0) - Number(item.received_quantity || 0));
-                return (
-                  <div key={item.id} className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                    <div className="md:col-span-2">
-                      <Label>{item.ingredient_name}</Label>
-                      <p className="text-xs text-slate-500">Remaining {formatNumber(remaining, 2)} {item.unit}</p>
-                    </div>
-                    <div><Label>Receive Qty</Label><Input type="number" min="0" step="0.01" value={receiptQuantities[item.id] ?? remaining} onChange={(event) => setReceiptQuantities((current) => ({ ...current, [item.id]: event.target.value }))} /></div>
-                    <div><Label>Unit</Label><Input value={item.unit || ''} disabled /></div>
-                  </div>
-                );
-              })}
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 p-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item Code</TableHead>
+                    <TableHead>Item Name</TableHead>
+                    <TableHead>Remaining</TableHead>
+                    <TableHead>Receive Qty</TableHead>
+                    <TableHead>Unit</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selectedOrderForReceipt.items.map((item) => {
+                    const remaining = Math.max(0, Number(item.ordered_quantity || 0) - Number(item.received_quantity || 0));
+                    return (
+                      <TableRow key={item.id}>
+                        <TableCell className="font-mono text-xs text-slate-600">{resolveProcurementItemCode(item)}</TableCell>
+                        <TableCell className="font-medium text-slate-900">{item.ingredient_name}</TableCell>
+                        <TableCell>{formatNumber(remaining, 2)} {item.unit}</TableCell>
+                        <TableCell>
+                          <Input
+                            aria-label={`Receive quantity for ${item.ingredient_name}`}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={receiptQuantities[item.id] ?? remaining}
+                            onChange={(event) => setReceiptQuantities((current) => ({ ...current, [item.id]: event.target.value }))}
+                          />
+                        </TableCell>
+                        <TableCell>{item.unit || '—'}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </div>
           ) : null}
           <div><Label>Notes</Label><Textarea value={receiptNotes} onChange={(event) => setReceiptNotes(event.target.value)} rows={4} /></div>

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Edit } from 'lucide-react';
+import { getItemCode } from '../../../shared/itemCode.js';
 
 export default function InventoryEditDialog({ open, onOpenChange, inventoryItem }) {
   const [formData, setFormData] = useState({
@@ -57,7 +58,8 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="bg-slate-50 rounded-lg p-3 text-sm">
-            <p><span className="font-medium">{inventoryItem?.ingredient_name}</span></p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{getItemCode(inventoryItem)}</p>
+            <p><span className="font-medium">{inventoryItem?.ingredient_name || '—'}</span></p>
             <p className="text-slate-600">{inventoryItem?.site_name}</p>
           </div>
 

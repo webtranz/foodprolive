@@ -8,6 +8,11 @@ import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { roundStandardDecimal } from '../shared/recipeNumbers.js';
+import { getItemCodeFromRecords } from '../shared/itemCode.js';
+import {
+  enrichIngredientItemCodes,
+  enrichRecordsWithIngredientItemCodes
+} from './itemCodes.js';
 import {
   assertEventReadyForSubmission,
   buildEventProductionPlanPayloads,
@@ -462,9 +467,13 @@ function invalidateEntityDataCaches(entity) {
 }
 
 async function decorateEntityRecords(entity, records = []) {
-  return entity === 'Recipe'
-    ? decorateRecipesWithServingWeights(records)
-    : records;
+  if (entity === 'Recipe') {
+    return decorateRecipesWithServingWeights(records);
+  }
+  if (entity === 'Inventory') {
+    return enrichIngredientItemCodes(records);
+  }
+  return records;
 }
 
 app.get('/api/events', requireAuth, async (request, response, next) => {
@@ -561,6 +570,7 @@ function buildInventoryShortages(production = {}, inventoryRows = [], ingredient
 
       return {
         ingredient_id: ingredientLine.ingredient_id,
+        item_code: getItemCodeFromRecords([ingredientMaster, ingredientLine, inventoryItem], null),
         ingredient_name: ingredientLine.ingredient_name,
         unit: inventoryUnit,
         required_quantity: Number(requiredQuantity.toFixed(2)),
@@ -642,6 +652,7 @@ async function syncMaterialRequestForProduction(user, production, mode = 'draft'
 
     return {
       ingredient_id: item.ingredient_id,
+      item_code: getItemCodeFromRecords([ingredientMaster, item, inventoryItem], null),
       ingredient_name: item.ingredient_name,
       required_quantity: requiredQuantity,
       current_stock: currentStock,
@@ -3221,7 +3232,8 @@ app.get('/api/material-requests', requireAuth, requireAnyPermission(['view_mater
       sort: '-request_date',
       limit: 200
     });
-    response.json(filterRowsByAccessibleSites(records, scope));
+    const scopedRecords = filterRowsByAccessibleSites(records, scope);
+    response.json(await enrichRecordsWithIngredientItemCodes(scopedRecords));
   } catch (error) {
     next(error);
   }

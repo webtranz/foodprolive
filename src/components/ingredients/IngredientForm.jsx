@@ -183,18 +183,6 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
             <TabsContent value="basic" className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="name">Ingredient Name *</Label>
-                  <Input
-                    id="name"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="e.g., Chicken Breast"
-                    className="mt-1"
-                    required
-                  />
-                </div>
-
-                <div>
                   <Label htmlFor="item_code">Item Code</Label>
                   <Input
                     id="item_code"
@@ -202,6 +190,18 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
                     onChange={(e) => setFormData({ ...formData, item_code: e.target.value })}
                     placeholder="e.g., ITM-001"
                     className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="name">Item Name *</Label>
+                  <Input
+                    id="name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="e.g., Chicken Breast"
+                    className="mt-1"
+                    required
                   />
                 </div>
 

@@ -26,6 +26,7 @@ const linkedRecipe = {
 };
 const eventIngredients = [{
   id: 'ingredient-main',
+  item_code: 'ITEM-MAIN-001',
   name: 'Main ingredient',
   unit: 'kg',
   average_cost: 5,
@@ -62,10 +63,12 @@ const cases = [
       assert.equal(plans[0].ingredients_used[0].net_quantity, 50);
       assert.equal(plans[0].ingredients_used[0].planned_quantity, 62.5);
       assert.equal(plans[0].ingredients_used[0].yield_percent, 80);
+      assert.equal(plans[0].ingredients_used[0].item_code, 'ITEM-MAIN-001');
       const prItems = buildEventPurchaseRequestItems(snapshot, event.event_name);
       assert.equal(prItems.length, 1);
       assert.equal(prItems[0].requested_quantity, 22.5);
       assert.equal(prItems[0].estimated_unit_price, 5);
+      assert.equal(prItems[0].item_code, 'ITEM-MAIN-001');
     }
   },
   {
@@ -84,6 +87,7 @@ const cases = [
       assert.equal(snapshot.ingredient_requirements[0].net_required_quantity, 50);
       assert.equal(snapshot.ingredient_requirements[0].required_quantity, 62.5);
       assert.equal(snapshot.ingredient_requirements[0].shortage_quantity, 22.5);
+      assert.equal(snapshot.ingredient_requirements[0].item_code, 'ITEM-MAIN-001');
       assert.equal(snapshot.estimated_procurement_spend, 112.5);
       assert.equal(snapshot.checklist.menu_and_costing, true);
     }

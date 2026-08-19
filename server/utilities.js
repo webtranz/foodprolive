@@ -20,7 +20,7 @@ export const utilityModules = Object.freeze({
     label: 'Ingredients',
     entity: 'Ingredient',
     required: ['name'],
-    headers: ['name', 'ingredient_code', 'sku', 'alias', 'supplier_item_name', 'unit', 'category', 'cuisine_type', 'cost_per_unit', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'sodium_per_100g', 'sugar_per_100g', 'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'allergens', 'is_active']
+    headers: ['item_code', 'name', 'ingredient_code', 'sku', 'alias', 'supplier_item_name', 'unit', 'category', 'cuisine_type', 'cost_per_unit', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'sodium_per_100g', 'sugar_per_100g', 'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'allergens', 'is_active']
   },
   recipes: {
     label: 'Recipes',

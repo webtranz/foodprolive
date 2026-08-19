@@ -27,6 +27,7 @@ import { Plus, Search, Package, LayoutGrid, List, Download, AlertTriangle, PlusC
 import { downloadCSV } from '../components/utils/exportData';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
+import { getItemCode, getItemCodeFromRecords, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
 
 const CATEGORIES = [
   { value: 'all', label: 'All Categories' },
@@ -143,22 +144,29 @@ export default function Ingredients() {
 
   // Filtered data
   const filteredIngredients = ingredients.filter(ing => {
-    const matchesSearch = ing.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ing.item_code?.toLowerCase().includes(searchQuery.toLowerCase());
+    const normalizedSearch = searchQuery.toLowerCase();
+    const matchesSearch = ing.name?.toLowerCase().includes(normalizedSearch) ||
+      getItemCode(ing, '').toLowerCase().includes(normalizedSearch);
     const matchesCategory = selectedCategory === 'all' || ing.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
   // Inventory enriched with ingredient nutritional data
   const enrichedInventory = inventory
-    .filter(item => {
-      const matchesSite = selectedSite === 'all' || item.site_id === selectedSite;
-      const matchesSearch = item.ingredient_name?.toLowerCase().includes(invSearch.toLowerCase());
-      return matchesSite && matchesSearch;
-    })
     .map(item => {
       const ing = ingredients.find(i => i.id === item.ingredient_id);
-      return { ...item, _ing: ing };
+      return {
+        ...item,
+        _ing: ing,
+        item_code: getItemCodeFromRecords([ing, item])
+      };
+    })
+    .filter(item => {
+      const matchesSite = selectedSite === 'all' || item.site_id === selectedSite;
+      const normalizedSearch = invSearch.toLowerCase();
+      const matchesSearch = item.ingredient_name?.toLowerCase().includes(normalizedSearch) ||
+        item.item_code.toLowerCase().includes(normalizedSearch);
+      return matchesSite && matchesSearch;
     });
 
   const lowStock = enrichedInventory.filter(i => i.status === 'low_stock').length;
@@ -205,7 +213,10 @@ export default function Ingredients() {
         >
           {activeTab === 'ingredients' ? (
             <>
-              <Button variant="outline" onClick={() => downloadCSV(filteredIngredients, 'ingredients')}>
+              <Button variant="outline" onClick={() => downloadCSV(
+                filteredIngredients.map((ingredient) => putItemCodeAndNameFirst(ingredient, { outputNameKey: 'item_name' })),
+                'ingredients'
+              )}>
                 <Download className="w-4 h-4 mr-2" /> Export
               </Button>
               <Button onClick={() => { setEditingIngredient(null); setFormOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700">
@@ -214,7 +225,14 @@ export default function Ingredients() {
             </>
           ) : (
             <>
-              <Button variant="outline" onClick={() => downloadCSV(enrichedInventory, 'inventory')}>
+              <Button variant="outline" onClick={() => downloadCSV(
+                enrichedInventory.map((item) => putItemCodeAndNameFirst(item, {
+                  nameKey: 'ingredient_name',
+                  outputNameKey: 'ingredient_name',
+                  itemCode: item.item_code
+                })),
+                'inventory'
+              )}>
                 <Download className="w-4 h-4 mr-2" /> Export
               </Button>
               <Button onClick={() => setStockFormOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
@@ -293,8 +311,8 @@ export default function Ingredients() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Name</TableHead>
                         <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Unit</TableHead>
                         <TableHead>Conversion Unit</TableHead>
@@ -313,8 +331,8 @@ export default function Ingredients() {
                     <TableBody>
                       {filteredIngredients.map(ing => (
                         <TableRow key={ing.id}>
+                          <TableCell className="text-slate-500 text-sm">{getItemCode(ing)}</TableCell>
                           <TableCell className="font-medium">{ing.name}</TableCell>
-                          <TableCell className="text-slate-500 text-sm">{ing.item_code || '-'}</TableCell>
                           <TableCell>
                             <Badge className={CATEGORY_COLORS[ing.category] || 'bg-slate-100 text-slate-700'}>
                               {ing.category?.replace(/_/g, ' ') || '-'}
@@ -424,7 +442,8 @@ export default function Ingredients() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Ingredient</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Site</TableHead>
                         <TableHead>Available Qty</TableHead>
                         <TableHead className="text-center">Cal/100g</TableHead>
@@ -447,6 +466,7 @@ export default function Ingredients() {
                           : null;
                         return (
                           <TableRow key={item.id}>
+                            <TableCell className="text-sm font-medium text-slate-600">{item.item_code}</TableCell>
                             <TableCell className="font-medium">{item.ingredient_name}</TableCell>
                             <TableCell className="text-slate-500 text-sm">{item.site_name}</TableCell>
                             <TableCell>
@@ -514,7 +534,7 @@ export default function Ingredients() {
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Ingredient</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to delete "{ingredientToDelete?.name}"? This action cannot be undone.
+                Are you sure you want to delete "{getItemCode(ingredientToDelete)} · {ingredientToDelete?.name || '—'}"? This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -592,7 +612,9 @@ export default function Ingredients() {
         <Dialog open={historyDialog.open} onOpenChange={(open) => setHistoryDialog({ ...historyDialog, open })}>
           <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Transaction History — {historyDialog.item?.ingredient_name}</DialogTitle>
+              <DialogTitle>
+                Transaction History — {getItemCodeFromRecords([historyDialog.item?._ing, historyDialog.item])} · {historyDialog.item?.ingredient_name || '—'}
+              </DialogTitle>
             </DialogHeader>
             {historyDialog.item && (
               <InventoryHistory ingredientId={historyDialog.item.ingredient_id} siteId={historyDialog.item.site_id} />

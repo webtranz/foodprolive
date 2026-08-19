@@ -6,6 +6,7 @@ import { downloadCSV } from '../utils/exportData';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
 import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
+import { getItemCode } from '../../../shared/itemCode.js';
 
 function averageBy(items, selector) {
   const values = items
@@ -22,7 +23,8 @@ function averageBy(items, selector) {
 export default function CostReport({ ingredients = [], recipes = [] }) {
   const generateCostReport = () => {
     const reportData = ingredients.map(ing => ({
-      ingredient: ing.name,
+      item_code: getItemCode(ing),
+      item_name: ing.name,
       cuisine: ing.cuisine_type,
       category: ing.category,
       unit: ing.unit,
@@ -66,7 +68,8 @@ export default function CostReport({ ingredients = [], recipes = [] }) {
     const yieldData = ingredients
       .filter(ing => ing.cooking_yield_percent || ing.shrinkage_percent)
       .map(ing => ({
-        ingredient: ing.name,
+        item_code: getItemCode(ing),
+        item_name: ing.name,
         cuisine: ing.cuisine_type,
         category: ing.category,
         raw_weight: ing.raw_weight_per_unit || 0,

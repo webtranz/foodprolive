@@ -4,6 +4,7 @@ import {
 } from '../../shared/ingredientUnits.js';
 import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
 import { formatRecipeQuantity } from '../../shared/recipeNumbers.js';
+import { getItemCodeFromRecords } from '../../shared/itemCode.js';
 
 export const PRODUCTION_MEAL_PERIODS = Object.freeze([
   { key: 'breakfast', label: 'Breakfast', time_range: '7:00 AM – 10:00 AM' },
@@ -26,6 +27,12 @@ function round(value, decimals = 2) {
 
 function textValue(value) {
   return String(value || '').trim();
+}
+
+function itemIdentityLabel(item = {}, fallbackName = 'Ingredient') {
+  const itemCode = getItemCodeFromRecords([item], '');
+  const itemName = item.ingredient_name || item.ingredient_id || fallbackName;
+  return itemCode && itemCode !== '—' ? `${itemCode} ${itemName}` : itemName;
 }
 
 export function normalizeProductionMealType(value) {
@@ -103,6 +110,7 @@ function buildInventoryMap(inventory, ingredientMap) {
       site_id: siteId,
       site_name: stock.site_name || '',
       ingredient_id: ingredientId,
+      item_code: getItemCodeFromRecords([ingredient, stock]),
       ingredient_name: stock.ingredient_name || ingredient.name || ingredientId,
       available_quantity: 0,
       unit: targetUnit
@@ -143,6 +151,7 @@ function buildShortages(productions, ingredientMap, inventoryMap) {
         site_id: siteId,
         site_name: production.site_name || inventoryRow?.site_name || '',
         ingredient_id: ingredientId,
+        item_code: getItemCodeFromRecords([ingredient, line, inventoryRow]),
         ingredient_name: line.ingredient_name || inventoryRow?.ingredient_name || ingredient.name || ingredientId,
         required_quantity: 0,
         available_quantity: numberValue(inventoryRow?.available_quantity, 0),
@@ -224,6 +233,13 @@ export function buildProductionPlanningDashboard({
       production,
       recipe,
       recipe_name: production.recipe_name || recipe?.name || 'Unnamed dish',
+      ingredient_lines: (Array.isArray(production?.ingredients_used) ? production.ingredients_used : []).map((line) => ({
+        ...line,
+        item_code: getItemCodeFromRecords([
+          ingredientMap.get(String(line?.ingredient_id || '')),
+          line
+        ])
+      })),
       image_url: production.image_url || recipe?.image_url || '',
       meal_type: mealType,
       required_portions: portions,
@@ -285,8 +301,8 @@ export function buildProductionPlanningDashboard({
 
 export function buildProductionPlanExportRows(dashboard) {
   return (dashboard?.items || []).map((item) => {
-    const productionIngredients = Array.isArray(item.production?.ingredients_used)
-      ? item.production.ingredients_used
+    const productionIngredients = Array.isArray(item.ingredient_lines)
+      ? item.ingredient_lines
       : [];
     return {
       production_date: item.production.production_date || '',
@@ -302,15 +318,15 @@ export function buildProductionPlanExportRows(dashboard) {
       prep_status: item.prep_status.label,
       workflow_status: item.workflow_status,
       shortages: item.shortages.map((shortage) => (
-        `${shortage.ingredient_name}: ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit}`
+        `${itemIdentityLabel(shortage)}: ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit}`
       )).join('; '),
       net_recipe_quantities: productionIngredients
         .filter((line) => line.net_quantity !== null && line.net_quantity !== undefined)
         .map((line) => (
-        `${line.ingredient_name || line.ingredient_id || 'Ingredient'}: ${formatRecipeQuantity(line.net_quantity ?? 0, line.unit)} ${line.unit || ''}`.trim()
+        `${itemIdentityLabel(line)}: ${formatRecipeQuantity(line.net_quantity ?? 0, line.unit)} ${line.unit || ''}`.trim()
         )).join('; '),
       ingredient_quantities: productionIngredients.map((line) => (
-        `${line.ingredient_name || line.ingredient_id || 'Ingredient'}: ${formatRecipeQuantity(
+        `${itemIdentityLabel(line)}: ${formatRecipeQuantity(
           line.actual_quantity ?? line.planned_quantity ?? line.yield_adjusted_quantity ?? line.required_quantity ?? 0,
           line.unit
         )} ${line.unit || ''}`.trim()
@@ -318,7 +334,7 @@ export function buildProductionPlanExportRows(dashboard) {
       yield_details: productionIngredients
         .filter((line) => line.yield_percent !== null && line.yield_percent !== undefined)
         .map((line) => (
-          `${line.ingredient_name || line.ingredient_id || 'Ingredient'}: ${formatRecipeQuantity(line.yield_percent, 'percent')}%`
+          `${itemIdentityLabel(line)}: ${formatRecipeQuantity(line.yield_percent, 'percent')}%`
         )).join('; '),
       notes: item.notes
     };

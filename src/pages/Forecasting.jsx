@@ -36,6 +36,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/exportData';
+import { getItemCode } from '../../shared/itemCode.js';
 
 function defaultFilters() {
   return {
@@ -80,7 +81,7 @@ function summaryToPdf(summary, rows, filters) {
       },
       {
         heading: 'Top Forecast Items',
-        lines: rows.slice(0, 12).map((row) => `${row.location} | ${row.item} | forecast ${row.forecast_quantity} | recommended ${row.recommended_production} | confidence ${row.confidence_score}`)
+        lines: rows.slice(0, 12).map((row) => `${getItemCode(row)} | ${row.item} | ${row.location} | forecast ${row.forecast_quantity} | recommended ${row.recommended_production} | confidence ${row.confidence_score}`)
       }
     ]
   });
@@ -157,6 +158,16 @@ export default function Forecasting() {
   const rows = summaryQuery.data?.rows || [];
   const chartData = summaryQuery.data?.chart || [];
   const inventoryCoverage = summaryQuery.data?.inventoryCoverage || [];
+  const exportRows = useMemo(() => rows.map((row) => ({
+    item_code: getItemCode(row),
+    item_name: row.item || '—',
+    location: row.location,
+    category: row.category,
+    forecast_quantity: row.forecast_quantity,
+    recommended_production: row.recommended_production,
+    confidence_score: row.confidence_score,
+    risk_level: row.risk_level
+  })), [rows]);
 
   if (permissionLoading) {
     return <div className="p-8 text-slate-500">Loading forecasting workspace...</div>;
@@ -181,11 +192,11 @@ export default function Forecasting() {
           title="Demand Forecasting"
           description="Forecast production demand across locations using POS sales, production history, menu plans, meal plans, and waste patterns."
         >
-          <Button variant="outline" onClick={() => downloadCSV(rows, 'forecast_rows')}>
+          <Button variant="outline" onClick={() => downloadCSV(exportRows, 'forecast_rows')}>
             <Download className="w-4 h-4 mr-2" />
             CSV
           </Button>
-          <Button variant="outline" onClick={() => downloadExcel(rows, 'forecast_rows', 'Forecast')}>
+          <Button variant="outline" onClick={() => downloadExcel(exportRows, 'forecast_rows', 'Forecast')}>
             <FileSpreadsheet className="w-4 h-4 mr-2" />
             Excel
           </Button>
@@ -344,8 +355,9 @@ export default function Forecasting() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Item Name</TableHead>
                       <TableHead>Location</TableHead>
-                      <TableHead>Item</TableHead>
                       <TableHead>Category</TableHead>
                       <TableHead>Forecast Qty</TableHead>
                       <TableHead>Recommended</TableHead>
@@ -356,14 +368,15 @@ export default function Forecasting() {
                   <TableBody>
                     {rows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="py-8 text-center text-slate-500">
+                        <TableCell colSpan={8} className="py-8 text-center text-slate-500">
                           No forecast rows available for the selected filters.
                         </TableCell>
                       </TableRow>
                     ) : rows.slice(0, 30).map((row) => (
                       <TableRow key={`${row.site_id}-${row.item}`}>
-                        <TableCell>{row.location}</TableCell>
+                        <TableCell className="font-mono text-xs text-slate-600">{getItemCode(row)}</TableCell>
                         <TableCell className="font-medium">{row.item}</TableCell>
+                        <TableCell>{row.location}</TableCell>
                         <TableCell>{row.category}</TableCell>
                         <TableCell>{row.forecast_quantity}</TableCell>
                         <TableCell>{row.recommended_production}</TableCell>
@@ -390,6 +403,7 @@ export default function Forecasting() {
                 <div key={`${item.site_id}-${item.ingredient}`} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{getItemCode(item)}</p>
                       <p className="font-medium text-slate-900">{item.ingredient}</p>
                       <p className="text-sm text-slate-500">{item.location}</p>
                     </div>

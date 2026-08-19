@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { AlertTriangle, Package, TrendingDown, ExternalLink, Clock3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
+import { getItemCode } from '../../../shared/itemCode.js';
 
 export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) {
   const lowStockAlerts = inventory.filter(item => 
@@ -68,7 +69,9 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
             className="flex items-start justify-between p-3 bg-amber-50 rounded-lg border border-amber-100"
           >
             <div className="flex-1">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{getItemCode(item)}</p>
               <div className="flex items-center gap-2">
+                <span className="font-medium text-sm">{item.ingredient_name}</span>
                 <Badge 
                   className={item.status === 'out_of_stock' 
                     ? 'bg-red-100 text-red-700' 
@@ -76,7 +79,6 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
                 >
                   {item.status === 'out_of_stock' ? 'Out of Stock' : 'Low Stock'}
                 </Badge>
-                <span className="font-medium text-sm">{item.ingredient_name}</span>
               </div>
               <p className="text-xs text-slate-600 mt-1">
                 {item.site_name} • Current: {item.quantity} {item.unit} • Min: {item.min_stock_level || 0} {item.unit}
@@ -92,13 +94,14 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
             className="flex items-start justify-between p-3 bg-rose-50 rounded-lg border border-rose-100"
           >
             <div className="flex-1">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{getItemCode(item)}</p>
               <div className="flex items-center gap-2">
+                <span className="font-medium text-sm">{item.ingredient_name}</span>
                 {(item.expired_lot_count || 0) > 0 ? (
                   <Badge className="bg-rose-100 text-rose-700">Expired Lots</Badge>
                 ) : (
                   <Badge className="bg-orange-100 text-orange-700">Near Expiry</Badge>
                 )}
-                <span className="font-medium text-sm">{item.ingredient_name}</span>
               </div>
               <p className="text-xs text-slate-600 mt-1">
                 {item.site_name} • Expired: {item.expired_lot_count || 0} • Near expiry: {item.near_expiry_count || 0}
@@ -125,9 +128,10 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
               className="flex items-start justify-between p-3 bg-red-50 rounded-lg border border-red-100"
             >
               <div className="flex-1">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{getItemCode(need)}</p>
                 <div className="flex items-center gap-2">
-                  <Badge className="bg-red-100 text-red-700">Shortage Expected</Badge>
                   <span className="font-medium text-sm">{need.ingredient_name}</span>
+                  <Badge className="bg-red-100 text-red-700">Shortage Expected</Badge>
                 </div>
                 <p className="text-xs text-slate-600 mt-1">
                   {need.site_name} • Needed: {need.required_quantity} {need.unit} • Short: {shortage.toFixed(1)} {need.unit}

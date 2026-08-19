@@ -15,6 +15,7 @@ import { format, addDays } from 'date-fns';
 import { downloadCSV } from '../components/utils/exportData';
 import StatCard from '@/components/ui/StatCard';
 import { formatCurrency } from '@/lib/currency';
+import { getItemCode } from '../../shared/itemCode.js';
 
 const PROTEIN_CATEGORIES = ['proteins_meat', 'proteins_poultry', 'proteins_seafood', 'proteins_plant'];
 const GRAIN_CATEGORIES = ['grains_cereals'];
@@ -53,6 +54,7 @@ export default function ProcurementPlanning() {
         const ingData = ingredients.find(i => i.id === ing.ingredient_id);
         if (!needsMap[ing.ingredient_id]) {
           needsMap[ing.ingredient_id] = {
+            item_code: getItemCode(ingData, getItemCode(ing)),
             ingredient_id: ing.ingredient_id,
             ingredient_name: ing.ingredient_name,
             unit: ing.unit,
@@ -98,6 +100,7 @@ export default function ProcurementPlanning() {
       period_start: planningDate,
       period_end: format(addDays(new Date(planningDate), 7), 'yyyy-MM-dd'),
       items: itemsToPurchase.map(n => ({
+        item_code: n.item_code === '—' ? '' : n.item_code,
         ingredient_id: n.ingredient_id,
         ingredient_name: n.ingredient_name,
         required_quantity: n.withBuffer,
@@ -112,6 +115,21 @@ export default function ProcurementPlanning() {
     });
   };
 
+  const exportProcurementPlan = () => {
+    const exportRows = aggregatedNeeds.map((need) => ({
+      item_code: need.item_code,
+      item_name: need.ingredient_name,
+      category: need.category,
+      current_stock: need.currentStock,
+      required_quantity: need.withBuffer,
+      to_purchase: need.toPurchase,
+      unit: need.unit,
+      estimated_cost: need.estimatedCost,
+      status: need.sufficient ? 'Sufficient' : 'Purchase Required'
+    }));
+    downloadCSV(exportRows, 'procurement_plan');
+  };
+
   const renderIngredientGroup = (items, label, color) => {
     if (items.length === 0) return null;
     return (
@@ -119,7 +137,8 @@ export default function ProcurementPlanning() {
         <h4 className={`text-sm font-semibold mb-2 px-1 ${color}`}>{label}</h4>
         {items.map((n, idx) => (
           <div key={idx} className={`flex items-center justify-between py-2 px-3 rounded-lg mb-1 ${n.sufficient ? 'bg-slate-50' : 'bg-red-50 border border-red-100'}`}>
-            <div>
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="min-w-24 font-mono text-xs text-slate-500">{n.item_code}</span>
               <span className="text-sm font-medium text-slate-800">{n.ingredient_name}</span>
               {!n.sufficient && <span className="ml-2 text-xs text-red-600 font-medium">⚠ Short by {(n.toPurchase - n.currentStock < 0 ? 0 : n.withBuffer - n.currentStock).toFixed(1)} {n.unit}</span>}
             </div>
@@ -139,7 +158,7 @@ export default function ProcurementPlanning() {
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-[1600px] mx-auto">
         <PageHeader title="Procurement Planning" description="Auto-generate purchase requirements from production plans">
-          <Button variant="outline" onClick={() => downloadCSV(aggregatedNeeds, 'procurement_plan')}>
+          <Button variant="outline" onClick={exportProcurementPlan}>
             <Download className="w-4 h-4 mr-2" /> Export
           </Button>
           <Button
@@ -227,7 +246,8 @@ export default function ProcurementPlanning() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Ingredient</TableHead>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Item Name</TableHead>
                       <TableHead>Category</TableHead>
                       <TableHead>Current Stock</TableHead>
                       <TableHead>Required (+{bufferPercent}% buffer)</TableHead>
@@ -240,6 +260,7 @@ export default function ProcurementPlanning() {
                   <TableBody>
                     {aggregatedNeeds.map((n, idx) => (
                       <TableRow key={idx}>
+                        <TableCell className="font-mono text-xs text-slate-600">{n.item_code}</TableCell>
                         <TableCell className="font-medium">{n.ingredient_name}</TableCell>
                         <TableCell className="text-xs text-slate-500 capitalize">{n.category?.replace(/_/g, ' ')}</TableCell>
                         <TableCell>{n.currentStock.toFixed(1)}</TableCell>
@@ -256,7 +277,7 @@ export default function ProcurementPlanning() {
                       </TableRow>
                     ))}
                     {aggregatedNeeds.length === 0 && (
-                      <TableRow><TableCell colSpan={8} className="text-center text-slate-500 py-8">No data available</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={9} className="text-center text-slate-500 py-8">No data available</TableCell></TableRow>
                     )}
                   </TableBody>
                 </Table>

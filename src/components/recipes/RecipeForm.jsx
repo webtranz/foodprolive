@@ -34,6 +34,7 @@ import {
   normalizeRecipeNumericFields,
   standardizeDecimalValue
 } from '../../../shared/recipeNumbers.js';
+import { getItemCode } from '../../../shared/itemCode.js';
 
 const ALLERGEN_COLORS = {
   dairy: 'bg-sky-100 text-sky-700',
@@ -327,7 +328,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
   const addIngredient = () => {
     setFormData((prev) => ({
       ...prev,
-      ingredients: [...prev.ingredients, { ingredient_id: '', ingredient_name: '', quantity: null, unit: 'g' }]
+      ingredients: [...prev.ingredients, { ingredient_id: '', item_code: '', ingredient_name: '', quantity: null, unit: 'g' }]
     }));
   };
 
@@ -349,6 +350,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       if (field === 'ingredient_id') {
         const selected = ingredients.find((item) => item.id === value);
         if (selected) {
+          nextIngredients[index].item_code = getItemCode(selected, '');
           nextIngredients[index].ingredient_name = selected.name;
           nextIngredients[index].unit = selected.unit || 'g';
         }
@@ -366,6 +368,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       nextIngredients[index] = {
         ...nextIngredients[index],
         ingredient_id: ingredient.id,
+        item_code: getItemCode(ingredient, ''),
         ingredient_name: ingredient.name,
         unit: ingredient.unit || nextIngredients[index]?.unit || 'g'
       };
@@ -759,8 +762,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
             <div className="space-y-3">
               {formData.ingredients.length > 0 ? (
-                <div className="hidden grid-cols-[minmax(230px,1.6fr)_100px_90px_120px_120px_130px_150px_42px] gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 xl:grid">
-                  <span>Ingredient</span>
+                <div className="hidden grid-cols-[100px_minmax(230px,1.6fr)_100px_90px_120px_120px_130px_150px_42px] gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 xl:grid">
+                  <span>Item Code</span>
+                  <span>Item Name</span>
                   <span>Quantity</span>
                   <span>Unit</span>
                   <span>Item Cost</span>
@@ -775,13 +779,24 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                 const numericStatus = numericValidation[`ingredient-${index}`] || {};
                 const selectedIngredient = costRow?.ingredient || (
                   ingredientLine.ingredient_id
-                    ? { id: ingredientLine.ingredient_id, name: ingredientLine.ingredient_name || 'Selected ingredient', unit: ingredientLine.unit }
+                    ? {
+                        id: ingredientLine.ingredient_id,
+                        item_code: ingredientLine.item_code,
+                        name: ingredientLine.ingredient_name || 'Selected ingredient',
+                        unit: ingredientLine.unit
+                      }
                     : null
                 );
                 return (
-                  <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[minmax(230px,1.6fr)_100px_90px_120px_120px_130px_150px_42px]">
+                  <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[100px_minmax(230px,1.6fr)_100px_90px_120px_120px_130px_150px_42px]">
+                  <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Code</p>
+                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-medium text-slate-700">
+                      {getItemCode(costRow?.ingredient || selectedIngredient || ingredientLine)}
+                    </div>
+                  </div>
                   <div className="md:col-span-2 xl:col-span-1">
-                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Ingredient</p>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Name</p>
                     <IngredientSearchCombobox
                       value={ingredientLine.ingredient_id}
                       selectedIngredient={selectedIngredient}

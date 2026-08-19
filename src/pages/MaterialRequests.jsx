@@ -11,9 +11,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CheckCircle2, ClipboardList, FileText, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
+import { getItemCode } from '../../shared/itemCode.js';
 
 const STATUS_CONFIG = {
   awaiting_production_approval: { color: 'bg-slate-100 text-slate-700', label: 'Awaiting Production Approval' },
@@ -36,6 +38,8 @@ export default function MaterialRequests() {
     queryKey: ['materialRequestsWorkflow'],
     queryFn: () => base44.materialRequests.list()
   });
+
+  const resolveRequestItemCode = (item) => getItemCode(item);
 
   const filteredBaseRequests = materialRequests.filter((request) =>
     String(request.status || '').toLowerCase() !== 'awaiting_production_approval'
@@ -70,6 +74,41 @@ export default function MaterialRequests() {
       setNotes('');
     }
   });
+
+  const renderRequestItemsTable = (request) => {
+    const items = request?.items || [];
+    return (
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Item Code</TableHead>
+              <TableHead>Item Name</TableHead>
+              <TableHead>Required</TableHead>
+              <TableHead>Current Stock</TableHead>
+              <TableHead>Request Quantity</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((item, index) => (
+              <TableRow key={`${request.id}-item-${item.id || index}`}>
+                <TableCell className="font-mono text-xs text-slate-600">{resolveRequestItemCode(item)}</TableCell>
+                <TableCell className="font-medium text-slate-900">{item.ingredient_name}</TableCell>
+                <TableCell>{Number(item.required_quantity || 0).toFixed(2)} {item.unit}</TableCell>
+                <TableCell>{Number(item.current_stock || 0).toFixed(2)} {item.unit}</TableCell>
+                <TableCell>{Number(item.request_quantity || 0).toFixed(2)} {item.unit}</TableCell>
+              </TableRow>
+            ))}
+            {items.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="py-6 text-center text-sm text-slate-500">No request items recorded.</TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
@@ -186,18 +225,7 @@ export default function MaterialRequests() {
 
                     <div className="rounded-2xl border border-slate-200 bg-white p-4">
                       <p className="mb-3 text-sm font-semibold text-slate-800">Requested Items</p>
-                      <div className="space-y-2">
-                        {(request.items || []).map((item, index) => (
-                          <div key={`${request.id}-item-${index}`} className="flex flex-col gap-1 rounded-xl bg-slate-50 px-3 py-2 text-sm md:flex-row md:items-center md:justify-between">
-                            <span className="font-medium text-slate-900">{item.ingredient_name}</span>
-                            <div className="flex flex-wrap items-center gap-3 text-slate-600">
-                              <span>Required: {Number(item.required_quantity || 0).toFixed(2)} {item.unit}</span>
-                              <span>Stock: {Number(item.current_stock || 0).toFixed(2)} {item.unit}</span>
-                              <span>Request: {Number(item.request_quantity || 0).toFixed(2)} {item.unit}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      {renderRequestItemsTable(request)}
                     </div>
 
                     {request.notes ? (
@@ -235,7 +263,7 @@ export default function MaterialRequests() {
       </div>
 
       <Dialog open={Boolean(selectedRequest)} onOpenChange={(open) => !open && setSelectedRequest(null)}>
-        <DialogContent>
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>Acknowledge Material Request</DialogTitle>
           </DialogHeader>
@@ -244,6 +272,10 @@ export default function MaterialRequests() {
               <p><span className="font-medium text-slate-900">Request:</span> {selectedRequest?.request_number}</p>
               <p><span className="font-medium text-slate-900">Production:</span> {selectedRequest?.source_production_name || '-'}</p>
               <p><span className="font-medium text-slate-900">Project:</span> {selectedRequest?.site_name || '-'}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <p className="mb-2 text-sm font-semibold text-slate-900">Requested Items</p>
+              {renderRequestItemsTable(selectedRequest)}
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">Procurement Notes</label>

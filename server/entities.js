@@ -394,6 +394,7 @@ export const entityRegistry = {
     defaults: { is_active: true, allergens: [] },
     unique: [
       { fields: ['name'], label: 'ingredient name' },
+      { fields: ['item_code'], label: 'item code', ignoreEmpty: true },
       { fields: ['ingredient_code'], label: 'ingredient code', ignoreEmpty: true },
       { fields: ['sku'], label: 'ingredient SKU', ignoreEmpty: true }
     ],

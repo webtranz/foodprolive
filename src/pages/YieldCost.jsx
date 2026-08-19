@@ -18,6 +18,7 @@ import YieldUpload from '../components/yield/YieldUpload';
 import CostReport from '../components/yield/CostReport';
 import { formatCurrency } from '@/lib/currency';
 import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
+import { getItemCode, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
 
 function averageBy(items, selector) {
   const values = items
@@ -52,7 +53,10 @@ export default function YieldCost() {
   };
 
   const filteredIngredients = ingredients.filter(ing => {
-    const matchesSearch = ing.name?.toLowerCase().includes(searchQuery.toLowerCase());
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+    const matchesSearch = !normalizedSearch
+      || ing.name?.toLowerCase().includes(normalizedSearch)
+      || getItemCode(ing, '').toLowerCase().includes(normalizedSearch);
     const matchesCuisine = selectedCuisine === 'all' || ing.cuisine_type === selectedCuisine;
     const matchesCategory = selectedCategory === 'all' || ing.category === selectedCategory;
     return matchesSearch && matchesCuisine && matchesCategory;
@@ -87,7 +91,13 @@ export default function YieldCost() {
         >
           <Button
             variant="outline"
-            onClick={() => downloadCSV(filteredIngredients, 'yield-cost-data')}
+            onClick={() => downloadCSV(
+              filteredIngredients.map((ingredient) => putItemCodeAndNameFirst(ingredient, {
+                nameKey: 'name',
+                outputNameKey: 'item_name'
+              })),
+              'yield-cost-data'
+            )}
           >
             <Download className="w-4 h-4 mr-2" />
             Export
@@ -220,7 +230,8 @@ export default function YieldCost() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Ingredient</TableHead>
+                          <TableHead>Item Code</TableHead>
+                          <TableHead>Item Name</TableHead>
                           <TableHead>Cuisine</TableHead>
                           <TableHead>Category</TableHead>
                           <TableHead className="text-right">Raw Weight (g)</TableHead>
@@ -233,6 +244,7 @@ export default function YieldCost() {
                       <TableBody>
                         {filteredIngredients.map(ingredient => (
                           <TableRow key={ingredient.id}>
+                            <TableCell className="font-mono text-xs text-slate-600">{getItemCode(ingredient)}</TableCell>
                             <TableCell className="font-medium">{ingredient.name}</TableCell>
                             <TableCell>
                               <Badge variant="outline" className="capitalize">

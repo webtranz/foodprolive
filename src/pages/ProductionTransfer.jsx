@@ -14,6 +14,7 @@ import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchC
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, ArrowRight, Package, CheckCircle2, Truck, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
+import { getItemCodeFromRecords } from '../../shared/itemCode.js';
 
 const STATUS_CONFIG = {
   pending: { color: 'bg-amber-500', label: 'Pending', icon: Package },
@@ -104,14 +105,14 @@ export default function ProductionTransfer() {
   };
 
   const addItem = () => {
-    setSelectedItems([...selectedItems, { ingredient_id: '', ingredient_name: '', quantity: 0, unit: 'kg' }]);
+    setSelectedItems([...selectedItems, { ingredient_id: '', item_code: '', ingredient_name: '', quantity: 0, unit: 'kg' }]);
   };
 
   const removeItem = (index) => {
     setSelectedItems(selectedItems.filter((_, i) => i !== index));
   };
 
-  const updateItem = (index, field, value) => {
+  const updateItem = (index, field, value, selectedIngredient = null) => {
     const updated = [...selectedItems];
     updated[index][field] = value;
     if (field === 'ingredient_id') {
@@ -119,8 +120,9 @@ export default function ProductionTransfer() {
         i.site_id === formData.from_site_id && 
         i.ingredient_id === value
       );
-      updated[index].ingredient_name = fromInv?.ingredient_name || '';
-      updated[index].unit = fromInv?.unit || 'kg';
+      updated[index].item_code = getItemCodeFromRecords([selectedIngredient, fromInv], '');
+      updated[index].ingredient_name = selectedIngredient?.name || fromInv?.ingredient_name || '';
+      updated[index].unit = selectedIngredient?.unit || fromInv?.unit || 'kg';
     }
     setSelectedItems(updated);
   };
@@ -147,7 +149,6 @@ export default function ProductionTransfer() {
   };
 
   const availableInventory = inventory.filter(i => i.site_id === formData.from_site_id && i.quantity > 0);
-
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-[1600px] mx-auto">
@@ -214,7 +215,10 @@ export default function ProductionTransfer() {
                     <div className="space-y-1">
                       {transfer.items?.slice(0, 3).map((item, idx) => (
                         <div key={idx} className="flex justify-between text-xs">
-                          <span className="text-slate-600">{item.ingredient_name}</span>
+                          <span className="min-w-0 text-slate-600">
+                            <span className="mr-3 font-mono text-slate-500">{getItemCodeFromRecords([item])}</span>
+                            <span className="font-medium text-slate-800">{item.ingredient_name}</span>
+                          </span>
                           <span className="font-medium">{item.quantity} {item.unit}</span>
                         </div>
                       ))}
@@ -300,7 +304,8 @@ export default function ProductionTransfer() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Ingredient</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Quantity</TableHead>
                         <TableHead>Unit</TableHead>
                         <TableHead></TableHead>
@@ -309,21 +314,25 @@ export default function ProductionTransfer() {
                     <TableBody>
                       {selectedItems.map((item, idx) => (
                         <TableRow key={idx}>
+                          <TableCell className="font-mono text-xs text-slate-600">
+                            {getItemCodeFromRecords([item])}
+                          </TableCell>
                           <TableCell>
                             <IngredientSearchCombobox
                               value={item.ingredient_id}
                               selectedIngredient={(() => {
                                 const stock = availableInventory.find((entry) => entry.ingredient_id === item.ingredient_id);
-                                return stock ? {
-                                  id: stock.ingredient_id,
-                                  name: stock.ingredient_name,
-                                  unit: stock.unit,
-                                  current_stock: stock.quantity
+                                return stock || item.ingredient_id ? {
+                                  id: item.ingredient_id || stock?.ingredient_id,
+                                  item_code: item.item_code,
+                                  name: item.ingredient_name || stock?.ingredient_name,
+                                  unit: item.unit || stock?.unit,
+                                  current_stock: stock?.quantity
                                 } : null;
                               })()}
                               siteId={formData.from_site_id}
                               stockOnly
-                              onValueChange={(value) => updateItem(idx, 'ingredient_id', value)}
+                              onValueChange={(value, ingredient) => updateItem(idx, 'ingredient_id', value, ingredient)}
                             />
                           </TableCell>
                           <TableCell>

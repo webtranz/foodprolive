@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { MoreVertical, Pencil, Trash2, Flame, Scale, TrendingDown, Droplets, Candy, ShieldAlert } from 'lucide-react';
+import { getItemCode } from '../../../shared/itemCode.js';
 
 const CATEGORY_COLORS = {
   proteins: 'bg-red-100 text-red-700',
@@ -26,6 +27,9 @@ export default function IngredientCard({ ingredient, onEdit, onDelete }) {
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-3">
           <div>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {getItemCode(ingredient)}
+            </p>
             <h3 className="font-semibold text-slate-900 group-hover:text-emerald-600 transition-colors">
               {ingredient.name}
             </h3>

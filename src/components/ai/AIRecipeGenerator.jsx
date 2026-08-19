@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Sparkles, Loader2, Save, RefreshCw, DollarSign } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { formatCurrency } from '@/lib/currency';
+import { getItemCode } from '../../../shared/itemCode.js';
 
 export default function AIRecipeGenerator() {
   const [filters, setFilters] = useState({
@@ -58,6 +59,7 @@ export default function AIRecipeGenerator() {
     .map(i => {
       const ing = ingredients.find(ing => ing.id === i.ingredient_id);
       return {
+        item_code: getItemCode(ing, ''),
         name: i.ingredient_name,
         quantity: i.quantity,
         unit: i.unit,
@@ -78,7 +80,7 @@ Meal Category: ${filters.category}
 Servings: ${filters.servings}
 
 Available Ingredients (use at least 5-8 of these):
-${availableIngredients.map(i => `- ${i.name} (${i.quantity} ${i.unit})`).join('\n')}
+${availableIngredients.map(i => `- ${i.item_code ? `${i.item_code} ` : ''}${i.name} (${i.quantity} ${i.unit})`).join('\n')}
 
 Requirements:
 1. Create an authentic ${filters.cuisineType} ${filters.category} recipe
@@ -139,6 +141,7 @@ Provide the recipe in the exact JSON format below (no markdown, no code blocks, 
         
         return {
           ingredient_id: matchedIng?.id || null,
+          item_code: getItemCode(matchedIng, ''),
           ingredient_name: ing.ingredient_name,
           quantity: ing.quantity,
           unit: ing.unit
@@ -436,7 +439,8 @@ Format as JSON.`;
                 {generatedRecipe.ingredients.map((ing, idx) => (
                   <div key={idx} className="flex items-center gap-2 text-sm">
                     <span className="text-slate-600">•</span>
-                    <span>{ing.quantity} {ing.unit} {ing.ingredient_name}</span>
+                    <span className="font-mono text-xs text-slate-500">{ing.item_code || '—'}</span>
+                    <span>{ing.ingredient_name} · {ing.quantity} {ing.unit}</span>
                   </div>
                 ))}
               </div>

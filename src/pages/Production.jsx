@@ -25,6 +25,7 @@ import {
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 import { calculateYieldAdjustedQuantity } from '../../shared/ingredientYield.js';
 import { formatRecipeQuantity, getRecipeQuantityPrecision, roundStandardDecimal } from '../../shared/recipeNumbers.js';
+import { getItemCode } from '../../shared/itemCode.js';
 
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -253,6 +254,7 @@ export default function Production() {
           const estimatedCost = calculateIngredientCost(adjustedQty, ing.unit, ingredientData, unitCost);
           
           return {
+            item_code: getItemCode(ingredientData, getItemCode(ing)),
             ingredient_id: ing.ingredient_id,
             ingredient_name: ing.ingredient_name,
             source_recipe_names: ing.source_recipe_names || [],
@@ -405,6 +407,7 @@ export default function Production() {
       recipe_name: recipe?.name || '',
       target_servings: Number(formData.target_servings) || 0,
       ingredients_used: calculatedIngredients.map(ing => ({
+        item_code: ing.item_code === '—' ? '' : ing.item_code,
         ingredient_id: ing.ingredient_id,
         ingredient_name: ing.ingredient_name,
         source_recipe_names: ing.source_recipe_names,
@@ -489,6 +492,7 @@ export default function Production() {
       const shortage = Math.max(0, requiredQuantity - currentStock);
       
       return {
+        item_code: getItemCode(ingredientData, getItemCode(ing)),
         ingredient_id: ing.ingredient_id,
         ingredient_name: ing.ingredient_name,
         adjusted_quantity: roundStandardDecimal(requiredQuantity, getRecipeQuantityPrecision(inventoryUnit)),
@@ -802,7 +806,8 @@ export default function Production() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Ingredient</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Net Recipe Qty</TableHead>
                         <TableHead>Yield</TableHead>
                         <TableHead>Raw Required</TableHead>
@@ -815,6 +820,7 @@ export default function Production() {
                     <TableBody>
                       {calculatedIngredients.map((ing, idx) => (
                         <TableRow key={idx}>
+                          <TableCell className="font-mono text-xs text-slate-600">{ing.item_code}</TableCell>
                           <TableCell>{ing.ingredient_name}</TableCell>
                           <TableCell>{formatRecipeQuantity(ing.planned_quantity, ing.unit)} {ing.unit}</TableCell>
                           <TableCell>{ing.yield_percent.toFixed(2)}%</TableCell>
@@ -914,7 +920,8 @@ export default function Production() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Ingredient</TableHead>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Item Name</TableHead>
                       <TableHead>Required</TableHead>
                       <TableHead>In Stock</TableHead>
                       <TableHead>Status</TableHead>
@@ -923,6 +930,7 @@ export default function Production() {
                   <TableBody>
                     {inventoryCheck.map((ing, idx) => (
                       <TableRow key={idx}>
+                        <TableCell className="font-mono text-xs text-slate-600">{ing.item_code}</TableCell>
                         <TableCell>{ing.ingredient_name}</TableCell>
                         <TableCell>{formatRecipeQuantity(ing.adjusted_quantity, ing.unit)} {ing.unit}</TableCell>
                         <TableCell>{formatRecipeQuantity(ing.current_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>

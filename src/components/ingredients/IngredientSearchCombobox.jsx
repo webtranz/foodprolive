@@ -15,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber } from '@/lib/currency';
 import { splitHighlightedIngredientText } from '../../../shared/ingredientSearch.js';
+import { getItemCode } from '../../../shared/itemCode.js';
 
 function useDebouncedValue(value, delay = 250) {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -33,10 +34,6 @@ function HighlightedText({ value, query }) {
       </mark>
     ) : <React.Fragment key={`${part.text}-${index}`}>{part.text}</React.Fragment>
   ));
-}
-
-function skuLabel(ingredient) {
-  return ingredient.sku || ingredient.ingredient_code || ingredient.item_code || '—';
 }
 
 function allergenList(ingredient) {
@@ -98,7 +95,9 @@ export default function IngredientSearchCombobox({
   const totalPages = Number(query.data?.total_pages || 1);
   const isDebouncing = search !== debouncedSearch;
   const visibleSearch = debouncedSearch;
-  const selectedLabel = selectedIngredient?.name || (value ? 'Selected ingredient' : '');
+  const selectedLabel = selectedIngredient
+    ? `${getItemCode(selectedIngredient)} · ${selectedIngredient.name || 'Unnamed item'}`
+    : (value ? 'Selected ingredient' : '');
 
   const resultDescription = useMemo(() => {
     if (query.isError) return 'Ingredient search unavailable';
@@ -162,8 +161,8 @@ export default function IngredientSearchCombobox({
             <span>{resultDescription}{query.data && !query.isFetching ? ` in ${query.data.elapsed_ms} ms` : ''}</span>
           </div>
 
-          <div className="hidden grid-cols-[minmax(180px,1.5fr)_110px_120px_60px_95px_100px_100px] gap-2 border-b bg-white px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:grid">
-            <span>Ingredient</span><span>SKU</span><span>Category</span><span>Unit</span><span>Stock</span><span>Last cost</span><span>Allergen</span>
+          <div className="hidden grid-cols-[110px_minmax(180px,1.5fr)_120px_60px_95px_100px_100px] gap-2 border-b bg-white px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:grid">
+            <span>Item Code</span><span>Item Name</span><span>Category</span><span>Unit</span><span>Stock</span><span>Last cost</span><span>Allergen</span>
           </div>
 
           <CommandList className="max-h-[390px]">
@@ -207,12 +206,12 @@ export default function IngredientSearchCombobox({
                       onSelect={() => chooseIngredient(ingredient)}
                       className="min-h-[58px] px-3 py-2"
                     >
-                      <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 md:grid-cols-[minmax(180px,1.5fr)_110px_120px_60px_95px_100px_100px]">
+                      <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 md:grid-cols-[110px_minmax(180px,1.5fr)_120px_60px_95px_100px_100px]">
                         <div className="min-w-0">
-                          <div className="truncate font-medium text-slate-900"><HighlightedText value={ingredient.name} query={visibleSearch} /></div>
-                          <div className="truncate text-xs text-slate-500 md:hidden"><HighlightedText value={skuLabel(ingredient)} query={visibleSearch} /> · {ingredient.category || 'Uncategorized'}</div>
+                          <div className="truncate text-xs font-semibold text-slate-700 md:text-sm"><HighlightedText value={getItemCode(ingredient)} query={visibleSearch} /></div>
+                          <div className="truncate text-sm font-medium text-slate-900 md:hidden"><HighlightedText value={ingredient.name || '—'} query={visibleSearch} /></div>
                         </div>
-                        <span className="hidden truncate text-xs text-slate-600 md:block"><HighlightedText value={skuLabel(ingredient)} query={visibleSearch} /></span>
+                        <span className="hidden truncate font-medium text-slate-900 md:block"><HighlightedText value={ingredient.name || '—'} query={visibleSearch} /></span>
                         <span className="hidden truncate text-xs text-slate-600 md:block"><HighlightedText value={ingredient.category || '—'} query={visibleSearch} /></span>
                         <span className="hidden text-xs text-slate-600 md:block">{ingredient.unit || '—'}</span>
                         <span className={cn('hidden text-xs font-medium md:block', Number(ingredient.current_stock) <= 0 ? 'text-red-600' : 'text-slate-700')}>

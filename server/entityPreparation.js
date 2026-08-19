@@ -4,6 +4,7 @@ import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { normalizeRecipeNumericFields } from '../shared/recipeNumbers.js';
 import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
 import { calculateIngredientCost, convertIngredientQuantity } from '../shared/ingredientUnits.js';
+import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import {
   applyLinkedProductionLocation,
   applyRequiredOperationalLocation
@@ -406,6 +407,7 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
 
       return {
         ingredient_id: line.ingredient_id,
+        item_code: getItemCodeFromRecords([ingredient, line, submitted], null),
         ingredient_name: ingredient.name || line.ingredient_name,
         source_recipe_names: line.source_recipe_names || [],
         net_quantity: Number(netQuantity.toFixed(4)),

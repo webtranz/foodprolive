@@ -44,6 +44,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import StatCard from '@/components/ui/StatCard';
 import { downloadCSV } from '../components/utils/exportData';
 import { formatCurrency } from '@/lib/currency';
+import { getItemCode, getItemCodeFromRecords, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
 
 const STATUS_COLORS = {
   in_stock: 'bg-emerald-100 text-emerald-700',
@@ -126,9 +127,17 @@ function resolveIngredientByValue(ingredients, value) {
   return ingredients.find((ingredient) => (
     normalizeLookup(ingredient.id) === normalizedValue ||
     normalizeLookup(ingredient.name) === normalizedValue ||
+    normalizeLookup(ingredient.item_code) === normalizedValue ||
     normalizeLookup(ingredient.ingredient_code) === normalizedValue ||
     normalizeLookup(ingredient.sku) === normalizedValue
   )) || null;
+}
+
+function withResolvedItemCode(record, ingredientById) {
+  return {
+    ...record,
+    item_code: getItemCodeFromRecords([ingredientById.get(record?.ingredient_id), record])
+  };
 }
 
 function buildBulkInventoryRows(rows, sites, ingredients, defaultSiteId = '') {
@@ -144,7 +153,7 @@ function buildBulkInventoryRows(rows, sites, ingredients, defaultSiteId = '') {
     );
     const ingredient = resolveIngredientByValue(
       ingredients,
-      pickValue(row, ['ingredient_id', 'ingredient_name', 'ingredient', 'item_name', 'ingredient_code', 'sku'])
+      pickValue(row, ['item_code', 'ingredient_id', 'ingredient_name', 'ingredient', 'item_name', 'ingredient_code', 'sku'])
     );
     const quantity = toSafeNumber(pickValue(row, ['quantity', 'qty', 'opening_stock', 'stock_qty']), 0);
     const unitCost = toSafeNumber(pickValue(row, ['unit_cost', 'cost', 'avg_cost', 'cost_per_unit']), 0);
@@ -159,6 +168,7 @@ function buildBulkInventoryRows(rows, sites, ingredients, defaultSiteId = '') {
     previewRows.push({
       row: index + 2,
       project: site?.name || '',
+      item_code: getItemCode(ingredient),
       ingredient: ingredient?.name || '',
       quantity,
       unit_cost: unitCost,
@@ -383,7 +393,8 @@ function InventoryTransferDialog({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Ingredient</TableHead>
+                    <TableHead>Item Code</TableHead>
+                    <TableHead>Item Name</TableHead>
                     <TableHead>Available</TableHead>
                     <TableHead>Quantity</TableHead>
                     <TableHead>Unit</TableHead>
@@ -395,12 +406,16 @@ function InventoryTransferDialog({
                     const selectedInventory = availableInventory.find((entry) => entry.ingredient_id === item.ingredient_id);
                     return (
                       <TableRow key={`${item.ingredient_id}-${index}`}>
+                        <TableCell className="text-sm font-medium text-slate-600">
+                          {getItemCode(selectedInventory)}
+                        </TableCell>
                         <TableCell>
                           <IngredientSearchCombobox
                             value={item.ingredient_id}
                             selectedIngredient={selectedInventory ? {
                               id: selectedInventory.ingredient_id,
                               name: selectedInventory.ingredient_name,
+                              item_code: selectedInventory.item_code,
                               unit: selectedInventory.unit,
                               current_stock: selectedInventory.quantity
                             } : null}
@@ -539,6 +554,31 @@ export default function Inventory() {
     queryFn: () => base44.inventory.listLots({ include_empty: false })
   });
 
+  const ingredientById = useMemo(
+    () => new Map(ingredients.map((ingredient) => [ingredient.id, ingredient])),
+    [ingredients]
+  );
+  const codedStockOnHand = useMemo(
+    () => stockOnHand.map((record) => withResolvedItemCode(record, ingredientById)),
+    [ingredientById, stockOnHand]
+  );
+  const codedMovementReport = useMemo(
+    () => movementReport.map((record) => withResolvedItemCode(record, ingredientById)),
+    [ingredientById, movementReport]
+  );
+  const codedExpiryReport = useMemo(
+    () => expiryReport.map((record) => withResolvedItemCode(record, ingredientById)),
+    [expiryReport, ingredientById]
+  );
+  const codedValuationReport = useMemo(
+    () => valuationReport.map((record) => withResolvedItemCode(record, ingredientById)),
+    [ingredientById, valuationReport]
+  );
+  const codedLots = useMemo(
+    () => lots.map((record) => withResolvedItemCode(record, ingredientById)),
+    [ingredientById, lots]
+  );
+
   useEffect(() => {
     const unsubscribeInventory = base44.entities.Inventory.subscribe(() => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
@@ -576,6 +616,7 @@ export default function Inventory() {
           needs.push({
             ingredient_id: ingredient.ingredient_id,
             ingredient_name: ingredient.ingredient_name,
+            item_code: getItemCodeFromRecords([ingredientById.get(ingredient.ingredient_id), ingredient]),
             site_id: production.site_id,
             site_name: production.site_name,
             required_quantity: ingredient.planned_quantity || 0,
@@ -586,39 +627,39 @@ export default function Inventory() {
       });
 
     return needs;
-  }, [productions]);
+  }, [ingredientById, productions]);
 
   const filteredInventory = useMemo(() => {
-    return stockOnHand.filter((item) => {
+    return codedStockOnHand.filter((item) => {
       const matchesSite = selectedSite === 'all' || item.site_id === selectedSite;
-      const matchesSearch = !searchQuery || `${item.ingredient_name} ${item.site_name}`.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = !searchQuery || `${item.item_code} ${item.ingredient_name} ${item.site_name}`.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesSite && matchesSearch;
     });
-  }, [searchQuery, selectedSite, stockOnHand]);
+  }, [codedStockOnHand, searchQuery, selectedSite]);
 
   const filteredExpiry = useMemo(() => {
-    return expiryReport.filter((item) => {
+    return codedExpiryReport.filter((item) => {
       const matchesSite = selectedSite === 'all' || item.site_id === selectedSite;
-      const matchesSearch = !searchQuery || `${item.ingredient_name} ${item.site_name} ${item.batch_number || ''}`.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = !searchQuery || `${item.item_code} ${item.ingredient_name} ${item.site_name} ${item.batch_number || ''}`.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesSite && matchesSearch;
     });
-  }, [expiryReport, searchQuery, selectedSite]);
+  }, [codedExpiryReport, searchQuery, selectedSite]);
 
   const filteredValuation = useMemo(() => {
-    return valuationReport.filter((item) => {
+    return codedValuationReport.filter((item) => {
       const matchesSite = selectedSite === 'all' || item.site_id === selectedSite;
-      const matchesSearch = !searchQuery || `${item.ingredient_name} ${item.site_name}`.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = !searchQuery || `${item.item_code} ${item.ingredient_name} ${item.site_name}`.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesSite && matchesSearch;
     });
-  }, [valuationReport, searchQuery, selectedSite]);
+  }, [codedValuationReport, searchQuery, selectedSite]);
 
   const filteredLots = useMemo(() => {
-    return lots.filter((lot) => {
+    return codedLots.filter((lot) => {
       const matchesSite = selectedSite === 'all' || lot.site_id === selectedSite;
-      const matchesSearch = !searchQuery || `${lot.ingredient_name} ${lot.site_name} ${lot.batch_number || ''}`.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = !searchQuery || `${lot.item_code} ${lot.ingredient_name} ${lot.site_name} ${lot.batch_number || ''}`.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesSite && matchesSearch;
     });
-  }, [lots, searchQuery, selectedSite]);
+  }, [codedLots, searchQuery, selectedSite]);
 
   const inventorySummary = useMemo(() => {
     const totalQuantity = filteredInventory.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
@@ -757,8 +798,9 @@ export default function Inventory() {
   const handleDownloadInventoryTemplate = () => {
     const worksheet = XLSX.utils.json_to_sheet([
       {
-        project_code: 'PROJ-001',
+        item_code: 'ITM-001',
         ingredient_name: 'Chicken Breast',
+        project_code: 'PROJ-001',
         quantity: 25,
         unit_cost: 5.8,
         batch_number: 'BATCH-001',
@@ -804,7 +846,7 @@ export default function Inventory() {
   };
 
   const movementSummary = useMemo(() => {
-    return movementReport.reduce((summary, movement) => {
+    return codedMovementReport.reduce((summary, movement) => {
       const quantity = Number(movement.quantity || 0);
       if (quantity >= 0) {
         summary.inbound += quantity;
@@ -813,15 +855,19 @@ export default function Inventory() {
       }
       return summary;
     }, { inbound: 0, outbound: 0 });
-  }, [movementReport]);
+  }, [codedMovementReport]);
 
   const filteredFastMoving = useMemo(() => {
-    return (velocityReport.fast_moving || []).filter((item) => selectedSite === 'all' || item.site_id === selectedSite);
-  }, [selectedSite, velocityReport.fast_moving]);
+    return (velocityReport.fast_moving || [])
+      .map((record) => withResolvedItemCode(record, ingredientById))
+      .filter((item) => selectedSite === 'all' || item.site_id === selectedSite);
+  }, [ingredientById, selectedSite, velocityReport.fast_moving]);
 
   const filteredSlowMoving = useMemo(() => {
-    return (velocityReport.slow_moving || []).filter((item) => selectedSite === 'all' || item.site_id === selectedSite);
-  }, [selectedSite, velocityReport.slow_moving]);
+    return (velocityReport.slow_moving || [])
+      .map((record) => withResolvedItemCode(record, ingredientById))
+      .filter((item) => selectedSite === 'all' || item.site_id === selectedSite);
+  }, [ingredientById, selectedSite, velocityReport.slow_moving]);
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
@@ -830,7 +876,13 @@ export default function Inventory() {
           title="Inventory Control"
           description="Manage project, kitchen, warehouse, and store inventory with manual entry, bulk upload, lots, expiry, valuation, and movement tracking."
         >
-          <Button variant="outline" onClick={() => downloadCSV(filteredInventory, 'inventory-stock-on-hand')}>
+          <Button variant="outline" onClick={() => downloadCSV(
+            filteredInventory.map((item) => putItemCodeAndNameFirst(item, {
+              nameKey: 'ingredient_name',
+              outputNameKey: 'ingredient_name'
+            })),
+            'inventory-stock-on-hand'
+          )}>
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
@@ -928,7 +980,8 @@ export default function Inventory() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Ingredient</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Location</TableHead>
                         <TableHead>Available</TableHead>
                         <TableHead>Min / Max</TableHead>
@@ -946,6 +999,7 @@ export default function Inventory() {
 
                         return (
                           <TableRow key={item.id}>
+                            <TableCell className="text-sm font-medium text-slate-600">{item.item_code}</TableCell>
                             <TableCell>
                               <div>
                                 <p className="font-medium">{item.ingredient_name}</p>
@@ -1030,8 +1084,9 @@ export default function Inventory() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Date</TableHead>
-                        <TableHead>Ingredient</TableHead>
                         <TableHead>Location</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead>Batch</TableHead>
@@ -1043,14 +1098,15 @@ export default function Inventory() {
                     <TableBody>
                       {movementReport.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={8} className="py-8 text-center text-slate-500">
+                          <TableCell colSpan={9} className="py-8 text-center text-slate-500">
                             No stock movements in the selected period.
                           </TableCell>
                         </TableRow>
-                      ) : movementReport.map((movement) => (
+                      ) : codedMovementReport.map((movement) => (
                         <TableRow key={movement.id}>
-                          <TableCell>{movement.transaction_date || '-'}</TableCell>
+                          <TableCell className="text-sm font-medium text-slate-600">{movement.item_code}</TableCell>
                           <TableCell>{movement.ingredient_name}</TableCell>
+                          <TableCell>{movement.transaction_date || '-'}</TableCell>
                           <TableCell>{movement.site_name}</TableCell>
                           <TableCell className="capitalize">{String(movement.transaction_type || '').replace(/_/g, ' ')}</TableCell>
                           <TableCell>{movement.batch_number || '-'}</TableCell>
@@ -1077,7 +1133,8 @@ export default function Inventory() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Ingredient</TableHead>
+                          <TableHead>Item Code</TableHead>
+                          <TableHead>Item Name</TableHead>
                           <TableHead>Location</TableHead>
                           <TableHead>Batch</TableHead>
                           <TableHead>Expiry</TableHead>
@@ -1088,12 +1145,13 @@ export default function Inventory() {
                       <TableBody>
                         {filteredExpiry.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={6} className="py-8 text-center text-slate-500">
+                            <TableCell colSpan={7} className="py-8 text-center text-slate-500">
                               No near-expiry or expired lots found.
                             </TableCell>
                           </TableRow>
                         ) : filteredExpiry.map((item) => (
                           <TableRow key={item.id}>
+                            <TableCell className="text-sm font-medium text-slate-600">{item.item_code}</TableCell>
                             <TableCell>{item.ingredient_name}</TableCell>
                             <TableCell>{item.site_name}</TableCell>
                             <TableCell>{item.batch_number || '-'}</TableCell>
@@ -1128,6 +1186,7 @@ export default function Inventory() {
                       <div key={lot.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{lot.item_code}</p>
                             <p className="font-medium text-slate-900">{lot.ingredient_name}</p>
                             <p className="text-sm text-slate-500">{lot.site_name}</p>
                           </div>
@@ -1155,7 +1214,8 @@ export default function Inventory() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Ingredient</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Location</TableHead>
                         <TableHead>Method</TableHead>
                         <TableHead>Quantity</TableHead>
@@ -1167,6 +1227,7 @@ export default function Inventory() {
                     <TableBody>
                       {filteredValuation.map((item) => (
                         <TableRow key={item.id}>
+                          <TableCell className="text-sm font-medium text-slate-600">{item.item_code}</TableCell>
                           <TableCell>{item.ingredient_name}</TableCell>
                           <TableCell>{item.site_name}</TableCell>
                           <TableCell>{item.valuation_method === 'weighted_average' ? 'Weighted Average' : 'FIFO'}</TableCell>
@@ -1195,6 +1256,7 @@ export default function Inventory() {
                       <div key={`${item.site_id}-${item.ingredient_id}`} className="rounded-xl border border-slate-200 p-4">
                         <div className="flex items-center justify-between gap-3">
                           <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.item_code}</p>
                             <p className="font-medium">{item.ingredient_name}</p>
                             <p className="text-sm text-slate-500">{item.site_name}</p>
                           </div>
@@ -1219,6 +1281,7 @@ export default function Inventory() {
                       <div key={`${item.site_id}-${item.ingredient_id}`} className="rounded-xl border border-slate-200 p-4">
                         <div className="flex items-center justify-between gap-3">
                           <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.item_code}</p>
                             <p className="font-medium">{item.ingredient_name}</p>
                             <p className="text-sm text-slate-500">{item.site_name}</p>
                           </div>
@@ -1250,7 +1313,9 @@ export default function Inventory() {
         <Dialog open={historyDialog.open} onOpenChange={(open) => setHistoryDialog((current) => ({ ...current, open }))}>
           <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Movement History - {historyDialog.item?.ingredient_name}</DialogTitle>
+              <DialogTitle>
+                Movement History — {getItemCode(historyDialog.item)} · {historyDialog.item?.ingredient_name || '—'}
+              </DialogTitle>
             </DialogHeader>
             {historyDialog.item ? (
               <InventoryHistory ingredientId={historyDialog.item.ingredient_id} siteId={historyDialog.item.site_id} />
@@ -1405,7 +1470,7 @@ export default function Inventory() {
                       <Label>Upload file</Label>
                       <Input className="mt-1" type="file" accept=".csv,.xlsx,.xls" onChange={handleBulkFile} />
                       <p className="mt-2 text-xs text-slate-500">
-                        Supported columns: project_code or site_name, ingredient_name, quantity, unit_cost, batch_number, expiry_date, min_stock_level, max_stock_level, valuation_method, notes.
+                        Supported columns: item_code or ingredient_name, project_code or site_name, quantity, unit_cost, batch_number, expiry_date, min_stock_level, max_stock_level, valuation_method, notes.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-3">
@@ -1466,9 +1531,10 @@ export default function Inventory() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Row</TableHead>
                         <TableHead>Project / Location</TableHead>
-                        <TableHead>Ingredient</TableHead>
                         <TableHead>Quantity</TableHead>
                         <TableHead>Unit Cost</TableHead>
                         <TableHead>Status</TableHead>
@@ -1477,15 +1543,16 @@ export default function Inventory() {
                     <TableBody>
                       {parsedBulkImport.previewRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="py-8 text-center text-slate-500">
+                          <TableCell colSpan={7} className="py-8 text-center text-slate-500">
                             Upload a file to preview bulk inventory rows.
                           </TableCell>
                         </TableRow>
                       ) : parsedBulkImport.previewRows.slice(0, 12).map((row) => (
                         <TableRow key={`preview-${row.row}`}>
+                          <TableCell className="text-sm font-medium text-slate-600">{row.item_code}</TableCell>
+                          <TableCell>{row.ingredient || '-'}</TableCell>
                           <TableCell>{row.row}</TableCell>
                           <TableCell>{row.project || '-'}</TableCell>
-                          <TableCell>{row.ingredient || '-'}</TableCell>
                           <TableCell>{formatQuantity(row.quantity)}</TableCell>
                           <TableCell>{formatCurrency(Number(row.unit_cost || 0))}</TableCell>
                           <TableCell>
@@ -1516,7 +1583,7 @@ export default function Inventory() {
           open={transferDialogOpen}
           onOpenChange={setTransferDialogOpen}
           sites={stockSites}
-          inventory={stockOnHand}
+          inventory={codedStockOnHand}
           onSubmit={(payload) => transferStockMutation.mutateAsync(payload)}
           isPending={transferStockMutation.isPending}
         />

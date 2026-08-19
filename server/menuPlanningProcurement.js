@@ -10,6 +10,7 @@ import { filterRecordsByLocation, getLocationScope } from './locationScope.js';
 import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
 import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
+import { getItemCode } from '../shared/itemCode.js';
 
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const DEFAULT_CYCLE_DAYS = 7;
@@ -152,6 +153,7 @@ function aggregateMenuPlanRequirements(menuPlans = [], recipes = [], ingredients
       const key = String(recipeIngredient.ingredient_id);
       const current = aggregation.get(key) || {
         ingredient_id: recipeIngredient.ingredient_id,
+        item_code: getItemCode(ingredient, getItemCode(recipeIngredient, null)),
         ingredient_name: ingredient.name || recipeIngredient.ingredient_name || 'Unnamed ingredient',
         net_requested_quantity: 0,
         requested_quantity: 0,
@@ -178,6 +180,7 @@ function aggregateMenuPlanRequirements(menuPlans = [], recipes = [], ingredients
     .map((item) => ({
       id: randomId('pri'),
       ingredient_id: item.ingredient_id,
+      item_code: item.item_code,
       ingredient_name: item.ingredient_name,
       description: `Menu plan demand for ${[...item.linked_recipes].slice(0, 3).join(', ')}${item.linked_recipes.size > 3 ? ' and more' : ''}`,
       net_requested_quantity: Number(item.net_requested_quantity.toFixed(3)),

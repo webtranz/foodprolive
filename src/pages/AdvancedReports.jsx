@@ -19,6 +19,7 @@ import { downloadCSV, downloadExcel } from '../components/utils/exportData';
 import { formatCurrency, replaceVisibleUSDCurrency } from '@/lib/currency';
 import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
 import { canAccessAdvancedReport } from '../../shared/advancedReportAccess.js';
+import { getItemCodeFromRecords } from '../../shared/itemCode.js';
 import {
   CalendarClock,
   Download,
@@ -332,11 +333,15 @@ export default function AdvancedReports() {
     });
 
     const menuEngineeringBase = Object.values(filteredData.salesSummary.reduce((accumulator, row) => {
-      const key = `${row.location_name || row.site_name}::${row.pos_item_name || row.item_name}`;
+      const itemName = row.pos_item_name || row.item_name || 'Unknown';
+      const recipe = recipes.find((entry) => entry.name === itemName);
+      const itemCode = String(row.pos_item_code || row.item_code || recipe?.recipe_code || '').trim() || '—';
+      const key = `${row.location_name || row.site_name}::${itemCode === '—' ? itemName : itemCode}`;
       if (!accumulator[key]) {
         accumulator[key] = {
+          item_code: itemCode,
+          item_name: itemName,
           location: row.location_name || row.site_name || 'Unknown',
-          item: row.pos_item_name || row.item_name || 'Unknown',
           quantity_sold: 0,
           revenue: 0
         };
@@ -345,7 +350,7 @@ export default function AdvancedReports() {
       accumulator[key].revenue += safeNumber(row.total_sales || row.total_price);
       return accumulator;
     }, {})).map((row) => {
-      const recipeMatch = groupedRecipeCosts.find((entry) => entry.recipe === row.item);
+      const recipeMatch = groupedRecipeCosts.find((entry) => entry.recipe === row.item_name);
       const marginPerServing = recipeMatch?.margin_per_serving || 0;
       return {
         ...row,
@@ -362,9 +367,10 @@ export default function AdvancedReports() {
     }));
 
     const wasteCostRows = filteredData.waste.map((entry) => ({
+      item_code: getItemCodeFromRecords([ingredientMap[entry.ingredient_id], entry]),
+      item_name: entry.ingredient_name || entry.recipe_name || 'Waste Item',
       date: entry.waste_date,
       location: entry.site_name,
-      item: entry.ingredient_name || entry.recipe_name || 'Waste Item',
       category: entry.category || ingredientMap[entry.ingredient_id]?.category || '-',
       quantity: Number(safeNumber(entry.quantity).toFixed(2)),
       estimated_cost: Number(safeNumber(entry.estimated_cost).toFixed(2)),
@@ -372,17 +378,19 @@ export default function AdvancedReports() {
     }));
 
     const supplierVarianceRows = Object.values(filteredData.orders.flatMap((order) => (order.items || []).map((item) => ({
+      item_code: getItemCodeFromRecords([ingredientMap[item.ingredient_id], item]),
+      item_name: item.ingredient_name || item.item_name || 'Unknown',
       supplier: order.supplier_name,
       location: order.site_name,
-      ingredient: item.ingredient_name || item.item_name || 'Unknown',
       unit_price: safeNumber(item.unit_price),
       quantity: safeNumber(item.quantity || item.ordered_quantity),
       po_number: order.po_number
     }))).reduce((accumulator, row) => {
-      const key = row.ingredient;
+      const key = `${row.item_code}::${row.item_name}`;
       if (!accumulator[key]) {
         accumulator[key] = {
-          ingredient: row.ingredient,
+          item_code: row.item_code,
+          item_name: row.item_name,
           min_price: row.unit_price,
           max_price: row.unit_price,
           average_price: 0,
@@ -396,7 +404,8 @@ export default function AdvancedReports() {
       accumulator[key].supplier_count += 1;
       return accumulator;
     }, {})).map((entry) => ({
-      ingredient: entry.ingredient,
+      item_code: entry.item_code,
+      item_name: entry.item_name,
       min_price: Number(entry.min_price.toFixed(2)),
       max_price: Number(entry.max_price.toFixed(2)),
       average_price: Number(average(entry.price_points).toFixed(2)),
@@ -416,8 +425,9 @@ export default function AdvancedReports() {
     }));
 
     const inventoryValuationRows = filteredData.valuation.map((item) => ({
+      item_code: getItemCodeFromRecords([ingredientMap[item.ingredient_id], item]),
+      item_name: item.ingredient_name || ingredientMap[item.ingredient_id]?.name || 'Unnamed item',
       location: item.site_name,
-      ingredient: item.ingredient_name,
       category: ingredientMap[item.ingredient_id]?.category || '-',
       quantity: Number(safeNumber(item.quantity).toFixed(2)),
       valuation_method: item.valuation_method === 'weighted_average' ? 'Weighted Average' : 'FIFO',
@@ -475,9 +485,10 @@ export default function AdvancedReports() {
     });
 
     const salesVsProductionRows = filteredData.salesVariance.map((row) => ({
+      item_code: String(row.pos_item_code || row.item_code || recipes.find((recipe) => recipe.name === row.item_name)?.recipe_code || '').trim() || '—',
+      item_name: row.item_name || 'Unknown item',
       date: row.business_date,
       location: row.site_name,
-      item: row.item_name,
       sales_qty: Number(safeNumber(row.sales_quantity).toFixed(2)),
       production_qty: Number(safeNumber(row.production_quantity).toFixed(2)),
       variance_qty: Number(safeNumber(row.variance_quantity).toFixed(2)),
@@ -485,17 +496,27 @@ export default function AdvancedReports() {
     }));
 
     const forecastDemandRows = Object.values(filteredData.salesSummary.reduce((accumulator, row) => {
-      const key = `${row.location_name || row.site_name}::${row.pos_item_name || row.item_name}`;
+      const itemName = row.pos_item_name || row.item_name || 'Unknown';
+      const recipe = recipes.find((entry) => entry.name === itemName);
+      const itemCode = String(row.pos_item_code || row.item_code || recipe?.recipe_code || '').trim() || '—';
+      const key = `${row.location_name || row.site_name}::${itemCode === '—' ? itemName : itemCode}`;
       if (!accumulator[key]) {
         accumulator[key] = {
+          item_code: itemCode,
+          item_name: itemName,
           location: row.location_name || row.site_name || 'Unknown',
-          item: row.pos_item_name || row.item_name || 'Unknown',
           daily_sales: [],
           daily_production: []
         };
       }
       accumulator[key].daily_sales.push(safeNumber(row.total_quantity));
-      const relatedVariance = filteredData.salesVariance.find((entry) => entry.item_name === (row.pos_item_name || row.item_name) && entry.site_name === (row.location_name || row.site_name));
+      const relatedVariance = filteredData.salesVariance.find((entry) => {
+        if (entry.site_name !== (row.location_name || row.site_name)) return false;
+        const varianceRecipe = recipes.find((recipe) => recipe.name === entry.item_name);
+        const varianceCode = String(entry.pos_item_code || entry.item_code || varianceRecipe?.recipe_code || '').trim() || '—';
+        if (itemCode !== '—') return varianceCode === itemCode;
+        return varianceCode === '—' && entry.item_name === itemName;
+      });
       if (relatedVariance) {
         accumulator[key].daily_production.push(safeNumber(relatedVariance.production_quantity));
       }
@@ -505,8 +526,9 @@ export default function AdvancedReports() {
       const avgProduction = average(entry.daily_production);
       const trendPercent = avgProduction > 0 ? ((avgSales - avgProduction) / avgProduction) * 100 : 0;
       return {
+        item_code: entry.item_code,
+        item_name: entry.item_name,
         location: entry.location,
-        item: entry.item,
         avg_daily_sales: Number(avgSales.toFixed(2)),
         avg_daily_production: Number(avgProduction.toFixed(2)),
         forecast_next_7_days: Number((avgSales * 7).toFixed(2)),

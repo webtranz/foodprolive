@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Trash2, Flame, Calculator, RotateCcw } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
+import { getItemCode } from '../../shared/itemCode.js';
 
 const MACRO_COLORS = {
   protein: '#10b981',
@@ -18,6 +19,16 @@ const MACRO_COLORS = {
   fat: '#ef4444',
   fiber: '#8b5cf6'
 };
+
+function getCalculatorItemCode(item, type) {
+  const standardCode = getItemCode(item, '');
+  if (standardCode) return standardCode;
+  if (type === 'recipe') {
+    const recipeCode = String(item?.recipe_code ?? item?.data?.recipe_code ?? '').trim();
+    if (recipeCode) return recipeCode;
+  }
+  return '—';
+}
 
 export default function CaloriesCalculator() {
   const [selectedItems, setSelectedItems] = useState([]);
@@ -45,6 +56,7 @@ export default function CaloriesCalculator() {
         setSelectedItems([...selectedItems, {
           type: 'ingredient',
           id: ingredient.id,
+          item_code: getCalculatorItemCode(ingredient, 'ingredient'),
           name: ingredient.name || ingredient.data?.name,
           quantity: 100,
           unit: 'g',
@@ -61,6 +73,7 @@ export default function CaloriesCalculator() {
         setSelectedItems([...selectedItems, {
           type: 'recipe',
           id: recipe.id,
+          item_code: getCalculatorItemCode(recipe, 'recipe'),
           name: recipe.name || recipe.data?.name,
           quantity: 1,
           unit: 'serving',
@@ -76,6 +89,7 @@ export default function CaloriesCalculator() {
     setSelectedItems((current) => [...current, {
       type: 'ingredient',
       id: ingredient.id,
+      item_code: getCalculatorItemCode(ingredient, 'ingredient'),
       name: ingredient.name || ingredient.data?.name,
       quantity: 100,
       unit: 'g',
@@ -178,7 +192,7 @@ export default function CaloriesCalculator() {
                       <SelectContent>
                         {recipes.map(recipe => (
                           <SelectItem key={recipe.id} value={recipe.id}>
-                            {recipe.name || recipe.data?.name} ({recipe.calories_per_serving || recipe.data?.calories_per_serving || 0} cal/serving)
+                            {getCalculatorItemCode(recipe, 'recipe')} · {recipe.name || recipe.data?.name} ({recipe.calories_per_serving || recipe.data?.calories_per_serving || 0} cal/serving)
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -213,7 +227,8 @@ export default function CaloriesCalculator() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Item</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead>Quantity</TableHead>
                         <TableHead>Calories</TableHead>
@@ -228,6 +243,7 @@ export default function CaloriesCalculator() {
                         
                         return (
                           <TableRow key={index}>
+                            <TableCell className="font-mono text-xs text-slate-600">{item.item_code || '—'}</TableCell>
                             <TableCell className="font-medium">{item.name}</TableCell>
                             <TableCell className="capitalize">{item.type}</TableCell>
                             <TableCell>

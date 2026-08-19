@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { formatCurrency, formatNumber } from '@/lib/currency';
+import { getItemCodeFromRecords } from '../../shared/itemCode.js';
 
 const MEAL_PERIODS = ['breakfast', 'lunch', 'dinner', 'snack'];
 const SERVICE_TYPES = ['buffet', 'plated_service', 'packed_meal', 'dining_hall'];
@@ -150,9 +151,16 @@ export default function EventPlanning() {
     placeholderData: (previousData) => previousData,
     refetchInterval: formOpen ? 300000 : false
   });
+  const ingredientsQuery = useQuery({
+    queryKey: ['ingredients'],
+    queryFn: () => base44.entities.Ingredient.list(),
+    enabled: can('manage_ingredients'),
+    retry: false
+  });
   const events = eventsQuery.data || [];
   const sites = sitesQuery.data || [];
   const recipes = (recipesQuery.data || []).filter((recipe) => recipe.is_active !== false);
+  const ingredientMap = new Map((ingredientsQuery.data || []).map((ingredient) => [ingredient.id, ingredient]));
 
   useEffect(() => {
     if (!selectedId && events[0]?.id) setSelectedId(events[0].id);
@@ -334,7 +342,7 @@ export default function EventPlanning() {
 
               <Card className="border-slate-200 shadow-sm">
                 <CardHeader className="border-b border-slate-100 pb-4"><CardTitle className="flex items-center gap-2 text-lg"><ShoppingCart className="h-5 w-5 text-teal-700" />Procurement Impact</CardTitle></CardHeader>
-                <CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full min-w-[700px] text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="p-3">Ingredient</th><th className="p-3">Required</th><th className="p-3">Available</th><th className="p-3">Shortage</th><th className="p-3">Estimated spend</th></tr></thead><tbody className="divide-y divide-slate-100">{(selected.ingredient_requirements || []).map((item) => <tr key={item.ingredient_id} className={item.shortage_quantity > 0 ? 'bg-rose-50/50' : ''}><td className="p-3 font-medium">{item.ingredient_name}</td><td className="p-3">{formatNumber(item.required_quantity, 2)} {item.unit}</td><td className="p-3">{formatNumber(item.available_stock, 2)} {item.unit}</td><td className={`p-3 font-semibold ${item.shortage_quantity > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{formatNumber(item.shortage_quantity, 2)} {item.unit}</td><td className="p-3">{formatCurrency(item.estimated_procurement_spend)}</td></tr>)}</tbody></table></div></CardContent>
+                <CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full min-w-[820px] text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="p-3">Item Code</th><th className="p-3">Item Name</th><th className="p-3">Required</th><th className="p-3">Available</th><th className="p-3">Shortage</th><th className="p-3">Estimated spend</th></tr></thead><tbody className="divide-y divide-slate-100">{(selected.ingredient_requirements || []).map((item) => <tr key={item.ingredient_id} className={item.shortage_quantity > 0 ? 'bg-rose-50/50' : ''}><td className="p-3 font-mono text-xs text-slate-600">{getItemCodeFromRecords([ingredientMap.get(item.ingredient_id), item])}</td><td className="p-3 font-medium">{item.ingredient_name}</td><td className="p-3">{formatNumber(item.required_quantity, 2)} {item.unit}</td><td className="p-3">{formatNumber(item.available_stock, 2)} {item.unit}</td><td className={`p-3 font-semibold ${item.shortage_quantity > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{formatNumber(item.shortage_quantity, 2)} {item.unit}</td><td className="p-3">{formatCurrency(item.estimated_procurement_spend)}</td></tr>)}</tbody></table></div></CardContent>
               </Card>
 
               <div className="flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-white p-4">
