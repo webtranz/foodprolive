@@ -8,11 +8,15 @@ export function hasAdminAccess(user) {
 }
 
 export function assertCanCreateProject(user) {
+  return assertCanManageSiteStructure(user);
+}
+
+export function assertCanManageSiteStructure(user) {
   if (hasAdminAccess(user)) {
     return true;
   }
 
-  const error = new Error('Only administrators can create projects');
+  const error = new Error('Only administrators can change the site structure');
   error.status = 403;
   throw error;
 }

@@ -22,6 +22,15 @@ import {
 } from '@/lib/rolePermissions';
 import { pagePermissionMap } from '@/lib/pageAccess';
 import {
+  isManagementScopeSiteType,
+  mergeSystemRoleProfiles,
+  resolveManagementDashboardView
+} from '../../shared/managementDashboardRoles.js';
+import {
+  getRoleLocationPolicy,
+  isRolePrimarySiteType
+} from '../../shared/roleLocationPolicy.js';
+import {
   Briefcase,
   Building2,
   KeyRound,
@@ -40,6 +49,9 @@ const ROLE_STYLE_MAP = {
   manager: { color: 'bg-amber-100 text-amber-800 border-amber-200', icon: Briefcase },
   user: { color: 'bg-blue-100 text-blue-800 border-blue-200', icon: User },
   chef: { color: 'bg-orange-100 text-orange-800 border-orange-200', icon: Briefcase },
+  general_manager: { color: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: Shield },
+  assistant_general_manager: { color: 'bg-indigo-100 text-indigo-800 border-indigo-200', icon: Users2 },
+  area_manager: { color: 'bg-purple-100 text-purple-800 border-purple-200', icon: Network },
   project_manager: { color: 'bg-teal-100 text-teal-800 border-teal-200', icon: Briefcase },
   storekeeper: { color: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: Building2 },
   procurement_officer: { color: 'bg-cyan-100 text-cyan-800 border-cyan-200', icon: Briefcase },
@@ -103,14 +115,15 @@ function preparePermissionsForEditing(permissions = []) {
   return normalizeGranularPermissions([...existing, ...legacyPagePermissions]);
 }
 
-function SiteAccessChecklist({ roots, childMap, selectedIds, onToggle }) {
+function SiteAccessChecklist({ roots, childMap, selectedIds, onToggle, isSelectable = () => true }) {
   const renderNode = (site, depth = 0) => {
     const children = childMap.get(site.id) || [];
     const isChecked = selectedIds.includes(site.id);
+    const canSelect = isSelectable(site);
     return (
       <div key={site.id} className="space-y-2">
-        <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" style={{ marginLeft: depth * 14 }}>
-          <Checkbox checked={isChecked} onCheckedChange={(checked) => onToggle(site.id, Boolean(checked))} />
+        <label className={`flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm ${canSelect ? '' : 'text-slate-400'}`} style={{ marginLeft: depth * 14 }}>
+          <Checkbox checked={isChecked} disabled={!canSelect && !isChecked} onCheckedChange={(checked) => onToggle(site.id, Boolean(checked))} />
           <span className="font-medium text-slate-700">{site.name}</span>
           <span className="text-xs text-slate-400">{site.type}</span>
         </label>
@@ -124,6 +137,100 @@ function SiteAccessChecklist({ roots, childMap, selectedIds, onToggle }) {
       {roots.map((site) => renderNode(site))}
       {roots.length === 0 ? <p className="text-sm text-slate-500">No locations available.</p> : null}
     </div>
+  );
+}
+
+function RoleLocationFields({
+  roleKey,
+  accessLevel,
+  form,
+  setForm,
+  sites,
+  roots,
+  childMap,
+  assignableSites,
+  siteIsAssignable,
+  onToggle
+}) {
+  if (accessLevel === 'admin') return null;
+  const rolePolicy = getRoleLocationPolicy(roleKey);
+
+  if (rolePolicy?.scope === 'all_areas') {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+        <p className="font-semibold">All Areas</p>
+        <p className="mt-1 text-emerald-700">This executive role can view every Area, Project, and Store without administrator permissions.</p>
+      </div>
+    );
+  }
+
+  if (rolePolicy?.primary_site_type) {
+    const options = assignableSites(roleKey);
+    return (
+      <div>
+        <Label className="mb-1.5 block">Assigned {rolePolicy.assignment_label} *</Label>
+        <Select
+          value={form.site_id || 'none'}
+          onValueChange={(value) => {
+            const siteId = value === 'none' ? '' : value;
+            setForm((current) => ({
+              ...current,
+              site_id: siteId,
+              allowed_site_ids: siteId ? [siteId] : [],
+              visibility_scope: rolePolicy.visibility_scope
+            }));
+          }}
+        >
+          <SelectTrigger><SelectValue placeholder={`Select ${rolePolicy.assignment_label.toLowerCase()}`} /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">Select {rolePolicy.assignment_label.toLowerCase()}</SelectItem>
+            {options.map((site) => <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <p className="mt-1.5 text-xs text-slate-500">
+          {rolePolicy.scope === 'subtree'
+            ? `Access includes this ${rolePolicy.assignment_label.toLowerCase()} and every record below it.`
+            : `Access is limited to this ${rolePolicy.assignment_label.toLowerCase()} only.`}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div>
+        <Label className="mb-1.5 block">Primary Location</Label>
+        <Select value={form.site_id || 'none'} onValueChange={(value) => setForm((current) => ({ ...current, site_id: value === 'none' ? '' : value }))}>
+          <SelectTrigger><SelectValue placeholder="Select primary location" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No primary location</SelectItem>
+            {sites.map((site) => <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <Label className="mb-1.5 flex items-center gap-2">
+          <Network className="w-4 h-4 text-slate-500" /> Location Access
+        </Label>
+        <SiteAccessChecklist
+          roots={roots}
+          childMap={childMap}
+          selectedIds={form.allowed_site_ids}
+          onToggle={onToggle}
+          isSelectable={(site) => siteIsAssignable(roleKey, site)}
+        />
+      </div>
+      <div>
+        <Label className="mb-1.5 block">Visibility Scope</Label>
+        <Select value={form.visibility_scope} onValueChange={(value) => setForm((current) => ({ ...current, visibility_scope: value }))}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="assigned_only">Assigned Locations Only</SelectItem>
+            <SelectItem value="subtree">Assigned Locations and Children</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </>
   );
 }
 
@@ -244,11 +351,50 @@ export default function UserRoleManagement() {
 
   const roots = useMemo(() => sites.filter((site) => !site.parent_site_id), [sites]);
   const childMap = useMemo(() => buildChildMap(sites), [sites]);
-  const roleMap = useMemo(() => Object.fromEntries(roleProfiles.map((role) => [role.role_key, role])), [roleProfiles]);
+  const selectableRoleProfiles = useMemo(() => mergeSystemRoleProfiles(roleProfiles), [roleProfiles]);
+  const roleMap = useMemo(
+    () => Object.fromEntries(selectableRoleProfiles.map((role) => [role.role_key, role])),
+    [selectableRoleProfiles]
+  );
   const adminUsers = useMemo(
     () => users.filter((user) => (user.role_access_level || roleMap[user.role]?.access_level || user.role) === 'admin'),
     [users, roleMap]
   );
+  const managementViewForRole = (roleKey) => {
+    const selectedRole = roleMap[roleKey];
+    return resolveManagementDashboardView({
+      role: roleKey,
+      dashboardVariant: selectedRole?.dashboard_variant,
+      roleName: selectedRole?.name
+    });
+  };
+  const assignableSitesForRole = (roleKey) => {
+    const rolePolicy = getRoleLocationPolicy(roleKey);
+    if (rolePolicy?.primary_site_type) {
+      return sites.filter((site) => site.is_active !== false && isRolePrimarySiteType(roleKey, site.type));
+    }
+    const dashboardView = managementViewForRole(roleKey);
+    return dashboardView
+      ? sites.filter((site) => isManagementScopeSiteType(dashboardView, site.type))
+      : sites;
+  };
+  const siteIsAssignableForRole = (roleKey, site) => (
+    assignableSitesForRole(roleKey).some((candidate) => candidate.id === site.id)
+  );
+
+  const changeUserRole = (setter, role) => {
+    const rolePolicy = getRoleLocationPolicy(role);
+    const selectedRole = roleMap[role];
+    setter((current) => ({
+      ...current,
+      role,
+      site_id: '',
+      allowed_site_ids: [],
+      visibility_scope: selectedRole?.access_level === 'admin' || rolePolicy?.scope === 'all_areas'
+        ? 'all_locations'
+        : (rolePolicy?.visibility_scope || 'subtree')
+    }));
+  };
 
   const toggleSelectedSite = (setter, selectedIds, siteId, checked) => {
     setter((current) => ({
@@ -273,17 +419,21 @@ export default function UserRoleManagement() {
     mutationFn: async (payload) => {
       const primarySite = sites.find((site) => site.id === payload.site_id);
       const selectedRole = roleMap[payload.role];
-      const allowedSiteIds = Array.from(new Set([payload.site_id, ...(payload.allowed_site_ids || [])].filter(Boolean)));
+      const rolePolicy = getRoleLocationPolicy(payload.role);
+      const hasGlobalAccess = selectedRole?.access_level === 'admin' || rolePolicy?.scope === 'all_areas';
+      const allowedSiteIds = rolePolicy?.primary_site_type
+        ? (payload.site_id ? [payload.site_id] : [])
+        : Array.from(new Set([payload.site_id, ...(payload.allowed_site_ids || [])].filter(Boolean)));
       return base44.entities.User.create({
         full_name: payload.full_name.trim(),
         email: payload.email.trim().toLowerCase(),
         password: payload.password,
         role: payload.role,
         status: 'active',
-        site_id: selectedRole?.access_level === 'admin' ? null : (payload.site_id || null),
-        site_name: selectedRole?.access_level === 'admin' ? null : (primarySite?.name || null),
-        allowed_site_ids: selectedRole?.access_level === 'admin' ? [] : allowedSiteIds,
-        visibility_scope: selectedRole?.access_level === 'admin' ? 'all_locations' : payload.visibility_scope
+        site_id: hasGlobalAccess ? null : (payload.site_id || null),
+        site_name: hasGlobalAccess ? null : (primarySite?.name || null),
+        allowed_site_ids: hasGlobalAccess ? [] : allowedSiteIds,
+        visibility_scope: hasGlobalAccess ? 'all_locations' : (rolePolicy?.visibility_scope || payload.visibility_scope)
       });
     },
     onSuccess: () => {
@@ -371,6 +521,11 @@ export default function UserRoleManagement() {
       setUserError('Password must be at least 8 characters long');
       return;
     }
+    const createRolePolicy = getRoleLocationPolicy(createForm.role);
+    if ((createRolePolicy?.primary_site_type || (managementViewForRole(createForm.role) && createRolePolicy?.scope !== 'all_areas')) && !createForm.site_id) {
+      setUserError(`Select a primary ${createRolePolicy?.assignment_label || 'location'} for this role`);
+      return;
+    }
     createUserMutation.mutate(createForm);
   };
 
@@ -388,19 +543,27 @@ export default function UserRoleManagement() {
       setUserError('New password must be at least 8 characters long');
       return;
     }
+    const editRolePolicy = getRoleLocationPolicy(editForm.role);
+    if ((editRolePolicy?.primary_site_type || (managementViewForRole(editForm.role) && editRolePolicy?.scope !== 'all_areas')) && !editForm.site_id) {
+      setUserError(`Select a primary ${editRolePolicy?.assignment_label || 'location'} for this role`);
+      return;
+    }
 
     const primarySite = sites.find((site) => site.id === editForm.site_id);
-    const allowedSiteIds = Array.from(new Set([editForm.site_id, ...(editForm.allowed_site_ids || [])].filter(Boolean)));
+    const hasGlobalAccess = selectedRole?.access_level === 'admin' || editRolePolicy?.scope === 'all_areas';
+    const allowedSiteIds = editRolePolicy?.primary_site_type
+      ? (editForm.site_id ? [editForm.site_id] : [])
+      : Array.from(new Set([editForm.site_id, ...(editForm.allowed_site_ids || [])].filter(Boolean)));
 
     updateUserMutation.mutate({
       id: editingUser.id,
       data: {
         full_name: editForm.full_name.trim(),
         role: editForm.role,
-        site_id: selectedRole?.access_level === 'admin' ? null : (editForm.site_id || null),
-        site_name: selectedRole?.access_level === 'admin' ? null : (primarySite?.name || null),
-        allowed_site_ids: selectedRole?.access_level === 'admin' ? [] : allowedSiteIds,
-        visibility_scope: selectedRole?.access_level === 'admin' ? 'all_locations' : editForm.visibility_scope,
+        site_id: hasGlobalAccess ? null : (editForm.site_id || null),
+        site_name: hasGlobalAccess ? null : (primarySite?.name || null),
+        allowed_site_ids: hasGlobalAccess ? [] : allowedSiteIds,
+        visibility_scope: hasGlobalAccess ? 'all_locations' : (editRolePolicy?.visibility_scope || editForm.visibility_scope),
         ...(editForm.password.trim() ? { password: editForm.password.trim() } : {})
       }
     });
@@ -478,7 +641,7 @@ export default function UserRoleManagement() {
 
           <TabsContent value="users" className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {roleProfiles.slice(0, 6).map((role) => {
+              {selectableRoleProfiles.slice(0, 6).map((role) => {
                 const style = ROLE_STYLE_MAP[role.role_key] || ROLE_STYLE_MAP[role.access_level] || ROLE_STYLE_MAP.user;
                 const Icon = style.icon;
                 const count = users.filter((user) => user.role === role.role_key).length;
@@ -512,7 +675,7 @@ export default function UserRoleManagement() {
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Role</TableHead>
-                      <TableHead>Primary Project</TableHead>
+                      <TableHead>Assigned Scope</TableHead>
                       <TableHead>Visibility</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
@@ -522,6 +685,7 @@ export default function UserRoleManagement() {
                       const role = roleMap[user.role] || { role_key: user.role || 'user', name: user.role_name || user.role || 'User', access_level: user.role_access_level || 'user' };
                       const style = ROLE_STYLE_MAP[role.role_key] || ROLE_STYLE_MAP[role.access_level] || ROLE_STYLE_MAP.user;
                       const Icon = style.icon;
+                      const rolePolicy = getRoleLocationPolicy(role.role_key);
                       const assignedCount = Array.isArray(user.allowed_site_ids) ? user.allowed_site_ids.length : (user.site_id ? 1 : 0);
                       return (
                         <TableRow key={user.id}>
@@ -534,17 +698,28 @@ export default function UserRoleManagement() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            {user.site_name ? (
+                            {rolePolicy?.scope === 'all_areas' || role.access_level === 'admin' ? (
+                              <Badge variant="outline" className="flex w-fit items-center gap-1">
+                                <Network className="w-3 h-3" />
+                                {role.access_level === 'admin' ? 'All Locations' : 'All Areas'}
+                              </Badge>
+                            ) : user.site_name ? (
                               <Badge variant="outline" className="flex w-fit items-center gap-1">
                                 <Building2 className="w-3 h-3" />
                                 {user.site_name}
                               </Badge>
                             ) : (
-                              <span className="text-xs text-slate-400">{role.access_level === 'admin' ? 'All Projects' : 'Unassigned'}</span>
+                              <span className="text-xs text-slate-400">Unassigned</span>
                             )}
                           </TableCell>
                           <TableCell className="text-sm text-slate-600">
-                            {role.access_level === 'admin' ? 'All locations' : `${user.visibility_scope || 'subtree'} • ${assignedCount} assigned`}
+                            {role.access_level === 'admin'
+                              ? 'All locations'
+                              : rolePolicy?.scope === 'all_areas'
+                                ? 'All areas and descendants'
+                                : rolePolicy?.primary_site_type
+                                  ? `${rolePolicy.assignment_label}${rolePolicy.scope === 'subtree' ? ' and descendants' : ' only'}`
+                                  : `${user.visibility_scope || 'subtree'} • ${assignedCount} assigned`}
                           </TableCell>
                           <TableCell>
                             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditUser(user)}>
@@ -579,7 +754,7 @@ export default function UserRoleManagement() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {roleProfiles.map((role) => {
+                    {selectableRoleProfiles.map((role) => {
                       const style = ROLE_STYLE_MAP[role.role_key] || ROLE_STYLE_MAP[role.access_level] || ROLE_STYLE_MAP.user;
                       const Icon = style.icon;
                       return (
@@ -597,9 +772,11 @@ export default function UserRoleManagement() {
                             <Badge variant="outline" className="capitalize">{role.access_level}</Badge>
                           </TableCell>
                           <TableCell className="text-sm text-slate-600">
-                            {Array.isArray(role.permissions)
+                            {role.is_fallback && !role.permissions?.length
+                              ? 'Built-in permissions'
+                              : Array.isArray(role.permissions)
                               ? role.permissions.filter((permission) => permission !== GRANULAR_PAGE_ACCESS_PERMISSION).length
-                              : 0} permissions
+                              : 0}{role.is_fallback && !role.permissions?.length ? '' : ' permissions'}
                           </TableCell>
                           <TableCell>
                             <Badge variant={role.is_active === false ? 'secondary' : 'default'}>
@@ -607,9 +784,13 @@ export default function UserRoleManagement() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditRole(role)}>
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
+                            {role.is_fallback || role.is_system ? (
+                              <span className="text-xs text-slate-400">Built-in</span>
+                            ) : (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditRole(role)}>
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       );
@@ -654,10 +835,10 @@ export default function UserRoleManagement() {
               </div>
               <div>
                 <Label className="mb-1.5 block">Role</Label>
-                <Select value={createForm.role} onValueChange={(value) => setCreateForm((current) => ({ ...current, role: value }))}>
+                <Select value={createForm.role} onValueChange={(value) => changeUserRole(setCreateForm, value)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {roleProfiles.filter((role) => role.is_active !== false).map((role) => (
+                    {selectableRoleProfiles.filter((role) => role.is_active !== false).map((role) => (
                       <SelectItem key={role.id} value={role.role_key}>{role.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -665,41 +846,18 @@ export default function UserRoleManagement() {
               </div>
             </div>
 
-            {(roleMap[createForm.role]?.access_level || 'user') !== 'admin' ? (
-              <>
-                <div>
-                  <Label className="mb-1.5 block">Primary Project</Label>
-                  <Select value={createForm.site_id || 'none'} onValueChange={(value) => setCreateForm((current) => ({ ...current, site_id: value === 'none' ? '' : value }))}>
-                    <SelectTrigger><SelectValue placeholder="Select primary project" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No primary project</SelectItem>
-                      {sites.map((site) => <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="mb-1.5 flex items-center gap-2">
-                    <Network className="w-4 h-4 text-slate-500" /> Project Access
-                  </Label>
-                  <SiteAccessChecklist
-                    roots={roots}
-                    childMap={childMap}
-                    selectedIds={createForm.allowed_site_ids}
-                    onToggle={(siteId, checked) => toggleSelectedSite(setCreateForm, createForm.allowed_site_ids, siteId, checked)}
-                  />
-                </div>
-                <div>
-                  <Label className="mb-1.5 block">Visibility Scope</Label>
-                  <Select value={createForm.visibility_scope} onValueChange={(value) => setCreateForm((current) => ({ ...current, visibility_scope: value }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="assigned_only">Assigned Projects Only</SelectItem>
-                      <SelectItem value="subtree">Assigned Projects and Children</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </>
-            ) : null}
+            <RoleLocationFields
+              roleKey={createForm.role}
+              accessLevel={roleMap[createForm.role]?.access_level || 'user'}
+              form={createForm}
+              setForm={setCreateForm}
+              sites={sites}
+              roots={roots}
+              childMap={childMap}
+              assignableSites={assignableSitesForRole}
+              siteIsAssignable={siteIsAssignableForRole}
+              onToggle={(siteId, checked) => toggleSelectedSite(setCreateForm, createForm.allowed_site_ids, siteId, checked)}
+            />
 
             {userError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{userError}</div> : null}
 
@@ -732,10 +890,10 @@ export default function UserRoleManagement() {
               </div>
               <div>
                 <Label className="mb-1.5 block">Role</Label>
-                <Select value={editForm.role} onValueChange={(value) => setEditForm((current) => ({ ...current, role: value }))}>
+                <Select value={editForm.role} onValueChange={(value) => changeUserRole(setEditForm, value)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {roleProfiles.filter((role) => role.is_active !== false).map((role) => (
+                    {selectableRoleProfiles.filter((role) => role.is_active !== false).map((role) => (
                       <SelectItem key={role.id} value={role.role_key}>{role.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -743,41 +901,18 @@ export default function UserRoleManagement() {
               </div>
             </div>
 
-            {(roleMap[editForm.role]?.access_level || 'user') !== 'admin' ? (
-              <>
-                <div>
-                  <Label className="mb-1.5 block">Primary Project</Label>
-                  <Select value={editForm.site_id || 'none'} onValueChange={(value) => setEditForm((current) => ({ ...current, site_id: value === 'none' ? '' : value }))}>
-                    <SelectTrigger><SelectValue placeholder="Select primary project" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No primary project</SelectItem>
-                      {sites.map((site) => <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="mb-1.5 flex items-center gap-2">
-                    <Network className="w-4 h-4 text-slate-500" /> Project Access
-                  </Label>
-                  <SiteAccessChecklist
-                    roots={roots}
-                    childMap={childMap}
-                    selectedIds={editForm.allowed_site_ids}
-                    onToggle={(siteId, checked) => toggleSelectedSite(setEditForm, editForm.allowed_site_ids, siteId, checked)}
-                  />
-                </div>
-                <div>
-                  <Label className="mb-1.5 block">Visibility Scope</Label>
-                  <Select value={editForm.visibility_scope} onValueChange={(value) => setEditForm((current) => ({ ...current, visibility_scope: value }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="assigned_only">Assigned Projects Only</SelectItem>
-                      <SelectItem value="subtree">Assigned Projects and Children</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </>
-            ) : null}
+            <RoleLocationFields
+              roleKey={editForm.role}
+              accessLevel={roleMap[editForm.role]?.access_level || 'user'}
+              form={editForm}
+              setForm={setEditForm}
+              sites={sites}
+              roots={roots}
+              childMap={childMap}
+              assignableSites={assignableSitesForRole}
+              siteIsAssignable={siteIsAssignableForRole}
+              onToggle={(siteId, checked) => toggleSelectedSite(setEditForm, editForm.allowed_site_ids, siteId, checked)}
+            />
 
             <div>
               <Label className="mb-1.5 block">Reset Password</Label>

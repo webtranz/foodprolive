@@ -125,6 +125,52 @@ BEGIN
 END;
 $trigger$;
 
+-- Backfill location ownership for legacy production-quality records whenever a
+-- trustworthy production or batch link is available. Records without such a
+-- link remain unattributed and are intentionally excluded from scoped reports.
+UPDATE entity_records AS batch
+SET data = batch.data || jsonb_build_object(
+      'site_id', production.data->>'site_id',
+      'site_name', production.data->>'site_name',
+      'updated_date', NOW()
+    ),
+    updated_at = NOW()
+FROM entity_records AS production
+WHERE batch.entity_name = 'ProductionBatch'
+  AND production.entity_name = 'Production'
+  AND production.id = batch.data->>'production_id'
+  AND COALESCE(batch.data->>'site_id', '') = ''
+  AND COALESCE(production.data->>'site_id', '') <> '';
+
+UPDATE entity_records AS inspection
+SET data = inspection.data || jsonb_build_object(
+      'site_id', batch.data->>'site_id',
+      'site_name', batch.data->>'site_name',
+      'production_id', COALESCE(inspection.data->>'production_id', batch.data->>'production_id'),
+      'updated_date', NOW()
+    ),
+    updated_at = NOW()
+FROM entity_records AS batch
+WHERE inspection.entity_name = 'QualityControl'
+  AND batch.entity_name = 'ProductionBatch'
+  AND batch.id = inspection.data->>'batch_id'
+  AND COALESCE(inspection.data->>'site_id', '') = ''
+  AND COALESCE(batch.data->>'site_id', '') <> '';
+
+UPDATE entity_records AS inspection
+SET data = inspection.data || jsonb_build_object(
+      'site_id', production.data->>'site_id',
+      'site_name', production.data->>'site_name',
+      'updated_date', NOW()
+    ),
+    updated_at = NOW()
+FROM entity_records AS production
+WHERE inspection.entity_name = 'QualityControl'
+  AND production.entity_name = 'Production'
+  AND production.id = inspection.data->>'production_id'
+  AND COALESCE(inspection.data->>'site_id', '') = ''
+  AND COALESCE(production.data->>'site_id', '') <> '';
+
 CREATE TABLE IF NOT EXISTS app_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -673,6 +719,63 @@ CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status,
 CREATE INDEX IF NOT EXISTS idx_goods_receipts_order ON goods_receipts(purchase_order_id, receipt_date DESC);
 CREATE INDEX IF NOT EXISTS idx_supplier_invoices_supplier ON supplier_invoices(supplier_id, invoice_date DESC);
 CREATE INDEX IF NOT EXISTS idx_supplier_price_history_lookup ON supplier_price_history(ingredient_id, supplier_id, effective_date DESC);
+
+CREATE OR REPLACE FUNCTION notify_foodpro_scoped_table_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  record_data JSONB;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    record_data := to_jsonb(OLD);
+  ELSE
+    record_data := to_jsonb(NEW);
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', TG_ARGV[0],
+      'action', LOWER(TG_OP),
+      'id', record_data->>'id',
+      'site_id', record_data->>'site_id',
+      'site_ids', '[]'::jsonb,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $trigger$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'purchase_requests_realtime_change' AND tgrelid = 'purchase_requests'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER purchase_requests_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON purchase_requests
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_scoped_table_change(''PurchaseRequest'')';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'purchase_orders_realtime_change' AND tgrelid = 'purchase_orders'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER purchase_orders_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON purchase_orders
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_scoped_table_change(''PurchaseOrder'')';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'goods_receipts_realtime_change' AND tgrelid = 'goods_receipts'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER goods_receipts_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON goods_receipts
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_scoped_table_change(''GoodsReceipt'')';
+  END IF;
+END;
+$trigger$;
 
 CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lookup
   ON entity_records ((data->>'site_id'), (data->>'ingredient_id'))

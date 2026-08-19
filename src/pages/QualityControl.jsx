@@ -137,6 +137,11 @@ export default function QualityControl() {
     await createQCMutation.mutateAsync({
       batch_id: selectedBatch.id,
       batch_number: selectedBatch.batch_number,
+      production_id: selectedBatch.production_id || null,
+      recipe_id: selectedBatch.recipe_id || null,
+      recipe_name: selectedBatch.recipe_name || null,
+      site_id: selectedBatch.site_id,
+      site_name: selectedBatch.site_name,
       inspection_date: new Date().toISOString(),
       inspector_name: user.email,
       temperature_logs: qcForm.temperature_logs,
@@ -221,6 +226,7 @@ export default function QualityControl() {
                 <TableRow>
                   <TableHead>Batch Number</TableHead>
                   <TableHead>Product</TableHead>
+                  <TableHead>Site</TableHead>
                   <TableHead>Quantity</TableHead>
                   <TableHead>Production Date</TableHead>
                   <TableHead>Stage</TableHead>
@@ -232,6 +238,7 @@ export default function QualityControl() {
                   <TableRow key={batch.id}>
                     <TableCell className="font-medium">{batch.batch_number}</TableCell>
                     <TableCell>{batch.recipe_name}</TableCell>
+                    <TableCell>{batch.site_name || 'Not assigned'}</TableCell>
                     <TableCell>{batch.quantity} {batch.unit}</TableCell>
                     <TableCell>{format(new Date(batch.production_date), 'MMM d, yyyy')}</TableCell>
                     <TableCell>
@@ -246,7 +253,7 @@ export default function QualityControl() {
                 ))}
                 {pendingBatches.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-slate-500 py-8">
+                    <TableCell colSpan={7} className="text-center text-slate-500 py-8">
                       No batches pending inspection
                     </TableCell>
                   </TableRow>
@@ -266,6 +273,7 @@ export default function QualityControl() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Batch Number</TableHead>
+                  <TableHead>Site</TableHead>
                   <TableHead>Inspector</TableHead>
                   <TableHead>Inspection Date</TableHead>
                   <TableHead>Status</TableHead>
@@ -275,6 +283,7 @@ export default function QualityControl() {
                 {qcRecords.slice(0, 20).map(qc => (
                   <TableRow key={qc.id}>
                     <TableCell className="font-medium">{qc.batch_number}</TableCell>
+                    <TableCell>{qc.site_name || 'Not assigned'}</TableCell>
                     <TableCell>{qc.inspector_name}</TableCell>
                     <TableCell>{format(new Date(qc.inspection_date), 'MMM d, yyyy HH:mm')}</TableCell>
                     <TableCell>

@@ -10,6 +10,22 @@ import {
   getSystemRoleDefinition
 } from './entities.js';
 import { buildEntityListQuery } from './entityQuery.js';
+import {
+  isManagementScopeSiteType,
+  isReservedManagementRoleKey,
+  normalizeManagementRoleProfile,
+  resolveManagementDashboardView
+} from '../shared/managementDashboardRoles.js';
+import {
+  isCanonicalSiteType,
+  validateCanonicalSiteParent,
+  validateSiteChildrenForParent
+} from '../shared/siteHierarchy.js';
+import {
+  getRoleLocationPolicy,
+  isRolePrimarySiteType,
+  normalizeRoleLocationFields
+} from '../shared/roleLocationPolicy.js';
 
 const rootDir = path.resolve(process.cwd());
 const uploadsDir = path.join(rootDir, 'uploads');
@@ -176,6 +192,12 @@ function normalizeRecord(entity, payload, existing = null) {
   };
 }
 
+function decorateStoredDocument(entity, record) {
+  if (!record) return record;
+  if (entity === 'RoleProfile') return normalizeManagementRoleProfile(record);
+  return record;
+}
+
 const roleProfileCache = new Map();
 const roleProfileCacheTtlMs = envInteger('ROLE_PROFILE_CACHE_TTL_MS', 10000, 0);
 let roleProfileCacheGeneration = 0;
@@ -213,7 +235,7 @@ async function findRoleProfileByKey(roleKey, executor = pool) {
     executor
   );
 
-  let value = result.rowCount ? result.rows[0].data : null;
+  let value = result.rowCount ? normalizeManagementRoleProfile(result.rows[0].data) : null;
   if (!value) {
     const builtIn = getSystemRoleDefinition(normalized);
     value = builtIn ? {
@@ -237,16 +259,108 @@ async function hydrateUserRole(user, executor = pool) {
   if (!user) return null;
 
   const roleProfile = await findRoleProfileByKey(user.role || 'user', executor);
-  const accessLevel = roleProfile?.access_level || (['admin', 'manager', 'user'].includes(user.role) ? user.role : 'user');
-  const rolePermissions = Array.isArray(roleProfile?.permissions) ? roleProfile.permissions : [];
+  const roleIsActive = roleProfile?.is_active !== false;
+  const accessLevel = roleIsActive
+    ? (roleProfile?.access_level || (['admin', 'manager', 'user'].includes(user.role) ? user.role : 'user'))
+    : 'user';
+  const rolePermissions = roleIsActive && Array.isArray(roleProfile?.permissions) ? roleProfile.permissions : [];
 
   return {
     ...user,
     role_name: roleProfile?.name || user.role || 'User',
     role_access_level: accessLevel,
     role_permissions: rolePermissions,
+    role_is_active: roleIsActive,
+    dashboard_variant: roleIsActive ? (roleProfile?.dashboard_variant || null) : null,
     is_custom_role: !['admin', 'manager', 'user'].includes(String(user.role || '').toLowerCase())
   };
+}
+
+async function validateManagementUserAssignment(user, executor = pool) {
+  const roleProfile = await findRoleProfileByKey(user?.role || 'user', executor);
+  if (roleProfile?.is_active === false) {
+    const error = new Error('The selected role is inactive');
+    error.status = 400;
+    throw error;
+  }
+
+  const rolePolicy = getRoleLocationPolicy(user?.role);
+  if (rolePolicy?.scope === 'all_areas') {
+    return normalizeRoleLocationFields(user);
+  }
+
+  if (rolePolicy?.primary_site_type) {
+    const primarySiteId = String(user?.site_id || '').trim();
+    if (!primarySiteId) {
+      const error = new Error(`A primary ${rolePolicy.assignment_label} is required for this role`);
+      error.status = 400;
+      throw error;
+    }
+
+    const primarySite = await findDocument('Site', primarySiteId, executor);
+    if (!primarySite || primarySite.is_active === false || !isRolePrimarySiteType(user.role, primarySite.type)) {
+      const error = new Error(`The selected primary location must be an active ${rolePolicy.assignment_label}`);
+      error.status = 400;
+      throw error;
+    }
+
+    const submittedAllowedIds = Array.isArray(user?.allowed_site_ids)
+      ? [...new Set(user.allowed_site_ids.filter(Boolean).map(String))]
+      : [];
+    const extraRoot = submittedAllowedIds.find((siteId) => siteId !== primarySiteId);
+    if (extraRoot) {
+      const error = new Error(`${rolePolicy.assignment_label} access must use one assigned hierarchy root`);
+      error.status = 400;
+      throw error;
+    }
+
+    return normalizeRoleLocationFields({
+      ...user,
+      site_id: primarySiteId,
+      site_name: primarySite.name || null
+    });
+  }
+
+  const dashboardView = resolveManagementDashboardView({
+    role: user?.role,
+    dashboardVariant: roleProfile?.dashboard_variant,
+    roleName: roleProfile?.name
+  });
+  if (!dashboardView) return user;
+
+  const primarySiteId = String(user?.site_id || '').trim();
+  if (!primarySiteId) {
+    const error = new Error('A primary project or area is required for management dashboard roles');
+    error.status = 400;
+    throw error;
+  }
+
+  const primarySite = await findDocument('Site', primarySiteId, executor);
+  if (!primarySite || !isManagementScopeSiteType(dashboardView, primarySite.type)) {
+    const error = new Error('The selected primary location is not valid for this management role');
+    error.status = 400;
+    throw error;
+  }
+
+  const allowedSiteIds = Array.isArray(user?.allowed_site_ids)
+    ? [...new Set(user.allowed_site_ids.filter(Boolean).map(String))]
+    : [];
+  if (allowedSiteIds.length > 0 && !allowedSiteIds.includes(primarySiteId)) {
+    const error = new Error('The primary management location must be included in project access');
+    error.status = 400;
+    throw error;
+  }
+  for (const siteId of allowedSiteIds) {
+    const allowedSite = siteId === primarySiteId
+      ? primarySite
+      : await findDocument('Site', siteId, executor);
+    if (!allowedSite || !isManagementScopeSiteType(dashboardView, allowedSite.type)) {
+      const error = new Error('Project access contains a location that is not valid for this management role');
+      error.status = 400;
+      throw error;
+    }
+  }
+  return user;
 }
 
 function normalizeUniqueValue(value) {
@@ -372,6 +486,7 @@ const singleReferenceTargets = new Map([
   ['menu_plan_id', 'MenuPlan'],
   ['source_event_id', 'MenuPlan'],
   ['production_id', 'Production'],
+  ['batch_id', 'ProductionBatch'],
   ['source_production_id', 'Production'],
   ['linked_material_request_id', 'MaterialRequest'],
   ['inventory_lot_id', 'InventoryLot'],
@@ -442,6 +557,7 @@ function collectDocumentReferences(value, references = [], pathPrefix = '') {
 async function validateDocumentRelationships(entity, record, currentId = null, executor = pool) {
   const references = collectDocumentReferences(record);
   const uniqueReferences = new Map();
+  let directSiteParent = null;
 
   references.forEach((reference) => {
     uniqueReferences.set(`${reference.targetEntity}:${reference.id}`, reference);
@@ -471,7 +587,21 @@ async function validateDocumentRelationships(entity, record, currentId = null, e
       if (!parent) {
         break;
       }
+      if (!directSiteParent) directSiteParent = parent;
       parentId = parent.parent_site_id ? String(parent.parent_site_id) : '';
+    }
+  }
+
+  if (entity === 'Site' && isCanonicalSiteType(record.type)) {
+    const hierarchyError = validateCanonicalSiteParent({
+      type: record.type,
+      parent: directSiteParent,
+      parentId: record.parent_site_id
+    });
+    if (hierarchyError) {
+      const error = new Error(hierarchyError);
+      error.status = 409;
+      throw error;
     }
   }
 
@@ -502,6 +632,32 @@ async function validateDocumentRelationships(entity, record, currentId = null, e
       error.status = 409;
       throw error;
     }
+  }
+}
+
+async function validateSiteChildrenAfterStructureChange(existing, record, executor = pool) {
+  if (!existing || !record) return;
+  const typeChanged = String(existing.type || '') !== String(record.type || '');
+  const parentChanged = String(existing.parent_site_id || '') !== String(record.parent_site_id || '');
+  if (!typeChanged && !parentChanged) return;
+
+  const result = await query(
+    `SELECT data
+       FROM entity_records
+      WHERE entity_name = 'Site'
+        AND data->>'parent_site_id' = $1
+      FOR SHARE`,
+    [String(record.id)],
+    executor
+  );
+  const hierarchyError = validateSiteChildrenForParent(
+    record,
+    result.rows.map((row) => row.data)
+  );
+  if (hierarchyError) {
+    const error = new Error(hierarchyError);
+    error.status = 409;
+    throw error;
   }
 }
 
@@ -593,6 +749,7 @@ async function initDatabase() {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['foodpro_schema_initialization']);
     await client.query('SET LOCAL statement_timeout = 0');
     await client.query({ text: sql, query_timeout: 0 });
+    await normalizeStoredManagementRoleProfiles(client);
     await ensureAdminAccounts(client);
     await client.query('COMMIT');
   } catch (error) {
@@ -600,6 +757,29 @@ async function initDatabase() {
     throw error;
   } finally {
     client.release();
+  }
+}
+
+async function normalizeStoredManagementRoleProfiles(executor = pool) {
+  const result = await query(
+    `SELECT id, data
+       FROM entity_records
+      WHERE entity_name = 'RoleProfile'`,
+    [],
+    executor
+  );
+  for (const row of result.rows) {
+    const normalized = normalizeManagementRoleProfile(row.data);
+    if (normalized === row.data || JSON.stringify(normalized) === JSON.stringify(row.data)) continue;
+    const next = { ...normalized, updated_date: nowIso() };
+    await query(
+      `UPDATE entity_records
+          SET data = $2::jsonb,
+              updated_at = $3
+        WHERE id = $1 AND entity_name = 'RoleProfile'`,
+      [row.id, JSON.stringify(next), next.updated_date],
+      executor
+    );
   }
 }
 
@@ -702,6 +882,7 @@ async function createUser(data, executor = pool) {
 
   const id = data.id || randomId('user');
   const timestamp = nowIso();
+  data = await validateManagementUserAssignment(data, executor);
   await validateDocumentRelationships('User', { ...data, id }, null, executor);
   const credentials = resolvePasswordFields(data);
   if (!credentials.password_hash) {
@@ -722,6 +903,12 @@ async function createUser(data, executor = pool) {
   delete profile.temporary_password;
   delete profile.created_date;
   delete profile.updated_date;
+  delete profile.role_name;
+  delete profile.role_access_level;
+  delete profile.role_permissions;
+  delete profile.role_is_active;
+  delete profile.dashboard_variant;
+  delete profile.is_custom_role;
 
   await query(
     `INSERT INTO users (id, email, full_name, role, status, site_id, site_name, password_hash, temporary_password, profile, created_at, updated_at)
@@ -759,13 +946,14 @@ async function updateUser(id, patch, executor = pool) {
   }
 
   const credentials = resolvePasswordFields(patch, existing);
-  const merged = {
+  let merged = {
     ...existing,
     ...patch,
     ...credentials,
     id,
     updated_date: nowIso()
   };
+  merged = await validateManagementUserAssignment(merged, executor);
   await validateDocumentRelationships('User', merged, id, executor);
   const profile = { ...merged };
   delete profile.id;
@@ -780,6 +968,12 @@ async function updateUser(id, patch, executor = pool) {
   delete profile.temporary_password;
   delete profile.created_date;
   delete profile.updated_date;
+  delete profile.role_name;
+  delete profile.role_access_level;
+  delete profile.role_permissions;
+  delete profile.role_is_active;
+  delete profile.dashboard_variant;
+  delete profile.is_custom_role;
 
   await query(
     `UPDATE users
@@ -828,7 +1022,7 @@ async function listDocuments(
 
   const built = buildEntityListQuery({ entity, filters, sort, limit, offset, lock, location });
   const result = await query(built.text, built.parameters, executor);
-  return result.rows.map((row) => row.data);
+  return result.rows.map((row) => decorateStoredDocument(entity, row.data));
 }
 
 async function listDocumentsPage(
@@ -878,7 +1072,7 @@ async function listDocumentsPage(
   }
 
   return {
-    items: result.rows.map((row) => row.data),
+    items: result.rows.map((row) => decorateStoredDocument(entity, row.data)),
     total_count: totalCount,
     limit: safeLimit,
     offset: safeOffset
@@ -900,7 +1094,7 @@ async function findDocument(entity, id, executor = pool, lock = false) {
     [entity, id],
     executor
   );
-  return result.rowCount ? result.rows[0].data : null;
+  return result.rowCount ? decorateStoredDocument(entity, result.rows[0].data) : null;
 }
 
 async function createDocument(entity, payload, executor = null) {
@@ -911,6 +1105,11 @@ async function createDocument(entity, payload, executor = null) {
   ensureKnownEntity(entity);
   if (entity === 'User') {
     return createUser(payload, executor);
+  }
+  if (entity === 'RoleProfile' && isReservedManagementRoleKey(payload?.role_key)) {
+    const error = new Error('This management role key is reserved by the system');
+    error.status = 409;
+    throw error;
   }
 
   const validated = validateEntityPayload(entity, payload);
@@ -940,10 +1139,18 @@ async function updateDocument(entity, id, patch, executor = null) {
 
   const existing = await findDocument(entity, id, executor);
   if (!existing) return null;
+  if (entity === 'RoleProfile' && isReservedManagementRoleKey(existing.role_key)) {
+    const error = new Error('Built-in management roles cannot be edited');
+    error.status = 409;
+    throw error;
+  }
 
   const validated = validateEntityPayload(entity, { ...existing, ...patch });
   const record = normalizeRecord(entity, validated, existing);
   await validateDocumentRelationships(entity, record, id, executor);
+  if (entity === 'Site') {
+    await validateSiteChildrenAfterStructureChange(existing, record, executor);
+  }
   await ensureEntityUniqueness(entity, record, id, executor);
 
   await query(
@@ -1334,6 +1541,7 @@ export {
   withTransaction,
   collectDocumentReferences,
   validateDocumentRelationships,
+  validateSiteChildrenAfterStructureChange,
   uploadsDir,
   initDatabase,
   listDocuments,

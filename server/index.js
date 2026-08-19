@@ -154,6 +154,7 @@ import {
 import { enqueueBulkUpload, resumeBulkUploadQueue, stopBulkUploadQueue } from './bulkUploadQueue.js';
 import { getIngredientCostSnapshots, searchIngredients } from './ingredientSearch.js';
 import { closeRealtime, subscribeToEntityEvents } from './realtime.js';
+import { getManagementDashboardSnapshot } from './managementDashboard.js';
 import {
   createObjectKey,
   getStoredObject,
@@ -1422,6 +1423,19 @@ app.post('/api/auth/login', async (request, response) => {
 
 app.get('/api/auth/me', requireAuth, (request, response) => {
   response.json(request.user);
+});
+
+app.get('/api/dashboard/management', requireAuth, requirePermission('view_dashboard'), async (request, response, next) => {
+  try {
+    response.set('Cache-Control', 'private, no-store');
+    response.json(await getManagementDashboardSnapshot(request.user, {
+      view: request.query.view,
+      date: request.query.date,
+      site_id: request.query.site_id
+    }));
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.patch('/api/auth/me', requireAuth, async (request, response, next) => {

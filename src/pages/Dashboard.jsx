@@ -29,6 +29,8 @@ import {
 import {
   AlertTriangle,
   Building2,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   Download,
   Factory,
@@ -52,6 +54,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { downloadCSV } from '../components/utils/exportData';
 import { formatCurrency } from '@/lib/currency';
+import { usePermissions } from '@/components/auth/usePermissions';
+import ManagementDashboard from '@/components/dashboard/ManagementDashboard';
+import {
+  ADMIN_DASHBOARD_VIEW_ORDER,
+  DASHBOARD_VIEWS
+} from '../../shared/managementDashboardRoles.js';
 
 const STATUS_COLORS = {
   draft: '#94a3b8',
@@ -113,7 +121,7 @@ function SectionCard({ title, subtitle, children, action }) {
   );
 }
 
-export default function Dashboard() {
+function DefaultDashboard() {
   const defaults = useMemo(() => getDateRangeOptions(), []);
   const [filters, setFilters] = useState({
     startDate: defaults.startDate,
@@ -1008,4 +1016,126 @@ export default function Dashboard() {
       </div>
     </div>
   );
+}
+
+const ADMIN_DASHBOARD_LABELS = {
+  [DASHBOARD_VIEWS.DEFAULT]: 'Default Dashboard',
+  [DASHBOARD_VIEWS.GENERAL_MANAGER]: 'GM View',
+  [DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER]: 'AGM View',
+  [DASHBOARD_VIEWS.AREA_MANAGER]: 'Area Manager View',
+  [DASHBOARD_VIEWS.PROJECT_MANAGER]: 'Project Manager View'
+};
+
+function DashboardPermissionLoading() {
+  return (
+    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto max-w-[1680px] space-y-5">
+        <Skeleton className="h-16 rounded-2xl" />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Skeleton key={index} className="h-28 rounded-2xl" />
+          ))}
+        </div>
+        <Skeleton className="h-[420px] rounded-2xl" />
+      </div>
+    </div>
+  );
+}
+
+function AdminDashboardCarousel() {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const activeView = ADMIN_DASHBOARD_VIEW_ORDER[activeIndex];
+  const move = (offset) => {
+    setActiveIndex((current) => (
+      (current + offset + ADMIN_DASHBOARD_VIEW_ORDER.length) % ADMIN_DASHBOARD_VIEW_ORDER.length
+    ));
+  };
+
+  return (
+    <section aria-label="Administrator dashboard perspectives" className="min-h-screen bg-slate-50">
+      <div className="border-b border-slate-200 bg-white px-4 py-3 shadow-sm sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-[1680px] flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className="bg-slate-900 text-white hover:bg-slate-900">Administrator</Badge>
+              <span className="text-sm font-semibold text-slate-900">Dashboard perspective</span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Preview each role dashboard without changing your account permissions or location access.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-10 w-10"
+              aria-label="Show previous dashboard"
+              onClick={() => move(-1)}
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
+            <div className="min-w-[190px] rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-center" aria-live="polite">
+              <p className="text-sm font-semibold text-slate-900">{ADMIN_DASHBOARD_LABELS[activeView]}</p>
+              <p className="text-[11px] text-slate-500">{activeIndex + 1} of {ADMIN_DASHBOARD_VIEW_ORDER.length}</p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-10 w-10"
+              aria-label="Show next dashboard"
+              onClick={() => move(1)}
+            >
+              <ChevronRight className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+
+        <div className="mx-auto mt-3 flex max-w-[1680px] flex-wrap items-center justify-center gap-2" aria-label="Dashboard perspectives">
+          {ADMIN_DASHBOARD_VIEW_ORDER.map((view, index) => (
+            <button
+              key={view}
+              type="button"
+              aria-pressed={index === activeIndex}
+              className={`min-h-9 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                index === activeIndex
+                  ? 'border-blue-600 bg-blue-600 text-white'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700'
+              }`}
+              onClick={() => setActiveIndex(index)}
+            >
+              {ADMIN_DASHBOARD_LABELS[view]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeView === DASHBOARD_VIEWS.DEFAULT ? (
+        <DefaultDashboard />
+      ) : (
+        <div className="mx-auto max-w-[1680px] p-4 sm:p-6 lg:p-8">
+          <ManagementDashboard view={activeView} isAdminPreview />
+        </div>
+      )}
+    </section>
+  );
+}
+
+export default function Dashboard() {
+  const { dashboardView, isAdmin, loading } = usePermissions();
+
+  if (loading) return <DashboardPermissionLoading />;
+  if (isAdmin) return <AdminDashboardCarousel />;
+  if (dashboardView) {
+    return (
+      <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto max-w-[1680px]">
+          <ManagementDashboard view={dashboardView} />
+        </div>
+      </div>
+    );
+  }
+  return <DefaultDashboard />;
 }

@@ -29,11 +29,7 @@ import {
   Trash2,
   Download,
   Network,
-  Warehouse,
-  ChefHat,
   Store,
-  Building,
-  Globe2,
   MapPinned,
   UserCog,
   Upload,
@@ -42,35 +38,33 @@ import {
 import SiteUserManager from '@/components/sites/SiteUserManager';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { downloadCSV } from '../components/utils/exportData';
+import {
+  getAllowedParentSites,
+  getRequiredParentType,
+  getSiteTypeLabel,
+  getVisibleHierarchyRoots,
+  isSupportedSiteType,
+  normalizeSiteType,
+  SITE_HIERARCHY_TYPES,
+  validateCanonicalSiteParent
+} from '../../shared/siteHierarchy.js';
 
 const SITE_TYPES = [
-  { value: 'company', label: 'Company', icon: Globe2 },
-  { value: 'region', label: 'Region', icon: MapPinned },
-  { value: 'location', label: 'Location', icon: Building },
-  { value: 'branch', label: 'Branch', icon: Building2 },
-  { value: 'camp', label: 'Camp', icon: Building2 },
-  { value: 'kitchen', label: 'Kitchen', icon: ChefHat },
-  { value: 'store', label: 'Store', icon: Store },
-  { value: 'warehouse', label: 'Warehouse', icon: Warehouse },
-  { value: 'headquarters', label: 'Headquarters', icon: Building2 }
+  { value: SITE_HIERARCHY_TYPES.AREA, label: 'Area', icon: MapPinned },
+  { value: SITE_HIERARCHY_TYPES.PROJECT, label: 'Project', icon: Building2 },
+  { value: SITE_HIERARCHY_TYPES.STORE, label: 'Store', icon: Store }
 ];
 
 const TYPE_COLORS = {
-  company: 'bg-slate-100 text-slate-700',
-  region: 'bg-blue-100 text-blue-700',
-  location: 'bg-emerald-100 text-emerald-700',
-  branch: 'bg-amber-100 text-amber-700',
-  camp: 'bg-cyan-100 text-cyan-700',
-  kitchen: 'bg-lime-100 text-lime-700',
+  area: 'bg-blue-100 text-blue-700',
+  project: 'bg-emerald-100 text-emerald-700',
   store: 'bg-violet-100 text-violet-700',
-  warehouse: 'bg-purple-100 text-purple-700',
-  headquarters: 'bg-rose-100 text-rose-700'
 };
 
 const emptyForm = {
   name: '',
   project_code: '',
-  type: 'location',
+  type: SITE_HIERARCHY_TYPES.AREA,
   parent_site_id: '',
   address: '',
   city: '',
@@ -83,7 +77,8 @@ const emptyForm = {
 };
 
 function getTypeMeta(type) {
-  return SITE_TYPES.find((entry) => entry.value === type) || SITE_TYPES[2];
+  const canonicalType = normalizeSiteType(type);
+  return SITE_TYPES.find((entry) => entry.value === canonicalType) || SITE_TYPES[0];
 }
 
 function normalizeLookup(value) {
@@ -132,8 +127,9 @@ function buildBulkSiteRows(rows, existingSites) {
 
   rows.forEach((row, index) => {
     const explicitType = normalizeLookup(pickValue(row, ['type']));
+    const areaValue = String(pickValue(row, ['area', 'area_name', 'parent_area']) || '').trim();
     const projectValue = String(pickValue(row, ['project', 'project_name', 'parent_project']) || '').trim();
-    const warehouseValue = String(pickValue(row, ['warehouse', 'warehouse_name']) || '').trim();
+    const storeValue = String(pickValue(row, ['store', 'store_name', 'warehouse', 'warehouse_name']) || '').trim();
     const rawName = String(pickValue(row, ['name', 'site_name', 'location_name']) || '').trim();
     const codeValue = String(pickValue(row, ['project_code', 'code']) || '').trim();
     const city = String(pickValue(row, ['city']) || '').trim();
@@ -145,20 +141,26 @@ function buildBulkSiteRows(rows, existingSites) {
     const capacityRaw = String(pickValue(row, ['capacity']) || '').trim();
     const isActive = toBoolean(pickValue(row, ['is_active', 'active', 'status']), true);
 
-    let resolvedType = explicitType;
-    if (!SITE_TYPES.some((entry) => entry.value === resolvedType)) {
-      resolvedType = warehouseValue ? 'warehouse' : 'location';
-    }
+    const inferredType = storeValue
+      ? SITE_HIERARCHY_TYPES.STORE
+      : (projectValue ? SITE_HIERARCHY_TYPES.PROJECT : SITE_HIERARCHY_TYPES.AREA);
+    const unsupportedExplicitType = explicitType && !isSupportedSiteType(explicitType);
+    const resolvedType = normalizeSiteType(explicitType, inferredType);
 
     const resolvedName = (
-      resolvedType === 'warehouse'
-        ? (warehouseValue || rawName)
-        : (rawName || projectValue || warehouseValue)
+      resolvedType === SITE_HIERARCHY_TYPES.STORE
+        ? (rawName || storeValue)
+        : resolvedType === SITE_HIERARCHY_TYPES.PROJECT
+          ? (rawName || projectValue)
+          : (rawName || areaValue)
     ).trim();
 
-    const parentLookupValue = resolvedType === 'warehouse'
-      ? projectValue
-      : pickValue(row, ['parent_project', 'parent_site', 'parent']);
+    const explicitParent = String(pickValue(row, ['parent', 'parent_site', 'parent_name']) || '').trim();
+    const parentLookupValue = resolvedType === SITE_HIERARCHY_TYPES.PROJECT
+      ? (explicitParent || areaValue)
+      : resolvedType === SITE_HIERARCHY_TYPES.STORE
+        ? (explicitParent || projectValue)
+        : '';
     const parentSite = resolveSiteReference(stagedSites, parentLookupValue);
     const duplicateByName = stagedSites.find((site) => normalizeLookup(site.name) === normalizeLookup(resolvedName));
     const duplicateByCode = codeValue
@@ -166,15 +168,20 @@ function buildBulkSiteRows(rows, existingSites) {
       : null;
 
     let status = 'Ready';
-    if (!resolvedName) {
+    const hierarchyError = validateCanonicalSiteParent({
+      type: resolvedType,
+      parent: parentSite,
+      parentId: parentLookupValue
+    });
+    if (unsupportedExplicitType) {
+      status = `Unsupported type "${explicitType}"`;
+      errors.push(`Row ${index + 2}: unsupported type "${explicitType}"`);
+    } else if (!resolvedName) {
       status = 'Name is required';
       errors.push(`Row ${index + 2}: name is required`);
-    } else if (resolvedType === 'warehouse' && !projectValue) {
-      status = 'Warehouse rows require a project';
-      errors.push(`Row ${index + 2}: warehouse rows require a project value`);
-    } else if (resolvedType === 'warehouse' && !parentSite) {
-      status = 'Parent project not found';
-      errors.push(`Row ${index + 2}: parent project "${projectValue}" was not found`);
+    } else if (hierarchyError) {
+      status = hierarchyError;
+      errors.push(`Row ${index + 2}: ${hierarchyError}`);
     } else if (duplicateByName) {
       status = `Already exists as ${duplicateByName.name}`;
       errors.push(`Row ${index + 2}: "${resolvedName}" already exists`);
@@ -187,8 +194,7 @@ function buildBulkSiteRows(rows, existingSites) {
       row: index + 2,
       name: resolvedName || '-',
       type: resolvedType,
-      project: projectValue || (parentSite?.name || '-'),
-      warehouse: warehouseValue || '-',
+      parent: parentLookupValue || '-',
       status
     });
 
@@ -201,6 +207,7 @@ function buildBulkSiteRows(rows, existingSites) {
       project_code: codeValue || '',
       type: resolvedType,
       parent_site_id: parentSite?.id || '',
+      parent_reference: parentLookupValue,
       address,
       city,
       country,
@@ -216,6 +223,7 @@ function buildBulkSiteRows(rows, existingSites) {
       id: `staged-${index + 1}`,
       name: payload.name,
       project_code: payload.project_code,
+      type: payload.type,
       parent_site_id: payload.parent_site_id,
       hierarchy_path: payload.name
     });
@@ -237,6 +245,7 @@ export default function Sites() {
   const [bulkFileName, setBulkFileName] = useState('');
   const [bulkError, setBulkError] = useState('');
   const [bulkSummary, setBulkSummary] = useState(null);
+  const [formError, setFormError] = useState('');
 
   const queryClient = useQueryClient();
   const { isAdmin } = usePermissions();
@@ -252,7 +261,9 @@ export default function Sites() {
       queryClient.invalidateQueries({ queryKey: ['sites'] });
       setFormOpen(false);
       setFormData(emptyForm);
-    }
+      setFormError('');
+    },
+    onError: (error) => setFormError(error?.message || 'Could not create this hierarchy record')
   });
 
   const updateMutation = useMutation({
@@ -262,7 +273,9 @@ export default function Sites() {
       setFormOpen(false);
       setEditingSite(null);
       setFormData(emptyForm);
-    }
+      setFormError('');
+    },
+    onError: (error) => setFormError(error?.message || 'Could not update this hierarchy record')
   });
 
   const deleteMutation = useMutation({
@@ -279,10 +292,18 @@ export default function Sites() {
       let imported = 0;
       let failed = 0;
       const failures = [];
+      const createdSites = [...sites];
 
       for (const row of rows) {
         try {
-          await base44.entities.Site.create(row);
+          const parent = row.parent_reference
+            ? resolveSiteReference(createdSites, row.parent_reference)
+            : null;
+          const payload = { ...row };
+          delete payload.parent_reference;
+          payload.parent_site_id = parent?.id || '';
+          const created = await base44.entities.Site.create(payload);
+          createdSites.push(created);
           imported += 1;
         } catch (error) {
           failed += 1;
@@ -325,7 +346,7 @@ export default function Sites() {
   }, [searchQuery, sites]);
 
   const roots = useMemo(() => {
-    const baseRoots = sites.filter((site) => !site.parent_site_id);
+    const baseRoots = getVisibleHierarchyRoots(sites);
     if (!searchQuery.trim()) {
       return baseRoots;
     }
@@ -340,10 +361,10 @@ export default function Sites() {
   }, [childMap, filteredIds, searchQuery, sites]);
 
   const stats = useMemo(() => ({
-    companies: sites.filter((site) => site.type === 'company').length,
-    regions: sites.filter((site) => site.type === 'region').length,
-    camps: sites.filter((site) => site.type === 'camp').length,
-    storage: sites.filter((site) => ['store', 'warehouse'].includes(site.type)).length
+    areas: sites.filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.AREA).length,
+    projects: sites.filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT).length,
+    stores: sites.filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE).length,
+    active: sites.filter((site) => site.is_active !== false).length
   }), [sites]);
 
   const parsedBulkImport = useMemo(
@@ -351,19 +372,21 @@ export default function Sites() {
     [bulkRows, sites]
   );
 
-  const openCreate = (parentId = '', type = 'location') => {
+  const openCreate = (parentId = '', type = SITE_HIERARCHY_TYPES.AREA) => {
     if (!isAdmin) return;
     setEditingSite(null);
     setFormData({ ...emptyForm, parent_site_id: parentId, type });
+    setFormError('');
     setFormOpen(true);
   };
 
   const openEdit = (site) => {
+    if (!isAdmin) return;
     setEditingSite(site);
     setFormData({
       name: site.name || '',
       project_code: site.project_code || '',
-      type: site.type || 'location',
+      type: normalizeSiteType(site.type),
       parent_site_id: site.parent_site_id || '',
       address: site.address || '',
       city: site.city || '',
@@ -374,14 +397,34 @@ export default function Sites() {
       contact_email: site.contact_email || '',
       is_active: site.is_active !== false
     });
+    setFormError('');
     setFormOpen(true);
   };
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    if (!editingSite && !isAdmin) return;
+    if (!isAdmin) return;
+    const preserveLegacyType = Boolean(
+      editingSite &&
+      normalizeSiteType(editingSite.type) === formData.type &&
+      !SITE_TYPES.some((entry) => entry.value === editingSite.type) &&
+      String(editingSite.parent_site_id || '') === String(formData.parent_site_id || '')
+    );
+    const parent = sites.find((site) => String(site.id) === String(formData.parent_site_id)) || null;
+    const hierarchyError = preserveLegacyType
+      ? null
+      : validateCanonicalSiteParent({
+        type: formData.type,
+        parent,
+        parentId: formData.parent_site_id
+      });
+    if (hierarchyError) {
+      setFormError(hierarchyError);
+      return;
+    }
     const payload = {
       ...formData,
+      type: preserveLegacyType ? editingSite.type : formData.type,
       capacity: formData.capacity ? parseInt(formData.capacity, 10) : null
     };
 
@@ -419,36 +462,42 @@ export default function Sites() {
   const handleDownloadProjectTemplate = () => {
     const worksheet = XLSX.utils.json_to_sheet([
       {
-        warehouse: '',
-        project: 'ABQAIQ CAMP',
+        name: 'Eastern Area',
+        type: 'area',
+        parent: '',
+        project_code: 'AREA-EAST',
+        city: 'Dammam',
+        country: 'Saudi Arabia'
+      },
+      {
         name: 'ABQAIQ CAMP',
+        type: 'project',
+        parent: 'Eastern Area',
         project_code: 'ABQ-CAMP',
-        type: 'location',
         city: 'Abqaiq',
         country: 'Saudi Arabia'
       },
       {
-        warehouse: 'ABQAIQ WAREHOUSE',
-        project: 'ABQAIQ CAMP',
-        name: 'ABQAIQ WAREHOUSE',
-        project_code: 'ABQ-WH',
-        type: 'warehouse',
+        name: 'ABQAIQ MAIN STORE',
+        type: 'store',
+        parent: 'ABQAIQ CAMP',
+        project_code: 'ABQ-ST',
         city: 'Abqaiq',
         country: 'Saudi Arabia'
       }
     ]);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Projects Upload');
-    XLSX.writeFile(workbook, 'projects_bulk_template.xlsx');
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Site Structure');
+    XLSX.writeFile(workbook, 'area_project_store_template.xlsx');
   };
 
   const handleSubmitBulkImport = () => {
     if (!isAdmin) {
-      setBulkError('Only administrators can import projects');
+      setBulkError('Only administrators can import the site structure');
       return;
     }
     if (!parsedBulkImport.items.length) {
-      setBulkError('Upload a valid project / warehouse file before importing');
+      setBulkError('Upload a valid Area / Project / Store file before importing');
       return;
     }
     bulkCreateMutation.mutate(parsedBulkImport.items);
@@ -456,7 +505,8 @@ export default function Sites() {
 
   const renderNode = (site, depth = 0) => {
     const children = childMap.get(site.id) || [];
-    const typeMeta = getTypeMeta(site.type);
+    const canonicalType = normalizeSiteType(site.type);
+    const typeMeta = getTypeMeta(canonicalType);
     const TypeIcon = typeMeta.icon;
 
     return (
@@ -471,9 +521,10 @@ export default function Sites() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-semibold text-slate-900">{site.name}</h3>
-                    <Badge className={TYPE_COLORS[site.type] || 'bg-slate-100 text-slate-700'}>{site.type}</Badge>
+                    <Badge className={TYPE_COLORS[canonicalType] || 'bg-slate-100 text-slate-700'}>{getSiteTypeLabel(canonicalType)}</Badge>
+                    {site.type !== canonicalType ? <Badge variant="outline">Legacy type: {site.type}</Badge> : null}
                     {!site.is_active ? <Badge variant="outline">Inactive</Badge> : null}
-                    {site.project_code ? <Badge variant="outline">Project Code: {site.project_code}</Badge> : null}
+                    {site.project_code ? <Badge variant="outline">Code: {site.project_code}</Badge> : null}
                   </div>
                   <p className="mt-1 text-xs text-slate-500">{site.hierarchy_path || site.name}</p>
                   <div className="mt-3 grid gap-2 text-sm text-slate-600 md:grid-cols-2 xl:grid-cols-4">
@@ -504,24 +555,24 @@ export default function Sites() {
                   </div>
                 </div>
               </div>
-              <DropdownMenu>
+              {isAdmin ? <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="h-8 w-8">
                     <MoreVertical className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {isAdmin ? (
-                    <>
-                      <DropdownMenuItem onClick={() => openCreate(site.id, 'location')}>
-                        <Plus className="h-4 w-4 mr-2" />
-                        Add Child
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => openCreate(site.id, 'warehouse')}>
-                        <Warehouse className="h-4 w-4 mr-2" />
-                        Add Warehouse
-                      </DropdownMenuItem>
-                    </>
+                  {isAdmin && canonicalType === SITE_HIERARCHY_TYPES.AREA ? (
+                    <DropdownMenuItem onClick={() => openCreate(site.id, SITE_HIERARCHY_TYPES.PROJECT)}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Project
+                    </DropdownMenuItem>
+                  ) : null}
+                  {isAdmin && canonicalType === SITE_HIERARCHY_TYPES.PROJECT ? (
+                    <DropdownMenuItem onClick={() => openCreate(site.id, SITE_HIERARCHY_TYPES.STORE)}>
+                      <Store className="h-4 w-4 mr-2" />
+                      Add Store
+                    </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuItem onClick={() => openEdit(site)}>
                     <Pencil className="h-4 w-4 mr-2" />
@@ -536,7 +587,7 @@ export default function Sites() {
                     Delete
                   </DropdownMenuItem>
                 </DropdownMenuContent>
-              </DropdownMenu>
+              </DropdownMenu> : null}
             </div>
           </CardContent>
         </Card>
@@ -549,8 +600,8 @@ export default function Sites() {
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-[1600px] mx-auto">
         <PageHeader
-          title="Project Management"
-          description="Manage company, region, project, kitchen, store, and warehouse hierarchy from one central view"
+          title="Site Structure"
+          description="Manage the operational hierarchy in a clear Area → Project → Store structure"
         >
           <Button variant="outline" onClick={() => downloadCSV(sites, 'project_hierarchy')}>
             <Download className="w-4 h-4 mr-2" />
@@ -562,23 +613,19 @@ export default function Sites() {
                 <Upload className="w-4 h-4 mr-2" />
                 Bulk Upload
               </Button>
-              <Button variant="outline" onClick={() => openCreate('', 'warehouse')}>
-                <Warehouse className="w-4 h-4 mr-2" />
-                Add Warehouse
-              </Button>
-              <Button onClick={() => openCreate('', 'location')} className="bg-emerald-600 hover:bg-emerald-700">
+              <Button onClick={() => openCreate('', SITE_HIERARCHY_TYPES.AREA)} className="bg-emerald-600 hover:bg-emerald-700">
                 <Plus className="w-4 h-4 mr-2" />
-                Add Project
+                Add Area
               </Button>
             </>
           ) : null}
         </PageHeader>
 
         <div className="mb-6 grid gap-4 md:grid-cols-4">
-          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Companies</p><p className="mt-2 text-2xl font-semibold">{stats.companies}</p></CardContent></Card>
-          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Regions</p><p className="mt-2 text-2xl font-semibold">{stats.regions}</p></CardContent></Card>
-          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Camps</p><p className="mt-2 text-2xl font-semibold">{stats.camps}</p></CardContent></Card>
-          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Stores / Warehouses</p><p className="mt-2 text-2xl font-semibold">{stats.storage}</p></CardContent></Card>
+          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Areas</p><p className="mt-2 text-2xl font-semibold">{stats.areas}</p></CardContent></Card>
+          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Projects</p><p className="mt-2 text-2xl font-semibold">{stats.projects}</p></CardContent></Card>
+          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Stores</p><p className="mt-2 text-2xl font-semibold">{stats.stores}</p></CardContent></Card>
+          <Card><CardContent className="p-5"><p className="text-sm text-slate-500">Active Records</p><p className="mt-2 text-2xl font-semibold">{stats.active}</p></CardContent></Card>
         </div>
 
         <div className="bg-white rounded-xl border border-slate-100 p-4 mb-6">
@@ -600,12 +647,12 @@ export default function Sites() {
         ) : roots.length === 0 ? (
           <EmptyState
             icon={Network}
-            title="No projects found"
+            title="No site structure found"
             description={isAdmin
-              ? 'Create your first company, region, or operating project to build the hierarchy'
-              : 'No projects are available in your current access scope'}
-            actionLabel={isAdmin ? 'Add Project' : undefined}
-            onAction={isAdmin ? () => openCreate('', 'location') : undefined}
+              ? 'Create the first Area, then add its Projects and Stores'
+              : 'No Areas, Projects, or Stores are available in your current access scope'}
+            actionLabel={isAdmin ? 'Add Area' : undefined}
+            onAction={isAdmin ? () => openCreate('', SITE_HIERARCHY_TYPES.AREA) : undefined}
           />
         ) : (
           <div className="space-y-4">
@@ -616,16 +663,16 @@ export default function Sites() {
         <Dialog open={formOpen} onOpenChange={setFormOpen}>
           <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editingSite ? 'Edit Project' : (formData.type === 'warehouse' ? 'Create Warehouse' : 'Create Project')}</DialogTitle>
+              <DialogTitle>{editingSite ? `Edit ${getSiteTypeLabel(formData.type)}` : `Create ${getSiteTypeLabel(formData.type)}`}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <Label>{formData.type === 'warehouse' ? 'Warehouse Name' : 'Project Name'}</Label>
+                  <Label>{getSiteTypeLabel(formData.type)} Name</Label>
                   <Input className="mt-1" value={formData.name} onChange={(event) => setFormData((current) => ({ ...current, name: event.target.value }))} required />
                 </div>
                 <div>
-                  <Label>Project Code</Label>
+                  <Label>{getSiteTypeLabel(formData.type)} Code</Label>
                   <Input className="mt-1" value={formData.project_code} onChange={(event) => setFormData((current) => ({ ...current, project_code: event.target.value }))} placeholder="e.g. PROJ-001" required />
                 </div>
               </div>
@@ -633,7 +680,7 @@ export default function Sites() {
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label>Type</Label>
-                  <Select value={formData.type} onValueChange={(value) => setFormData((current) => ({ ...current, type: value }))}>
+                  <Select value={formData.type} onValueChange={(value) => setFormData((current) => ({ ...current, type: value, parent_site_id: '' }))}>
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {SITE_TYPES.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
@@ -641,12 +688,12 @@ export default function Sites() {
                   </Select>
                 </div>
                 <div>
-                  <Label>Parent Project</Label>
-                  <Select value={formData.parent_site_id || 'none'} onValueChange={(value) => setFormData((current) => ({ ...current, parent_site_id: value === 'none' ? '' : value }))}>
-                    <SelectTrigger className="mt-1"><SelectValue placeholder="None" /></SelectTrigger>
+                  <Label>{getRequiredParentType(formData.type) ? `Parent ${getSiteTypeLabel(getRequiredParentType(formData.type))}` : 'Parent'}</Label>
+                  <Select disabled={!getRequiredParentType(formData.type)} value={formData.parent_site_id || 'none'} onValueChange={(value) => setFormData((current) => ({ ...current, parent_site_id: value === 'none' ? '' : value }))}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder={getRequiredParentType(formData.type) ? 'Select parent' : 'Top-level Area'} /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">None</SelectItem>
-                      {sites.filter((site) => site.id !== editingSite?.id).map((site) => (
+                      <SelectItem value="none">{getRequiredParentType(formData.type) ? 'Select parent' : 'Top-level Area'}</SelectItem>
+                      {getAllowedParentSites(formData.type, sites, editingSite?.id).map((site) => (
                         <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
                       ))}
                     </SelectContent>
@@ -697,10 +744,14 @@ export default function Sites() {
                 <Input type="email" className="mt-1" value={formData.contact_email} onChange={(event) => setFormData((current) => ({ ...current, contact_email: event.target.value }))} />
               </div>
 
+              {formError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</div>
+              ) : null}
+
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button>
                 <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={createMutation.isPending || updateMutation.isPending}>
-                  {createMutation.isPending || updateMutation.isPending ? 'Saving...' : (editingSite ? 'Update Project' : (formData.type === 'warehouse' ? 'Create Warehouse' : 'Create Project'))}
+                  {createMutation.isPending || updateMutation.isPending ? 'Saving...' : (editingSite ? `Update ${getSiteTypeLabel(formData.type)}` : `Create ${getSiteTypeLabel(formData.type)}`)}
                 </Button>
               </DialogFooter>
             </form>
@@ -719,7 +770,7 @@ export default function Sites() {
         >
           <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Bulk Upload Projects / Warehouses</DialogTitle>
+              <DialogTitle>Bulk Upload Site Structure</DialogTitle>
             </DialogHeader>
             <div className="space-y-5">
               <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
@@ -729,7 +780,7 @@ export default function Sites() {
                       <Label>Upload CSV / Excel</Label>
                       <Input className="mt-1" type="file" accept=".csv,.xlsx,.xls" onChange={handleBulkFile} />
                       <p className="mt-2 text-xs text-slate-500">
-                        Use the template fields `warehouse`, `project`, and `name`. Optional fields: `project_code`, `type`, `city`, `country`, `address`, `capacity`, `contact_person`, `contact_phone`, `contact_email`, `is_active`.
+                        Add rows in Area, Project, then Store order. Required fields: `name` and `type`; Projects and Stores also require `parent`. Optional fields include `project_code`, address, contact, capacity, and active status.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-3">
@@ -783,16 +834,15 @@ export default function Sites() {
                         <TableHead>Row</TableHead>
                         <TableHead>Name</TableHead>
                         <TableHead>Type</TableHead>
-                        <TableHead>Project</TableHead>
-                        <TableHead>Warehouse</TableHead>
+                        <TableHead>Parent</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {parsedBulkImport.previewRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="py-8 text-center text-slate-500">
-                            Upload a file to preview project and warehouse rows.
+                          <TableCell colSpan={5} className="py-8 text-center text-slate-500">
+                            Upload a file to preview Area, Project, and Store rows.
                           </TableCell>
                         </TableRow>
                       ) : parsedBulkImport.previewRows.slice(0, 20).map((row) => (
@@ -800,8 +850,7 @@ export default function Sites() {
                           <TableCell>{row.row}</TableCell>
                           <TableCell>{row.name}</TableCell>
                           <TableCell className="capitalize">{row.type}</TableCell>
-                          <TableCell>{row.project}</TableCell>
-                          <TableCell>{row.warehouse}</TableCell>
+                          <TableCell>{row.parent}</TableCell>
                           <TableCell>
                             <Badge className={row.status === 'Ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
                               {row.status}
@@ -819,7 +868,7 @@ export default function Sites() {
                   Close
                 </Button>
                 <Button type="button" className="bg-emerald-600 hover:bg-emerald-700" disabled={bulkCreateMutation.isPending} onClick={handleSubmitBulkImport}>
-                  {bulkCreateMutation.isPending ? 'Importing...' : 'Import Projects'}
+                  {bulkCreateMutation.isPending ? 'Importing...' : 'Import Site Structure'}
                 </Button>
               </DialogFooter>
             </div>

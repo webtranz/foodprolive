@@ -58,21 +58,32 @@ function buildLocationClause(parameters, entity, location = null) {
     AND (COALESCE(record.data->>'from_site_id', '') = '' OR record.data->>'from_site_id' = ANY(${siteParameter}::text[]))
     AND (COALESCE(record.data->>'to_site_id', '') = '' OR record.data->>'to_site_id' = ANY(${siteParameter}::text[]))
   )`;
-  const scopedArrayAllowed = `(CASE
-    WHEN jsonb_typeof(record.data->'site_ids') = 'array' THEN (
-      jsonb_array_length(record.data->'site_ids') = 0
-      OR EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements_text(record.data->'site_ids') AS scoped_site(value)
-        WHERE scoped_site.value = ANY(${siteParameter}::text[])
-      )
+  const scopedArrayAllowed = `(
+    jsonb_typeof(record.data->'site_ids') = 'array'
+    AND jsonb_array_length(record.data->'site_ids') > 0
+    AND EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(record.data->'site_ids') AS scoped_site(value)
+      WHERE scoped_site.value = ANY(${siteParameter}::text[])
     )
-    ELSE TRUE
-  END)`;
+  )`;
+  const globalRecipeAllowed = entity === 'Recipe'
+    ? `OR (
+      NOT ${hasDirectSite}
+      AND (
+        COALESCE(record.data->>'site_scope', 'global') = 'global'
+        OR (
+          jsonb_typeof(record.data->'site_ids') = 'array'
+          AND jsonb_array_length(record.data->'site_ids') = 0
+        )
+      )
+    )`
+    : '';
 
   return `(
     (${hasDirectSite} AND ${directSitesAllowed})
     OR (NOT ${hasDirectSite} AND ${scopedArrayAllowed})
+    ${globalRecipeAllowed}
   )`;
 }
 

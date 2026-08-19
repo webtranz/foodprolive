@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { downloadCSV, downloadExcel } from '../components/utils/exportData';
 import { formatCurrency, replaceVisibleUSDCurrency } from '@/lib/currency';
 import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
+import { canAccessAdvancedReport } from '../../shared/advancedReportAccess.js';
 import {
   CalendarClock,
   Download,
@@ -119,7 +120,7 @@ const scheduleTemplate = {
 };
 
 export default function AdvancedReports() {
-  const { role, can, loading: permLoading } = usePermissions();
+  const { accessLevel, permissions, can, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState({
     startDate: format(subDays(new Date(), 30), 'yyyy-MM-dd'),
@@ -182,8 +183,11 @@ export default function AdvancedReports() {
   const siteMap = useMemo(() => Object.fromEntries(sites.map((item) => [item.id, item])), [sites]);
 
   const availableReports = useMemo(
-    () => reportDefinitions.filter((report) => (reportAccess[report.key] || []).includes(role || 'user')),
-    [role]
+    () => reportDefinitions.filter((report) => canAccessAdvancedReport(
+      { accessLevel, permissions },
+      reportAccess[report.key] || []
+    )),
+    [accessLevel, permissions]
   );
 
   const categories = useMemo(() => {

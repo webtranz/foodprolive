@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { assertCanCreateProject, getUserEffectiveRole } from './accessControl.js';
+import { assertCanManageSiteStructure, getUserEffectiveRole } from './accessControl.js';
+import {
+  MANAGEMENT_ROLE_DEFINITIONS,
+  normalizeManagementRoleProfile
+} from '../shared/managementDashboardRoles.js';
+import { SUPPORTED_SITE_TYPES } from '../shared/siteHierarchy.js';
 
 export { getUserEffectiveRole } from './accessControl.js';
 
@@ -149,6 +154,18 @@ export const systemRoleDefinitions = {
       'approve_attendance', 'manage_quality'
     ]
   },
+  general_manager: {
+    ...MANAGEMENT_ROLE_DEFINITIONS.general_manager,
+    permissions: [...MANAGEMENT_ROLE_DEFINITIONS.general_manager.permissions]
+  },
+  assistant_general_manager: {
+    ...MANAGEMENT_ROLE_DEFINITIONS.assistant_general_manager,
+    permissions: [...MANAGEMENT_ROLE_DEFINITIONS.assistant_general_manager.permissions]
+  },
+  area_manager: {
+    ...MANAGEMENT_ROLE_DEFINITIONS.area_manager,
+    permissions: [...MANAGEMENT_ROLE_DEFINITIONS.area_manager.permissions]
+  },
   user: {
     role_key: 'user',
     name: 'General User',
@@ -171,19 +188,8 @@ export const systemRoleDefinitions = {
     ]
   },
   project_manager: {
-    role_key: 'project_manager',
-    name: 'Project Manager',
-    access_level: 'manager',
-    description: 'Reviews production requests for assigned projects and controls operational approvals.',
-    permissions: [
-      'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
-      'manage_inventory', 'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event',
-      'edit_special_event', 'submit_special_event', 'review_special_event', 'approve_special_event',
-      'reject_special_event', 'manage_production',
-      'review_production_request', 'approve_production_request', 'reject_production_request',
-      'request_changes_production', 'approve_production', 'view_material_request',
-      'manage_waste', 'approve_waste'
-    ]
+    ...MANAGEMENT_ROLE_DEFINITIONS.project_manager,
+    permissions: [...MANAGEMENT_ROLE_DEFINITIONS.project_manager.permissions]
   },
   storekeeper: {
     role_key: 'storekeeper',
@@ -574,9 +580,10 @@ export const entityRegistry = {
       description: stringOptional,
       access_level: z.enum(['admin', 'manager', 'user']).optional().nullable(),
       permissions: arrayOptional,
+      dashboard_variant: stringOptional,
       is_active: booleanOptional,
       is_system: booleanOptional
-    }).passthrough()
+    }).passthrough().transform((profile) => normalizeManagementRoleProfile(profile))
   },
   QRDelivery: {
     defaults: { status: 'pending' }
@@ -636,7 +643,7 @@ export const entityRegistry = {
     defaults: { status: 'draft' }
   },
   Site: {
-    defaults: { is_active: true, type: 'location', hierarchy_level: 'location' },
+    defaults: { is_active: true, type: 'area', hierarchy_level: 'area' },
     unique: [
       { fields: ['name'], label: 'project name' },
       { fields: ['project_code'], label: 'project code', ignoreEmpty: true }
@@ -644,7 +651,7 @@ export const entityRegistry = {
     schema: z.object({
       name: z.string().trim().min(1, 'Site name is required'),
       project_code: stringOptional,
-      type: stringOptional,
+      type: z.enum(SUPPORTED_SITE_TYPES).optional().nullable(),
       hierarchy_level: stringOptional,
       parent_site_id: stringOptional,
       parent_site_name: stringOptional,
@@ -654,6 +661,9 @@ export const entityRegistry = {
       location_name: stringOptional,
       kitchen_name: stringOptional,
       storage_name: stringOptional,
+      area_name: stringOptional,
+      project_name: stringOptional,
+      store_name: stringOptional,
       address: stringOptional,
       city: stringOptional,
       country: stringOptional,
@@ -795,7 +805,7 @@ const entityPermissions = {
   ForecastSnapshot: { read: 'manage_forecasting', write: 'manage_forecasting' }
 };
 
-const selfWritableFields = new Set(['full_name', 'site_id', 'site_name', 'phone', 'language', 'avatar_url']);
+const selfWritableFields = new Set(['full_name', 'phone', 'language', 'avatar_url']);
 
 export function ensureKnownEntity(entity) {
   if (!knownEntities.has(entity)) {
@@ -832,8 +842,8 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
   const requiresWriteRole = writeRoles[entity];
   const permissionRequirements = entityPermissions[entity] || {};
 
-  if (entity === 'Site' && action === 'create') {
-    return assertCanCreateProject(user);
+  if (entity === 'Site' && ['create', 'update', 'delete'].includes(action)) {
+    return assertCanManageSiteStructure(user);
   }
 
   if (entity === 'Production') {

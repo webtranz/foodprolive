@@ -4,7 +4,18 @@ import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { normalizeRecipeNumericFields } from '../shared/recipeNumbers.js';
 import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
 import { calculateIngredientCost, convertIngredientQuantity } from '../shared/ingredientUnits.js';
-import { listDocuments } from './db.js';
+import {
+  applyLinkedProductionLocation,
+  applyRequiredOperationalLocation
+} from '../shared/productionQualityLocation.js';
+import {
+  buildCanonicalHierarchyFields,
+  isCanonicalSiteType,
+  isSupportedSiteType,
+  normalizeSiteType,
+  validateCanonicalSiteParent
+} from '../shared/siteHierarchy.js';
+import { findDocument, listDocuments } from './db.js';
 import { getIngredientCostSnapshots } from './ingredientSearch.js';
 import {
   assertPayloadLocationAccess,
@@ -20,9 +31,57 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
   const merged = existing ? { ...existing, ...payload } : payload;
 
   if (entity === 'Site') {
-    return {
+    const requestedType = String(merged.type || 'area').trim().toLowerCase();
+    if (!isSupportedSiteType(requestedType)) {
+      const error = new Error(`Unsupported site type "${requestedType}". Use Area, Project, or Store.`);
+      error.status = 400;
+      throw error;
+    }
+    const preserveLegacyType = Boolean(
+      existing &&
+      !isCanonicalSiteType(existing.type) &&
+      String(payload.type || '') === String(existing.type || '')
+    );
+    const sitePayload = {
       ...merged,
-      ...buildSiteHierarchy(merged, existing, scope)
+      type: preserveLegacyType
+        ? existing.type
+        : normalizeSiteType(requestedType, 'area')
+    };
+    const parentId = String(sitePayload.parent_site_id || '').trim();
+    const parent = parentId ? scope?.graph?.byId?.get(parentId) || null : null;
+
+    if (isCanonicalSiteType(sitePayload.type)) {
+      const hierarchyError = validateCanonicalSiteParent({
+        type: sitePayload.type,
+        parent,
+        parentId
+      });
+      if (hierarchyError) {
+        const error = new Error(hierarchyError);
+        error.status = 400;
+        throw error;
+      }
+    }
+
+    const ancestors = [];
+    const visited = new Set();
+    let cursor = parent;
+    while (cursor) {
+      const cursorId = String(cursor.id || '');
+      if (!cursorId || visited.has(cursorId)) break;
+      visited.add(cursorId);
+      ancestors.unshift(cursor);
+      cursor = cursor.parent_site_id
+        ? scope?.graph?.byId?.get(String(cursor.parent_site_id)) || null
+        : null;
+    }
+    const hierarchy = buildSiteHierarchy(sitePayload, existing, scope);
+
+    return {
+      ...sitePayload,
+      ...hierarchy,
+      ...buildCanonicalHierarchyFields({ site: sitePayload, ancestors })
     };
   }
 
@@ -95,6 +154,170 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
       food_cost_percent: costing.food_cost_percent,
       costing_updated_at: new Date().toISOString()
     };
+  }
+
+  if (entity === 'ProductionBatch') {
+    let preparedBatch = merged;
+    if (merged.production_id) {
+      const production = (
+        context.production
+        && String(context.production.id) === String(merged.production_id)
+      ) ? context.production
+        : await findDocument('Production', String(merged.production_id));
+      if (!production) {
+        const error = new Error('The selected production plan no longer exists.');
+        error.status = 400;
+        throw error;
+      }
+
+      assertPayloadLocationAccess(user, 'Production', production, scope);
+      if (
+        merged.recipe_id
+        && production.recipe_id
+        && String(merged.recipe_id) !== String(production.recipe_id)
+      ) {
+        const error = new Error('The selected recipe does not match the production plan.');
+        error.status = 409;
+        throw error;
+      }
+
+      preparedBatch = applyLinkedProductionLocation(
+        merged,
+        production,
+        scope.sites,
+        'linked production plan'
+      );
+      preparedBatch = {
+        ...preparedBatch,
+        production_id: production.id,
+        recipe_id: production.recipe_id || preparedBatch.recipe_id || null,
+        recipe_name: production.recipe_name || preparedBatch.recipe_name || null,
+        meal_type: production.meal_type || preparedBatch.meal_type || null
+      };
+    } else {
+      const accessibleSiteIds = [...(scope.accessibleSiteIds || [])];
+      const fallbackSiteId = !existing && !scope.unrestricted
+        ? user?.site_id || (accessibleSiteIds.length === 1 ? accessibleSiteIds[0] : '')
+        : '';
+      preparedBatch = applyRequiredOperationalLocation(
+        merged,
+        scope.sites,
+        fallbackSiteId,
+        'production batch'
+      );
+    }
+
+    assertPayloadLocationAccess(user, entity, preparedBatch, scope);
+    return preparedBatch;
+  }
+
+  if (entity === 'QualityControl') {
+    let preparedQualityControl = merged;
+    let linkedSource = null;
+    let linkedLabel = 'linked production record';
+
+    if (merged.batch_id) {
+      const batch = (
+        context.productionBatch
+        && String(context.productionBatch.id) === String(merged.batch_id)
+      ) ? context.productionBatch
+        : await findDocument('ProductionBatch', String(merged.batch_id));
+      if (!batch) {
+        const error = new Error('The selected production batch no longer exists.');
+        error.status = 400;
+        throw error;
+      }
+
+      if (
+        merged.production_id
+        && batch.production_id
+        && String(merged.production_id) !== String(batch.production_id)
+      ) {
+        const error = new Error('The selected production plan does not match the production batch.');
+        error.status = 409;
+        throw error;
+      }
+
+      linkedSource = batch;
+      linkedLabel = 'linked production batch';
+      let linkedProduction = null;
+      if (batch.production_id) {
+        linkedProduction = (
+          context.production
+          && String(context.production.id) === String(batch.production_id)
+        ) ? context.production : await findDocument('Production', String(batch.production_id));
+        const production = linkedProduction;
+        if (!production) {
+          const error = new Error('The production plan linked to this batch no longer exists.');
+          error.status = 400;
+          throw error;
+        }
+        if (
+          batch.site_id
+          && production.site_id
+          && String(batch.site_id) !== String(production.site_id)
+        ) {
+          const error = new Error('The production batch site does not match its linked production plan.');
+          error.status = 409;
+          throw error;
+        }
+        if (!batch.site_id) {
+          linkedSource = production;
+          linkedLabel = 'production plan linked to the batch';
+        }
+      }
+
+      preparedQualityControl = {
+        ...preparedQualityControl,
+        batch_id: batch.id,
+        batch_number: batch.batch_number || preparedQualityControl.batch_number || null,
+        production_id: linkedProduction?.id || null,
+        recipe_id: batch.recipe_id || linkedProduction?.recipe_id || preparedQualityControl.recipe_id || null,
+        recipe_name: batch.recipe_name || linkedProduction?.recipe_name || preparedQualityControl.recipe_name || null
+      };
+    } else if (merged.production_id) {
+      const production = (
+        context.production
+        && String(context.production.id) === String(merged.production_id)
+      ) ? context.production : await findDocument('Production', String(merged.production_id));
+      if (!production) {
+        const error = new Error('The selected production plan no longer exists.');
+        error.status = 400;
+        throw error;
+      }
+      linkedSource = production;
+      linkedLabel = 'linked production plan';
+      preparedQualityControl = {
+        ...preparedQualityControl,
+        production_id: production.id,
+        recipe_id: production.recipe_id || preparedQualityControl.recipe_id || null,
+        recipe_name: production.recipe_name || preparedQualityControl.recipe_name || null
+      };
+    }
+
+    if (linkedSource) {
+      assertPayloadLocationAccess(user, entity, linkedSource, scope);
+      preparedQualityControl = applyLinkedProductionLocation(
+        preparedQualityControl,
+        linkedSource,
+        scope.sites,
+        linkedLabel
+      );
+    } else {
+      const accessibleSiteIds = [...(scope.accessibleSiteIds || [])];
+      const fallbackSiteId = !existing && !scope.unrestricted
+        ? user?.site_id || (accessibleSiteIds.length === 1 ? accessibleSiteIds[0] : '')
+        : '';
+      preparedQualityControl = applyRequiredOperationalLocation(
+        preparedQualityControl,
+        scope.sites,
+        fallbackSiteId,
+        'quality-control inspection'
+      );
+    }
+
+    assertPayloadLocationAccess(user, entity, preparedQualityControl, scope);
+    return preparedQualityControl;
   }
 
   if (entity === 'Production') {

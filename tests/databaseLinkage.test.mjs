@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 
 import {
   collectDocumentReferences,
-  validateDocumentRelationships
+  validateDocumentRelationships,
+  validateSiteChildrenAfterStructureChange
 } from '../server/db.js';
 import {
   assertSufficientStock,
@@ -107,6 +108,38 @@ const cases = [
           { sites }
         ),
         /cycle/
+      );
+    }
+  },
+  {
+    name: 'rejects site structure changes that would invalidate existing children',
+    async run() {
+      const executor = {
+        async query(sql, params) {
+          assert.match(sql, /data->>'parent_site_id'/);
+          assert.deepEqual(params, ['area-west']);
+          return {
+            rowCount: 1,
+            rows: [{ data: { id: 'project-jeddah', name: 'Jeddah Project', type: 'project', parent_site_id: 'area-west' } }]
+          };
+        }
+      };
+
+      await assert.rejects(
+        validateSiteChildrenAfterStructureChange(
+          { id: 'area-west', name: 'Western Area', type: 'area', parent_site_id: null },
+          { id: 'area-west', name: 'Western Area', type: 'project', parent_site_id: 'area-central' },
+          executor
+        ),
+        /Jeddah Project cannot remain/i
+      );
+
+      await assert.doesNotReject(
+        validateSiteChildrenAfterStructureChange(
+          { id: 'area-west', name: 'Western Area', type: 'area', parent_site_id: null },
+          { id: 'area-west', name: 'Renamed Western Area', type: 'area', parent_site_id: null },
+          { async query() { throw new Error('Unchanged structure must not query children'); } }
+        )
       );
     }
   },

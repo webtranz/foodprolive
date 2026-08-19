@@ -38,6 +38,14 @@ const noSiteReference = buildEntityListQuery({
   entity: 'Production',
   location: { unrestricted: false, accessibleSiteIds: ['site-a'] }
 });
-assert.match(noSiteReference.text, /ELSE TRUE/);
+assert.doesNotMatch(noSiteReference.text, /ELSE TRUE/);
+assert.match(noSiteReference.text, /jsonb_array_length\(record\.data->'site_ids'\) > 0/);
+
+const globalRecipe = buildEntityListQuery({
+  entity: 'Recipe',
+  location: { unrestricted: false, accessibleSiteIds: ['site-a'] }
+});
+assert.match(globalRecipe.text, /site_scope/);
+assert.match(globalRecipe.text, /= 'global'/);
 
 console.log('Entity SQL query builder tests passed.');

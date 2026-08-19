@@ -264,6 +264,15 @@ async function ensureAuth() {
 
 export const base44 = {
   entities,
+  managementDashboard: {
+    getSnapshot(filters = {}) {
+      return apiRequest(`/api/dashboard/management${buildQueryString({
+        view: filters.view,
+        date: filters.date,
+        site_id: filters.site_id ?? filters.siteId
+      })}`);
+    }
+  },
   ingredients: {
     search(filters = {}) {
       return apiRequest(`/api/ingredients/search${buildQueryString(filters)}`);

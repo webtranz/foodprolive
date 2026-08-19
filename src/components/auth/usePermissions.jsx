@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { ALL_GRANULAR_ROLE_PERMISSION_KEYS } from '@/lib/rolePermissions';
+import {
+  MANAGEMENT_ROLE_DEFINITIONS,
+  normalizeManagementRoleProfile,
+  resolveManagementDashboardView
+} from '../../../shared/managementDashboardRoles.js';
 
 const SYSTEM_ROLES = {
   admin: {
@@ -71,7 +76,8 @@ const SYSTEM_ROLES = {
   user: {
     access_level: 'user',
     permissions: ['scan_qr', 'view_dashboard']
-  }
+  },
+  ...MANAGEMENT_ROLE_DEFINITIONS
 };
 
 export function usePermissions() {
@@ -93,9 +99,21 @@ export function usePermissions() {
   }, []);
 
   const role = currentUser?.role || 'user';
-  const roleProfile = roleProfiles.find((profile) => profile.role_key === role) || SYSTEM_ROLES[role] || null;
-  const accessLevel = currentUser?.role_access_level || roleProfile?.access_level || (['admin', 'manager', 'user'].includes(role) ? role : 'user');
-  const roleSpecificPermissions = roleProfile?.permissions || currentUser?.role_permissions || [];
+  const persistedRoleProfile = normalizeManagementRoleProfile(
+    roleProfiles.find((profile) => profile.role_key === role) || null
+  );
+  const systemRoleProfile = SYSTEM_ROLES[role] || null;
+  const roleProfile = persistedRoleProfile || systemRoleProfile;
+  const roleIsActive = currentUser?.role_is_active !== false && roleProfile?.is_active !== false;
+  const accessLevel = roleIsActive
+    ? (currentUser?.role_access_level || roleProfile?.access_level || (['admin', 'manager', 'user'].includes(role) ? role : 'user'))
+    : 'user';
+  const roleSpecificPermissions = roleIsActive
+    ? (persistedRoleProfile?.permissions
+      ?? currentUser?.role_permissions
+      ?? systemRoleProfile?.permissions
+      ?? [])
+    : [];
   const permissions = Array.from(new Set([
     ...(currentUser?.is_custom_role ? [] : (SYSTEM_ROLES[accessLevel]?.permissions || [])),
     ...roleSpecificPermissions
@@ -108,6 +126,13 @@ export function usePermissions() {
     ? currentUser.allowed_site_ids
     : (currentUser?.site_id ? [currentUser.site_id] : []);
   const visibilityScope = currentUser?.visibility_scope || (isAdmin ? 'all_locations' : 'subtree');
+  const dashboardView = roleIsActive
+    ? resolveManagementDashboardView({
+      role,
+      dashboardVariant: currentUser?.dashboard_variant || roleProfile?.dashboard_variant,
+      roleName: currentUser?.role_name || roleProfile?.name
+    })
+    : null;
 
   return {
     currentUser,
@@ -120,6 +145,8 @@ export function usePermissions() {
     isManager,
     allowedSiteIds,
     visibilityScope,
+    dashboardView,
+    roleIsActive,
     loading
   };
 }

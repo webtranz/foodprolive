@@ -42,6 +42,7 @@ export default function BatchTracking() {
   const [showStageDialog, setShowStageDialog] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState(null);
   const [batchForm, setBatchForm] = useState({
+    production_id: '',
     recipe_id: '',
     quantity: '',
     production_date: new Date().toISOString().split('T')[0],
@@ -56,10 +57,11 @@ export default function BatchTracking() {
     queryFn: () => base44.entities.ProductionBatch.list('-production_date', 100)
   });
 
-  const { data: recipes = [] } = useQuery({
-    queryKey: ['recipes'],
-    queryFn: () => base44.entities.Recipe.list()
+  const { data: productions = [] } = useQuery({
+    queryKey: ['productionPlansForBatchTracking'],
+    queryFn: () => base44.entities.Production.list('-production_date', 500)
   });
+  const productionPlans = productions.filter(production => production.site_id && production.recipe_id);
 
   const createBatchMutation = useMutation({
     mutationFn: async (data) => {
@@ -84,6 +86,7 @@ export default function BatchTracking() {
       queryClient.invalidateQueries({ queryKey: ['productionBatches'] });
       setShowCreateDialog(false);
       setBatchForm({
+        production_id: '',
         recipe_id: '',
         quantity: '',
         production_date: new Date().toISOString().split('T')[0],
@@ -126,12 +129,29 @@ export default function BatchTracking() {
   });
 
   const handleCreateBatch = () => {
-    const recipe = recipes.find(r => r.id === batchForm.recipe_id);
+    const production = productionPlans.find(record => record.id === batchForm.production_id);
+    if (!production) return;
     createBatchMutation.mutate({
       ...batchForm,
-      recipe_name: recipe?.name,
+      production_id: production.id,
+      recipe_id: production.recipe_id,
+      recipe_name: production.recipe_name,
+      site_id: production.site_id,
+      site_name: production.site_name,
+      meal_type: production.meal_type,
       quantity: parseFloat(batchForm.quantity)
     });
+  };
+
+  const selectProductionPlan = (productionId) => {
+    const production = productionPlans.find(record => record.id === productionId);
+    setBatchForm(current => ({
+      ...current,
+      production_id: productionId,
+      recipe_id: production?.recipe_id || '',
+      quantity: production?.target_servings || current.quantity,
+      production_date: production?.production_date || current.production_date
+    }));
   };
 
   const advanceStage = (batch) => {
@@ -218,6 +238,7 @@ export default function BatchTracking() {
                     <div>
                       <CardTitle className="text-lg">{batch.batch_number}</CardTitle>
                       <p className="text-sm text-slate-600 mt-1">{batch.recipe_name}</p>
+                      <p className="text-xs text-slate-500 mt-1">{batch.site_name || 'Site not assigned'}</p>
                     </div>
                     <Badge className={STAGE_COLORS[batch.process_stage]}>
                       {batch.process_stage}
@@ -289,18 +310,18 @@ export default function BatchTracking() {
             </DialogHeader>
             <div className="space-y-4">
               <div>
-                <Label>Recipe *</Label>
+                <Label>Production Plan *</Label>
                 <Select
-                  value={batchForm.recipe_id}
-                  onValueChange={(value) => setBatchForm({ ...batchForm, recipe_id: value })}
+                  value={batchForm.production_id}
+                  onValueChange={selectProductionPlan}
                 >
                   <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Select recipe" />
+                    <SelectValue placeholder="Select a site production plan" />
                   </SelectTrigger>
                   <SelectContent>
-                    {recipes.map(recipe => (
-                      <SelectItem key={recipe.id} value={recipe.id}>
-                        {recipe.name}
+                    {productionPlans.map(production => (
+                      <SelectItem key={production.id} value={production.id}>
+                        {production.site_name || 'Unassigned site'} · {production.recipe_name || 'Unnamed recipe'} · {production.production_date}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -343,7 +364,7 @@ export default function BatchTracking() {
               </Button>
               <Button 
                 onClick={handleCreateBatch}
-                disabled={!batchForm.recipe_id || !batchForm.quantity || createBatchMutation.isPending}
+                disabled={!batchForm.production_id || !batchForm.quantity || createBatchMutation.isPending}
                 className="bg-indigo-600 hover:bg-indigo-700"
               >
                 Create Batch

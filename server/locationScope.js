@@ -1,5 +1,12 @@
 import { listDocuments } from './db.js';
 import { hasAdminAccess } from './accessControl.js';
+import {
+  getRoleLocationPolicy,
+  hasAllAreaAccess,
+  isRolePrimarySiteType,
+  normalizeRoleLocationFields
+} from '../shared/roleLocationPolicy.js';
+import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../shared/siteHierarchy.js';
 
 const LOCATION_SCOPED_ENTITIES = new Set([
   'Inventory',
@@ -8,6 +15,7 @@ const LOCATION_SCOPED_ENTITIES = new Set([
   'Production',
   'ProductionBatch',
   'ProductionTransfer',
+  'Budget',
   'MenuPlan',
   'MenuPlanPRSchedule',
   'MenuPlanPRRun',
@@ -89,6 +97,10 @@ function collectAncestorIds(rootIds = [], graph) {
 }
 
 function getAssignedRootIds(user = {}) {
+  const rolePolicy = user?.role_is_active === false ? null : getRoleLocationPolicy(user?.role);
+  if (rolePolicy?.primary_site_type) {
+    return user.site_id ? [String(user.site_id)] : [];
+  }
   const explicit = normalizeArray(user.allowed_site_ids);
   if (explicit.length > 0) {
     return explicit;
@@ -109,9 +121,15 @@ export function hasUnrestrictedLocationAccess(user = {}) {
   return hasAdminAccess(user);
 }
 
-function canAccessLocationRecord(user, record, accessibleSiteIds, accessibleTreeIds) {
+export function hasOrganizationWideLocationAccess(user = {}) {
+  return user?.role_is_active !== false && hasAllAreaAccess(user?.role);
+}
+
+function canAccessLocationRecord(user, entity, record, accessibleSiteIds, accessibleTreeIds) {
   if (hasUnrestrictedLocationAccess(user)) return true;
   if (!record) return true;
+
+  if (entity === 'Recipe' && isGlobalRecipe(record)) return true;
 
   if (record.id && accessibleTreeIds.has(record.id)) {
     return true;
@@ -131,7 +149,7 @@ function canAccessLocationRecord(user, record, accessibleSiteIds, accessibleTree
     return intersects(normalizeArray(record.site_ids), [...accessibleSiteIds]);
   }
 
-  return true;
+  return false;
 }
 
 export function isLocationScopedEntity(entity) {
@@ -174,9 +192,7 @@ async function getSiteCatalog() {
   }
 }
 
-async function getLocationScope(user) {
-  const { sites, graph } = await getSiteCatalog();
-
+export function buildUserLocationScope(user = {}, sites = [], graph = createSiteGraph(sites)) {
   if (hasUnrestrictedLocationAccess(user)) {
     const allIds = new Set(sites.map((site) => String(site.id)));
     return {
@@ -189,12 +205,39 @@ async function getLocationScope(user) {
     };
   }
 
-  const assignedRootIds = getAssignedRootIds(user);
+  if (hasOrganizationWideLocationAccess(user)) {
+    const allIds = new Set(sites.map((site) => String(site.id)));
+    return {
+      sites,
+      graph,
+      assignedRootIds: sites
+        .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.AREA)
+        .map((site) => String(site.id)),
+      accessibleSiteIds: allIds,
+      accessibleTreeIds: allIds,
+      unrestricted: false,
+      organizationWide: true
+    };
+  }
+
+  const rolePolicy = user?.role_is_active === false ? null : getRoleLocationPolicy(user?.role);
+  const assignedRootIds = getAssignedRootIds(user).filter((siteId) => {
+    if (!rolePolicy?.primary_site_type) return true;
+    const assignedSite = graph.byId.get(String(siteId));
+    return Boolean(
+      assignedSite
+      && assignedSite.is_active !== false
+      && isRolePrimarySiteType(user.role, assignedSite.type)
+    );
+  });
   const explicitAllowedIds = normalizeArray(user?.allowed_site_ids);
-  const visibilityScope = String(user?.visibility_scope || '').toLowerCase();
+  const visibilityScope = String(rolePolicy?.visibility_scope || user?.visibility_scope || '').toLowerCase();
+  const rootIds = rolePolicy?.primary_site_type
+    ? assignedRootIds
+    : (explicitAllowedIds.length ? explicitAllowedIds : assignedRootIds);
   const scopedIds = ['assigned', 'assigned_only', 'custom'].includes(visibilityScope)
-    ? (explicitAllowedIds.length ? explicitAllowedIds : assignedRootIds)
-    : collectDescendantIds(explicitAllowedIds.length ? explicitAllowedIds : assignedRootIds, graph);
+    ? rootIds
+    : collectDescendantIds(rootIds, graph);
   const accessibleIds = new Set(scopedIds);
   const ancestorIds = new Set(collectAncestorIds(assignedRootIds, graph));
   const accessibleTreeIds = new Set([...accessibleIds, ...ancestorIds]);
@@ -209,6 +252,11 @@ async function getLocationScope(user) {
   };
 }
 
+async function getLocationScope(user) {
+  const { sites, graph } = await getSiteCatalog();
+  return buildUserLocationScope(user, sites, graph);
+}
+
 function filterRecordsByLocation(user, entity, records = [], scope) {
   if (hasUnrestrictedLocationAccess(user) || !LOCATION_SCOPED_ENTITIES.has(entity)) {
     return records;
@@ -219,7 +267,7 @@ function filterRecordsByLocation(user, entity, records = [], scope) {
   }
 
   return records.filter((record) =>
-    canAccessLocationRecord(user, record, scope.accessibleSiteIds, scope.accessibleTreeIds)
+    canAccessLocationRecord(user, entity, record, scope.accessibleSiteIds, scope.accessibleTreeIds)
   );
 }
 
@@ -318,6 +366,26 @@ function normalizeUserLocationPayload(payload = {}, scope) {
       allowed_site_names: [],
       visibility_scope: 'all_locations'
     };
+  }
+
+  const rolePolicy = getRoleLocationPolicy(role);
+  if (rolePolicy?.scope === 'all_areas') {
+    return normalizeRoleLocationFields(payload);
+  }
+
+  if (rolePolicy?.primary_site_type) {
+    const primarySiteId = String(payload.site_id || '').trim() || null;
+    const submittedAllowedIds = normalizeArray(payload.allowed_site_ids);
+    if (submittedAllowedIds.some((siteId) => siteId !== primarySiteId)) {
+      const error = new Error(`${rolePolicy.assignment_label} access must use one assigned hierarchy root`);
+      error.status = 400;
+      throw error;
+    }
+    return normalizeRoleLocationFields({
+      ...payload,
+      site_id: primarySiteId,
+      site_name: primarySiteId ? siteMap.get(primarySiteId)?.name || payload.site_name || null : null
+    });
   }
 
   const allowedSiteIds = normalizeArray(payload.allowed_site_ids);

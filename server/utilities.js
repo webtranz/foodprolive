@@ -5,10 +5,10 @@ const commonSiteFields = ['site_id', 'site_name'];
 
 export const utilityModules = Object.freeze({
   sites: {
-    label: 'Projects & Sites',
+    label: 'Areas, Projects & Stores',
     entity: 'Site',
     required: ['name'],
-    headers: ['name', 'project_code', 'type', 'hierarchy_level', 'parent_site_id', 'parent_site_name', 'company_name', 'region_name', 'location_name', 'kitchen_name', 'storage_name', 'address', 'city', 'country', 'capacity', 'contact_person', 'contact_phone', 'contact_email', 'is_active']
+    headers: ['name', 'project_code', 'type', 'hierarchy_level', 'parent_site_id', 'parent_site_name', 'area_name', 'project_name', 'store_name', 'region_name', 'location_name', 'storage_name', 'address', 'city', 'country', 'capacity', 'contact_person', 'contact_phone', 'contact_email', 'is_active']
   },
   'food-categories': {
     label: 'Food Categories',

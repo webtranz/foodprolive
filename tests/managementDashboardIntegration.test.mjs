@@ -1,0 +1,142 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {
+  assertManagementDashboardViewAccess,
+  normalizeManagementDashboardView,
+  selectDefaultProjectScope
+} from '../server/managementDashboardAccess.js';
+
+const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+
+const page = read('src/pages/Dashboard.jsx');
+const managementUi = read('src/components/dashboard/ManagementDashboard.jsx');
+const client = read('src/api/base44Client.js');
+const server = read('server/managementDashboard.js');
+const serverIndex = read('server/index.js');
+const roles = read('shared/managementDashboardRoles.js');
+
+assert.match(page, /function DefaultDashboard\(\)/);
+assert.match(page, /if \(isAdmin\) return <AdminDashboardCarousel \/>/);
+assert.match(page, /ADMIN_DASHBOARD_VIEW_ORDER/);
+assert.match(page, /aria-label="Show previous dashboard"/);
+assert.match(page, /aria-label="Show next dashboard"/);
+assert.match(page, /aria-pressed=\{index === activeIndex\}/);
+assert.match(page, /aria-live="polite"/);
+assert.match(page, /<ManagementDashboard view=\{dashboardView\}/);
+
+assert.match(managementUi, /base44\.managementDashboard\.getSnapshot/);
+assert.match(managementUi, /refetchInterval: 60_000/);
+assert.match(managementUi, /\.subscribe\(/);
+assert.match(managementUi, /'PurchaseRequest'/);
+assert.match(managementUi, /'GoodsReceipt'/);
+assert.match(managementUi, /event\.target\.value \|\| todayValue\(\)/);
+assert.match(managementUi, /normalizedView === 'agm' \? locationRef : chartRef/);
+assert.match(managementUi, /awaitingProjectScope/);
+assert.match(managementUi, /isRefetchError/);
+assert.match(managementUi, /formatCurrency/);
+assert.match(managementUi, /GM View/);
+assert.match(managementUi, /AGM View/);
+assert.match(managementUi, /Area Manager View/);
+assert.match(managementUi, /Project Manager View/);
+assert.doesNotMatch(managementUi, /SAR\s*[0-9]/);
+assert.doesNotMatch(managementUi, /48,260|620,000|598,424|16,755|13,620/);
+
+assert.match(client, /managementDashboard:\s*\{/);
+assert.match(client, /\/api\/dashboard\/management/);
+assert.match(serverIndex, /app\.get\('\/api\/dashboard\/management', requireAuth, requirePermission\('view_dashboard'\)/);
+assert.match(serverIndex, /Cache-Control', 'private, no-store'/);
+
+assert.match(server, /getLocationScope\(user\)/);
+assert.match(server, /assertManagementDashboardViewAccess\(user, filters\.view\)/);
+assert.match(server, /You do not have access to the selected location/);
+assert.match(server, /return false;\s*\n\s*\}\);/);
+assert.match(server, /purchase_requests/);
+assert.match(server, /purchase_orders/);
+assert.match(server, /goods_receipts/);
+assert.match(server, /buildManagementDashboardSnapshot/);
+assert.match(server, /listInventoryRiskCounts/);
+assert.match(server, /MANAGEMENT_DASHBOARD_SOURCE_LIMIT/);
+assert.match(server, /withSnapshotCache/);
+assert.match(server, /openStatusFields:\s*\['approval_status'/);
+assert.doesNotMatch(server, /itemTable|itemForeignKey|itemsByHeader/);
+
+assert.match(roles, /general_manager/);
+assert.match(roles, /assistant_general_manager/);
+assert.match(roles, /area_manager/);
+assert.match(roles, /project_manager/);
+assert.match(roles, /normalizeManagementRoleProfile/);
+assert.match(roles, /isManagementScopeSiteType/);
+
+const db = read('server/db.js');
+const usersPage = read('src/pages/UserRoleManagement.jsx');
+const initSql = read('server/sql/init.sql');
+assert.match(db, /validateManagementUserAssignment/);
+assert.match(db, /Built-in management roles cannot be edited/);
+assert.match(db, /A primary project or area is required/);
+assert.match(usersPage, /managementViewForRole/);
+assert.match(usersPage, /assignableSitesForRole/);
+assert.match(initSql, /purchase_requests_realtime_change/);
+assert.match(initSql, /purchase_orders_realtime_change/);
+assert.match(initSql, /goods_receipts_realtime_change/);
+
+assert.equal(normalizeManagementDashboardView('General Manager'), 'gm');
+assert.equal(
+  assertManagementDashboardViewAccess({ role: 'general_manager', role_access_level: 'manager' }, 'gm'),
+  'gm'
+);
+assert.throws(
+  () => assertManagementDashboardViewAccess({ role: 'general_manager', role_access_level: 'manager' }, 'agm'),
+  (error) => error.status === 403 && /not assigned/i.test(error.message)
+);
+assert.throws(
+  () => assertManagementDashboardViewAccess({
+    role: 'general_manager',
+    role_access_level: 'manager',
+    dashboard_variant: 'agm'
+  }, 'agm'),
+  (error) => error.status === 403 && /not assigned/i.test(error.message)
+);
+assert.throws(
+  () => assertManagementDashboardViewAccess({ role: 'user', role_access_level: 'user' }, 'gm'),
+  (error) => error.status === 403 && /senior management role/i.test(error.message)
+);
+assert.throws(
+  () => assertManagementDashboardViewAccess({ role: 'general_manager', role_access_level: 'manager', role_is_active: false }, 'gm'),
+  (error) => error.status === 403 && /inactive/i.test(error.message)
+);
+assert.throws(
+  () => assertManagementDashboardViewAccess({ role: 'general_manager', role_access_level: 'user', role_is_active: false }, 'gm'),
+  (error) => error.status === 403 && /inactive/i.test(error.message)
+);
+assert.equal(
+  assertManagementDashboardViewAccess({ role: 'super_admin', role_access_level: 'admin' }, 'area_manager'),
+  'area_manager'
+);
+assert.throws(
+  () => normalizeManagementDashboardView('finance_controller'),
+  (error) => error.status === 400 && /unknown/i.test(error.message)
+);
+
+const projectSites = [
+  { id: 'region', name: 'Western Region', type: 'region' },
+  { id: 'makkah', name: 'Makkah Site', type: 'camp', parent_site_id: 'region' },
+  { id: 'jeddah', name: 'Jeddah Project', type: 'location', parent_site_id: 'region' },
+  { id: 'kitchen', name: 'Main Kitchen', type: 'kitchen', parent_site_id: 'jeddah' }
+];
+assert.equal(selectDefaultProjectScope({
+  user: { site_id: 'makkah' },
+  sites: projectSites,
+  accessibleSiteIds: new Set(projectSites.map((site) => site.id))
+}), 'makkah');
+assert.equal(selectDefaultProjectScope({
+  user: { site_id: 'region' },
+  sites: projectSites,
+  accessibleSiteIds: new Set(projectSites.map((site) => site.id))
+}), 'jeddah');
+assert.equal(selectDefaultProjectScope({
+  user: { site_id: 'region' },
+  sites: projectSites,
+  accessibleSiteIds: new Set(['region', 'kitchen'])
+}), null);
+
+console.log('Management dashboard integration wiring tests passed.');
