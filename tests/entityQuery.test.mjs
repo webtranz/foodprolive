@@ -31,6 +31,19 @@ assert.deepEqual(sites.parameters[1], ['site-a']);
 const locked = buildEntityListQuery({ entity: 'Inventory', lock: true, limit: 5 });
 assert.match(locked.text, /LIMIT \$\d+::integer\s+FOR UPDATE/);
 
+const inventoryStatus = buildEntityListQuery({
+  entity: 'Inventory',
+  filters: { status: 'low_stock' },
+  sort: 'status',
+  limit: 25,
+  includeTotal: true
+});
+assert.match(inventoryStatus.text, /WHEN .*quantity.* <= 0 THEN 'out_of_stock'/s);
+assert.match(inventoryStatus.text, /THEN 'low_stock'/);
+assert.match(inventoryStatus.text, /COUNT\(\*\) OVER\(\)/);
+assert.deepEqual(inventoryStatus.parameters, ['Inventory', 'low_stock', 25]);
+assert.doesNotMatch(inventoryStatus.text, /record\.data->>\$\d+.*status/);
+
 const emptyFilter = buildEntityListQuery({ entity: 'Recipe', filters: { category: '' } });
 assert.match(emptyFilter.text, /COALESCE\(record\.data->>\$2, ''\) = ''/);
 

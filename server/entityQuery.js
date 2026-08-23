@@ -1,4 +1,5 @@
 const MAX_INTERNAL_PAGE_SIZE = 10000;
+const NUMERIC_PATTERN = "^-?[0-9]+([.][0-9]+)?$";
 
 function addParameter(parameters, value) {
   parameters.push(value);
@@ -17,7 +18,34 @@ function normalizedOffset(value) {
   return Number.isFinite(numeric) ? Math.max(0, Math.trunc(numeric)) : 0;
 }
 
-function buildFilterClause(parameters, field, expected) {
+function numericInventoryFieldExpression(field) {
+  const valueExpression = `COALESCE(record.data->>'${field}', '')`;
+  return `(CASE
+    WHEN ${valueExpression} ~ '${NUMERIC_PATTERN}' THEN (${valueExpression})::numeric
+    ELSE 0
+  END)`;
+}
+
+function inventoryStatusExpression() {
+  const quantityExpression = numericInventoryFieldExpression('quantity');
+  const minimumExpression = `GREATEST(0, ${numericInventoryFieldExpression('min_stock_level')})`;
+  return `(CASE
+    WHEN ${quantityExpression} <= 0 THEN 'out_of_stock'
+    WHEN ${minimumExpression} > 0 AND ${quantityExpression} <= ${minimumExpression} THEN 'low_stock'
+    ELSE 'in_stock'
+  END)`;
+}
+
+function buildFilterClause(parameters, entity, field, expected) {
+  if (entity === 'Inventory' && field === 'status') {
+    const derivedStatus = inventoryStatusExpression();
+    if (expected === null || expected === undefined || expected === '') {
+      return `COALESCE(${derivedStatus}, '') = ''`;
+    }
+    const expectedParameter = addParameter(parameters, String(expected));
+    return `LOWER(${derivedStatus}) = LOWER(${expectedParameter}::text)`;
+  }
+
   const fieldParameter = addParameter(parameters, String(field));
   const textExpression = `record.data->>${fieldParameter}`;
   const jsonExpression = `record.data->${fieldParameter}`;
@@ -87,21 +115,22 @@ function buildLocationClause(parameters, entity, location = null) {
   )`;
 }
 
-function buildOrderClause(parameters, sort) {
+function buildOrderClause(parameters, entity, sort) {
   const normalizedSort = String(sort || '').trim();
   if (!normalizedSort) return 'record.updated_at DESC, record.id ASC';
 
   const descending = normalizedSort.startsWith('-');
   const field = descending ? normalizedSort.slice(1) : normalizedSort;
   if (!field) return 'record.updated_at DESC, record.id ASC';
-  const fieldParameter = addParameter(parameters, field);
   const direction = descending ? 'DESC' : 'ASC';
-  const valueExpression = `record.data->>${fieldParameter}`;
-  const numericPattern = "^-?[0-9]+([.][0-9]+)?$";
+  if (entity === 'Inventory' && field === 'status') {
+    return `LOWER(${inventoryStatusExpression()}) ${direction}, record.id ASC`;
+  }
+  const valueExpression = `record.data->>${addParameter(parameters, field)}`;
 
   return `
-    CASE WHEN COALESCE(${valueExpression}, '') ~ '${numericPattern}' THEN 0 ELSE 1 END ASC,
-    CASE WHEN COALESCE(${valueExpression}, '') ~ '${numericPattern}' THEN (${valueExpression})::numeric END ${direction} NULLS LAST,
+    CASE WHEN COALESCE(${valueExpression}, '') ~ '${NUMERIC_PATTERN}' THEN 0 ELSE 1 END ASC,
+    CASE WHEN COALESCE(${valueExpression}, '') ~ '${NUMERIC_PATTERN}' THEN (${valueExpression})::numeric END ${direction} NULLS LAST,
     LOWER(${valueExpression}) ${direction} NULLS LAST,
     record.id ASC
   `;
@@ -122,13 +151,13 @@ export function buildEntityListQuery({
   const clauses = [`record.entity_name = ${entityParameter}`];
 
   Object.entries(filters || {}).forEach(([field, expected]) => {
-    clauses.push(buildFilterClause(parameters, field, expected));
+    clauses.push(buildFilterClause(parameters, entity, field, expected));
   });
 
   const locationClause = buildLocationClause(parameters, entity, location);
   if (locationClause) clauses.push(locationClause);
 
-  const orderClause = buildOrderClause(parameters, sort);
+  const orderClause = buildOrderClause(parameters, entity, sort);
   const pageSize = normalizedLimit(limit);
   const pageOffset = normalizedOffset(offset);
   const limitClause = pageSize === null

@@ -9,6 +9,7 @@ import {
   validateDocumentRelationships
 } from './db.js';
 import { receiveStock } from './inventory.js';
+import { deriveInventoryStatus } from '../shared/inventoryStatus.js';
 import { enrichIngredientItemCodes } from './itemCodes.js';
 
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
@@ -361,9 +362,8 @@ async function autoGeneratePurchaseRequestFromLowStock(payload, actor) {
     const siteMatch = !payload.site_id || item.site_id === payload.site_id;
     const minimum = toNumber(item.min_stock_level, 0);
     const quantity = toNumber(item.quantity, 0);
-    const lowByStatus = ['low_stock', 'out_of_stock'].includes(String(item.status || '').toLowerCase());
-    const lowByThreshold = minimum > 0 && quantity <= minimum;
-    return siteMatch && (lowByStatus || lowByThreshold);
+    const status = deriveInventoryStatus(quantity, minimum);
+    return siteMatch && status !== 'in_stock';
   });
 
   const items = [];
@@ -708,12 +708,6 @@ async function getGoodsReceiptById(id, executor = pool) {
     ...result.rows[0],
     items: await getReceiptItems([id], executor)
   };
-}
-
-function inventoryStatus(quantity, minimum) {
-  if (quantity <= 0) return 'out_of_stock';
-  if (minimum > 0 && quantity <= minimum) return 'low_stock';
-  return 'in_stock';
 }
 
 async function applyReceiptToInventory(order, receiptItem, actor, executor = null) {

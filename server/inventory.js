@@ -12,6 +12,11 @@ import {
 } from '../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
+import {
+  deriveInventoryRecord,
+  deriveInventoryStatus,
+  hasLowStockAlert
+} from '../shared/inventoryStatus.js';
 
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const nowIso = () => new Date().toISOString();
@@ -45,12 +50,6 @@ function daysUntil(dateValue) {
   const target = new Date(`${toDateOnly(dateValue)}T00:00:00Z`);
   if (Number.isNaN(target.getTime())) return null;
   return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function inventoryStatus(quantity, minimum) {
-  if (quantity <= 0) return 'out_of_stock';
-  if (minimum > 0 && quantity <= minimum) return 'low_stock';
-  return 'in_stock';
 }
 
 function getAvailableLotQuantity(lots = []) {
@@ -164,7 +163,7 @@ async function recalculateInventoryRecord(record, executor = null) {
     next_expiry_date: earliestExpiry,
     near_expiry_count: nearExpiryCount,
     expired_lot_count: expiredCount,
-    status: inventoryStatus(quantity, toNumber(record.min_stock_level, 0))
+    status: deriveInventoryStatus(quantity, toNumber(record.min_stock_level, 0))
   }, executor || undefined);
 }
 
@@ -757,11 +756,15 @@ async function completeProduction(productionId, actor, executor = null) {
 
 async function getStockOnHandReport() {
   const inventory = await listDocuments('Inventory', { limit: 5000, sort: 'ingredient_name' });
-  return inventory.map((item) => ({
-    ...item,
-    low_stock_alert: toNumber(item.quantity, 0) <= toNumber(item.min_stock_level, 0),
-    overstock_alert: toNumber(item.max_stock_level, 0) > 0 && toNumber(item.quantity, 0) >= toNumber(item.max_stock_level, 0)
-  }));
+  return inventory.map((item) => {
+    const derivedItem = deriveInventoryRecord(item);
+    return {
+      ...derivedItem,
+      low_stock_alert: hasLowStockAlert(derivedItem),
+      overstock_alert: toNumber(derivedItem.max_stock_level, 0) > 0
+        && toNumber(derivedItem.quantity, 0) >= toNumber(derivedItem.max_stock_level, 0)
+    };
+  });
 }
 
 async function getStockMovementReport({ siteId = '', ingredientId = '', dateFrom = '', dateTo = '' } = {}) {

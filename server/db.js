@@ -10,6 +10,7 @@ import {
   getSystemRoleDefinition
 } from './entities.js';
 import { buildEntityListQuery } from './entityQuery.js';
+import { deriveInventoryRecord } from '../shared/inventoryStatus.js';
 import {
   isManagementScopeSiteType,
   isReservedManagementRoleKey,
@@ -184,18 +185,20 @@ function normalizeRecord(entity, payload, existing = null) {
     ...payload
   };
 
-  return {
+  const record = {
     id: withDefaults.id || existing?.id || randomId(entity.toLowerCase()),
     created_date: withDefaults.created_date || existing?.created_date || nowIso(),
     updated_date: nowIso(),
     ...withDefaults
   };
+
+  return entity === 'Inventory' ? deriveInventoryRecord(record) : record;
 }
 
-function decorateStoredDocument(entity, record) {
-  if (!record) return record;
-  if (entity === 'RoleProfile') return normalizeManagementRoleProfile(record);
-  return record;
+function hydrateDerivedFields(entity, record) {
+  if (!record) return null;
+  const derivedRecord = entity === 'Inventory' ? deriveInventoryRecord(record) : record;
+  return entity === 'RoleProfile' ? normalizeManagementRoleProfile(derivedRecord) : derivedRecord;
 }
 
 const roleProfileCache = new Map();
@@ -1022,7 +1025,7 @@ async function listDocuments(
 
   const built = buildEntityListQuery({ entity, filters, sort, limit, offset, lock, location });
   const result = await query(built.text, built.parameters, executor);
-  return result.rows.map((row) => decorateStoredDocument(entity, row.data));
+  return result.rows.map((row) => hydrateDerivedFields(entity, row.data));
 }
 
 async function listDocumentsPage(
@@ -1072,7 +1075,7 @@ async function listDocumentsPage(
   }
 
   return {
-    items: result.rows.map((row) => decorateStoredDocument(entity, row.data)),
+    items: result.rows.map((row) => hydrateDerivedFields(entity, row.data)),
     total_count: totalCount,
     limit: safeLimit,
     offset: safeOffset
@@ -1094,7 +1097,7 @@ async function findDocument(entity, id, executor = pool, lock = false) {
     [entity, id],
     executor
   );
-  return result.rowCount ? decorateStoredDocument(entity, result.rows[0].data) : null;
+  return result.rowCount ? hydrateDerivedFields(entity, result.rows[0].data) : null;
 }
 
 async function createDocument(entity, payload, executor = null) {
