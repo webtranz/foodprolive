@@ -15,6 +15,29 @@ const CLOSED_ORDER_STATUSES = new Set(['received', 'completed', 'cancelled', 'ca
 const COMPLETED_ORDER_STATUSES = new Set(['received', 'completed', 'closed']);
 const HIGH_WASTE_COST_THRESHOLD = 500;
 
+const DATE_FIELDS = Object.freeze({
+  production: ['production_date', 'planned_date', 'date'],
+  foodWaste: ['waste_date', 'served_at', 'created_date', 'date'],
+  menuPlans: ['plan_date', 'event_date', 'date'],
+  attendanceRecords: ['shift_date', 'attendance_date', 'check_in_at', 'checked_in_at', 'marked_at', 'created_date'],
+  staffShifts: ['shift_date', 'date', 'start_date', 'created_date'],
+  qualityControls: ['inspection_date', 'quality_date', 'created_date']
+});
+const RECORD_COLLECTIONS = Object.freeze([
+  'production',
+  'foodWaste',
+  'inventory',
+  'budgets',
+  'menuPlans',
+  'materialRequests',
+  'attendanceRecords',
+  'staffShifts',
+  'qualityControls',
+  'purchaseRequests',
+  'purchaseOrders',
+  'goodsReceipts'
+]);
+
 const LOCATION_SERIES_COLORS = ['#16a34a', '#2563eb', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2'];
 
 function safeNumber(value, fallback = 0) {
@@ -39,19 +62,25 @@ function normalizeMealType(value) {
 function dateOnly(value) {
   const normalized = String(value || '').trim();
   const match = normalized.match(/^(\d{4}-\d{2}-\d{2})/);
-  return match ? match[1] : '';
+  if (!match) return '';
+  const candidate = match[1];
+  const parsed = new Date(`${candidate}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === candidate
+    ? candidate
+    : '';
 }
 
 function shiftDate(value, days) {
   const normalized = dateOnly(value);
   if (!normalized) return '';
-  const [year, month, day] = normalized.split('-').map(Number);
-  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  const shifted = new Date(`${normalized}T00:00:00.000Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
   return shifted.toISOString().slice(0, 10);
 }
 
-function rangeDates(endDate, length = 7) {
-  return Array.from({ length }, (_, index) => shiftDate(endDate, index - (length - 1)));
+function datesBetween(startDate, endDate) {
+  const length = inclusiveDays(startDate, endDate);
+  return Array.from({ length }, (_, index) => shiftDate(startDate, index));
 }
 
 function inclusiveDays(startDate, endDate) {
@@ -73,6 +102,11 @@ function recordDate(record, fields) {
 
 function isOnDate(record, targetDate, fields) {
   return recordDate(record, fields) === targetDate;
+}
+
+function isInDateRange(record, startDate, endDate, fields) {
+  const value = recordDate(record, fields);
+  return Boolean(value && value >= startDate && value <= endDate);
 }
 
 function isPending(value) {
@@ -352,22 +386,33 @@ function computeQualityScore(qualityControls = []) {
   return round((passed / finalRecords.length) * 100, 1);
 }
 
-function computeMenuCompletion(menuPlans = [], operationalSiteCount = 1, siteKeyForPlan = null) {
+function computeMenuCompletion(
+  menuPlans = [],
+  operationalSiteCount = 1,
+  siteKeyForPlan = null,
+  rangeStart = '',
+  rangeEnd = ''
+) {
   const completedKeys = new Set();
+  const periodDates = rangeStart && rangeEnd ? datesBetween(rangeStart, rangeEnd) : [];
+  const includeDate = periodDates.length > 0;
   menuPlans
     .filter((plan) => !plan.event_name && !plan.event_type)
     .forEach((plan) => {
       const siteKey = typeof siteKeyForPlan === 'function'
         ? siteKeyForPlan(plan)
         : plan.site_id;
+      const planDate = includeDate ? recordDate(plan, DATE_FIELDS.menuPlans) : '';
       flattenMenuEntries(plan).forEach((entry) => {
         const mealType = normalizeMealType(entry.meal_type);
         if (MEAL_PERIODS.includes(mealType) && menuEntryIsComplete(entry)) {
-          completedKeys.add(`${siteKey || 'global'}:${mealType}`);
+          completedKeys.add(`${siteKey || 'global'}:${planDate ? `${planDate}:` : ''}${mealType}`);
         }
       });
     });
-  const denominator = Math.max(1, operationalSiteCount) * MEAL_PERIODS.length;
+  const denominator = Math.max(1, operationalSiteCount)
+    * MEAL_PERIODS.length
+    * Math.max(1, periodDates.length);
   return round(Math.min(100, (completedKeys.size / denominator) * 100), 1);
 }
 
@@ -402,21 +447,235 @@ function recordsForSiteIds(data, siteIds, helpers) {
   };
 }
 
-function computeCoreMetrics(records, targetDate, operationalSiteCount) {
-  const dayProduction = records.production.filter((record) => isOnDate(record, targetDate, ['production_date', 'date']));
-  const dayWaste = records.foodWaste.filter((record) => isOnDate(record, targetDate, ['waste_date', 'date']));
-  const dayMenus = records.menuPlans.filter((record) => isOnDate(record, targetDate, ['plan_date', 'event_date', 'date']));
-  const dayAttendance = records.attendanceRecords.filter((record) => isOnDate(record, targetDate, ['shift_date', 'attendance_date', 'check_in_at', 'checked_in_at', 'created_date']));
-  const dayShifts = records.staffShifts.filter((record) => isOnDate(record, targetDate, ['shift_date', 'date', 'start_date']));
-  const dayQuality = records.qualityControls.filter((record) => isOnDate(record, targetDate, ['inspection_date', 'quality_date', 'created_date']));
+function emptyScopedRecords(records) {
+  return {
+    ...Object.fromEntries(RECORD_COLLECTIONS.map((key) => [key, []])),
+    siteIdForRecord: records.siteIdForRecord,
+    helpers: records.helpers
+  };
+}
 
-  const totalMeals = dayProduction.reduce((sum, record) => sum + producedServings(record), 0);
-  const spent = dayProduction
+function partitionRecordsByOperationalAnchor(records) {
+  const partitions = new Map();
+  RECORD_COLLECTIONS.forEach((key) => {
+    records[key].forEach((record) => {
+      const anchor = records.helpers.operationalAnchor(records.siteIdForRecord(record));
+      if (!anchor) return;
+      const anchorId = String(anchor.id);
+      if (!partitions.has(anchorId)) partitions.set(anchorId, emptyScopedRecords(records));
+      partitions.get(anchorId)[key].push(record);
+    });
+  });
+  return partitions;
+}
+
+function indexRecordsByDate(records, fields, allowedDates) {
+  const index = new Map();
+  records.forEach((record) => {
+    const date = recordDate(record, fields);
+    if (!allowedDates.has(date)) return;
+    if (!index.has(date)) index.set(date, []);
+    index.get(date).push(record);
+  });
+  return index;
+}
+
+function recordsInDateIndex(index) {
+  return [...index.values()].flat();
+}
+
+function budgetGroupKey(records, record) {
+  const siteId = records.siteIdForRecord(record);
+  const anchor = records.helpers.operationalAnchor(siteId);
+  return String(anchor?.id || siteId || 'global');
+}
+
+function emptyBudgetGroupTotals() {
+  return {
+    mealScoped: Object.fromEntries(MEAL_PERIODS.map((mealType) => [mealType, 0])),
+    allMealTotal: 0
+  };
+}
+
+function applyBudgetContribution(groups, contribution, multiplier = 1) {
+  const { groupKey, mealType, amount } = contribution;
+  const group = groups.get(groupKey) || emptyBudgetGroupTotals();
+  if (MEAL_PERIODS.includes(mealType)) {
+    group.mealScoped[mealType] += amount * multiplier;
+  } else {
+    group.allMealTotal += amount * multiplier;
+  }
+
+  const isEmpty = Math.abs(group.allMealTotal) < 1e-9
+    && MEAL_PERIODS.every((period) => Math.abs(group.mealScoped[period]) < 1e-9);
+  if (isEmpty) groups.delete(groupKey);
+  else groups.set(groupKey, group);
+}
+
+function cloneBudgetGroupTotals(groups) {
+  return new Map([...groups.entries()].map(([groupKey, group]) => [groupKey, {
+    mealScoped: { ...group.mealScoped },
+    allMealTotal: group.allMealTotal
+  }]));
+}
+
+function indexBudgetGroupsByDate(records, dates) {
+  const totalsByDate = new Map();
+  if (!dates.length) return totalsByDate;
+
+  const rangeStart = dates[0];
+  const rangeEnd = dates.at(-1);
+  const eventsByDate = new Map();
+  const directByDate = new Map();
+  const addEvent = (date, contribution, multiplier) => {
+    if (!eventsByDate.has(date)) eventsByDate.set(date, []);
+    eventsByDate.get(date).push({ contribution, multiplier });
+  };
+  const addDirect = (date, contribution) => {
+    if (!directByDate.has(date)) directByDate.set(date, []);
+    directByDate.get(date).push(contribution);
+  };
+  const addInterval = (startDate, endDate, contribution) => {
+    const effectiveStart = startDate > rangeStart ? startDate : rangeStart;
+    const effectiveEnd = endDate < rangeEnd ? endDate : rangeEnd;
+    if (effectiveStart > effectiveEnd || contribution.amount <= 0) return;
+    addEvent(effectiveStart, contribution, 1);
+    if (effectiveEnd < rangeEnd) addEvent(shiftDate(effectiveEnd, 1), contribution, -1);
+  };
+
+  records.budgets.forEach((budget) => {
+    const status = normalizeStatus(budget.status || 'active');
+    if (['inactive', 'cancelled', 'canceled', 'closed'].includes(status)) return;
+
+    const declaredStart = dateOnly(budget.start_date || budget.budget_date);
+    const declaredEnd = dateOnly(budget.end_date || budget.budget_date || declaredStart);
+    const groupKey = budgetGroupKey(records, budget);
+    const mealType = normalizeMealType(budget.meal_type);
+    const contributionForDay = (day) => ({ groupKey, mealType, amount: dailyBudgetAmount(budget, day) });
+
+    // Persisted budgets require both bounds. Retain exact legacy fallback
+    // behavior for malformed historical rows without making valid rows scan
+    // every selected day.
+    if (!declaredStart || !declaredEnd) {
+      dates.forEach((day) => {
+        const contribution = contributionForDay(day);
+        if (contribution.amount > 0) addDirect(day, contribution);
+      });
+      return;
+    }
+    if (declaredEnd < declaredStart) return;
+    const amount = Math.max(0, safeNumber(budget.budget_amount ?? budget.amount));
+    const scopeType = normalizeStatus(budget.scope_type);
+    if (scopeType.includes('daily') || budget.budget_date) {
+      addInterval(declaredStart, declaredEnd, { groupKey, mealType, amount });
+      return;
+    }
+
+    // Allocate a period budget in whole currency cents so selecting the full
+    // period always reconciles exactly to the stored amount. A base interval
+    // plus one short bonus interval keeps this O(1) per budget.
+    const periodDays = inclusiveDays(declaredStart, declaredEnd);
+    const totalCents = Math.round(amount * 100);
+    const baseCents = Math.floor(totalCents / periodDays);
+    const remainderCents = totalCents - (baseCents * periodDays);
+    if (baseCents > 0) {
+      addInterval(declaredStart, declaredEnd, { groupKey, mealType, amount: baseCents / 100 });
+    }
+    if (remainderCents > 0) {
+      addInterval(
+        declaredStart,
+        shiftDate(declaredStart, remainderCents - 1),
+        { groupKey, mealType, amount: 0.01 }
+      );
+    }
+  });
+
+  const activeGroups = new Map();
+  dates.forEach((day) => {
+    (eventsByDate.get(day) || []).forEach(({ contribution, multiplier }) => {
+      applyBudgetContribution(activeGroups, contribution, multiplier);
+    });
+    const dayGroups = cloneBudgetGroupTotals(activeGroups);
+    (directByDate.get(day) || []).forEach((contribution) => {
+      applyBudgetContribution(dayGroups, contribution);
+    });
+    totalsByDate.set(day, dayGroups);
+  });
+  return totalsByDate;
+}
+
+function createPeriodContext(records, rangeStart, rangeEnd) {
+  const dates = datesBetween(rangeStart, rangeEnd);
+  const allowedDates = new Set(dates);
+  const budgetGroupsByDate = indexBudgetGroupsByDate(records, dates);
+  const context = {
+    dates,
+    allowedDates,
+    productionByDate: indexRecordsByDate(records.production, DATE_FIELDS.production, allowedDates),
+    wasteByDate: indexRecordsByDate(records.foodWaste, DATE_FIELDS.foodWaste, allowedDates),
+    menusByDate: indexRecordsByDate(records.menuPlans, DATE_FIELDS.menuPlans, allowedDates),
+    budgetMenusByDate: indexRecordsByDate(records.menuPlans, ['plan_date', 'date'], allowedDates),
+    attendanceByDate: indexRecordsByDate(records.attendanceRecords, DATE_FIELDS.attendanceRecords, allowedDates),
+    shiftsByDate: indexRecordsByDate(records.staffShifts, DATE_FIELDS.staffShifts, allowedDates),
+    qualityByDate: indexRecordsByDate(records.qualityControls, DATE_FIELDS.qualityControls, allowedDates),
+    mealBudgetsByDate: new Map(),
+    rangeBudgetTotalsByGroup: new Map()
+  };
+
+  dates.forEach((day) => {
+    const allocationTotalsByGroup = new Map();
+    context.mealBudgetsByDate.set(day, buildMealBudgetAllocation(records, day, 0, {
+      menuPlans: context.budgetMenusByDate.get(day) || [],
+      budgetTotalsByGroup: budgetGroupsByDate.get(day) || new Map(),
+      allocationTotalsByGroup
+    }));
+    allocationTotalsByGroup.forEach((amount, groupKey) => {
+      context.rangeBudgetTotalsByGroup.set(
+        groupKey,
+        round((context.rangeBudgetTotalsByGroup.get(groupKey) || 0) + amount, 2)
+      );
+    });
+  });
+  return context;
+}
+
+function createMetricPeriodContext(records, reportPeriod, rangeBudgetTotal) {
+  const { dates, allowedDates } = reportPeriod;
+  return {
+    dates,
+    allowedDates,
+    productionByDate: indexRecordsByDate(records.production, DATE_FIELDS.production, allowedDates),
+    wasteByDate: indexRecordsByDate(records.foodWaste, DATE_FIELDS.foodWaste, allowedDates),
+    menusByDate: indexRecordsByDate(records.menuPlans, DATE_FIELDS.menuPlans, allowedDates),
+    attendanceByDate: indexRecordsByDate(records.attendanceRecords, DATE_FIELDS.attendanceRecords, allowedDates),
+    shiftsByDate: indexRecordsByDate(records.staffShifts, DATE_FIELDS.staffShifts, allowedDates),
+    qualityByDate: indexRecordsByDate(records.qualityControls, DATE_FIELDS.qualityControls, allowedDates),
+    rangeBudgetTotal
+  };
+}
+
+function computeCoreMetrics(records, rangeStart, rangeEnd, operationalSiteCount, period = null) {
+  const context = period || createPeriodContext(records, rangeStart, rangeEnd);
+  const periodProduction = recordsInDateIndex(context.productionByDate);
+  const periodWaste = recordsInDateIndex(context.wasteByDate);
+  const periodMenus = recordsInDateIndex(context.menusByDate);
+  const periodAttendance = recordsInDateIndex(context.attendanceByDate);
+  const periodShifts = recordsInDateIndex(context.shiftsByDate);
+  const periodQuality = recordsInDateIndex(context.qualityByDate);
+
+  const totalMeals = periodProduction.reduce((sum, record) => sum + producedServings(record), 0);
+  const spent = periodProduction
     .filter(productionCountsAsSpend)
     .reduce((sum, record) => sum + productionCost(record), 0);
-  const wasteCost = dayWaste.reduce((sum, record) => sum + Math.max(0, safeNumber(record.estimated_cost ?? record.waste_cost)), 0);
-  const mealBudgetAllocation = buildMealBudgetAllocation(records, targetDate);
-  const budget = MEAL_PERIODS.reduce((sum, mealType) => sum + mealBudgetAllocation[mealType], 0);
+  const wasteCost = periodWaste.reduce((sum, record) => (
+    sum + Math.max(0, safeNumber(record.estimated_cost ?? record.waste_cost))
+  ), 0);
+  const budget = Number.isFinite(context.rangeBudgetTotal)
+    ? context.rangeBudgetTotal
+    : context.dates.reduce((total, day) => {
+      const mealBudgetAllocation = context.mealBudgetsByDate.get(day);
+      return total + MEAL_PERIODS.reduce((sum, mealType) => sum + mealBudgetAllocation[mealType], 0);
+    }, 0);
   const stockRisk = records.inventory.filter((record) => deriveInventoryStatus(record) !== 'in_stock').length;
   // Approval widgets are queues, not selected-day activity counters. Count every
   // open item supplied for the current location scope and exclude unsubmitted drafts.
@@ -427,8 +686,8 @@ function computeCoreMetrics(records, targetDate, operationalSiteCount) {
     menuPlans: records.menuPlans,
     purchaseRequests: records.purchaseRequests
   });
-  const supplier = computeSupplierStats(records.purchaseOrders, records.goodsReceipts, targetDate);
-  const attendance = computeAttendanceStats(dayShifts, dayAttendance);
+  const supplier = computeSupplierStats(records.purchaseOrders, records.goodsReceipts, rangeEnd);
+  const attendance = computeAttendanceStats(periodShifts, periodAttendance);
 
   return {
     total_meals: round(totalMeals, 0),
@@ -440,29 +699,26 @@ function computeCoreMetrics(records, targetDate, operationalSiteCount) {
     stock_risk: stockRisk,
     pending_approvals: approvals.total,
     menu_plan_completion: computeMenuCompletion(
-      dayMenus,
+      periodMenus,
       operationalSiteCount,
       (plan) => records.helpers.operationalAnchor(records.siteIdForRecord(plan))?.id
         || records.siteIdForRecord(plan)
-        || 'global'
+        || 'global',
+      rangeStart,
+      rangeEnd
     ),
     supplier_sla: supplier.supplier_sla,
     supplier_exceptions: supplier.supplier_exceptions,
     attendance: attendance.attendance,
     attendance_gaps: attendance.attendance_gaps,
-    quality_score: computeQualityScore(dayQuality),
+    quality_score: computeQualityScore(periodQuality),
     approvals
   };
 }
 
-function buildMealBudgetAllocation(records, targetDate, dailyBudget = 0) {
+function buildMealBudgetAllocation(records, targetDate, dailyBudget = 0, sources = null) {
   const allocations = Object.fromEntries(MEAL_PERIODS.map((mealType) => [mealType, 0]));
   const groups = new Map();
-  const groupForRecord = (record) => {
-    const siteId = records.siteIdForRecord(record);
-    const anchor = records.helpers.operationalAnchor(siteId);
-    return String(anchor?.id || siteId || 'global');
-  };
   const ensureGroup = (key) => {
     if (!groups.has(key)) {
       groups.set(key, {
@@ -476,11 +732,12 @@ function buildMealBudgetAllocation(records, targetDate, dailyBudget = 0) {
   };
 
   const seenPlans = new Set();
-  records.menuPlans
+  const menuPlans = sources?.menuPlans || records.menuPlans
+    .filter((plan) => isOnDate(plan, targetDate, ['plan_date', 'date']));
+  menuPlans
     .filter((plan) => !plan.event_name && !plan.event_type)
-    .filter((plan) => isOnDate(plan, targetDate, ['plan_date', 'date']))
     .forEach((plan) => {
-      const groupKey = groupForRecord(plan);
+      const groupKey = budgetGroupKey(records, plan);
       const planSiteKey = records.siteIdForRecord(plan) || groupKey;
       const planKey = String(plan.id || recordDate(plan, ['plan_date', 'date']) || 'menu-plan');
       const uniquePlanKey = `${planSiteKey}:${planKey}`;
@@ -496,18 +753,28 @@ function buildMealBudgetAllocation(records, targetDate, dailyBudget = 0) {
       }
     });
 
-  records.budgets
-    .filter((budget) => budgetCoversDate(budget, targetDate))
-    .forEach((budget) => {
+  if (sources?.budgetTotalsByGroup instanceof Map) {
+    sources.budgetTotalsByGroup.forEach((totals, groupKey) => {
+      const group = ensureGroup(groupKey);
+      MEAL_PERIODS.forEach((mealType) => {
+        group.mealScoped[mealType] += Math.max(0, safeNumber(totals.mealScoped?.[mealType]));
+      });
+      group.allMealTotal += Math.max(0, safeNumber(totals.allMealTotal));
+    });
+  } else {
+    const budgets = sources?.budgets || records.budgets
+      .filter((budget) => budgetCoversDate(budget, targetDate));
+    budgets.forEach((budget) => {
       const amount = dailyBudgetAmount(budget, targetDate);
       if (amount <= 0) return;
-      const group = ensureGroup(groupForRecord(budget));
+      const group = ensureGroup(budgetGroupKey(records, budget));
       const mealType = normalizeMealType(budget.meal_type);
       if (MEAL_PERIODS.includes(mealType)) group.mealScoped[mealType] += amount;
       else group.allMealTotal += amount;
     });
+  }
 
-  groups.forEach((group) => {
+  groups.forEach((group, groupKey) => {
     const direct = Object.fromEntries(MEAL_PERIODS.map((mealType) => [
       mealType,
       group.explicit[mealType] > 0
@@ -525,9 +792,15 @@ function buildMealBudgetAllocation(records, targetDate, dailyBudget = 0) {
       ? Math.max(0, allMealCeiling - directTotal) / unresolved.length
       : 0;
 
+    let groupTotal = 0;
     MEAL_PERIODS.forEach((mealType) => {
-      allocations[mealType] += direct[mealType] > 0 ? direct[mealType] : fallbackShare;
+      const amount = direct[mealType] > 0 ? direct[mealType] : fallbackShare;
+      allocations[mealType] += amount;
+      groupTotal += amount;
     });
+    if (sources?.allocationTotalsByGroup instanceof Map) {
+      sources.allocationTotalsByGroup.set(groupKey, round(groupTotal, 2));
+    }
   });
 
   // Legacy snapshots may provide only a precomputed daily total. Preserve the
@@ -549,26 +822,60 @@ function buildMealBudgetAllocation(records, targetDate, dailyBudget = 0) {
       .find((mealType) => roundedAllocations[mealType] > 0) || MEAL_PERIODS.at(-1);
     roundedAllocations[adjustmentMeal] = round(roundedAllocations[adjustmentMeal] + roundingRemainder, 2);
   }
+
+  if (sources?.allocationTotalsByGroup instanceof Map && sources.allocationTotalsByGroup.size > 0) {
+    const expectedTotal = round(
+      MEAL_PERIODS.reduce((sum, mealType) => sum + roundedAllocations[mealType], 0),
+      2
+    );
+    const groupedTotal = round(
+      [...sources.allocationTotalsByGroup.values()].reduce((sum, amount) => sum + amount, 0),
+      2
+    );
+    const groupRemainder = round(expectedTotal - groupedTotal, 2);
+    if (groupRemainder !== 0) {
+      const adjustmentGroup = [...sources.allocationTotalsByGroup.keys()].at(-1);
+      sources.allocationTotalsByGroup.set(
+        adjustmentGroup,
+        round(sources.allocationTotalsByGroup.get(adjustmentGroup) + groupRemainder, 2)
+      );
+    }
+  }
   return roundedAllocations;
 }
 
-function buildMealRows(records, targetDate, dailyBudget) {
-  const dayProduction = records.production.filter((record) => isOnDate(record, targetDate, ['production_date', 'date']));
-  const dayWaste = records.foodWaste.filter((record) => isOnDate(record, targetDate, ['waste_date', 'date']));
-  const dayMenus = records.menuPlans.filter((record) => isOnDate(record, targetDate, ['plan_date', 'date']) && !record.event_name);
-  const mealBudgets = buildMealBudgetAllocation(records, targetDate, dailyBudget);
-
+function buildMealRows(records, rangeStart, rangeEnd, period = null) {
+  const context = period || createPeriodContext(records, rangeStart, rangeEnd);
   return MEAL_PERIODS.map((mealType) => {
-    const production = dayProduction.filter((record) => normalizeMealType(record.meal_type) === mealType);
-    const waste = dayWaste.filter((record) => normalizeMealType(record.meal_type) === mealType);
-    const menuPlanned = dayMenus.reduce((sum, plan) => sum + flattenMenuEntries(plan)
-      .filter((entry) => normalizeMealType(entry.meal_type) === mealType)
-      .reduce((entrySum, entry) => entrySum + menuEntryServings(entry), 0), 0);
-    const productionPlanned = production.reduce((sum, record) => sum + plannedServings(record), 0);
-    const planned = productionPlanned > 0 ? productionPlanned : menuPlanned;
-    const produced = production.reduce((sum, record) => sum + producedServings(record), 0);
-    const spent = production.filter(productionCountsAsSpend).reduce((sum, record) => sum + productionCost(record), 0);
-    const wasteCost = waste.reduce((sum, record) => sum + Math.max(0, safeNumber(record.estimated_cost ?? record.waste_cost)), 0);
+    let planned = 0;
+    let produced = 0;
+    let spent = 0;
+    let wasteCost = 0;
+    let budget = 0;
+
+    context.dates.forEach((day) => {
+      const production = (context.productionByDate.get(day) || [])
+        .filter((record) => normalizeMealType(record.meal_type) === mealType);
+      const waste = (context.wasteByDate.get(day) || [])
+        .filter((record) => normalizeMealType(record.meal_type) === mealType);
+      const menuPlanned = (context.menusByDate.get(day) || [])
+        .filter((record) => !record.event_name)
+        .reduce((sum, plan) => sum + flattenMenuEntries(plan)
+          .filter((entry) => normalizeMealType(entry.meal_type) === mealType)
+          .reduce((entrySum, entry) => entrySum + menuEntryServings(entry), 0), 0);
+      const productionPlanned = production.reduce((sum, record) => sum + plannedServings(record), 0);
+
+      planned += productionPlanned > 0 ? productionPlanned : menuPlanned;
+      produced += production.reduce((sum, record) => sum + producedServings(record), 0);
+      spent += production
+        .filter(productionCountsAsSpend)
+        .reduce((sum, record) => sum + productionCost(record), 0);
+      wasteCost += waste.reduce((sum, record) => (
+        sum + Math.max(0, safeNumber(record.estimated_cost ?? record.waste_cost))
+      ), 0);
+      budget += context.mealBudgetsByDate.get(day)[mealType];
+    });
+
     const variance = produced - planned;
     let action = 'None';
     if (planned > 0 && produced === 0) action = 'Start production';
@@ -581,7 +888,7 @@ function buildMealRows(records, targetDate, dailyBudget) {
       planned: round(planned, 0),
       produced: round(produced, 0),
       variance: round(variance, 0),
-      budget: mealBudgets[mealType],
+      budget: round(budget, 2),
       spent: round(spent, 2),
       waste_cost: round(wasteCost, 2),
       action
@@ -589,15 +896,16 @@ function buildMealRows(records, targetDate, dailyBudget) {
   });
 }
 
-function buildTrendRows(data, records, sites, targetDate, helpers) {
-  const dates = rangeDates(targetDate, 7);
+function buildTrendRows(records, rangeStart, rangeEnd, helpers, period = null) {
+  const context = period || createPeriodContext(records, rangeStart, rangeEnd);
   const locationTotals = new Map();
-  records.production.forEach((record) => {
-    const siteId = records.siteIdForRecord(record);
-    const anchor = helpers.operationalAnchor(siteId);
-    if (!anchor) return;
-    locationTotals.set(String(anchor.id), (locationTotals.get(String(anchor.id)) || 0) + producedServings(record));
-  });
+  recordsInDateIndex(context.productionByDate)
+    .forEach((record) => {
+      const siteId = records.siteIdForRecord(record);
+      const anchor = helpers.operationalAnchor(siteId);
+      if (!anchor) return;
+      locationTotals.set(String(anchor.id), (locationTotals.get(String(anchor.id)) || 0) + producedServings(record));
+    });
 
   const locationSeries = [...locationTotals.entries()]
     .sort((left, right) => right[1] - left[1])
@@ -609,13 +917,14 @@ function buildTrendRows(data, records, sites, targetDate, helpers) {
       color: LOCATION_SERIES_COLORS[index % LOCATION_SERIES_COLORS.length]
     }));
 
-  const rows = dates.map((day) => {
-    const dayProduction = records.production.filter((record) => isOnDate(record, day, ['production_date', 'date']));
-    const dayWaste = records.foodWaste.filter((record) => isOnDate(record, day, ['waste_date', 'date']));
+  const rows = context.dates.map((day) => {
+    const dayProduction = context.productionByDate.get(day) || [];
+    const dayWaste = context.wasteByDate.get(day) || [];
+    const mealBudgets = context.mealBudgetsByDate.get(day);
     const row = {
       date: day,
       label: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`)),
-      budget: round(records.budgets.reduce((sum, budget) => sum + dailyBudgetAmount(budget, day), 0), 2),
+      budget: round(MEAL_PERIODS.reduce((sum, mealType) => sum + mealBudgets[mealType], 0), 2),
       spent: round(dayProduction.filter(productionCountsAsSpend).reduce((sum, record) => sum + productionCost(record), 0), 2),
       waste_cost: round(dayWaste.reduce((sum, record) => sum + Math.max(0, safeNumber(record.estimated_cost ?? record.waste_cost)), 0), 2),
       planned: round(dayProduction.reduce((sum, record) => sum + plannedServings(record), 0), 0),
@@ -632,7 +941,7 @@ function buildTrendRows(data, records, sites, targetDate, helpers) {
   return { rows, locationSeries };
 }
 
-function buildLocationRows(data, records, targetDate, helpers, selectedIds) {
+function buildLocationRows(data, records, rangeStart, rangeEnd, helpers, selectedIds, reportPeriod) {
   const anchors = new Map();
   data.sites.forEach((site) => {
     if (selectedIds && !selectedIds.has(String(site.id))) return;
@@ -643,18 +952,24 @@ function buildLocationRows(data, records, targetDate, helpers, selectedIds) {
     const anchor = helpers.operationalAnchor(records.siteIdForRecord(record));
     if (anchor) anchors.set(String(anchor.id), anchor);
   });
+  const recordsByAnchor = partitionRecordsByOperationalAnchor(records);
 
   return [...anchors.values()].map((site) => {
-    const siteIds = helpers.descendantIds(site.id);
-    const scoped = recordsForSiteIds(data, siteIds, helpers);
-    const metrics = computeCoreMetrics(scoped, targetDate, 1);
-    const highWaste = scoped.foodWaste.filter((record) => isOnDate(record, targetDate, ['waste_date', 'date']))
+    const siteId = String(site.id);
+    const scoped = recordsByAnchor.get(siteId) || emptyScopedRecords(records);
+    const period = createMetricPeriodContext(
+      scoped,
+      reportPeriod,
+      reportPeriod.rangeBudgetTotalsByGroup.get(siteId) || 0
+    );
+    const metrics = computeCoreMetrics(scoped, rangeStart, rangeEnd, 1, period);
+    const highWaste = recordsInDateIndex(period.wasteByDate)
       .filter((record) => safeNumber(record.estimated_cost ?? record.waste_cost) >= HIGH_WASTE_COST_THRESHOLD)
       .length;
     const exceptions = metrics.stock_risk + metrics.supplier_exceptions + metrics.attendance_gaps + highWaste;
     const overdue = metrics.supplier_exceptions > 0 || highWaste > 0;
     return {
-      id: String(site.id),
+      id: siteId,
       name: site.name || 'Location',
       meals: metrics.total_meals,
       budget: metrics.daily_budget,
@@ -675,8 +990,9 @@ function buildLocationRows(data, records, targetDate, helpers, selectedIds) {
   }).sort((left, right) => right.meals - left.meals || left.name.localeCompare(right.name));
 }
 
-function buildActions(view, metrics, records, targetDate) {
-  const highWaste = records.foodWaste.filter((record) => isOnDate(record, targetDate, ['waste_date', 'date']))
+function buildActions(view, metrics, records, rangeStart, rangeEnd, period = null) {
+  const context = period || createPeriodContext(records, rangeStart, rangeEnd);
+  const highWaste = recordsInDateIndex(context.wasteByDate)
     .filter((record) => safeNumber(record.estimated_cost ?? record.waste_cost) >= HIGH_WASTE_COST_THRESHOLD).length;
   const values = {
     procurement: { key: 'procurement', label: 'PR Approvals', count: metrics.approvals.procurement, href: '/ProcurementModule', tone: 'blue' },
@@ -722,7 +1038,18 @@ function availableScopeTypes(view) {
 export function buildManagementDashboardSnapshot(input = {}) {
   const data = normalizeDataset(input);
   const view = String(input.view || DASHBOARD_VIEWS.GENERAL_MANAGER);
-  const targetDate = dateOnly(input.date) || new Date().toISOString().slice(0, 10);
+  const explicitRangeStart = dateOnly(input.startDate || input.start_date);
+  const explicitRangeEnd = dateOnly(input.endDate || input.end_date);
+  const targetDate = dateOnly(input.date) || explicitRangeEnd || new Date().toISOString().slice(0, 10);
+  const aggregateRange = input.aggregateRange === true || Boolean(explicitRangeStart && explicitRangeEnd);
+  const rangeStart = aggregateRange
+    ? (explicitRangeStart || dateOnly(input.rangeStart) || targetDate)
+    : targetDate;
+  const rangeEnd = aggregateRange
+    ? (explicitRangeEnd || dateOnly(input.rangeEnd) || targetDate)
+    : targetDate;
+  const trendStart = aggregateRange ? rangeStart : (dateOnly(input.rangeStart) || shiftDate(targetDate, -6));
+  const trendEnd = aggregateRange ? rangeEnd : (dateOnly(input.rangeEnd) || targetDate);
   const helpers = createSiteHelpers(data.sites);
   const selectedSiteId = input.selectedSiteId || input.siteId || null;
   const selectedIds = selectedSiteId ? helpers.descendantIds(selectedSiteId) : null;
@@ -733,12 +1060,30 @@ export function buildManagementDashboardSnapshot(input = {}) {
     return normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT;
   });
   const operationalAnchors = new Set(operationalSites.map((site) => String(helpers.operationalAnchor(site.id)?.id || site.id)));
-  const metrics = computeCoreMetrics(records, targetDate, Math.max(1, operationalAnchors.size));
+  const reportPeriod = createPeriodContext(records, rangeStart, rangeEnd);
+  const trendPeriod = trendStart === rangeStart && trendEnd === rangeEnd
+    ? reportPeriod
+    : createPeriodContext(records, trendStart, trendEnd);
+  const metrics = computeCoreMetrics(
+    records,
+    rangeStart,
+    rangeEnd,
+    Math.max(1, operationalAnchors.size),
+    reportPeriod
+  );
   metrics.open_exceptions = metrics.stock_risk + metrics.supplier_exceptions + metrics.attendance_gaps
     + metrics.approvals.waste + metrics.approvals.production;
 
-  const trend = buildTrendRows(data, records, data.sites, targetDate, helpers);
-  const locations = buildLocationRows(data, records, targetDate, helpers, selectedIds);
+  const trend = buildTrendRows(records, trendStart, trendEnd, helpers, trendPeriod);
+  const locations = buildLocationRows(
+    data,
+    records,
+    rangeStart,
+    rangeEnd,
+    helpers,
+    selectedIds,
+    reportPeriod
+  );
   const scopeTypes = availableScopeTypes(view);
   const availableScopes = data.sites
     .filter((site) => scopeTypes.has(normalizeSiteType(site.type)))
@@ -752,19 +1097,20 @@ export function buildManagementDashboardSnapshot(input = {}) {
 
   const selectedSite = selectedSiteId ? helpers.byId.get(String(selectedSiteId)) : null;
   const dataQuality = [];
-  if (!records.production.some((record) => isOnDate(record, targetDate, ['production_date', 'date']))) {
-    dataQuality.push('No production activity is recorded for the selected date.');
+  const periodLabel = aggregateRange ? 'selected date range' : 'selected date';
+  if (reportPeriod.productionByDate.size === 0) {
+    dataQuality.push(`No production activity is recorded for the ${periodLabel}.`);
   }
   if (metrics.supplier_sla === null) dataQuality.push('Supplier SLA is unavailable until at least one delivery is recorded.');
-  if (metrics.attendance === null) dataQuality.push('Attendance is unavailable because no scheduled shifts are recorded for the selected date.');
+  if (metrics.attendance === null) dataQuality.push(`Attendance is unavailable because no scheduled shifts are recorded for the ${periodLabel}.`);
   if (metrics.quality_score === null) dataQuality.push('Quality score is unavailable because no completed inspections are linked to this scope.');
 
   return {
     generated_at: new Date().toISOString(),
     view,
     date: targetDate,
-    range_start: input.rangeStart || shiftDate(targetDate, -6),
-    range_end: input.rangeEnd || targetDate,
+    range_start: trendStart,
+    range_end: trendEnd,
     scope: {
       selected_site_id: selectedSiteId || null,
       selected_site_name: selectedSite?.name || null,
@@ -772,8 +1118,8 @@ export function buildManagementDashboardSnapshot(input = {}) {
     },
     metrics,
     locations,
-    meals: buildMealRows(records, targetDate, metrics.daily_budget),
-    actions: buildActions(view, metrics, records, targetDate),
+    meals: buildMealRows(records, rangeStart, rangeEnd, reportPeriod),
+    actions: buildActions(view, metrics, records, rangeStart, rangeEnd, reportPeriod),
     trends: trend.rows,
     location_series: trend.locationSeries,
     data_quality: dataQuality

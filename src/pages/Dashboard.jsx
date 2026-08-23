@@ -55,7 +55,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { downloadCSV } from '../components/utils/exportData';
 import { formatCurrency } from '@/lib/currency';
 import { usePermissions } from '@/components/auth/usePermissions';
-import ManagementDashboard from '@/components/dashboard/ManagementDashboard';
+import ManagementDashboard, { getInitialManagementDateRange } from '@/components/dashboard/ManagementDashboard';
 import {
   ADMIN_DASHBOARD_VIEW_ORDER,
   DASHBOARD_VIEWS
@@ -1047,6 +1047,7 @@ function DashboardPermissionLoading() {
 
 function AdminDashboardCarousel() {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [managementDateRange, setManagementDateRange] = useState(getInitialManagementDateRange);
   const activeView = ADMIN_DASHBOARD_VIEW_ORDER[activeIndex];
   const move = (offset) => {
     setActiveIndex((current) => (
@@ -1119,7 +1120,12 @@ function AdminDashboardCarousel() {
         <DefaultDashboard />
       ) : (
         <div className="mx-auto max-w-[1680px] p-4 sm:p-6 lg:p-8">
-          <ManagementDashboard view={activeView} isAdminPreview />
+          <ManagementDashboard
+            view={activeView}
+            isAdminPreview
+            dateRange={managementDateRange}
+            onDateRangeChange={setManagementDateRange}
+          />
         </div>
       )}
     </section>

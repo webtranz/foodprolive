@@ -1442,6 +1442,8 @@ app.get('/api/dashboard/management', requireAuth, requirePermission('view_dashbo
     response.json(await getManagementDashboardSnapshot(request.user, {
       view: request.query.view,
       date: request.query.date,
+      start_date: request.query.start_date,
+      end_date: request.query.end_date,
       site_id: request.query.site_id
     }));
   } catch (error) {

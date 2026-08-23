@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -68,10 +68,14 @@ const VIEW_CONFIG = {
   },
   project_manager: {
     title: 'Project Manager View',
-    eyebrow: 'Daily operational control for the selected project',
+    eyebrow: 'Operational control across the selected reporting period',
     scopeLabel: 'Selected project'
   }
 };
+
+const MIN_DATE_VALUE = '0001-01-01';
+const MAX_DATE_VALUE = '9999-12-31';
+const MAX_RANGE_OFFSET_DAYS = 365;
 
 const ENTITY_NAMES = [
   'Site',
@@ -146,6 +150,22 @@ function todayValue() {
   const value = new Date();
   const offset = value.getTimezoneOffset();
   return new Date(value.getTime() - offset * 60_000).toISOString().slice(0, 10);
+}
+
+function shiftDateValue(value, days) {
+  const shifted = new Date(`${value}T00:00:00Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  if (shifted.getUTCFullYear() < 1) return MIN_DATE_VALUE;
+  if (shifted.getUTCFullYear() > 9999) return MAX_DATE_VALUE;
+  return shifted.toISOString().slice(0, 10);
+}
+
+export function getInitialManagementDateRange() {
+  const endDate = todayValue();
+  return {
+    startDate: shiftDateValue(endDate, -6),
+    endDate
+  };
 }
 
 function number(value, digits = 0) {
@@ -351,7 +371,7 @@ function LocationTable({ locations, mode, panelRef }) {
 function MealOperationsTable({ meals, panelRef }) {
   return (
     <Panel title="Project Operations" panelRef={panelRef}>
-      {meals.length === 0 ? <NoRows>No meal-period production was found for this project and date.</NoRows> : (
+      {meals.length === 0 ? <NoRows>No meal-period production was found for this project and date range.</NoRows> : (
         <Table>
           <TableHeader className="bg-slate-50">
             <TableRow>
@@ -567,8 +587,8 @@ function PrimaryMetrics({ metrics, view }) {
   const common = [
     { key: 'total_meals', label: 'Total Meals', value: number(metrics.total_meals), icon: UsersRound, tone: 'emerald' },
     { key: 'cost_per_meal', label: 'Cost / Meal', value: formatCurrency(metrics.cost_per_meal), icon: Tag, tone: 'emerald' },
-    { key: 'daily_budget', label: 'Daily Budget', value: compactCurrency(metrics.daily_budget), icon: WalletCards, tone: 'blue' },
-    { key: 'daily_spent', label: 'Daily Spent', value: compactCurrency(metrics.daily_spent), icon: ReceiptText, tone: 'blue' },
+    { key: 'daily_budget', label: 'Range Budget', value: compactCurrency(metrics.daily_budget), icon: WalletCards, tone: 'blue' },
+    { key: 'daily_spent', label: 'Range Spent', value: compactCurrency(metrics.daily_spent), icon: ReceiptText, tone: 'blue' },
     { key: 'food_wastage_cost', label: 'Food Wastage Cost', value: compactCurrency(metrics.food_wastage_cost), icon: Trash2, tone: 'rose' }
   ];
   const cards = view === 'agm' ? common.filter((item) => item.key !== 'total_meals') : common;
@@ -603,46 +623,92 @@ function SecondaryMetrics({ metrics, view }) {
   return <div className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 ${cards.length === 4 ? 'xl:grid-cols-4' : cards.length === 5 ? 'xl:grid-cols-5' : 'xl:grid-cols-6'}`}>{cards.map((card) => <MetricCard key={card.key} {...card} />)}</div>;
 }
 
-function Toolbar({ config, date, setDate, siteId, setSiteId, scope, onLocations, onCompare, onFollowUp, view, isFetching }) {
+function Toolbar({
+  config,
+  startDate,
+  endDate,
+  setStartDate,
+  setEndDate,
+  siteId,
+  setSiteId,
+  scope,
+  onLocations,
+  onCompare,
+  onFollowUp,
+  view,
+  isFetching,
+  navigationDisabled = false
+}) {
   const options = Array.isArray(scope?.available_scopes) ? scope.available_scopes : [];
   const isProject = view === 'project_manager';
   const selectedValue = siteId || scope?.selected_site_id || (isProject ? '__select_project' : '__all');
+  const scopeLabelId = useId();
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm lg:flex-row lg:items-end">
-      <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
-        <label className="min-w-0">
-          <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">{config.scopeLabel}</span>
+    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm xl:flex-row xl:items-end">
+      <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-3">
+        <div className="min-w-0">
+          <span id={scopeLabelId} className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">{config.scopeLabel}</span>
           <Select value={selectedValue} onValueChange={(value) => setSiteId(value === '__all' ? '' : value)}>
-            <SelectTrigger className="h-10 bg-white"><Building2 className="mr-2 h-4 w-4 text-slate-400" /><SelectValue placeholder={isProject ? 'Select project' : 'All assigned locations'} /></SelectTrigger>
+            <SelectTrigger aria-labelledby={scopeLabelId} className="h-10 bg-white"><Building2 className="mr-2 h-4 w-4 text-slate-400" /><SelectValue placeholder={isProject ? 'Select project' : 'All assigned locations'} /></SelectTrigger>
             <SelectContent>
               {!isProject ? <SelectItem value="__all">All assigned locations</SelectItem> : null}
               {isProject && selectedValue === '__select_project' ? <SelectItem value="__select_project" disabled>Select project</SelectItem> : null}
               {options.map((option) => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}
             </SelectContent>
           </Select>
-        </label>
+        </div>
         <label>
-          <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Reporting date</span>
+          <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Date range start</span>
           <div className="relative">
             <CalendarDays className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
-            <Input type="date" value={date} max="9999-12-31" onChange={(event) => setDate(event.target.value || todayValue())} className="h-10 bg-white pl-9" />
+            <Input
+              type="date"
+              value={startDate}
+              min={MIN_DATE_VALUE}
+              max={MAX_DATE_VALUE}
+              onChange={(event) => setStartDate(event.target.value || endDate)}
+              className="h-10 bg-white pl-9"
+            />
+          </div>
+        </label>
+        <label>
+          <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Date range end</span>
+          <div className="relative">
+            <CalendarDays className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
+            <Input
+              type="date"
+              value={endDate}
+              min={MIN_DATE_VALUE}
+              max={MAX_DATE_VALUE}
+              onChange={(event) => setEndDate(event.target.value || todayValue())}
+              className="h-10 bg-white pl-9"
+            />
           </div>
         </label>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" onClick={onLocations}><Building2 className="mr-2 h-4 w-4" />View Multiple Location Stats</Button>
-        <Button type="button" variant="outline" onClick={onCompare}><BarChart3 className="mr-2 h-4 w-4" />Compare Locations</Button>
-        {view === 'agm' ? <Button type="button" className="bg-emerald-700 hover:bg-emerald-800" onClick={onFollowUp}><ClipboardCheck className="mr-2 h-4 w-4" />Operations Follow-up</Button> : null}
+        <Button type="button" variant="outline" disabled={navigationDisabled} onClick={onLocations}><Building2 className="mr-2 h-4 w-4" />View Multiple Location Stats</Button>
+        <Button type="button" variant="outline" disabled={navigationDisabled} onClick={onCompare}><BarChart3 className="mr-2 h-4 w-4" />Compare Locations</Button>
+        {view === 'agm' ? <Button type="button" disabled={navigationDisabled} className="bg-emerald-700 hover:bg-emerald-800" onClick={onFollowUp}><ClipboardCheck className="mr-2 h-4 w-4" />Operations Follow-up</Button> : null}
         {isFetching ? <div className="flex items-center px-2 text-xs text-slate-500"><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />Refreshing</div> : null}
       </div>
     </div>
   );
 }
 
-export default function ManagementDashboard({ view, isAdminPreview = false }) {
+export default function ManagementDashboard({
+  view,
+  isAdminPreview = false,
+  dateRange: controlledDateRange = null,
+  onDateRangeChange = null
+}) {
   const normalizedView = normalizeView(view);
   const config = VIEW_CONFIG[normalizedView];
-  const [date, setDate] = useState(todayValue);
+  const [internalDateRange, setInternalDateRange] = useState(getInitialManagementDateRange);
+  const activeDateRange = controlledDateRange?.startDate && controlledDateRange?.endDate
+    ? controlledDateRange
+    : internalDateRange;
+  const { startDate, endDate } = activeDateRange;
   const [siteId, setSiteId] = useState('');
   const queryClient = useQueryClient();
   const locationRef = useRef(null);
@@ -653,10 +719,52 @@ export default function ManagementDashboard({ view, isAdminPreview = false }) {
     setSiteId('');
   }, [normalizedView]);
 
-  const queryKey = useMemo(() => ['management-dashboard', normalizedView, date, siteId || 'all'], [date, normalizedView, siteId]);
+  const updateDateRange = (nextRange) => {
+    if (onDateRangeChange) onDateRangeChange(nextRange);
+    else setInternalDateRange(nextRange);
+  };
+
+  const setStartDate = (value) => {
+    const latestEndDate = shiftDateValue(value, MAX_RANGE_OFFSET_DAYS);
+    updateDateRange({
+      startDate: value,
+      endDate: value > endDate || endDate > latestEndDate
+        ? (value > endDate ? value : latestEndDate)
+        : endDate
+    });
+  };
+  const setEndDate = (value) => {
+    const earliestStartDate = shiftDateValue(value, -MAX_RANGE_OFFSET_DAYS);
+    updateDateRange({
+      startDate: value < startDate || startDate < earliestStartDate
+        ? (value < startDate ? value : earliestStartDate)
+        : startDate,
+      endDate: value
+    });
+  };
+
+  const resetDateRange = () => {
+    const defaults = getInitialManagementDateRange();
+    if (defaults.startDate === startDate && defaults.endDate === endDate) {
+      snapshotQuery.refetch();
+      return;
+    }
+    updateDateRange(defaults);
+  };
+
+  const queryKey = useMemo(
+    () => ['management-dashboard', normalizedView, startDate, endDate, siteId || 'all'],
+    [endDate, normalizedView, siteId, startDate]
+  );
   const snapshotQuery = useQuery({
     queryKey,
-    queryFn: () => base44.managementDashboard.getSnapshot({ view: normalizedView, date, site_id: siteId || undefined }),
+    queryFn: () => base44.managementDashboard.getSnapshot({
+      view: normalizedView,
+      start_date: startDate,
+      end_date: endDate,
+      site_id: siteId || undefined
+    }),
+    placeholderData: (previousData) => previousData?.view === normalizedView ? previousData : undefined,
     staleTime: 20_000,
     refetchInterval: 60_000,
     refetchOnWindowFocus: true
@@ -690,18 +798,48 @@ export default function ManagementDashboard({ view, isAdminPreview = false }) {
 
   if (snapshotQuery.isError) {
     return (
-      <AsyncStatePanel
-        variant="error"
-        title="Management dashboard unavailable"
-        description={snapshotQuery.error?.message || 'Live operational data could not be loaded.'}
-        action={<Button type="button" onClick={() => snapshotQuery.refetch()}><RefreshCw className="mr-2 h-4 w-4" />Try again</Button>}
-      />
+      <div className="space-y-4 pb-8">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">{config.title}</h1>
+            {isAdminPreview ? <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">Admin preview</Badge> : null}
+          </div>
+          <p className="mt-1 text-sm text-slate-500">{config.eyebrow}</p>
+        </div>
+        <Toolbar
+          config={config}
+          startDate={startDate}
+          endDate={endDate}
+          setStartDate={setStartDate}
+          setEndDate={setEndDate}
+          siteId={siteId}
+          setSiteId={setSiteId}
+          scope={snapshotQuery.data?.scope || {}}
+          view={normalizedView}
+          isFetching={snapshotQuery.isFetching}
+          navigationDisabled
+          onLocations={() => {}}
+          onCompare={() => {}}
+          onFollowUp={() => {}}
+        />
+        <AsyncStatePanel
+          variant="error"
+          title="Management dashboard unavailable"
+          description={snapshotQuery.error?.message || 'Live operational data could not be loaded. Adjust the date range above or try again.'}
+          action={(
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button type="button" onClick={() => snapshotQuery.refetch()}><RefreshCw className="mr-2 h-4 w-4" />Try again</Button>
+              <Button type="button" variant="outline" onClick={resetDateRange}><CalendarDays className="mr-2 h-4 w-4" />Reset to last 7 days</Button>
+            </div>
+          )}
+        />
+      </div>
     );
   }
 
   const snapshot = snapshotQuery.data;
   if (!snapshot) {
-    return <AsyncStatePanel variant="empty" title="No dashboard data" description="No management snapshot was returned for this role and date." />;
+    return <AsyncStatePanel variant="empty" title="No dashboard data" description="No management snapshot was returned for this role and date range." />;
   }
 
   const awaitingProjectScope = normalizedView === 'project_manager'
@@ -739,8 +877,10 @@ export default function ManagementDashboard({ view, isAdminPreview = false }) {
 
       <Toolbar
         config={config}
-        date={date}
-        setDate={setDate}
+        startDate={startDate}
+        endDate={endDate}
+        setStartDate={setStartDate}
+        setEndDate={setEndDate}
         siteId={siteId}
         setSiteId={setSiteId}
         scope={snapshot.scope || {}}
@@ -790,8 +930,8 @@ export default function ManagementDashboard({ view, isAdminPreview = false }) {
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 text-xs text-slate-500">
-        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />Meals, spend, waste and attendance use the selected date; stock and open actions show current state.</span>
-        <span>{snapshot.scope?.selected_site_name || (normalizedView === 'area_manager' ? 'Assigned area' : 'All assigned locations')} · {snapshot.date || date}</span>
+        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />Operational metrics, tables and trends use the selected date range; current stock and unresolved approvals show current state.</span>
+        <span>{snapshot.scope?.selected_site_name || (normalizedView === 'area_manager' ? 'Assigned area' : 'All assigned locations')} · {snapshot.range_start || startDate} to {snapshot.range_end || endDate}</span>
       </div>
     </div>
   );

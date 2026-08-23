@@ -16,6 +16,7 @@ const SOURCE_PAGE_SIZE = numericEnv('MANAGEMENT_DASHBOARD_SOURCE_PAGE_SIZE', 500
 const MAX_SOURCE_ROWS = numericEnv('MANAGEMENT_DASHBOARD_MAX_SOURCE_ROWS', 250000, SOURCE_PAGE_SIZE, 1000000);
 const SNAPSHOT_CACHE_TTL_MS = numericEnv('MANAGEMENT_DASHBOARD_CACHE_TTL_MS', 5000, 0, 60000);
 const SNAPSHOT_CACHE_MAX_ENTRIES = numericEnv('MANAGEMENT_DASHBOARD_CACHE_MAX_ENTRIES', 1024, 1, 5000);
+const MAX_REPORTING_RANGE_DAYS = numericEnv('MANAGEMENT_DASHBOARD_MAX_RANGE_DAYS', 366, 1, 3660);
 const snapshotCache = new Map();
 
 const PURCHASE_REQUEST_OPEN_STATUSES = Object.freeze([
@@ -34,14 +35,14 @@ function httpError(status, message) {
   return error;
 }
 
-function normalizeDate(value) {
+function normalizeDate(value, label = 'Date') {
   const candidate = String(value || currentOperationalDate()).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
-    throw httpError(400, 'Date must use YYYY-MM-DD format');
+    throw httpError(400, `${label} must use YYYY-MM-DD format`);
   }
   const parsed = new Date(`${candidate}T00:00:00.000Z`);
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== candidate) {
-    throw httpError(400, 'Date is not a valid calendar date');
+    throw httpError(400, `${label} is not a valid calendar date`);
   }
   return candidate;
 }
@@ -66,6 +67,48 @@ function addUtcDays(date, days) {
   const parsed = new Date(`${date}T00:00:00.000Z`);
   parsed.setUTCDate(parsed.getUTCDate() + days);
   return parsed.toISOString().slice(0, 10);
+}
+
+function inclusiveRangeDays(startDate, endDate) {
+  const startTime = Date.parse(`${startDate}T00:00:00.000Z`);
+  const endTime = Date.parse(`${endDate}T00:00:00.000Z`);
+  return Math.round((endTime - startTime) / 86400000) + 1;
+}
+
+function resolveDateSelection(filters = {}) {
+  const startValue = filters.start_date ?? filters.startDate;
+  const endValue = filters.end_date ?? filters.endDate;
+  const hasStart = String(startValue ?? '').trim() !== '';
+  const hasEnd = String(endValue ?? '').trim() !== '';
+
+  if (hasStart !== hasEnd) {
+    throw httpError(400, 'start_date and end_date must be provided together');
+  }
+
+  if (hasStart && hasEnd) {
+    const rangeStart = normalizeDate(startValue, 'Start date');
+    const rangeEnd = normalizeDate(endValue, 'End date');
+    if (rangeStart > rangeEnd) {
+      throw httpError(400, 'Start date must be on or before end date');
+    }
+    if (inclusiveRangeDays(rangeStart, rangeEnd) > MAX_REPORTING_RANGE_DAYS) {
+      throw httpError(400, `Date range cannot exceed ${MAX_REPORTING_RANGE_DAYS} days`);
+    }
+    return {
+      date: rangeEnd,
+      rangeStart,
+      rangeEnd,
+      aggregateRange: true
+    };
+  }
+
+  const date = normalizeDate(filters.date);
+  return {
+    date,
+    rangeStart: addUtcDays(date, -6),
+    rangeEnd: date,
+    aggregateRange: false
+  };
 }
 
 function collectDescendantIds(rootId, graph) {
@@ -111,6 +154,10 @@ function normalizeDateFields(fields) {
   return [...new Set(fields.map((field) => String(field || '').trim()).filter(Boolean))];
 }
 
+function normalizeOpenStatus(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
 async function listDatedDocuments({
   entity,
   dateFields,
@@ -131,13 +178,13 @@ async function listDatedDocuments({
   });
   const normalizedOpenFields = normalizeDateFields(openStatusFields);
   const normalizedOpenStatuses = [...new Set((openStatuses || [])
-    .map((status) => String(status || '').trim().toLowerCase())
+    .map(normalizeOpenStatus)
     .filter(Boolean))];
   let openClause = '';
   if (normalizedOpenFields.length > 0 && normalizedOpenStatuses.length > 0) {
     const statusExpressions = normalizedOpenFields.map((field) => {
       baseParameters.push(field);
-      return `LOWER(COALESCE(record.data->>$${baseParameters.length}, ''))`;
+      return `REGEXP_REPLACE(LOWER(BTRIM(COALESCE(record.data->>$${baseParameters.length}, ''))), '[[:space:]-]+', '_', 'g')`;
     });
     baseParameters.push(normalizedOpenStatuses);
     const statusesParameter = `$${baseParameters.length}`;
@@ -287,7 +334,7 @@ async function listNormalizedRows({
 
   const keepOpen = Array.isArray(openStatuses) && openStatuses.length > 0;
   const openClause = keepOpen
-    ? `OR LOWER(COALESCE(status, '')) = ANY($5::text[])`
+    ? `OR REGEXP_REPLACE(LOWER(BTRIM(COALESCE(status, ''))), '[[:space:]-]+', '_', 'g') = ANY($5::text[])`
     : '';
   const receiptLinkedClause = includeReceiptLinked && table === 'purchase_orders'
     ? `OR id IN (
@@ -302,7 +349,7 @@ async function listNormalizedRows({
   while (records.length <= requestedMaximum) {
     const pageLimit = Math.min(SOURCE_PAGE_SIZE, requestedMaximum + 1 - records.length);
     const parameters = [[...siteIds], startDate, endDate, pageLimit];
-    if (keepOpen) parameters.push(openStatuses.map((status) => String(status).toLowerCase()));
+    if (keepOpen) parameters.push(openStatuses.map(normalizeOpenStatus));
     parameters.push(records.length);
     const offsetParameter = `$${parameters.length}`;
     const headerResult = await pool.query(
@@ -394,10 +441,21 @@ function pruneSnapshotCache(now = Date.now()) {
   }
 }
 
-function snapshotCacheKey({ view, date, selectedSiteId, accessibleSiteIds }) {
+function snapshotCacheKey({
+  view,
+  date,
+  rangeStart,
+  rangeEnd,
+  aggregateRange,
+  selectedSiteId,
+  accessibleSiteIds
+}) {
   return JSON.stringify([
     view,
     date,
+    rangeStart || null,
+    rangeEnd || null,
+    Boolean(aggregateRange),
     selectedSiteId || null,
     [...accessibleSiteIds].map(String).sort()
   ]);
@@ -435,6 +493,7 @@ async function loadManagementDashboardSnapshot({
   date,
   rangeStart,
   rangeEnd,
+  aggregateRange,
   selectedSiteId,
   selectedSiteIds,
   accessibleSites,
@@ -546,6 +605,8 @@ async function loadManagementDashboardSnapshot({
     date,
     rangeStart,
     rangeEnd,
+    aggregateRange,
+    ...(aggregateRange ? { startDate: rangeStart, endDate: rangeEnd } : {}),
     selectedSiteId,
     selectedSiteIds: [...selectedSiteIds],
     sites: accessibleSites,
@@ -568,9 +629,12 @@ async function loadManagementDashboardSnapshot({
 
 export async function getManagementDashboardSnapshot(user, filters = {}) {
   const view = assertManagementDashboardViewAccess(user, filters.view);
-  const date = normalizeDate(filters.date);
-  const rangeStart = addUtcDays(date, -6);
-  const rangeEnd = date;
+  const {
+    date,
+    rangeStart,
+    rangeEnd,
+    aggregateRange
+  } = resolveDateSelection(filters);
   let selectedSiteId = String(filters.site_id || filters.siteId || '').trim() || null;
   const scope = await getLocationScope(user);
   const accessibleSites = (scope.sites || []).filter((site) => scope.accessibleSiteIds.has(String(site.id)));
@@ -597,6 +661,9 @@ export async function getManagementDashboardSnapshot(user, filters = {}) {
   const cacheKey = snapshotCacheKey({
     view,
     date,
+    rangeStart,
+    rangeEnd,
+    aggregateRange,
     selectedSiteId,
     accessibleSiteIds: scope.accessibleSiteIds
   });
@@ -607,6 +674,7 @@ export async function getManagementDashboardSnapshot(user, filters = {}) {
     date,
     rangeStart,
     rangeEnd,
+    aggregateRange,
     selectedSiteId,
     selectedSiteIds,
     accessibleSites,
@@ -617,6 +685,9 @@ export async function getManagementDashboardSnapshot(user, filters = {}) {
 
 export const managementDashboardInternals = {
   normalizeDate,
+  normalizeOpenStatus,
+  resolveDateSelection,
+  inclusiveRangeDays,
   collectDescendantIds,
   filterBySelectedSites,
   applyInventoryRiskCounts,

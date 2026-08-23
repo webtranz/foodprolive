@@ -269,6 +269,8 @@ export const base44 = {
       return apiRequest(`/api/dashboard/management${buildQueryString({
         view: filters.view,
         date: filters.date,
+        start_date: filters.start_date ?? filters.startDate,
+        end_date: filters.end_date ?? filters.endDate,
         site_id: filters.site_id ?? filters.siteId
       })}`);
     }
