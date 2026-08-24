@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 import {
   SPECIAL_EVENT_STATUSES,
@@ -93,6 +94,22 @@ const cases = [
     }
   },
   {
+    name: 'uses the assigned fulfillment Store inventory instead of Project-level stock',
+    run() {
+      const snapshot = calculateEventPlanningSnapshot(
+        { ...linkedEvent, fulfillment_store_id: 'store-1' },
+        [linkedRecipe],
+        eventIngredients,
+        [
+          { site_id: 'site-1', ingredient_id: 'ingredient-main', quantity: 100, unit: 'kg' },
+          { site_id: 'store-1', ingredient_id: 'ingredient-main', quantity: 10, unit: 'kg' }
+        ]
+      );
+      assert.equal(snapshot.ingredient_requirements[0].available_stock, 10);
+      assert.equal(snapshot.ingredient_requirements[0].shortage_quantity, 52.5);
+    }
+  },
+  {
     name: 'recalculates event cost and detects budget overruns when guest count changes',
     run() {
       const scaled = calculateEventPlanningSnapshot(
@@ -137,6 +154,124 @@ const cases = [
       assert.equal(payload.total_planned_cost, 3500);
       assert.equal(payload.status, SPECIAL_EVENT_STATUSES.draft);
       assert.deepEqual(payload.meals.map((meal) => meal.meal_type), ['breakfast', 'dinner']);
+    }
+  },
+  {
+    name: 'ignores client-controlled handoff linkage when creating a special event',
+    run() {
+      const payload = buildSpecialEventWritePayload({
+        event_name: 'Forged Handoff',
+        site_id: 'project-1',
+        plan_date: '2026-05-20',
+        production_plan_status: 'generated',
+        production_plan_ids: ['production-forged'],
+        production_generated_at: '2020-01-01T00:00:00.000Z',
+        production_generated_by: 'attacker@example.com',
+        production_generated_by_name: 'Attacker',
+        procurement_pr_status: 'approved',
+        procurement_pr_id: 'pr-forged',
+        procurement_pr_number: 'PR-FORGED',
+        procurement_generated_at: '2020-01-01T00:00:00.000Z',
+        procurement_generated_by: 'attacker@example.com',
+        procurement_generated_by_name: 'Attacker',
+        linked_recipes: [{
+          recipe_id: 'recipe-main',
+          recipe_name: 'Gala Main Course',
+          production_status: 'completed'
+        }]
+      });
+
+      assert.equal(payload.production_plan_status, 'not_generated');
+      assert.deepEqual(payload.production_plan_ids, []);
+      assert.equal(payload.production_generated_at, null);
+      assert.equal(payload.production_generated_by, null);
+      assert.equal(payload.production_generated_by_name, null);
+      assert.equal(payload.procurement_pr_status, 'not_created');
+      assert.equal(payload.procurement_pr_id, null);
+      assert.equal(payload.procurement_pr_number, null);
+      assert.equal(payload.procurement_generated_at, null);
+      assert.equal(payload.procurement_generated_by, null);
+      assert.equal(payload.procurement_generated_by_name, null);
+      assert.equal(payload.linked_recipes[0].production_status, 'not_generated');
+    }
+  },
+  {
+    name: 'preserves server-owned handoff linkage when updating a special event',
+    run() {
+      const existing = {
+        event_name: 'Existing Event',
+        plan_date: '2026-05-20',
+        production_plan_status: 'generated',
+        production_plan_ids: ['production-1'],
+        production_generated_at: '2026-05-19T10:00:00.000Z',
+        production_generated_by: 'server@example.com',
+        production_generated_by_name: 'Server Actor',
+        procurement_pr_status: 'pending',
+        procurement_pr_id: 'pr-1',
+        procurement_pr_number: 'PR-001',
+        procurement_generated_at: '2026-05-19T11:00:00.000Z',
+        procurement_generated_by: 'procurement@example.com',
+        procurement_generated_by_name: 'Procurement Actor',
+        linked_recipes: [{
+          recipe_id: 'recipe-main',
+          recipe_name: 'Gala Main Course',
+          production_status: 'in_progress'
+        }]
+      };
+      const payload = buildSpecialEventWritePayload({
+        event_name: 'Updated Event Name',
+        production_plan_status: 'not_generated',
+        production_plan_ids: ['production-forged'],
+        production_generated_at: '2020-01-01T00:00:00.000Z',
+        production_generated_by: 'attacker@example.com',
+        production_generated_by_name: 'Attacker',
+        procurement_pr_status: 'approved',
+        procurement_pr_id: 'pr-forged',
+        procurement_pr_number: 'PR-FORGED',
+        procurement_generated_at: '2020-01-01T00:00:00.000Z',
+        procurement_generated_by: 'attacker@example.com',
+        procurement_generated_by_name: 'Attacker',
+        linked_recipes: [
+          {
+            recipe_id: 'recipe-main',
+            recipe_name: 'Updated Main Course',
+            production_status: 'completed'
+          },
+          {
+            recipe_id: 'recipe-new',
+            recipe_name: 'New Dish',
+            production_status: 'completed'
+          }
+        ]
+      }, existing);
+
+      assert.equal(payload.production_plan_status, 'generated');
+      assert.deepEqual(payload.production_plan_ids, ['production-1']);
+      assert.notEqual(payload.production_plan_ids, existing.production_plan_ids);
+      assert.equal(payload.production_generated_at, '2026-05-19T10:00:00.000Z');
+      assert.equal(payload.production_generated_by, 'server@example.com');
+      assert.equal(payload.production_generated_by_name, 'Server Actor');
+      assert.equal(payload.procurement_pr_status, 'pending');
+      assert.equal(payload.procurement_pr_id, 'pr-1');
+      assert.equal(payload.procurement_pr_number, 'PR-001');
+      assert.equal(payload.procurement_generated_at, '2026-05-19T11:00:00.000Z');
+      assert.equal(payload.procurement_generated_by, 'procurement@example.com');
+      assert.equal(payload.procurement_generated_by_name, 'Procurement Actor');
+      assert.equal(payload.linked_recipes[0].production_status, 'in_progress');
+      assert.equal(payload.linked_recipes[1].production_status, 'not_generated');
+    }
+  },
+  {
+    name: 'server validates event handoff ownership and supports audited regeneration',
+    run() {
+      const serverSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+      assert.match(serverSource, /purchaseRequestCandidate\.source_event_id[\s\S]*hydratedRecord\.id/);
+      assert.match(serverSource, /purchaseRequestCandidate\.site_id[\s\S]*expectedProcurementSiteId/);
+      assert.match(serverSource, /getPurchaseRequestBySourceEventId\(existing\.id, client\)/);
+      assert.match(serverSource, /source_event_id: existing\.id/);
+      assert.match(serverSource, /site_id: fulfillmentStore\.id/);
+      assert.match(serverSource, /PRODUCTION_REOPENED_FROM_SPECIAL_EVENT/);
+      assert.match(serverSource, /\['rejected', 'cancelled'\]\.includes\(lockedStatus\)/);
     }
   },
   {

@@ -22,6 +22,8 @@ import {
 } from '@/lib/rolePermissions';
 import { pagePermissionMap } from '@/lib/pageAccess';
 import {
+  getRequiredSystemRolePermissions,
+  getSystemRoleDefinition,
   isManagementScopeSiteType,
   mergeSystemRoleProfiles,
   resolveManagementDashboardView
@@ -95,8 +97,11 @@ function normalizeRoleLabel(role) {
   return role?.name || role?.role_key?.replace(/_/g, ' ') || 'Role';
 }
 
-function preparePermissionsForEditing(permissions = []) {
-  const existing = Array.from(new Set((permissions || []).filter(Boolean)));
+function preparePermissionsForEditing(permissions = [], requiredPermissions = []) {
+  const existing = Array.from(new Set([
+    ...(requiredPermissions || []),
+    ...(permissions || [])
+  ].filter(Boolean)));
   if (existing.includes(GRANULAR_PAGE_ACCESS_PERMISSION)) {
     return existing;
   }
@@ -234,7 +239,18 @@ function RoleLocationFields({
   );
 }
 
-function PermissionChecklist({ selected, onToggleMany }) {
+function PermissionChecklist({ selected = [], required = [], onToggleMany }) {
+  const requiredPermissions = new Set(required);
+  const selectedPermissions = Array.from(new Set([...required, ...selected]));
+  const toggleEditablePermissions = (permissions, checked) => {
+    const editablePermissions = checked
+      ? permissions
+      : permissions.filter((permission) => !requiredPermissions.has(permission));
+    if (editablePermissions.length > 0) {
+      onToggleMany(editablePermissions, checked);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
@@ -243,7 +259,7 @@ function PermissionChecklist({ selected, onToggleMany }) {
           <p className="text-xs text-emerald-700">Select the pages this role can open, then choose its actions and approvals.</p>
         </div>
         <Badge variant="outline" className="border-emerald-300 bg-white text-emerald-800">
-          {selected.filter((permission) => permission !== GRANULAR_PAGE_ACCESS_PERMISSION).length} selected
+          {selectedPermissions.filter((permission) => permission !== GRANULAR_PAGE_ACCESS_PERMISSION).length} selected
         </Badge>
       </div>
 
@@ -252,17 +268,21 @@ function PermissionChecklist({ selected, onToggleMany }) {
           ...section.subsections.map((subsection) => subsection.key),
           ...section.capabilities.map((capability) => capability.key)
         ];
-        const selectedCount = sectionPermissions.filter((permission) => selected.includes(permission)).length;
-        const sectionChecked = selectedCount === sectionPermissions.length;
-        const sectionState = selectedCount > 0 && !sectionChecked ? 'indeterminate' : sectionChecked;
+        const selectedCount = sectionPermissions.filter((permission) => selectedPermissions.includes(permission)).length;
+        const editablePermissions = sectionPermissions.filter((permission) => !requiredPermissions.has(permission));
+        const editableCount = editablePermissions.length;
+        const editableSelectedCount = editablePermissions.filter((permission) => selectedPermissions.includes(permission)).length;
+        const sectionChecked = editableCount > 0 && editableSelectedCount === editableCount;
+        const sectionState = editableSelectedCount > 0 && !sectionChecked ? 'indeterminate' : sectionChecked;
 
         return (
           <div key={section.key} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
-              <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
+              <label className={`flex min-w-0 flex-1 items-start gap-3 ${editableCount ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}>
                 <Checkbox
                   checked={sectionState}
-                  onCheckedChange={(checked) => onToggleMany(sectionPermissions, Boolean(checked))}
+                  disabled={editableCount === 0}
+                  onCheckedChange={(checked) => toggleEditablePermissions(sectionPermissions, Boolean(checked))}
                   className="mt-0.5"
                 />
                 <span>
@@ -271,7 +291,7 @@ function PermissionChecklist({ selected, onToggleMany }) {
                 </span>
               </label>
               <Badge variant="outline" className="bg-white text-slate-600">
-                {selectedCount}/{sectionPermissions.length}
+                {selectedCount}/{sectionPermissions.length} total · {editableSelectedCount}/{editableCount} customizable
               </Badge>
             </div>
 
@@ -279,34 +299,44 @@ function PermissionChecklist({ selected, onToggleMany }) {
               <div>
                 <h5 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Subsections</h5>
                 <div className="grid gap-2 md:grid-cols-2">
-                  {section.subsections.map((subsection) => (
-                    <label key={subsection.key} className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 px-3 py-2.5 hover:border-emerald-300 hover:bg-emerald-50/40">
-                      <Checkbox
-                        checked={selected.includes(subsection.key)}
-                        onCheckedChange={(checked) => onToggleMany([subsection.key], Boolean(checked))}
-                        className="mt-0.5"
-                      />
-                      <span>
-                        <span className="block text-sm font-medium text-slate-800">{subsection.label}</span>
-                        <span className="mt-0.5 block text-xs leading-4 text-slate-500">{subsection.description}</span>
-                      </span>
-                    </label>
-                  ))}
+                  {section.subsections.map((subsection) => {
+                    const isRequired = requiredPermissions.has(subsection.key);
+                    return (
+                      <label key={subsection.key} className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${isRequired ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-500' : 'cursor-pointer border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40'}`}>
+                        <Checkbox
+                          checked={selectedPermissions.includes(subsection.key)}
+                          disabled={isRequired}
+                          onCheckedChange={(checked) => toggleEditablePermissions([subsection.key], Boolean(checked))}
+                          className="mt-0.5"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className={`block text-sm font-medium ${isRequired ? 'text-slate-500' : 'text-slate-800'}`}>{subsection.label}</span>
+                          <span className="mt-0.5 block text-xs leading-4 text-slate-500">{subsection.description}</span>
+                        </span>
+                        {isRequired ? <Badge variant="secondary" className="shrink-0 text-[10px]">Built-in</Badge> : null}
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
 
               <div>
                 <h5 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Actions & approvals</h5>
                 <div className="grid gap-2 md:grid-cols-2">
-                  {section.capabilities.map((capability) => (
-                    <label key={capability.key} className="flex cursor-pointer items-center gap-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                      <Checkbox
-                        checked={selected.includes(capability.key)}
-                        onCheckedChange={(checked) => onToggleMany([capability.key], Boolean(checked))}
-                      />
-                      <span>{capability.label}</span>
-                    </label>
-                  ))}
+                  {section.capabilities.map((capability) => {
+                    const isRequired = requiredPermissions.has(capability.key);
+                    return (
+                      <label key={capability.key} className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${isRequired ? 'cursor-not-allowed bg-slate-100 text-slate-500' : 'cursor-pointer bg-slate-50 text-slate-700'}`}>
+                        <Checkbox
+                          checked={selectedPermissions.includes(capability.key)}
+                          disabled={isRequired}
+                          onCheckedChange={(checked) => toggleEditablePermissions([capability.key], Boolean(checked))}
+                        />
+                        <span className="min-w-0 flex-1">{capability.label}</span>
+                        {isRequired ? <Badge variant="secondary" className="shrink-0 text-[10px]">Built-in</Badge> : null}
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -319,6 +349,8 @@ function PermissionChecklist({ selected, onToggleMany }) {
 
 export default function UserRoleManagement() {
   const { can, loading: permissionLoading } = usePermissions();
+  const canManageUsers = can('manage_users');
+  const canManageRoles = can('manage_roles');
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('users');
   const [createOpen, setCreateOpen] = useState(false);
@@ -334,19 +366,22 @@ export default function UserRoleManagement() {
   const [roleForm, setRoleForm] = useState(emptyRoleForm);
   const [editRoleForm, setEditRoleForm] = useState(emptyRoleForm);
 
-  const { data: users = [], isLoading } = useQuery({
+  const { data: users = [], isLoading: usersLoading, error: usersQueryError } = useQuery({
     queryKey: ['users'],
-    queryFn: () => base44.entities.User.list()
+    queryFn: () => base44.entities.User.list(),
+    enabled: canManageUsers
   });
 
-  const { data: sites = [] } = useQuery({
+  const { data: sites = [], error: sitesQueryError } = useQuery({
     queryKey: ['sites'],
-    queryFn: () => base44.entities.Site.list()
+    queryFn: () => base44.entities.Site.list(),
+    enabled: canManageUsers
   });
 
-  const { data: roleProfiles = [] } = useQuery({
+  const { data: roleProfiles = [], error: rolesQueryError } = useQuery({
     queryKey: ['roleProfiles'],
-    queryFn: () => base44.entities.RoleProfile.list('name', 200)
+    queryFn: () => base44.entities.RoleProfile.list('name', 200),
+    enabled: canManageRoles
   });
 
   const roots = useMemo(() => sites.filter((site) => !site.parent_site_id), [sites]);
@@ -469,7 +504,11 @@ export default function UserRoleManagement() {
   });
 
   const updateRoleMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.RoleProfile.update(id, data),
+    mutationFn: ({ id, data, materializeFallback = false }) => (
+      materializeFallback
+        ? base44.entities.RoleProfile.create(data)
+        : base44.entities.RoleProfile.update(id, data)
+    ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['roleProfiles'] });
       queryClient.invalidateQueries({ queryKey: ['users'] });
@@ -497,13 +536,14 @@ export default function UserRoleManagement() {
   };
 
   const openEditRole = (role) => {
+    const requiredPermissions = getRequiredSystemRolePermissions(role.role_key);
     setEditingRole(role);
     setEditRoleForm({
       role_key: role.role_key || '',
       name: role.name || '',
       description: role.description || '',
       access_level: role.access_level || 'user',
-      permissions: preparePermissionsForEditing(role.permissions),
+      permissions: preparePermissionsForEditing(role.permissions, requiredPermissions),
       is_active: role.is_active !== false
     });
     setRoleError('');
@@ -588,32 +628,50 @@ export default function UserRoleManagement() {
     event.preventDefault();
     if (!editingRole) return;
     setRoleError('');
+    const builtIn = getSystemRoleDefinition(editingRole.role_key);
+    const permissions = normalizeGranularPermissions([
+      ...(builtIn?.permissions || []),
+      ...editRoleForm.permissions
+    ]);
     updateRoleMutation.mutate({
       id: editingRole.id,
+      materializeFallback: editingRole.is_fallback === true,
       data: {
         ...editRoleForm,
+        role_key: builtIn?.role_key || editRoleForm.role_key,
         name: editRoleForm.name.trim(),
         description: editRoleForm.description.trim(),
-        permissions: normalizeGranularPermissions(editRoleForm.permissions)
+        access_level: builtIn?.access_level || editRoleForm.access_level,
+        permissions,
+        ...(builtIn ? { is_system: true } : {})
       }
     });
   };
 
-  if (permissionLoading || isLoading) {
+  if (permissionLoading || (canManageUsers && usersLoading)) {
     return <div className="p-8 text-slate-500">Loading...</div>;
   }
 
-  if (!can('manage_users')) {
+  if (!canManageUsers && !canManageRoles) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-8">
         <Card className="max-w-sm w-full text-center p-8">
           <ShieldAlert className="w-12 h-12 text-red-400 mx-auto mb-4" />
           <h2 className="text-lg font-semibold text-slate-800">Access Denied</h2>
-          <p className="text-sm text-slate-500 mt-2">Only administrators can access this page.</p>
+          <p className="text-sm text-slate-500 mt-2">You need User Management or Role Management permission to access this page.</p>
         </Card>
       </div>
     );
   }
+
+  const visibleTab = activeTab === 'users' && !canManageUsers
+    ? 'roles'
+    : activeTab === 'roles' && !canManageRoles
+      ? 'users'
+      : activeTab;
+  const queryError = visibleTab === 'users'
+    ? (usersQueryError || sitesQueryError)
+    : rolesQueryError;
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
@@ -622,21 +680,27 @@ export default function UserRoleManagement() {
           title="User & Role Management"
           description="Manage custom roles, standard operational roles, and project-specific user access"
         >
-          {activeTab === 'users' ? (
+          {visibleTab === 'users' && canManageUsers ? (
             <Button onClick={() => { setCreateForm(emptyUserForm); setUserError(''); setCreateOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700">
               <UserPlus className="w-4 h-4 mr-2" /> Create User
             </Button>
-          ) : (
+          ) : canManageRoles ? (
             <Button onClick={() => { setRoleForm(emptyRoleForm); setRoleError(''); setRoleOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700">
               <Shield className="w-4 h-4 mr-2" /> Create Role
             </Button>
-          )}
+          ) : null}
         </PageHeader>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="users">Users</TabsTrigger>
-            <TabsTrigger value="roles">Roles & Permissions</TabsTrigger>
+        {queryError ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {queryError.message || 'Unable to load this management section.'}
+          </div>
+        ) : null}
+
+        <Tabs value={visibleTab} onValueChange={setActiveTab}>
+          <TabsList className={`grid w-full ${canManageUsers && canManageRoles ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {canManageUsers ? <TabsTrigger value="users">Users</TabsTrigger> : null}
+            {canManageRoles ? <TabsTrigger value="roles">Roles & Permissions</TabsTrigger> : null}
           </TabsList>
 
           <TabsContent value="users" className="space-y-6">
@@ -722,7 +786,13 @@ export default function UserRoleManagement() {
                                   : `${user.visibility_scope || 'subtree'} • ${assignedCount} assigned`}
                           </TableCell>
                           <TableCell>
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditUser(user)}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              aria-label={`Edit ${user.full_name || user.email}`}
+                              onClick={() => openEditUser(user)}
+                            >
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
                           </TableCell>
@@ -749,6 +819,7 @@ export default function UserRoleManagement() {
                       <TableHead>Role</TableHead>
                       <TableHead>Access Level</TableHead>
                       <TableHead>Permissions</TableHead>
+                      <TableHead>Type</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
@@ -779,18 +850,28 @@ export default function UserRoleManagement() {
                               : 0}{role.is_fallback && !role.permissions?.length ? '' : ' permissions'}
                           </TableCell>
                           <TableCell>
-                            <Badge variant={role.is_active === false ? 'secondary' : 'default'}>
-                              {role.is_system ? 'System' : 'Custom'}
+                            <Badge variant="outline">
+                              {role.is_system ? 'Built-in' : 'Custom'}
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            {role.is_fallback || role.is_system ? (
-                              <span className="text-xs text-slate-400">Built-in</span>
-                            ) : (
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditRole(role)}>
+                            <Badge variant={role.is_active === false ? 'secondary' : 'default'}>
+                              {role.is_active === false ? 'Inactive' : 'Active'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              {role.is_system ? <span className="text-xs text-slate-400">Built-in</span> : null}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                aria-label={`Edit ${role.name}`}
+                                onClick={() => openEditRole(role)}
+                              >
                                 <Pencil className="w-3.5 h-3.5" />
                               </Button>
-                            )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -1021,12 +1102,13 @@ export default function UserRoleManagement() {
 
             <PermissionChecklist
               selected={editRoleForm.permissions}
+              required={getRequiredSystemRolePermissions(editingRole?.role_key)}
               onToggleMany={(permissions, checked) => togglePermissions(setEditRoleForm, permissions, checked)}
             />
 
             {editingRole?.is_system ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                System roles are editable for visibility and access tuning, but the role key stays locked for audit consistency.
+                Required permissions are locked. You can add optional permissions, while the role key and access level stay fixed for audit consistency.
               </div>
             ) : null}
 

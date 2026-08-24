@@ -202,6 +202,29 @@ async function getPurchaseRequestById(id, executor = pool) {
   };
 }
 
+async function getPurchaseRequestBySourceEventId(sourceEventId, executor = pool) {
+  const normalizedSourceEventId = normalizeText(sourceEventId);
+  if (!normalizedSourceEventId) return null;
+
+  const result = await query(
+    `SELECT *
+     FROM purchase_requests
+     WHERE source_type = 'special_event'
+       AND source_event_id = $1
+     LIMIT 1`,
+    [normalizedSourceEventId],
+    executor
+  );
+  if (!result.rowCount) return null;
+
+  const request = result.rows[0];
+  const items = await getRequestItems([request.id], executor);
+  return {
+    ...request,
+    items
+  };
+}
+
 function normalizeRequestItems(items = []) {
   return (Array.isArray(items) ? items : []).map((item) => {
     const requestedQuantity = toNumber(item.requested_quantity, 0);
@@ -224,7 +247,7 @@ function normalizeRequestItems(items = []) {
   }).filter((item) => item.ingredient_name && item.requested_quantity > 0);
 }
 
-async function createPurchaseRequest(payload, actor) {
+async function createPurchaseRequest(payload, actor, executor = null) {
   const items = normalizeRequestItems(payload.items || []);
   if (!items.length) {
     const error = new Error('At least one purchase request item is required');
@@ -232,7 +255,7 @@ async function createPurchaseRequest(payload, actor) {
     throw error;
   }
 
-  return withTransaction(async (client) => {
+  const createWithExecutor = async (client) => {
     await validateProcurementReferences({
       siteId: payload.site_id,
       items
@@ -246,8 +269,8 @@ async function createPurchaseRequest(payload, actor) {
       `INSERT INTO purchase_requests (
         id, request_number, site_id, site_name, request_date, needed_by, requested_by,
         requested_by_name, priority, status, approval_role, auto_generated, source_type,
-        notes, total_estimated_cost, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW())`,
+        source_event_id, notes, total_estimated_cost, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),NOW())`,
       [
         id,
         requestNumber,
@@ -262,6 +285,7 @@ async function createPurchaseRequest(payload, actor) {
         normalizeText(payload.approval_role || 'manager') || 'manager',
         payload.auto_generated === true,
         normalizeText(payload.source_type || 'manual') || 'manual',
+        normalizeText(payload.source_event_id) || null,
         normalizeText(payload.notes) || null,
         totalEstimatedCost
       ]
@@ -295,7 +319,9 @@ async function createPurchaseRequest(payload, actor) {
     }
 
     return getPurchaseRequestById(id, client);
-  });
+  };
+
+  return executor ? createWithExecutor(executor) : withTransaction(createWithExecutor);
 }
 
 async function approvePurchaseRequest(id, payload, actor) {
@@ -1095,6 +1121,7 @@ export {
   deleteSupplier,
   listPurchaseRequests,
   getPurchaseRequestById,
+  getPurchaseRequestBySourceEventId,
   createPurchaseRequest,
   approvePurchaseRequest,
   autoGeneratePurchaseRequestFromLowStock,

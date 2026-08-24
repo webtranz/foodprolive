@@ -22,6 +22,7 @@ import {
 } from './utilities.js';
 import { auditAction } from './audit.js';
 import { prepareEntityPayload } from './entityPreparation.js';
+import { resolveProductionFulfillmentStore } from '../shared/productionFulfillment.js';
 import { materializeStoredReference, removeStoredReference } from './objectStorage.js';
 
 const MAX_RECORDED_ERRORS = 100;
@@ -106,13 +107,28 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
       await client.query('SAVEPOINT bulk_upload_row');
       try {
         authorizeEntityAction(user, job.entity_name, 'create', staged.payload);
-        const preparedPayload = await prepareEntityPayload(
+        let preparedPayload = await prepareEntityPayload(
           user,
           job.entity_name,
           staged.payload,
           null,
           context
         );
+        if (job.entity_name === 'Production') {
+          const requestedStatus = String(preparedPayload.status || 'planned').toLowerCase();
+          if (!['draft', 'planned'].includes(requestedStatus)) {
+            const error = new Error('Bulk-uploaded Production rows must start as Production Created.');
+            error.status = 409;
+            throw error;
+          }
+          const fulfillmentStore = resolveProductionFulfillmentStore(preparedPayload, context.scope.sites);
+          preparedPayload = {
+            ...preparedPayload,
+            status: 'planned',
+            fulfillment_store_id: fulfillmentStore.id,
+            fulfillment_store_name: fulfillmentStore.name || null
+          };
+        }
         assertPayloadLocationAccess(user, job.entity_name, preparedPayload, context.scope);
         const created = await createDocument(job.entity_name, preparedPayload, client);
         if (job.entity_name === 'Recipe' && Array.isArray(context.recipeCatalog)) {

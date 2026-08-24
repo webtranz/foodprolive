@@ -5,6 +5,7 @@ import {
 import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
 import { formatRecipeQuantity } from '../../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../../shared/itemCode.js';
+import { resolveProductionFulfillmentStore } from '../../shared/productionFulfillment.js';
 
 export const PRODUCTION_MEAL_PERIODS = Object.freeze([
   { key: 'breakfast', label: 'Breakfast', time_range: '7:00 AM – 10:00 AM' },
@@ -43,7 +44,8 @@ export function normalizeProductionMealType(value) {
 }
 
 function resolveProductionCost(production, ingredientMap) {
-  if (String(production?.status || '').toLowerCase() === 'completed') {
+  const isCompleted = String(production?.status || '').toLowerCase() === 'completed';
+  if (isCompleted) {
     const postedCost = production?.production_cost_total ?? production?.ingredient_cost_total;
     if (postedCost !== null && postedCost !== undefined && postedCost !== '') {
       return round(postedCost);
@@ -52,7 +54,10 @@ function resolveProductionCost(production, ingredientMap) {
 
   const calculated = (Array.isArray(production?.ingredients_used) ? production.ingredients_used : [])
     .reduce((sum, line) => (
-      sum + calculateProductionIngredientCost(line, ingredientMap.get(String(line?.ingredient_id || '')))
+      sum + calculateProductionIngredientCost(
+        isCompleted ? line : { ...line, actual_quantity: null },
+        ingredientMap.get(String(line?.ingredient_id || ''))
+      )
     ), 0);
 
   return round(calculated || production?.estimated_batch_cost || 0);
@@ -126,14 +131,36 @@ function buildInventoryMap(inventory, ingredientMap) {
   return map;
 }
 
-function buildShortages(productions, ingredientMap, inventoryMap) {
+function resolvePlanningInventorySite(production, sites = []) {
+  if (production?.fulfillment_store_id) {
+    return {
+      id: textValue(production.fulfillment_store_id),
+      name: production.fulfillment_store_name || production.site_name || ''
+    };
+  }
+  if (!sites.length) {
+    return { id: textValue(production?.site_id), name: production?.site_name || '' };
+  }
+  try {
+    const store = resolveProductionFulfillmentStore(production, sites);
+    return { id: textValue(store.id), name: store.name || production?.site_name || '' };
+  } catch {
+    return {
+      id: `unrouted:${production?.id || 'production'}`,
+      name: 'Fulfillment Store Required'
+    };
+  }
+}
+
+function buildShortages(productions, ingredientMap, inventoryMap, sites) {
   const demandMap = new Map();
 
   productions.forEach((production) => {
     const workflowStatus = textValue(production?.status).toLowerCase();
     if (workflowStatus === 'completed' || NON_DEMAND_STATUSES.has(workflowStatus)) return;
 
-    const siteId = textValue(production?.site_id);
+    const inventorySite = resolvePlanningInventorySite(production, sites);
+    const siteId = inventorySite.id;
     (Array.isArray(production?.ingredients_used) ? production.ingredients_used : []).forEach((line) => {
       const ingredientId = textValue(line?.ingredient_id);
       if (!siteId || !ingredientId) return;
@@ -141,7 +168,11 @@ function buildShortages(productions, ingredientMap, inventoryMap) {
       const inventoryRow = inventoryMap.get(`${siteId}::${ingredientId}`);
       const targetUnit = inventoryRow?.unit || ingredient.unit || line.unit || 'unit';
       const requiredQuantity = convertIngredientQuantity(
-        line.actual_quantity ?? line.planned_quantity ?? line.adjusted_quantity ?? line.required_quantity ?? 0,
+        line.planned_quantity
+          ?? line.yield_adjusted_quantity
+          ?? line.required_quantity
+          ?? line.adjusted_quantity
+          ?? 0,
         line.unit || targetUnit,
         targetUnit,
         ingredient
@@ -149,7 +180,7 @@ function buildShortages(productions, ingredientMap, inventoryMap) {
       const key = `${siteId}::${ingredientId}`;
       const demand = demandMap.get(key) || {
         site_id: siteId,
-        site_name: production.site_name || inventoryRow?.site_name || '',
+        site_name: inventorySite.name || inventoryRow?.site_name || '',
         ingredient_id: ingredientId,
         item_code: getItemCodeFromRecords([ingredient, line, inventoryRow]),
         ingredient_name: line.ingredient_name || inventoryRow?.ingredient_name || ingredient.name || ingredientId,
@@ -214,12 +245,13 @@ export function buildProductionPlanningDashboard({
   productions = [],
   recipes = [],
   ingredients = [],
-  inventory = []
+  inventory = [],
+  sites = []
 } = {}) {
   const recipeMap = new Map(recipes.map((recipe) => [String(recipe?.id || ''), recipe]));
   const ingredientMap = new Map(ingredients.map((ingredient) => [String(ingredient?.id || ''), ingredient]));
   const inventoryMap = buildInventoryMap(inventory, ingredientMap);
-  const shortages = buildShortages(productions, ingredientMap, inventoryMap);
+  const shortages = buildShortages(productions, ingredientMap, inventoryMap, sites);
 
   const items = productions.map((production) => {
     const recipe = recipeMap.get(String(production?.recipe_id || '')) || null;
@@ -304,9 +336,14 @@ export function buildProductionPlanExportRows(dashboard) {
     const productionIngredients = Array.isArray(item.ingredient_lines)
       ? item.ingredient_lines
       : [];
+    const useActualQuantities = item.workflow_status === 'completed';
     return {
       production_date: item.production.production_date || '',
+      project_id: item.production.site_id || '',
+      project_name: item.production.site_name || '',
       site: item.production.site_name || '',
+      fulfillment_store_id: item.production.fulfillment_store_id || '',
+      fulfillment_store_name: item.production.fulfillment_store_name || '',
       meal_period: item.meal_type,
       dish_name: item.recipe_name,
       required_portions: item.required_portions,
@@ -327,7 +364,11 @@ export function buildProductionPlanExportRows(dashboard) {
         )).join('; '),
       ingredient_quantities: productionIngredients.map((line) => (
         `${itemIdentityLabel(line)}: ${formatRecipeQuantity(
-          line.actual_quantity ?? line.planned_quantity ?? line.yield_adjusted_quantity ?? line.required_quantity ?? 0,
+          (useActualQuantities ? line.actual_quantity : null)
+            ?? line.planned_quantity
+            ?? line.yield_adjusted_quantity
+            ?? line.required_quantity
+            ?? 0,
           line.unit
         )} ${line.unit || ''}`.trim()
       )).join('; '),

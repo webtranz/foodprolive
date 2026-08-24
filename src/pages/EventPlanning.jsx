@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle, CalendarDays, Check, CheckCircle2, CircleDollarSign, ClipboardCheck,
@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { formatCurrency, formatNumber } from '@/lib/currency';
 import { getItemCodeFromRecords } from '../../shared/itemCode.js';
+import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 
 const MEAL_PERIODS = ['breakfast', 'lunch', 'dinner', 'snack'];
 const SERVICE_TYPES = ['buffet', 'plated_service', 'packed_meal', 'dining_hall'];
@@ -35,6 +36,7 @@ const emptyForm = () => ({
   event_name: '',
   event_date: format(new Date(), 'yyyy-MM-dd'),
   site_id: '',
+  fulfillment_store_id: '',
   event_location: '',
   expected_participants: '100',
   meal_period: 'lunch',
@@ -65,6 +67,7 @@ function formFromEvent(event = {}) {
     event_name: event.event_name || '',
     event_date: event.event_date || event.plan_date || '',
     site_id: event.site_id || '',
+    fulfillment_store_id: event.fulfillment_store_id || '',
     event_location: event.event_location || '',
     expected_participants: String(event.expected_participants || ''),
     meal_period: event.meal_period || event.meals?.[0]?.meal_type || 'lunch',
@@ -89,12 +92,17 @@ function formFromEvent(event = {}) {
 
 function buildPayload(form, sites) {
   const site = sites.find((item) => String(item.id) === String(form.site_id));
+  const fulfillmentStore = sites.find(
+    (item) => String(item.id) === String(form.fulfillment_store_id)
+  );
   return {
     event_name: form.event_name.trim(),
     event_date: form.event_date,
     plan_date: form.event_date,
     site_id: form.site_id,
     site_name: site?.name || '',
+    fulfillment_store_id: form.fulfillment_store_id,
+    fulfillment_store_name: fulfillmentStore?.name || '',
     event_location: form.event_location.trim(),
     expected_participants: number(form.expected_participants),
     total_expected_servings: number(form.expected_participants),
@@ -159,6 +167,15 @@ export default function EventPlanning() {
   });
   const events = eventsQuery.data || [];
   const sites = sitesQuery.data || [];
+  const projectSites = useMemo(() => sites.filter((site) => (
+    site.is_active !== false
+    && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT
+  )), [sites]);
+  const fulfillmentStoreOptions = useMemo(() => sites.filter((site) => (
+    site.is_active !== false
+    && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
+    && String(site.parent_site_id || '') === String(formData.site_id || '')
+  )), [formData.site_id, sites]);
   const recipes = (recipesQuery.data || []).filter((recipe) => recipe.is_active !== false);
   const ingredientMap = new Map((ingredientsQuery.data || []).map((ingredient) => [ingredient.id, ingredient]));
 
@@ -166,6 +183,21 @@ export default function EventPlanning() {
     if (!selectedId && events[0]?.id) setSelectedId(events[0].id);
     if (selectedId && events.length && !events.some((event) => event.id === selectedId)) setSelectedId(events[0].id);
   }, [events, selectedId]);
+
+  useEffect(() => {
+    if (!formOpen || !formData.site_id) return;
+    const currentStoreIsValid = fulfillmentStoreOptions.some(
+      (store) => String(store.id) === String(formData.fulfillment_store_id || '')
+    );
+    const nextStoreId = currentStoreIsValid
+      ? formData.fulfillment_store_id
+      : fulfillmentStoreOptions.length === 1
+        ? fulfillmentStoreOptions[0].id
+        : '';
+    if (nextStoreId !== formData.fulfillment_store_id) {
+      setFormData((current) => ({ ...current, fulfillment_store_id: nextStoreId }));
+    }
+  }, [formData.fulfillment_store_id, formData.site_id, formOpen, fulfillmentStoreOptions]);
 
   const selectedSummary = events.find((event) => event.id === selectedId) || events[0] || null;
   const eventDetailQuery = useQuery({
@@ -190,6 +222,9 @@ export default function EventPlanning() {
   }, [queryClient]);
   const selected = eventDetailQuery.data || selectedSummary;
   const selectedSite = sites.find((site) => site.id === formData.site_id);
+  const selectedEventFulfillmentStore = sites.find(
+    (site) => String(site.id) === String(selected?.fulfillment_store_id || '')
+  );
   const budgetContextQuery = useQuery({
     queryKey: ['specialEventBudgetContext', formData.site_id, formData.event_date, formData.event_name, formData.budget_id],
     queryFn: () => base44.specialEvents.getBudgetContext(formData.site_id, formData.event_date, formData.event_name, formData.budget_id, 0),
@@ -219,12 +254,17 @@ export default function EventPlanning() {
     onError: (error) => setActionError(error.message)
   });
   const productionMutation = useMutation({
-    mutationFn: (event) => base44.specialEvents.generateProduction(event.id, { prep_start_date: event.prep_start_date }),
+    mutationFn: (event) => base44.specialEvents.generateProduction(event.id, {
+      prep_start_date: event.prep_start_date,
+      fulfillment_store_id: event.fulfillment_store_id
+    }),
     onSuccess: (result) => invalidate(result.event?.id || selectedId),
     onError: (error) => setActionError(error.message)
   });
   const procurementMutation = useMutation({
-    mutationFn: (event) => base44.specialEvents.createPurchaseRequest(event.id),
+    mutationFn: (event) => base44.specialEvents.createPurchaseRequest(event.id, {
+      fulfillment_store_id: event.fulfillment_store_id
+    }),
     onSuccess: (result) => invalidate(result.event?.id || selectedId),
     onError: (error) => setActionError(error.message)
   });
@@ -241,8 +281,8 @@ export default function EventPlanning() {
     onError: (error) => setActionError(error.message)
   });
 
-  const openCreate = () => { setFormData(emptyForm()); setRecipeToAdd(''); setFormOpen(true); };
-  const openEdit = (event) => { setFormData(formFromEvent(event)); setRecipeToAdd(''); setFormOpen(true); };
+  const openCreate = () => { setFormData(emptyForm()); setRecipeToAdd(''); setActionError(''); setFormOpen(true); };
+  const openEdit = (event) => { setFormData(formFromEvent(event)); setRecipeToAdd(''); setActionError(''); setFormOpen(true); };
   const addRecipe = () => {
     const recipe = recipes.find((item) => item.id === recipeToAdd);
     if (!recipe || formData.linked_recipes.some((item) => item.recipe_id === recipe.id)) return;
@@ -266,6 +306,14 @@ export default function EventPlanning() {
 
   const submitForm = (event) => {
     event.preventDefault();
+    if (!projectSites.some((site) => String(site.id) === String(formData.site_id))) {
+      setActionError('Select an active Project for this event.');
+      return;
+    }
+    if (!fulfillmentStoreOptions.some((store) => String(store.id) === String(formData.fulfillment_store_id))) {
+      setActionError('Select an active fulfillment Store under the event Project.');
+      return;
+    }
     if (!formData.linked_recipes.length) {
       setActionError('Link at least one recipe before saving the event plan.');
       return;
@@ -276,8 +324,11 @@ export default function EventPlanning() {
   const linkedRecipes = selected?.linked_recipes || [];
   const shortages = selected?.shortage_items || [];
   const checklist = selected?.approval_checklist || {};
-  const canGenerateProduction = can('edit_special_event') || can('manage_production') || can('create_production_request');
+  const canGenerateProduction = can('create_production_request');
   const canCreatePR = can('edit_special_event') || can('manage_procurement') || can('create_material_request');
+  const productionPlanCanGenerate = ['not_generated', 'action_required'].includes(
+    String(selected?.production_plan_status || 'not_generated').toLowerCase()
+  );
   const loading = eventsQuery.isLoading || sitesQuery.isLoading || recipesQuery.isLoading || (selectedSummary && eventDetailQuery.isLoading);
   const loadError = eventsQuery.error || sitesQuery.error || recipesQuery.error || eventDetailQuery.error;
 
@@ -317,7 +368,7 @@ export default function EventPlanning() {
                         <span className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-teal-700" />{selected.event_date || selected.plan_date}</span>
                         <span className="flex items-center gap-2"><Users className="h-4 w-4 text-teal-700" />{formatNumber(selected.expected_participants)} guests</span>
                         <span className="flex items-center gap-2"><MapPin className="h-4 w-4 text-teal-700" />{selected.event_location || selected.site_name}</span>
-                        <span><b>Project:</b> {selected.site_name}</span><span><b>Meal:</b> {label(selected.meal_period)}</span><span><b>Service:</b> {label(selected.service_style)}</span>
+                        <span><b>Project:</b> {selected.site_name}</span><span><b>Store:</b> {selected.fulfillment_store_name || selectedEventFulfillmentStore?.name || 'Not assigned'}</span><span><b>Meal:</b> {label(selected.meal_period)}</span><span><b>Service:</b> {label(selected.service_style)}</span>
                       </div>
                     </div>
                     {can('edit_special_event') && ['draft', 'rejected'].includes(selected.status) && <Button variant="outline" onClick={() => openEdit(selected)}><Pencil className="mr-2 h-4 w-4" />Edit Event</Button>}
@@ -346,8 +397,9 @@ export default function EventPlanning() {
               </Card>
 
               <div className="flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-white p-4">
-                {canGenerateProduction && <Button variant="outline" onClick={() => productionMutation.mutate(selected)} disabled={productionMutation.isPending || selected.production_plan_status === 'generated'}><Factory className="mr-2 h-4 w-4" />{selected.production_plan_status === 'generated' ? 'Production Plan Generated' : 'Generate Production Plan'}</Button>}
-                {canCreatePR && <Button variant="outline" onClick={() => procurementMutation.mutate(selected)} disabled={procurementMutation.isPending || Boolean(selected.procurement_pr_id)}><PackagePlus className="mr-2 h-4 w-4" />{selected.procurement_pr_id ? `PR ${selected.procurement_pr_number || 'Created'}` : 'Create PR'}</Button>}
+                {canGenerateProduction && <Button variant="outline" onClick={() => productionMutation.mutate(selected)} disabled={productionMutation.isPending || !productionPlanCanGenerate || !selected.fulfillment_store_id} title={!selected.fulfillment_store_id ? 'Edit the event and select its fulfillment Store first.' : undefined}><Factory className="mr-2 h-4 w-4" />{selected.production_plan_status === 'action_required' ? 'Regenerate Production Plan' : productionPlanCanGenerate ? 'Generate Production Plan' : `Production ${label(selected.production_plan_status)}`}</Button>}
+                {canGenerateProduction && productionPlanCanGenerate && !selected.fulfillment_store_id ? <p className="self-center text-xs text-amber-700">Edit the event and assign its fulfillment Store before generating production.</p> : null}
+                {canCreatePR && <Button variant="outline" onClick={() => procurementMutation.mutate(selected)} disabled={procurementMutation.isPending || Boolean(selected.procurement_pr_id) || !selected.fulfillment_store_id} title={!selected.fulfillment_store_id ? 'Edit the event and select its fulfillment Store first.' : undefined}><PackagePlus className="mr-2 h-4 w-4" />{selected.procurement_pr_id ? `PR ${selected.procurement_pr_number || 'Created'}` : 'Create PR'}</Button>}
                 {can('submit_special_event') && ['draft', 'rejected'].includes(selected.status) && <Button className="bg-teal-700 hover:bg-teal-800" onClick={() => submitMutation.mutate(selected)} disabled={submitMutation.isPending || !selected.ready_to_submit}><Send className="mr-2 h-4 w-4" />Submit for Approval</Button>}
                 {can('approve_special_event') && selected.status === 'pending_approval' && <Button className="bg-emerald-700 hover:bg-emerald-800" onClick={() => setApproval('approve')}><Check className="mr-2 h-4 w-4" />Approve</Button>}
                 {can('reject_special_event') && selected.status === 'pending_approval' && <Button variant="outline" className="border-rose-300 text-rose-700" onClick={() => setApproval('reject')}><XCircle className="mr-2 h-4 w-4" />Reject</Button>}
@@ -357,21 +409,63 @@ export default function EventPlanning() {
             <aside className="space-y-4">
               <Card><CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><CircleDollarSign className="h-5 w-5 text-teal-700" />Event Cost Summary</CardTitle></CardHeader><CardContent className="grid gap-3"><SummaryMetric title="Total event cost" value={formatCurrency(selected.total_event_cost)} tone="blue" /><SummaryMetric title="Cost per guest" value={`${formatCurrency(selected.cost_per_guest)} / guest`} /><SummaryMetric title="Average item cost" value={formatCurrency(selected.average_item_cost)} /><SummaryMetric title="Budget remaining" value={formatCurrency(selected.budget_remaining)} tone={selected.budget_comparison?.is_over_budget ? 'rose' : 'emerald'} />{selected.food_cost_percent !== null && selected.food_cost_percent !== undefined && <SummaryMetric title="Food cost" value={`${formatNumber(selected.food_cost_percent, 2)}%`} />}{selected.margin_per_guest !== null && selected.margin_per_guest !== undefined && <SummaryMetric title="Margin / guest" value={formatCurrency(selected.margin_per_guest)} tone={selected.margin_per_guest < 0 ? 'rose' : 'emerald'} />}{selected.budget_comparison?.is_over_budget && <div className="flex gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><AlertTriangle className="h-4 w-4 shrink-0" />Budget overrun must be resolved before approval.</div>}</CardContent></Card>
               <Card><CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><ShoppingCart className="h-5 w-5 text-teal-700" />Procurement</CardTitle></CardHeader><CardContent className="space-y-3 text-sm"><div className="flex justify-between"><span>Shortage items</span><b className={shortages.length ? 'text-rose-700' : 'text-emerald-700'}>{shortages.length}</b></div><div className="flex justify-between"><span>Estimated spend</span><b>{formatCurrency(selected.estimated_procurement_spend)}</b></div><div className="flex justify-between"><span>PR status</span><Badge variant="outline">{label(selected.procurement_pr_status)}</Badge></div></CardContent></Card>
-              <Card><CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><Factory className="h-5 w-5 text-teal-700" />Production Handoff</CardTitle></CardHeader><CardContent className="space-y-3 text-sm"><div className="flex justify-between"><span>Plan status</span><Badge variant="outline">{label(selected.production_plan_status)}</Badge></div><div className="flex justify-between"><span>Prep start</span><b>{selected.prep_start_date || 'Not set'}</b></div><div className="flex justify-between"><span>Kitchen</span><b>{selected.kitchen_assignment || 'Recipe stations'}</b></div></CardContent></Card>
+              <Card><CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><Factory className="h-5 w-5 text-teal-700" />Production Handoff</CardTitle></CardHeader><CardContent className="space-y-3 text-sm"><div className="flex justify-between"><span>Plan status</span><Badge variant="outline">{label(selected.production_plan_status)}</Badge></div><div className="flex justify-between gap-3"><span>Fulfillment Store</span><b className="text-right">{selected.fulfillment_store_name || selectedEventFulfillmentStore?.name || 'Not assigned'}</b></div><div className="flex justify-between"><span>Prep start</span><b>{selected.prep_start_date || 'Not set'}</b></div><div className="flex justify-between"><span>Kitchen</span><b>{selected.kitchen_assignment || 'Recipe stations'}</b></div></CardContent></Card>
               <Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><ClipboardCheck className="h-5 w-5 text-teal-700" />Approval Checklist</CardTitle></CardHeader><CardContent className="divide-y divide-slate-100"><CheckItem complete={checklist.event_details}>Event details</CheckItem><CheckItem complete={checklist.menu_and_costing}>Menu and costing</CheckItem><CheckItem complete={checklist.budget_check}>Budget check</CheckItem><CheckItem complete={checklist.procurement_plan || selected.procurement_pr_status === 'not_required'}>Procurement plan</CheckItem><CheckItem complete={checklist.production_plan}>Production plan</CheckItem><div className="flex items-center justify-between pt-3 text-sm font-semibold"><span>Overall status</span><Badge className={STATUS_STYLE[selected.status] || STATUS_STYLE.draft}>{label(selected.status)}</Badge></div></CardContent></Card>
               {selected.notes && <Card><CardHeader className="pb-2"><CardTitle className="text-base">Plan Notes</CardTitle></CardHeader><CardContent><p className="whitespace-pre-wrap text-sm text-slate-600">{selected.notes}</p></CardContent></Card>}
             </aside>
           </div>
         )}
 
-        <Dialog open={formOpen} onOpenChange={setFormOpen}>
+        <Dialog open={formOpen} onOpenChange={(open) => { setFormOpen(open); if (!open) setActionError(''); }}>
           <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
             <DialogHeader><DialogTitle>{formData.id ? 'Edit Event & Meal Plan' : 'Create Event & Meal Plan'}</DialogTitle></DialogHeader>
+            {actionError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{actionError}</div> : null}
             <form onSubmit={submitForm} className="space-y-6">
               <section><h3 className="mb-3 font-semibold text-slate-900">1. Event Details</h3><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 <div className="lg:col-span-2"><Label>Event name *</Label><Input className="mt-1" value={formData.event_name} onChange={(event) => setFormData({ ...formData, event_name: event.target.value })} required /></div>
                 <div><Label>Date *</Label><Input type="date" className="mt-1" value={formData.event_date} onChange={(event) => setFormData({ ...formData, event_date: event.target.value })} required /></div>
-                <div><Label>Project *</Label><Select value={formData.site_id} onValueChange={(value) => setFormData({ ...formData, site_id: value })}><SelectTrigger className="mt-1"><SelectValue placeholder="Select project" /></SelectTrigger><SelectContent>{sites.map((site) => <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>)}</SelectContent></Select></div>
+                <div>
+                  <Label htmlFor="event-project">Project *</Label>
+                  <Select
+                    value={formData.site_id}
+                    onValueChange={(value) => setFormData((current) => ({
+                      ...current,
+                      site_id: value,
+                      fulfillment_store_id: ''
+                    }))}
+                  >
+                    <SelectTrigger id="event-project" className="mt-1"><SelectValue placeholder="Select project" /></SelectTrigger>
+                    <SelectContent>
+                      {projectSites.map((site) => <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="event-fulfillment-store">Fulfillment Store *</Label>
+                  <Select
+                    value={formData.fulfillment_store_id}
+                    onValueChange={(value) => setFormData((current) => ({ ...current, fulfillment_store_id: value }))}
+                    disabled={!formData.site_id || fulfillmentStoreOptions.length === 0}
+                  >
+                    <SelectTrigger id="event-fulfillment-store" className="mt-1">
+                      <SelectValue placeholder={
+                        !formData.site_id
+                          ? 'Select a project first'
+                          : fulfillmentStoreOptions.length === 0
+                            ? 'No active Store under this Project'
+                            : 'Select fulfillment Store'
+                      } />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {fulfillmentStoreOptions.map((store) => <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {formData.site_id && fulfillmentStoreOptions.length === 0 ? (
+                    <p className="mt-1 text-xs text-rose-600">Create an active Store under this Project before generating production.</p>
+                  ) : fulfillmentStoreOptions.length === 1 ? (
+                    <p className="mt-1 text-xs text-slate-500">The Project's only active Store is selected automatically.</p>
+                  ) : null}
+                </div>
                 <div><Label>Location *</Label><Input className="mt-1" value={formData.event_location} onChange={(event) => setFormData({ ...formData, event_location: event.target.value })} placeholder={selectedSite?.name || 'Event venue'} required /></div>
                 <div><Label>Guest count *</Label><Input type="number" min="1" className="mt-1" value={formData.expected_participants} onChange={(event) => setFormData({ ...formData, expected_participants: event.target.value })} required /></div>
                 <div><Label>Meal period</Label><Select value={formData.meal_period} onValueChange={(value) => setFormData({ ...formData, meal_period: value })}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent>{MEAL_PERIODS.map((item) => <SelectItem key={item} value={item}>{label(item)}</SelectItem>)}</SelectContent></Select></div>

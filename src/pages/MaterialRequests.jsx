@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { usePermissions } from '@/components/auth/usePermissions';
@@ -33,11 +33,21 @@ export default function MaterialRequests() {
   const [dateFilter, setDateFilter] = useState('');
   const [projectFilter, setProjectFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [actionError, setActionError] = useState('');
+  const canAcknowledge = can('acknowledge_material_request');
 
-  const { data: materialRequests = [] } = useQuery({
+  const { data: materialRequests = [], isLoading, error: requestsError } = useQuery({
     queryKey: ['materialRequestsWorkflow'],
-    queryFn: () => base44.materialRequests.list()
+    queryFn: () => base44.materialRequests.list(),
+    refetchInterval: 60000
   });
+
+  useEffect(() => {
+    const unsubscribe = base44.entities.MaterialRequest.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+    });
+    return unsubscribe;
+  }, [queryClient]);
 
   const resolveRequestItemCode = (item) => getItemCode(item);
 
@@ -48,8 +58,10 @@ export default function MaterialRequests() {
   const projectOptions = useMemo(() => {
     const uniqueProjects = new Map();
     filteredBaseRequests.forEach((request) => {
-      if (request.site_id && request.site_name && !uniqueProjects.has(request.site_id)) {
-        uniqueProjects.set(request.site_id, request.site_name);
+      const projectId = request.requesting_site_id || request.site_id;
+      const projectName = request.requesting_site_name || request.site_name;
+      if (projectId && projectName && !uniqueProjects.has(projectId)) {
+        uniqueProjects.set(projectId, projectName);
       }
     });
     return Array.from(uniqueProjects, ([id, name]) => ({ id, name }))
@@ -59,7 +71,8 @@ export default function MaterialRequests() {
   const visibleRequests = useMemo(() => {
     return filteredBaseRequests.filter((request) => {
       const matchesDate = !dateFilter || String(request.request_date || '').slice(0, 10) === dateFilter;
-      const matchesProject = projectFilter === 'all' || request.site_id === projectFilter;
+      const matchesProject = projectFilter === 'all'
+        || (request.requesting_site_id || request.site_id) === projectFilter;
       const matchesStatus = statusFilter === 'all' || request.status === statusFilter;
       return matchesDate && matchesProject && matchesStatus;
     });
@@ -72,7 +85,9 @@ export default function MaterialRequests() {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       setSelectedRequest(null);
       setNotes('');
-    }
+      setActionError('');
+    },
+    onError: (error) => setActionError(error.message || 'Unable to acknowledge this material request.')
   });
 
   const renderRequestItemsTable = (request) => {
@@ -151,16 +166,30 @@ export default function MaterialRequests() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
-                  {Object.entries(STATUS_CONFIG).map(([statusKey, config]) => (
+                  {Object.entries(STATUS_CONFIG)
+                    .filter(([statusKey]) => statusKey !== 'awaiting_production_approval')
+                    .map(([statusKey, config]) => (
                     <SelectItem key={statusKey} value={statusKey}>{config.label}</SelectItem>
-                  ))}
+                    ))}
                 </SelectContent>
               </Select>
             </div>
           </CardContent>
         </Card>
 
-        {visibleRequests.length === 0 ? (
+        {requestsError ? (
+          <Card className="border-red-200 bg-red-50">
+            <CardContent className="py-8 text-center text-sm text-red-700">
+              {requestsError.message || 'Unable to load material requests. Please try again.'}
+            </CardContent>
+          </Card>
+        ) : isLoading ? (
+          <Card className="border-slate-200 bg-white">
+            <CardContent className="flex items-center justify-center gap-2 py-12 text-sm text-slate-600">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading material requests...
+            </CardContent>
+          </Card>
+        ) : visibleRequests.length === 0 ? (
           <Card className="border-dashed border-slate-300 bg-white">
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <ClipboardList className="mb-4 h-10 w-10 text-slate-400" />
@@ -186,7 +215,9 @@ export default function MaterialRequests() {
                           <Badge className={statusConfig.color}>{statusConfig.label}</Badge>
                         </CardTitle>
                         <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-500">
-                          <span>{request.site_name || 'Unassigned project'}</span>
+                          <span>Project: {request.requesting_site_name || request.site_name || 'Unassigned'}</span>
+                          <span>•</span>
+                          <span>Store: {request.fulfillment_store_name || request.site_name || 'Unassigned'}</span>
                           <span>•</span>
                           <span>{request.source_production_name || 'Manual request'}</span>
                           {request.request_date ? (
@@ -241,12 +272,13 @@ export default function MaterialRequests() {
                     ) : null}
 
                     <div className="flex flex-wrap gap-2">
-                      {request.status === 'pending_procurement_ack' && can('acknowledge_material_request') ? (
+                      {request.status === 'pending_procurement_ack' && canAcknowledge ? (
                         <Button
                           className="bg-emerald-600 hover:bg-emerald-700"
                           onClick={() => {
                             setSelectedRequest(request);
                             setNotes(request.procurement_notes || '');
+                            setActionError('');
                           }}
                         >
                           <CheckCircle2 className="mr-2 h-4 w-4" />
@@ -262,16 +294,25 @@ export default function MaterialRequests() {
         )}
       </div>
 
-      <Dialog open={Boolean(selectedRequest)} onOpenChange={(open) => !open && setSelectedRequest(null)}>
+      <Dialog open={Boolean(selectedRequest)} onOpenChange={(open) => {
+        if (!open) {
+          setSelectedRequest(null);
+          setActionError('');
+        }
+      }}>
         <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>Acknowledge Material Request</DialogTitle>
           </DialogHeader>
+          {actionError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
+          ) : null}
           <div className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
               <p><span className="font-medium text-slate-900">Request:</span> {selectedRequest?.request_number}</p>
               <p><span className="font-medium text-slate-900">Production:</span> {selectedRequest?.source_production_name || '-'}</p>
-              <p><span className="font-medium text-slate-900">Project:</span> {selectedRequest?.site_name || '-'}</p>
+              <p><span className="font-medium text-slate-900">Project:</span> {selectedRequest?.requesting_site_name || selectedRequest?.site_name || '-'}</p>
+              <p><span className="font-medium text-slate-900">Fulfillment Store:</span> {selectedRequest?.fulfillment_store_name || selectedRequest?.site_name || '-'}</p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-3">
               <p className="mb-2 text-sm font-semibold text-slate-900">Requested Items</p>

@@ -5,6 +5,12 @@ import {
   normalizeManagementRoleProfile
 } from '../shared/managementDashboardRoles.js';
 import { SUPPORTED_SITE_TYPES } from '../shared/siteHierarchy.js';
+import {
+  canStartApprovedProduction,
+  getProductionTransitionPermission,
+  isAllowedProductionTransition,
+  normalizeProductionStatus
+} from '../shared/productionWorkflow.js';
 
 export { getUserEffectiveRole } from './accessControl.js';
 
@@ -82,10 +88,13 @@ export const permissionCatalog = [
   { key: 'view_audit_logs', label: 'View Audit Logs' },
   { key: 'view_bulk_upload_progress', label: 'View Bulk Upload Progress' },
   { key: 'manage_projects', label: 'Manage Projects' },
+  { key: 'view_ingredients', label: 'View Ingredients' },
   { key: 'manage_ingredients', label: 'Manage Ingredients' },
   { key: 'manage_food_categories', label: 'Manage Food Categories' },
   { key: 'manage_inventory', label: 'Manage Inventory' },
+  { key: 'view_inventory', label: 'View Inventory' },
   { key: 'transfer_inventory', label: 'Transfer Inventory' },
+  { key: 'view_recipes', label: 'View Recipes' },
   { key: 'manage_recipes', label: 'Manage Recipes' },
   { key: 'manage_menu_planning', label: 'Manage Menu Planning' },
   { key: 'generate_menu_plan_pr', label: 'Generate Menu Planning Purchase Requests' },
@@ -104,6 +113,8 @@ export const permissionCatalog = [
   { key: 'reject_production_request', label: 'Reject Production Request' },
   { key: 'request_changes_production', label: 'Request Changes On Production Request' },
   { key: 'approve_production', label: 'Approve Production' },
+  { key: 'request_changes_area_production', label: 'Area Review: Request Production Changes' },
+  { key: 'reject_area_production', label: 'Area Review: Reject Production' },
   { key: 'start_production', label: 'Start Production' },
   { key: 'complete_production', label: 'Complete Production' },
   { key: 'create_material_request', label: 'Create Material Request' },
@@ -142,12 +153,11 @@ export const systemRoleDefinitions = {
     permissions: [
       'view_dashboard', 'view_reports', 'export_data', 'manage_bulk_uploads',
       'view_audit_logs', 'view_bulk_upload_progress', 'manage_projects',
-      'manage_ingredients', 'manage_food_categories', 'manage_inventory', 'transfer_inventory', 'manage_recipes',
+      'manage_ingredients', 'manage_food_categories', 'view_inventory', 'manage_inventory', 'transfer_inventory', 'manage_recipes',
       'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event', 'edit_special_event',
       'submit_special_event', 'review_special_event', 'approve_special_event', 'reject_special_event',
       'manage_production', 'create_production_request', 'edit_production_request',
-      'submit_production_request', 'review_production_request', 'approve_production_request',
-      'reject_production_request', 'request_changes_production', 'approve_production', 'start_production',
+      'submit_production_request', 'start_production',
       'complete_production', 'create_material_request', 'view_material_request',
       'acknowledge_material_request', 'manage_procurement', 'approve_procurement', 'manage_suppliers', 'manage_waste',
       'approve_waste', 'manage_pos', 'manage_forecasting', 'manage_attendance',
@@ -179,7 +189,7 @@ export const systemRoleDefinitions = {
     access_level: 'user',
     description: 'Kitchen leadership role focused on recipes, menus, production, and food quality.',
     permissions: [
-      'view_dashboard', 'view_reports', 'manage_ingredients', 'manage_recipes',
+      'view_dashboard', 'view_reports', 'view_inventory', 'manage_ingredients', 'manage_recipes',
       'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event', 'edit_special_event',
       'submit_special_event', 'manage_production', 'create_production_request',
       'edit_production_request', 'submit_production_request', 'start_production',
@@ -198,7 +208,8 @@ export const systemRoleDefinitions = {
     description: 'Warehouse and stock control role for receiving, adjustments, and transfers.',
     permissions: [
       'view_dashboard', 'view_reports', 'export_data', 'manage_inventory',
-      'transfer_inventory', 'manage_ingredients'
+      'transfer_inventory', 'manage_ingredients', 'view_material_request',
+      'acknowledge_material_request'
     ]
   },
   procurement_officer: {
@@ -220,9 +231,7 @@ export const systemRoleDefinitions = {
     permissions: [
       'view_dashboard', 'view_reports', 'create_special_event', 'edit_special_event',
       'submit_special_event', 'review_special_event', 'approve_special_event', 'reject_special_event', 'manage_production',
-      'review_production_request', 'approve_production_request', 'reject_production_request',
-      'request_changes_production', 'approve_production', 'start_production',
-      'complete_production', 'view_material_request', 'manage_menu_planning',
+      'start_production', 'complete_production', 'view_material_request', 'view_inventory', 'manage_menu_planning',
       'manage_quality', 'manage_waste'
     ]
   },
@@ -262,8 +271,11 @@ export function getUserPermissions(user) {
     return Array.from(new Set(explicitPermissions));
   }
 
+  const usesAccessLevelBaseline = !builtInFromCurrentRole
+    || ['admin', 'manager', 'user'].includes(String(user?.role || '').toLowerCase());
+
   return Array.from(new Set([
-    ...(builtInFromAccessLevel?.permissions || []),
+    ...(usesAccessLevelBaseline ? (builtInFromAccessLevel?.permissions || []) : []),
     ...(builtInFromCurrentRole?.permissions || []),
     ...explicitPermissions
   ]));
@@ -552,7 +564,46 @@ export const entityRegistry = {
     }).passthrough()
   },
   Production: {
-    defaults: { status: 'planned' }
+    defaults: { status: 'planned' },
+    unique: [
+      {
+        fields: ['source_event_id', 'source_event_recipe_id'],
+        label: 'production plan for this event recipe',
+        ignoreEmpty: true
+      }
+    ]
+  },
+  ProductionConsumptionReport: {
+    defaults: { status: 'posted', sections: [], ingredient_lines: [] },
+    unique: [
+      { fields: ['production_id'], label: 'consumption report for this production' },
+      { fields: ['report_number'], label: 'production consumption report number' }
+    ],
+    schema: z.object({
+      report_number: z.string().trim().min(1, 'Report number is required'),
+      report_name: z.string().trim().min(1, 'Report name is required'),
+      production_id: z.string().trim().min(1, 'Production is required'),
+      production_name: stringOptional,
+      production_date: stringOptional,
+      site_id: stringOptional,
+      site_name: stringOptional,
+      recipe_id: stringOptional,
+      recipe_name: stringOptional,
+      meal_type: stringOptional,
+      kitchen_station: stringOptional,
+      target_servings: numberOptional,
+      completed_by: stringOptional,
+      completed_by_name: stringOptional,
+      completed_at: stringOptional,
+      quantity_basis: stringOptional,
+      total_consumption_cost: numberOptional,
+      total_shortage_cost: numberOptional,
+      shortage_line_count: numberOptional,
+      ingredient_line_count: numberOptional,
+      ingredient_lines: arrayOptional,
+      sections: arrayOptional,
+      status: stringOptional
+    }).passthrough()
   },
   ProductionBatch: {
     defaults: { status: 'planned' }
@@ -741,6 +792,7 @@ const writeRoles = {
   User: 'admin',
   UserGroup: 'manager',
   Production: 'manager',
+  ProductionConsumptionReport: 'manager',
   ProductionBatch: 'manager',
   ProductionTransfer: 'manager',
   Inventory: 'manager',
@@ -771,23 +823,27 @@ const writeRoles = {
 };
 
 const entityPermissions = {
-  Site: { read: 'manage_projects', write: 'manage_projects' },
+  Site: { write: 'manage_projects' },
   RoleProfile: { read: 'manage_roles', write: 'manage_roles' },
   User: { read: 'manage_users', write: 'manage_users' },
-  Ingredient: { read: 'manage_ingredients', write: 'manage_ingredients' },
+  Ingredient: { read: ['view_ingredients', 'manage_ingredients'], write: 'manage_ingredients' },
   FoodCategory: { read: 'manage_food_categories', write: 'manage_food_categories' },
   Budget: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
-  Inventory: { read: 'manage_inventory', write: 'manage_inventory' },
+  Inventory: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
   InventoryTransaction: { read: 'manage_inventory', write: 'manage_inventory' },
   InventoryLot: { read: 'manage_inventory', write: 'manage_inventory' },
-  Recipe: { read: 'manage_recipes', write: 'manage_recipes' },
+  Recipe: { read: ['view_recipes', 'manage_recipes'], write: 'manage_recipes' },
   MenuPlan: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
   MenuPlanPRSchedule: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
   MenuPlanPRRun: { read: 'generate_menu_plan_pr', write: 'generate_menu_plan_pr' },
   Production: { read: 'manage_production', write: 'manage_production' },
+  ProductionConsumptionReport: { read: 'manage_production', write: 'complete_production' },
   ProductionBatch: { read: 'manage_production', write: 'manage_production' },
   ProductionTransfer: { read: 'transfer_inventory', write: 'transfer_inventory' },
-  MaterialRequest: { read: 'manage_procurement', write: 'manage_procurement' },
+  MaterialRequest: {
+    read: ['view_material_request', 'acknowledge_material_request', 'manage_procurement', 'approve_procurement'],
+    write: 'manage_procurement'
+  },
   Supplier: { read: 'manage_suppliers', write: 'manage_suppliers' },
   PurchaseOrder: { read: 'manage_procurement', write: 'manage_procurement' },
   RFQ: { read: 'manage_procurement', write: 'manage_procurement' },
@@ -842,14 +898,41 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
   const requiresReadRole = readRoles[entity];
   const requiresWriteRole = writeRoles[entity];
   const permissionRequirements = entityPermissions[entity] || {};
+  const hasRequiredPermission = (requirement) => (
+    Array.isArray(requirement)
+      ? requirement.some((permission) => hasPermission(user, permission))
+      : Boolean(requirement && hasPermission(user, requirement))
+  );
 
   if (entity === 'Site' && ['create', 'update', 'delete'].includes(action)) {
     return assertCanManageSiteStructure(user);
   }
 
+  if (entity === 'ProductionConsumptionReport' && ['create', 'update', 'delete'].includes(action)) {
+    const error = new Error('Production consumption reports are immutable and are generated only by completing production');
+    error.status = 409;
+    throw error;
+  }
+
+  if (entity === 'MaterialRequest') {
+    const isProductionGenerated = String(payload?.source_type || resource?.source_type || '').toLowerCase() === 'production'
+      || Boolean(payload?.source_production_id || resource?.source_production_id);
+    if (isProductionGenerated && ['create', 'update', 'delete'].includes(action)) {
+      const error = new Error('Production material requests are managed only by the production and procurement workflow');
+      error.status = 409;
+      throw error;
+    }
+  }
+
   if (entity === 'Production') {
-    const nextStatus = payload?.status;
-    const currentStatus = resource?.status || null;
+    const nextStatus = normalizeProductionStatus(payload?.status);
+    const currentStatus = normalizeProductionStatus(resource?.status, 'draft');
+
+    if (action === 'delete') {
+      const error = new Error('Production records cannot be deleted because their workflow and inventory audit history must be preserved');
+      error.status = 409;
+      throw error;
+    }
 
     if (action === 'create') {
       if (nextStatus === 'pending_approval') {
@@ -861,7 +944,7 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
         return true;
       }
 
-      if (nextStatus === 'draft' || !nextStatus) {
+      if (['draft', 'planned'].includes(nextStatus) || !nextStatus) {
         if (!hasPermission(user, 'create_production_request')) {
           const error = new Error('You do not have permission to create production requests');
           error.status = 403;
@@ -869,31 +952,91 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
         }
         return true;
       }
+
+      const error = new Error('New production requests must start as Production Created or Pending PM Approval');
+      error.status = 409;
+      throw error;
     }
 
     if (action === 'update') {
+      if (currentStatus === 'completed') {
+        const error = new Error('Completed production and its consumption record are immutable');
+        error.status = 409;
+        throw error;
+      }
+
       if (nextStatus && nextStatus !== currentStatus) {
-        const transitionPermissionMap = {
-          pending_approval: 'submit_production_request',
-          approved: 'approve_production_request',
-          rejected: 'reject_production_request',
-          changes_requested: 'request_changes_production',
-          in_progress: 'start_production',
-          completed: 'complete_production'
-        };
-        const requiredPermission = transitionPermissionMap[nextStatus];
+        const transitionFieldAllowlist = new Set([
+          'status', 'review_notes', 'reviewed_at',
+          'pm_approval_status', 'pm_approved_by', 'pm_approved_by_name', 'pm_approved_at',
+          'area_approval_status', 'area_approved_by', 'area_approved_by_name', 'area_approved_at',
+          'submitted_by', 'submitted_by_name', 'submitted_at',
+          'started_by', 'started_by_name', 'started_at',
+          'fulfillment_store_id', 'fulfillment_store_name'
+        ]);
+        const contentFields = Object.keys(payload || {}).filter((field) => !transitionFieldAllowlist.has(field));
+        if (contentFields.length > 0) {
+          const error = new Error('Production content and workflow status must be updated separately');
+          error.status = 409;
+          throw error;
+        }
+
+        if (!isAllowedProductionTransition(currentStatus, nextStatus)) {
+          const error = new Error(`Invalid production workflow transition: ${currentStatus} → ${nextStatus}`);
+          error.status = 409;
+          throw error;
+        }
+
+        if (nextStatus === 'pending_production') {
+          const error = new Error('Pending Production is set only after Store Keeper / Procurement acknowledgement');
+          error.status = 409;
+          throw error;
+        }
+
+        if (currentStatus === 'pending_production' && nextStatus === 'approved') {
+          const error = new Error('Use the Area Manager approval action so procurement and fulfillment Store checks are enforced');
+          error.status = 409;
+          throw error;
+        }
+
+        if (
+          ['changes_requested', 'rejected'].includes(nextStatus)
+          && !String(payload?.review_notes || '').trim()
+        ) {
+          const error = new Error('Review notes are required when requesting changes or rejecting production');
+          error.status = 400;
+          throw error;
+        }
+
+        if (nextStatus === 'completed') {
+          const error = new Error('Use the production completion action so inventory and the consumption report are posted together');
+          error.status = 409;
+          throw error;
+        }
+
+        const requiredPermission = getProductionTransitionPermission(currentStatus, nextStatus);
         if (requiredPermission && !hasPermission(user, requiredPermission)) {
           const error = new Error('You do not have permission to update this production status');
           error.status = 403;
           throw error;
         }
 
-        if (['approved', 'rejected', 'changes_requested'].includes(nextStatus) && !hasPermission(user, 'review_production_request')) {
+        if (
+          currentStatus === 'pending_approval'
+          && ['pending_procurement', 'rejected', 'changes_requested'].includes(nextStatus)
+          && !hasPermission(user, 'review_production_request')
+        ) {
           const error = new Error('You do not have permission to review production requests');
           error.status = 403;
           throw error;
         }
-      } else if (!hasPermission(user, 'edit_production_request')) {
+
+        if (nextStatus === 'in_progress' && !canStartApprovedProduction(resource)) {
+          const error = new Error('Production cannot start until procurement is acknowledged and the Area Manager has approved it');
+          error.status = 409;
+          throw error;
+        }
+      } else if (!['draft', 'planned', 'changes_requested'].includes(currentStatus) || !hasPermission(user, 'edit_production_request')) {
         const error = new Error('You do not have permission to edit production requests');
         error.status = 403;
         throw error;
@@ -903,8 +1046,11 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
   }
 
   if (action === 'list' || action === 'filter' || action === 'read') {
-    if (permissionRequirements.read && hasPermission(user, permissionRequirements.read)) {
-      return true;
+    if (permissionRequirements.read) {
+      if (hasRequiredPermission(permissionRequirements.read)) return true;
+      const error = new Error('You do not have permission to view this resource');
+      error.status = 403;
+      throw error;
     }
     if (!requiresReadRole) {
       return true;
@@ -914,11 +1060,6 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     }
     if (entity === 'User' && resource?.id === user.id) {
       return true;
-    }
-    if (isCustomRole && permissionRequirements.read) {
-      const error = new Error('You do not have permission to view this resource');
-      error.status = 403;
-      throw error;
     }
     const error = new Error('You do not have permission to view this resource');
     error.status = 403;
@@ -932,7 +1073,7 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     }
   }
 
-  if (permissionRequirements.write && hasPermission(user, permissionRequirements.write)) {
+  if (permissionRequirements.write && hasRequiredPermission(permissionRequirements.write)) {
     return true;
   }
 

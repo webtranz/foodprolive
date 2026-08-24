@@ -76,16 +76,18 @@ function buildLocationClause(parameters, entity, location = null) {
     return `record.id = ANY(${siteParameter}::text[])`;
   }
 
-  const hasDirectSite = `(
-    COALESCE(record.data->>'site_id', '') <> ''
-    OR COALESCE(record.data->>'from_site_id', '') <> ''
-    OR COALESCE(record.data->>'to_site_id', '') <> ''
-  )`;
-  const directSitesAllowed = `(
-    (COALESCE(record.data->>'site_id', '') = '' OR record.data->>'site_id' = ANY(${siteParameter}::text[]))
-    AND (COALESCE(record.data->>'from_site_id', '') = '' OR record.data->>'from_site_id' = ANY(${siteParameter}::text[]))
-    AND (COALESCE(record.data->>'to_site_id', '') = '' OR record.data->>'to_site_id' = ANY(${siteParameter}::text[]))
-  )`;
+  const directLocationFields = [
+    'site_id',
+    'from_site_id',
+    'to_site_id',
+    ...(['Production', 'ProductionConsumptionReport'].includes(entity) ? ['fulfillment_store_id'] : [])
+  ];
+  const hasDirectSite = `(${directLocationFields
+    .map((field) => `COALESCE(record.data->>'${field}', '') <> ''`)
+    .join('\n    OR ')})`;
+  const directSitesAllowed = `(${directLocationFields
+    .map((field) => `(COALESCE(record.data->>'${field}', '') = '' OR record.data->>'${field}' = ANY(${siteParameter}::text[]))`)
+    .join('\n    AND ')})`;
   const scopedArrayAllowed = `(
     jsonb_typeof(record.data->'site_ids') = 'array'
     AND jsonb_array_length(record.data->'site_ids') > 0

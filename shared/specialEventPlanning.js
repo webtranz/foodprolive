@@ -29,12 +29,13 @@ export function normalizeEventRecipeLinks(links = []) {
 
 export function calculateEventPlanningSnapshot(event = {}, recipes = [], ingredients = [], inventory = []) {
   const guests = Math.max(0, number(event.expected_participants ?? event.guest_count));
+  const inventorySiteId = event.fulfillment_store_id || event.site_id;
   const recipeMap = new Map(recipes.map((recipe) => [String(recipe.id), recipe]));
   const ingredientMap = new Map(ingredients.map((ingredient) => [String(ingredient.id), ingredient]));
   const inventoryByIngredient = new Map();
 
   inventory
-    .filter((row) => !event.site_id || !row.site_id || String(row.site_id) === String(event.site_id))
+    .filter((row) => !inventorySiteId || !row.site_id || String(row.site_id) === String(inventorySiteId))
     .forEach((row) => {
       const key = String(row.ingredient_id || '');
       const ingredient = ingredientMap.get(key) || {};

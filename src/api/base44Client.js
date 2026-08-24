@@ -192,6 +192,9 @@ function buildQueryString(params = {}) {
 
 function createEntityModule(entity) {
   return {
+    get(id) {
+      return apiRequest(`/api/entities/${entity}/${id}`);
+    },
     list(sort, limit) {
       const params = new URLSearchParams();
       if (sort) params.set('sort', sort);
@@ -500,6 +503,14 @@ export const base44 = {
       });
     }
   },
+  productionWorkflow: {
+    approveForArea(id, data = {}) {
+      return apiRequest(`/api/productions/${id}/area-approve`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    }
+  },
   menuPlanning: {
     getWeek(siteId, weekStart) {
       return apiRequest(`/api/menu-plans/week${buildQueryString({ site_id: siteId, week_start: weekStart })}`);
@@ -597,10 +608,10 @@ export const base44 = {
         body: JSON.stringify(data)
       });
     },
-    createPurchaseRequest(id) {
+    createPurchaseRequest(id, data = {}) {
       return apiRequest(`/api/special-events/${id}/create-pr`, {
         method: 'POST',
-        body: JSON.stringify({})
+        body: JSON.stringify(data)
       });
     },
     submit(id, note) {
@@ -677,10 +688,10 @@ export const base44 = {
         body: JSON.stringify(data)
       });
     },
-    completeProduction(id) {
+    completeProduction(id, data = {}) {
       return apiRequest(`/api/inventory/production/${id}/complete`, {
         method: 'POST',
-        body: JSON.stringify({})
+        body: JSON.stringify(data)
       });
     },
     listLots(filters = {}) {

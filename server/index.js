@@ -26,6 +26,7 @@ import {
 import {
   uploadsDir,
   pool,
+  withTransaction,
   listDocuments,
   listDocumentsPage,
   findDocument,
@@ -45,6 +46,13 @@ import {
   createEmailLog,
   invalidateRoleProfileCache
 } from './db.js';
+import {
+  canStartApprovedProduction,
+  hasAuthoritativeNoMaterialRequirement,
+  normalizeProductionStatus,
+  requiresAreaProductionApproval
+} from '../shared/productionWorkflow.js';
+import { resolveProductionFulfillmentStore } from '../shared/productionFulfillment.js';
 import { authorizeEntityAction, ensureKnownEntity } from './entities.js';
 import { getUserEffectiveRole, hasPermission } from './entities.js';
 import {
@@ -69,6 +77,7 @@ import {
   deleteSupplier,
   listPurchaseRequests,
   getPurchaseRequestById,
+  getPurchaseRequestBySourceEventId,
   createPurchaseRequest,
   approvePurchaseRequest,
   autoGeneratePurchaseRequestFromLowStock,
@@ -529,10 +538,13 @@ function filterRowsByAccessibleSites(rows = [], scope, fields = ['site_id']) {
     return rows;
   }
 
-  return rows.filter((row) => fields
-    .map((field) => row?.[field])
-    .filter(Boolean)
-    .every((siteId) => scope.accessibleSiteIds.has(String(siteId))));
+  return rows.filter((row) => {
+    const siteIds = fields
+      .map((field) => row?.[field])
+      .filter(Boolean);
+    return siteIds.length > 0
+      && siteIds.every((siteId) => scope.accessibleSiteIds.has(String(siteId)));
+  });
 }
 
 function numericMatch(input, fallback = 0) {
@@ -583,13 +595,137 @@ function buildInventoryShortages(production = {}, inventoryRows = [], ingredient
     .filter((item) => item.ingredient_id && item.shortage_quantity > 0);
 }
 
-async function syncMaterialRequestForProduction(user, production, mode = 'draft') {
+function applyProductionWorkflowMetadata(user, payload, existing = null) {
+  const now = new Date().toISOString();
+  const currentStatus = normalizeProductionStatus(existing?.status, 'draft');
+  const nextStatus = normalizeProductionStatus(payload?.status, currentStatus);
+  const actor = {
+    email: user?.email || null,
+    name: user?.full_name || user?.email || null
+  };
+  const prepared = { ...payload };
+
+  if (!existing && nextStatus === 'pending_approval') {
+    Object.assign(prepared, {
+      submitted_by: actor.email,
+      submitted_by_name: actor.name,
+      submitted_at: now
+    });
+  }
+
+  if (currentStatus !== nextStatus && nextStatus === 'pending_approval') {
+    Object.assign(prepared, {
+      submitted_by: actor.email,
+      submitted_by_name: actor.name,
+      submitted_at: now,
+      pm_approval_status: 'pending',
+      area_approval_status: null
+    });
+  }
+
+  if (currentStatus === 'pending_approval' && nextStatus === 'pending_procurement') {
+    Object.assign(prepared, {
+      pm_approval_status: 'approved',
+      pm_approved_by: actor.email,
+      pm_approved_by_name: actor.name,
+      pm_approved_at: now,
+      reviewed_at: now
+    });
+  }
+
+  if (currentStatus === 'pending_production' && nextStatus === 'approved') {
+    Object.assign(prepared, {
+      area_approval_status: 'approved',
+      area_approved_by: actor.email,
+      area_approved_by_name: actor.name,
+      area_approved_at: now,
+      reviewed_at: now
+    });
+  }
+
+  if (['changes_requested', 'rejected'].includes(nextStatus) && currentStatus !== nextStatus) {
+    const areaReview = currentStatus === 'pending_production';
+    Object.assign(prepared, areaReview ? {
+      area_approval_status: nextStatus,
+      area_reviewed_by: actor.email,
+      area_reviewed_by_name: actor.name,
+      area_reviewed_at: now
+    } : {
+      pm_approval_status: nextStatus,
+      pm_reviewed_by: actor.email,
+      pm_reviewed_by_name: actor.name,
+      pm_reviewed_at: now
+    });
+  }
+
+  if (currentStatus === 'approved' && nextStatus === 'in_progress') {
+    Object.assign(prepared, {
+      started_by: actor.email,
+      started_by_name: actor.name,
+      started_at: now
+    });
+  }
+
+  return prepared;
+}
+
+async function assertProductionStartPrerequisites(production, executor = null, user = null) {
+  if (!canStartApprovedProduction(production)) {
+    const error = new Error('Production cannot start until procurement is acknowledged and the Area Manager has approved it.');
+    error.status = 409;
+    throw error;
+  }
+
+  const siteCatalog = await listDocuments('Site', { limit: 5000 }, executor || undefined);
+  const fulfillmentStore = resolveProductionFulfillmentStore(production, siteCatalog);
+  if (user) {
+    const scope = await getLocationScope(user);
+    if (!scope.unrestricted && !scope.accessibleSiteIds.has(String(fulfillmentStore.id))) {
+      const error = new Error('You do not have access to the fulfillment Store for this production');
+      error.status = 403;
+      throw error;
+    }
+  }
+  const materialStatus = String(production.material_request_status || '').toLowerCase();
+
+  if (materialStatus === 'not_required') {
+    if (!hasAuthoritativeNoMaterialRequirement(production)) {
+      const error = new Error('Production cannot start because its no-material requirement is not authoritative. Reconcile procurement first.');
+      error.status = 409;
+      throw error;
+    }
+    return fulfillmentStore;
+  }
+
+  const materialRequest = production.linked_material_request_id
+    ? await findDocument('MaterialRequest', production.linked_material_request_id, executor || undefined, Boolean(executor))
+    : null;
+  if (
+    !materialRequest
+    || String(materialRequest.status || '').toLowerCase() !== 'acknowledged'
+    || String(materialRequest.source_production_id || '') !== String(production.id)
+    || String(materialRequest.site_id || '') !== String(fulfillmentStore.id)
+  ) {
+    const error = new Error('The linked material request has not been acknowledged by Store / Procurement.');
+    error.status = 409;
+    throw error;
+  }
+  return fulfillmentStore;
+}
+
+async function syncMaterialRequestForProduction(
+  user,
+  production,
+  mode = 'draft',
+  executor = null,
+  forceFreshAcknowledgement = false
+) {
   if (!production?.id) {
     return null;
   }
 
   if (
-    production.yield_adjustment_applied !== true
+    production.yield_snapshot_source !== 'server_recipe_expansion'
     && production.recipe_id
     && String(production.status || '').toLowerCase() !== 'completed'
   ) {
@@ -599,14 +735,14 @@ async function syncMaterialRequestForProduction(user, production, mode = 'draft'
       { ingredients_used: production.ingredients_used || [] },
       production
     );
-    production = await updateDocument('Production', production.id, yieldPreparedProduction);
+    production = await updateDocument('Production', production.id, yieldPreparedProduction, executor);
   }
 
   const normalizedMode = String(mode || 'draft').toLowerCase();
   const isDraftMode = normalizedMode === 'draft';
 
-  if (!isDraftMode && String(production.status || '') !== 'approved') {
-    const error = new Error('Material requests can only be activated for approved production requests.');
+  if (!isDraftMode && String(production.status || '') !== 'pending_procurement') {
+    const error = new Error('Material requests can only be activated after PM approval.');
     error.status = 400;
     throw error;
   }
@@ -615,15 +751,20 @@ async function syncMaterialRequestForProduction(user, production, mode = 'draft'
     filters: { source_production_id: production.id },
     sort: '-request_date',
     limit: 20
-  });
+  }, executor || undefined);
 
-  const [inventoryRows, ingredients] = await Promise.all([
-    listDocuments('Inventory', {
-      filters: { site_id: production.site_id },
-      limit: 2000
-    }),
-    listDocuments('Ingredient', { limit: 2000 })
+  const [siteCatalog, ingredients] = await Promise.all([
+    listDocuments('Site', { limit: 5000 }, executor || undefined),
+    listDocuments('Ingredient', { limit: 10000 }, executor || undefined)
   ]);
+  const productionSite = siteCatalog.find((site) => String(site.id) === String(production.site_id));
+  const fulfillmentStore = resolveProductionFulfillmentStore(production, siteCatalog);
+  const inventorySiteId = fulfillmentStore?.id || production.site_id;
+  const inventorySiteName = fulfillmentStore?.name || production.site_name;
+  const inventoryRows = await listDocuments('Inventory', {
+    filters: { site_id: inventorySiteId },
+    limit: 10000
+  }, executor || undefined);
 
   const productionItems = (Array.isArray(production.ingredients_used) ? production.ingredients_used : []).map((item) => {
     const inventoryItem = inventoryRows.find((inventoryRow) => inventoryRow.ingredient_id === item.ingredient_id);
@@ -664,14 +805,33 @@ async function syncMaterialRequestForProduction(user, production, mode = 'draft'
   });
 
   if (!productionItems.length) {
+    for (const request of existingRequests) {
+      if (['cancelled', 'rejected'].includes(String(request.status || '').toLowerCase())) continue;
+      await updateDocument('MaterialRequest', request.id, {
+        status: 'cancelled',
+        procurement_notes: 'Cancelled automatically because the production recipe has no stock-managed ingredients.'
+      }, executor);
+    }
+    await updateDocument('Production', production.id, {
+      status: isDraftMode ? production.status : 'pending_production',
+      material_request_status: 'not_required',
+      linked_material_request_id: null,
+      linked_material_request_number: null,
+      fulfillment_store_id: fulfillmentStore?.id || null,
+      fulfillment_store_name: fulfillmentStore?.name || null
+    }, executor);
     return null;
   }
 
   const targetStatus = isDraftMode ? 'awaiting_production_approval' : 'pending_procurement_ack';
   const existingRequest = existingRequests.find((item) => !['cancelled', 'rejected'].includes(String(item.status || '').toLowerCase()));
   const payload = {
-    site_id: production.site_id || null,
-    site_name: production.site_name || null,
+    site_id: inventorySiteId || null,
+    site_name: inventorySiteName || null,
+    requesting_site_id: production.site_id || null,
+    requesting_site_name: production.site_name || productionSite?.name || null,
+    fulfillment_store_id: fulfillmentStore?.id || null,
+    fulfillment_store_name: fulfillmentStore?.name || null,
     request_date: new Date().toISOString().slice(0, 10),
     period_start: production.production_date || null,
     period_end: production.production_date || null,
@@ -689,23 +849,46 @@ async function syncMaterialRequestForProduction(user, production, mode = 'draft'
   const materialRequest = existingRequest
     ? await updateDocument('MaterialRequest', existingRequest.id, {
         ...payload,
+        created_by: existingRequest.created_by || payload.created_by,
+        created_by_name: existingRequest.created_by_name || payload.created_by_name,
         request_number: existingRequest.request_number || `MR-PROD-${Date.now()}`,
-        status: !isDraftMode && String(existingRequest.status || '') === 'acknowledged'
+        status: !isDraftMode
+          && !forceFreshAcknowledgement
+          && String(existingRequest.status || '') === 'acknowledged'
           ? 'acknowledged'
           : targetStatus
-      })
+      }, executor)
     : await createDocument('MaterialRequest', {
         request_number: `MR-PROD-${Date.now()}`,
         ...payload
-      });
+      }, executor);
 
   await updateDocument('Production', production.id, {
     linked_material_request_id: materialRequest.id,
     linked_material_request_number: materialRequest.request_number,
-    material_request_status: materialRequest.status
-  });
+    material_request_status: materialRequest.status,
+    fulfillment_store_id: fulfillmentStore?.id || null,
+    fulfillment_store_name: fulfillmentStore?.name || null,
+    ...(!isDraftMode && String(materialRequest.status || '').toLowerCase() === 'acknowledged'
+      ? { status: 'pending_production', area_approval_status: 'pending' }
+      : {})
+  }, executor);
 
   return materialRequest;
+}
+
+async function cancelMaterialRequestsForProduction(productionId, reason, executor = null) {
+  const requests = await listDocuments('MaterialRequest', {
+    filters: { source_production_id: productionId },
+    limit: 50
+  }, executor || undefined);
+  for (const request of requests) {
+    if (['cancelled', 'rejected'].includes(String(request.status || '').toLowerCase())) continue;
+    await updateDocument('MaterialRequest', request.id, {
+      status: 'rejected',
+      procurement_notes: reason || request.procurement_notes || 'Production request rejected'
+    }, executor);
+  }
 }
 
 const CORE_MENU_MEAL_TYPES = new Set(['breakfast', 'lunch', 'dinner']);
@@ -883,12 +1066,25 @@ async function getSpecialEventBudgetContext(user, planLike = {}) {
 }
 
 async function calculateSpecialEventPlanning(user, record) {
+  const scope = await getLocationScope(user);
+  const validatedFulfillmentStore = record.fulfillment_store_id
+    ? resolveProductionFulfillmentStore(record, scope.sites)
+    : null;
+  const inventorySiteId = validatedFulfillmentStore?.id || record.site_id;
+  if (
+    inventorySiteId
+    && !scope.unrestricted
+    && !scope.accessibleSiteIds.has(String(inventorySiteId))
+  ) {
+    const error = new Error('The event fulfillment Store is outside your assigned location scope.');
+    error.status = 403;
+    throw error;
+  }
   const [recipes, ingredients, inventoryRows] = await Promise.all([
     listDocuments('Recipe', { limit: 5000 }),
     listDocuments('Ingredient', { limit: 5000 }),
-    listDocuments('Inventory', { filters: { site_id: record.site_id }, limit: 5000 })
+    listDocuments('Inventory', { filters: { site_id: inventorySiteId }, limit: 5000 })
   ]);
-  const scope = await getLocationScope(user);
   const scopedRecipes = filterRecordsByLocation(user, 'Recipe', recipes, scope)
     .filter((recipe) => recipe.is_active !== false)
     .filter((recipe) => recipe.site_scope !== 'specific'
@@ -896,7 +1092,7 @@ async function calculateSpecialEventPlanning(user, record) {
       || (Array.isArray(recipe.site_ids) && recipe.site_ids.includes(record.site_id)));
   const costSnapshots = await getIngredientCostSnapshots({
     ingredientIds: ingredients.map((ingredient) => ingredient.id),
-    siteIds: record.site_id ? [record.site_id] : null
+    siteIds: inventorySiteId ? [inventorySiteId] : null
   });
   const costingIngredients = ingredients.map((ingredient) => ({
     ...ingredient,
@@ -942,12 +1138,25 @@ async function buildSpecialEventResponse(user, record) {
   const snapshot = await calculateSpecialEventPlanning(user, pricedRecord);
   const hydratedRecord = mergeSpecialEventSnapshot(pricedRecord, snapshot);
   const budgetContext = await getSpecialEventBudgetContext(user, hydratedRecord);
-  const [purchaseRequest, productionPlans] = await Promise.all([
+  const productionScope = await getLocationScope(user);
+  const [purchaseRequestCandidate, productionPlans] = await Promise.all([
     hydratedRecord.procurement_pr_id ? getPurchaseRequestById(hydratedRecord.procurement_pr_id) : null,
-    Array.isArray(hydratedRecord.production_plan_ids) && hydratedRecord.production_plan_ids.length > 0
-      ? listDocuments('Production', { filters: { source_event_id: hydratedRecord.id }, limit: 500 })
-      : []
+    listDocuments('Production', {
+      filters: { source_event_id: hydratedRecord.id },
+      limit: 500,
+      location: productionScope
+    })
   ]);
+  const expectedProcurementSiteId = String(
+    hydratedRecord.fulfillment_store_id || hydratedRecord.site_id || ''
+  );
+  const purchaseRequest = purchaseRequestCandidate
+    && String(purchaseRequestCandidate.source_type || '').toLowerCase() === 'special_event'
+    && String(purchaseRequestCandidate.source_event_id || '') === String(hydratedRecord.id)
+    && String(purchaseRequestCandidate.site_id || '') === expectedProcurementSiteId
+    && filterRowsByAccessibleSites([purchaseRequestCandidate], productionScope).length
+    ? purchaseRequestCandidate
+    : null;
   const productionByRecipe = new Map(productionPlans.map((plan) => [String(plan.source_event_recipe_id), plan]));
   const linkedRecipes = hydratedRecord.linked_recipes.map((link) => ({
     ...link,
@@ -955,18 +1164,29 @@ async function buildSpecialEventResponse(user, record) {
   }));
   const productionStatuses = productionPlans.map((plan) => String(plan.status || 'planned'));
   const productionPlanStatus = productionStatuses.length === 0
-    ? hydratedRecord.production_plan_status
+    ? 'not_generated'
     : productionStatuses.every((status) => status === 'completed')
       ? 'completed'
-      : productionStatuses.some((status) => ['in_progress', 'completed'].includes(status))
-        ? 'in_progress'
-        : 'generated';
+      : productionStatuses.some((status) => ['rejected', 'cancelled'].includes(status))
+        ? 'action_required'
+        : productionStatuses.some((status) => ['in_progress', 'completed'].includes(status))
+          ? 'in_progress'
+          : 'generated';
   return {
     ...hydratedRecord,
     linked_recipes: linkedRecipes,
-    procurement_pr_status: purchaseRequest?.status || hydratedRecord.procurement_pr_status,
+    procurement_pr_id: purchaseRequest?.id || null,
+    procurement_pr_number: purchaseRequest?.request_number || null,
+    procurement_pr_status: purchaseRequest?.status
+      || (snapshot.shortage_items.length === 0 ? 'not_required' : 'not_created'),
     procurement_request: purchaseRequest,
+    production_plan_ids: productionPlans.map((plan) => plan.id),
     production_plan_status: productionPlanStatus,
+    approval_checklist: {
+      ...(hydratedRecord.approval_checklist || {}),
+      procurement_plan: Boolean(purchaseRequest) || snapshot.shortage_items.length === 0,
+      production_plan: productionPlans.length > 0
+    },
     linked_budget: budgetContext.linked_budget,
     budget_candidates: budgetContext.budget_candidates,
     budget_comparison: {
@@ -1058,7 +1278,11 @@ async function getScopedProduction(request, productionId) {
     return { scope, production: null };
   }
 
-  const scopedProduction = filterRowsByAccessibleSites([production], scope).length ? production : null;
+  const scopedProduction = filterRowsByAccessibleSites(
+    [production],
+    scope,
+    ['site_id', 'fulfillment_store_id']
+  ).length ? production : null;
   return { scope, production: scopedProduction };
 }
 
@@ -1432,8 +1656,16 @@ app.post('/api/auth/login', async (request, response) => {
   return response.json(session);
 });
 
-app.get('/api/auth/me', requireAuth, (request, response) => {
-  response.json(request.user);
+app.get('/api/auth/me', requireAuth, async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    response.json({
+      ...request.user,
+      accessible_site_ids: [...scope.accessibleSiteIds]
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/api/dashboard/management', requireAuth, requirePermission('view_dashboard'), async (request, response, next) => {
@@ -1953,11 +2185,7 @@ app.patch('/api/special-events/:id', requireAuth, requirePermission('edit_specia
   }
 });
 
-app.post('/api/special-events/:id/generate-production', requireAuth, requireAnyPermission([
-  'edit_special_event',
-  'manage_production',
-  'create_production_request'
-]), async (request, response, next) => {
+app.post('/api/special-events/:id/generate-production', requireAuth, requirePermission('create_production_request'), async (request, response, next) => {
   try {
     const existing = await findScopedSpecialEventById(request.user, request.params.id);
     if (!existing) {
@@ -1969,32 +2197,158 @@ app.post('/api/special-events/:id/generate-production', requireAuth, requireAnyP
       listDocuments('Ingredient', { limit: 10000 })
     ]);
     const preparationScope = await getLocationScope(request.user);
-    const snapshot = await calculateSpecialEventPlanning(request.user, existing);
-    assertEventReadyForSubmission(existing, snapshot);
+    const requestedFulfillmentStoreId = String(
+      request.body?.fulfillment_store_id || existing.fulfillment_store_id || ''
+    ).trim();
+    const fulfillmentStore = resolveProductionFulfillmentStore({
+      site_id: existing.site_id,
+      fulfillment_store_id: requestedFulfillmentStoreId
+    }, preparationScope.sites);
+    if (
+      !preparationScope.unrestricted
+      && !preparationScope.accessibleSiteIds.has(String(fulfillmentStore.id))
+    ) {
+      const error = new Error('You do not have access to the selected fulfillment Store');
+      error.status = 403;
+      throw error;
+    }
+    const eventForGeneration = {
+      ...existing,
+      fulfillment_store_id: fulfillmentStore.id,
+      fulfillment_store_name: fulfillmentStore.name || null
+    };
+    const snapshot = await calculateSpecialEventPlanning(request.user, eventForGeneration);
+    assertEventReadyForSubmission(eventForGeneration, snapshot);
     const currentPlans = await listDocuments('Production', {
       filters: { source_event_id: existing.id },
-      limit: 500
+      limit: 500,
+      location: preparationScope
     });
     const productionIds = [];
     let duplicateCount = 0;
-    const productionPayloads = buildEventProductionPlanPayloads(existing, snapshot, recipes, ingredients);
+    let reopenedCount = 0;
+    const productionPayloads = buildEventProductionPlanPayloads(
+      eventForGeneration,
+      snapshot,
+      recipes,
+      ingredients
+    );
 
-    for (const productionPayload of productionPayloads) {
-      const duplicate = currentPlans.find((plan) => String(plan.source_event_recipe_id) === String(productionPayload.recipe_id));
-      if (duplicate) {
-        duplicateCount += 1;
-        productionIds.push(duplicate.id);
-        continue;
-      }
+    for (const eventProductionPayload of productionPayloads) {
+      const productionPayload = {
+        ...eventProductionPayload,
+        fulfillment_store_id: fulfillmentStore.id,
+        fulfillment_store_name: fulfillmentStore.name || null
+      };
+      const duplicate = currentPlans.find((plan) => (
+        String(plan.source_event_recipe_id) === String(productionPayload.recipe_id)
+        && String(plan.source_type || '').toLowerCase() === 'special_event'
+        && String(plan.site_id || '') === String(existing.site_id || '')
+      ));
+      authorizeEntityAction(request.user, 'Production', 'create', productionPayload);
       const prepared = await prepareEntityPayload(
         request.user,
         'Production',
         productionPayload,
         null,
-        { scope: preparationScope, recipeCatalog: recipes, ingredientCatalog: ingredients }
+        {
+          scope: preparationScope,
+          recipeCatalog: recipes,
+          ingredientCatalog: ingredients,
+          trustedProductionSource: true
+        }
       );
-      const created = await createDocument('Production', prepared);
+      const workflowPrepared = applyProductionWorkflowMetadata(request.user, {
+        ...prepared,
+        fulfillment_store_id: fulfillmentStore.id,
+        fulfillment_store_name: fulfillmentStore.name || null
+      });
+
+      if (duplicate) {
+        const reopened = await withTransaction(async (client) => {
+          const lockedDuplicate = await findDocument('Production', duplicate.id, client, true);
+          const lockedStatus = normalizeProductionStatus(lockedDuplicate?.status);
+          if (
+            !lockedDuplicate
+            || !['rejected', 'cancelled'].includes(lockedStatus)
+            || lockedDuplicate.consumption_report_id
+          ) {
+            return { record: lockedDuplicate || duplicate, mutated: false };
+          }
+
+          await cancelMaterialRequestsForProduction(
+            lockedDuplicate.id,
+            'Superseded while regenerating the linked special-event production plan.',
+            client
+          );
+          let record = await updateDocument('Production', lockedDuplicate.id, {
+            ...workflowPrepared,
+            status: 'planned',
+            linked_material_request_id: null,
+            linked_material_request_number: null,
+            material_request_status: null,
+            pm_approval_status: null,
+            pm_approved_by: null,
+            pm_approved_by_name: null,
+            pm_approved_at: null,
+            pm_reviewed_by: null,
+            pm_reviewed_by_name: null,
+            pm_reviewed_at: null,
+            area_approval_status: null,
+            area_approved_by: null,
+            area_approved_by_name: null,
+            area_approved_at: null,
+            area_reviewed_by: null,
+            area_reviewed_by_name: null,
+            area_reviewed_at: null,
+            submitted_by: null,
+            submitted_by_name: null,
+            submitted_at: null,
+            reviewed_at: null,
+            review_notes: null,
+            started_by: null,
+            started_by_name: null,
+            started_at: null
+          }, client);
+          await syncMaterialRequestForProduction(request.user, record, 'draft', client);
+          record = await findDocument('Production', record.id, client);
+          return { record, mutated: true };
+        });
+        productionIds.push(reopened.record.id);
+        if (reopened.mutated) {
+          reopenedCount += 1;
+          await auditAction({
+            user: request.user,
+            action: 'PRODUCTION_REOPENED_FROM_SPECIAL_EVENT',
+            entity: 'Production',
+            entityId: reopened.record.id,
+            details: { source_event_id: existing.id, saved_record: reopened.record }
+          });
+        } else {
+          duplicateCount += 1;
+        }
+        continue;
+      }
+
+      const created = await withTransaction(async (client) => {
+        let record = await createDocument('Production', workflowPrepared, client);
+        await syncMaterialRequestForProduction(request.user, record, 'draft', client);
+        record = await findDocument('Production', record.id, client);
+        return record;
+      });
       productionIds.push(created.id);
+      await auditAction({
+        user: request.user,
+        action: 'PRODUCTION_CREATE_FROM_SPECIAL_EVENT',
+        entity: 'Production',
+        entityId: created.id,
+        details: { source_event_id: existing.id, created_record: created }
+      });
+    }
+
+    if (productionIds.length > duplicateCount) {
+      recordChanged('Production');
+      recordChanged('MaterialRequest');
     }
 
     const linkedRecipes = snapshot.linked_recipes.map((link) => ({ ...link, production_status: 'planned' }));
@@ -2002,6 +2356,8 @@ app.post('/api/special-events/:id/generate-production', requireAuth, requireAnyP
       production_plan_status: 'generated',
       production_plan_ids: productionIds,
       linked_recipes: linkedRecipes,
+      fulfillment_store_id: fulfillmentStore.id,
+      fulfillment_store_name: fulfillmentStore.name || null,
       prep_start_date: request.body?.prep_start_date || existing.prep_start_date || existing.event_date || existing.plan_date,
       production_generated_at: new Date().toISOString(),
       production_generated_by: request.user.email || null
@@ -2009,7 +2365,8 @@ app.post('/api/special-events/:id/generate-production', requireAuth, requireAnyP
     return response.status(201).json(buildApiObjectResponse({
       event: await buildSpecialEventResponse(request.user, updated),
       production_plan_ids: productionIds,
-      duplicate_count: duplicateCount
+      duplicate_count: duplicateCount,
+      reopened_count: reopenedCount
     }, { action: 'generate_production' }));
   } catch (error) {
     return next(error);
@@ -2026,55 +2383,136 @@ app.post('/api/special-events/:id/create-pr', requireAuth, requireAnyPermission(
     if (!existing) {
       return response.status(404).json({ message: 'Special event not found' });
     }
-    if (existing.procurement_pr_id) {
-      return response.json(buildApiObjectResponse({
-        event: await buildSpecialEventResponse(request.user, existing),
-        duplicate_prevented: true,
-        purchase_request_id: existing.procurement_pr_id
-      }, { action: 'create_pr' }));
-    }
-
-    const snapshot = await calculateSpecialEventPlanning(request.user, existing);
-    assertEventReadyForSubmission(existing, snapshot);
-    if (!snapshot.shortage_items.length) {
-      const updated = await updateDocument('MenuPlan', existing.id, {
-        procurement_pr_status: 'not_required',
-        estimated_procurement_spend: 0
-      });
-      return response.json(buildApiObjectResponse({
-        event: await buildSpecialEventResponse(request.user, updated),
-        duplicate_prevented: false,
-        no_shortage: true
-      }, { action: 'create_pr' }));
-    }
-
-    const requestRecord = await createPurchaseRequest({
-      request_number: `PR-EVT-${Date.now()}`,
+    const scope = await getLocationScope(request.user);
+    const requestedFulfillmentStoreId = String(
+      request.body?.fulfillment_store_id || existing.fulfillment_store_id || ''
+    ).trim();
+    const fulfillmentStore = resolveProductionFulfillmentStore({
       site_id: existing.site_id,
-      site_name: existing.site_name,
-      request_date: new Date().toISOString().slice(0, 10),
-      needed_by: existing.prep_start_date || existing.event_date || existing.plan_date,
-      priority: 'high',
-      status: 'pending',
-      approval_role: 'manager',
-      auto_generated: true,
-      source_type: 'special_event',
-      notes: `Auto-generated for event ${existing.event_name}`,
-      items: buildEventPurchaseRequestItems(snapshot, existing.event_name)
-    }, request.user);
+      fulfillment_store_id: requestedFulfillmentStoreId
+    }, scope.sites);
+    if (!scope.unrestricted && !scope.accessibleSiteIds.has(String(fulfillmentStore.id))) {
+      const error = new Error('You do not have access to the selected fulfillment Store');
+      error.status = 403;
+      throw error;
+    }
+    const eventForProcurement = {
+      ...existing,
+      fulfillment_store_id: fulfillmentStore.id,
+      fulfillment_store_name: fulfillmentStore.name || null
+    };
+    const snapshot = await calculateSpecialEventPlanning(request.user, eventForProcurement);
+    assertEventReadyForSubmission(eventForProcurement, snapshot);
 
-    const updated = await updateDocument('MenuPlan', existing.id, {
-      procurement_pr_status: requestRecord.status || 'pending',
-      procurement_pr_id: requestRecord.id,
-      procurement_pr_number: requestRecord.request_number,
-      estimated_procurement_spend: snapshot.estimated_procurement_spend,
-      procurement_generated_at: new Date().toISOString(),
-      procurement_generated_by: request.user.email || null
+    const result = await withTransaction(async (client) => {
+      const lockedEvent = await findDocument('MenuPlan', existing.id, client, true);
+      if (!lockedEvent || !isSpecialEventPlan(lockedEvent)) {
+        const error = new Error('Special event not found');
+        error.status = 404;
+        throw error;
+      }
+      if (!filterRowsByAccessibleSites([lockedEvent], scope).length) {
+        const error = new Error('Special event is outside your assigned Project scope');
+        error.status = 403;
+        throw error;
+      }
+
+      const linkedRequest = await getPurchaseRequestBySourceEventId(existing.id, client);
+      if (linkedRequest) {
+        const lockedStore = resolveProductionFulfillmentStore({
+          ...lockedEvent,
+          fulfillment_store_id: lockedEvent.fulfillment_store_id || fulfillmentStore.id
+        }, scope.sites);
+        if (!scope.unrestricted && !scope.accessibleSiteIds.has(String(lockedStore.id))) {
+          const error = new Error('The existing event purchase request is outside your assigned Store scope.');
+          error.status = 403;
+          throw error;
+        }
+        if (String(linkedRequest.site_id || '') !== String(lockedStore.id)) {
+          const error = new Error('The existing event purchase request is routed to a different Store. Reconcile it before continuing.');
+          error.status = 409;
+          throw error;
+        }
+        const updated = await updateDocument('MenuPlan', lockedEvent.id, {
+          procurement_pr_status: linkedRequest.status || 'pending',
+          procurement_pr_id: linkedRequest.id,
+          procurement_pr_number: linkedRequest.request_number,
+          fulfillment_store_id: lockedStore.id,
+          fulfillment_store_name: lockedStore.name || null
+        }, client);
+        return { updated, requestRecord: linkedRequest, duplicatePrevented: true, noShortage: false };
+      }
+
+      if (
+        existing.updated_date
+        && lockedEvent.updated_date
+        && String(existing.updated_date) !== String(lockedEvent.updated_date)
+      ) {
+        const error = new Error('The event changed while procurement was being prepared. Refresh and try again.');
+        error.status = 409;
+        throw error;
+      }
+
+      if (!snapshot.shortage_items.length) {
+        const updated = await updateDocument('MenuPlan', lockedEvent.id, {
+          procurement_pr_status: 'not_required',
+          procurement_pr_id: null,
+          procurement_pr_number: null,
+          estimated_procurement_spend: 0,
+          fulfillment_store_id: fulfillmentStore.id,
+          fulfillment_store_name: fulfillmentStore.name || null
+        }, client);
+        return { updated, requestRecord: null, duplicatePrevented: false, noShortage: true };
+      }
+
+      const requestRecord = await createPurchaseRequest({
+        request_number: `PR-EVT-${Date.now()}`,
+        site_id: fulfillmentStore.id,
+        site_name: fulfillmentStore.name || null,
+        request_date: new Date().toISOString().slice(0, 10),
+        needed_by: existing.prep_start_date || existing.event_date || existing.plan_date,
+        priority: 'high',
+        status: 'pending',
+        approval_role: 'manager',
+        auto_generated: true,
+        source_type: 'special_event',
+        source_event_id: existing.id,
+        notes: `Auto-generated for event ${existing.event_name}`,
+        items: buildEventPurchaseRequestItems(snapshot, existing.event_name)
+      }, request.user, client);
+
+      const updated = await updateDocument('MenuPlan', lockedEvent.id, {
+        procurement_pr_status: requestRecord.status || 'pending',
+        procurement_pr_id: requestRecord.id,
+        procurement_pr_number: requestRecord.request_number,
+        estimated_procurement_spend: snapshot.estimated_procurement_spend,
+        procurement_generated_at: new Date().toISOString(),
+        procurement_generated_by: request.user.email || null,
+        procurement_generated_by_name: request.user.full_name || request.user.email || null,
+        fulfillment_store_id: fulfillmentStore.id,
+        fulfillment_store_name: fulfillmentStore.name || null
+      }, client);
+      return { updated, requestRecord, duplicatePrevented: false, noShortage: false };
     });
-    return response.status(201).json(buildApiObjectResponse({
-      event: await buildSpecialEventResponse(request.user, updated),
-      duplicate_prevented: false,
-      purchase_request: requestRecord
+
+    if (result.requestRecord && !result.duplicatePrevented) {
+      await auditAction({
+        user: request.user,
+        action: 'SPECIAL_EVENT_PURCHASE_REQUEST_CREATED',
+        entity: 'MenuPlan',
+        entityId: existing.id,
+        details: {
+          purchase_request_id: result.requestRecord.id,
+          fulfillment_store_id: fulfillmentStore.id
+        }
+      });
+    }
+    return response.status(result.requestRecord && !result.duplicatePrevented ? 201 : 200).json(buildApiObjectResponse({
+      event: await buildSpecialEventResponse(request.user, result.updated),
+      duplicate_prevented: result.duplicatePrevented,
+      no_shortage: result.noShortage,
+      purchase_request_id: result.requestRecord?.id || null,
+      purchase_request: result.requestRecord
     }, { action: 'create_pr' }));
   } catch (error) {
     return next(error);
@@ -2630,15 +3068,25 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
       return response.status(400).json({ message: 'Special events must be created from the event planning module.' });
     }
     authorizeEntityAction(request.user, entity, 'create', request.body || {});
-    const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {});
-    let record = await createDocument(entity, preparedPayload);
+    let preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {});
+    if (entity === 'Production') {
+      preparedPayload = applyProductionWorkflowMetadata(request.user, preparedPayload);
+    }
+    let record;
+    if (entity === 'Production') {
+      record = await withTransaction(async (client) => {
+        let created = await createDocument(entity, preparedPayload, client);
+        if (['draft', 'planned', 'pending_approval', 'changes_requested'].includes(String(created.status || ''))) {
+          await syncMaterialRequestForProduction(request.user, created, 'draft', client);
+          created = await findDocument(entity, created.id, client);
+        }
+        return created;
+      });
+    } else {
+      record = await createDocument(entity, preparedPayload);
+    }
     invalidateEntityAccessCaches(entity);
     recordChanged(entity);
-
-    if (entity === 'Production' && ['draft', 'pending_approval', 'changes_requested'].includes(String(record.status || ''))) {
-      await syncMaterialRequestForProduction(request.user, record, 'draft');
-      record = await findDocument(entity, record.id);
-    }
 
     await auditAction({
       user: request.user,
@@ -2670,21 +3118,46 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       return response.status(400).json({ message: 'Special events must be edited from the event planning module.' });
     }
     authorizeEntityAction(request.user, entity, 'update', request.body || {}, existing);
-    const preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {}, existing);
-    let updated = await updateDocument(entity, request.params.id, preparedPayload);
+    let preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {}, existing);
+    if (entity === 'Production') {
+      preparedPayload = applyProductionWorkflowMetadata(request.user, preparedPayload, existing);
+    }
+    let updated;
+    if (entity === 'Production') {
+      updated = await withTransaction(async (client) => {
+        const lockedExisting = await findDocument(entity, request.params.id, client, true);
+        authorizeEntityAction(request.user, entity, 'update', request.body || {}, lockedExisting);
+        let transactionPayload = preparedPayload;
+        if (
+          normalizeProductionStatus(request.body?.status) === 'in_progress'
+          && normalizeProductionStatus(lockedExisting.status) !== 'in_progress'
+        ) {
+          const fulfillmentStore = await assertProductionStartPrerequisites(lockedExisting, client, request.user);
+          transactionPayload = {
+            ...transactionPayload,
+            fulfillment_store_id: fulfillmentStore.id,
+            fulfillment_store_name: fulfillmentStore.name || null
+          };
+        }
+        let saved = await updateDocument(entity, request.params.id, transactionPayload, client);
+        const status = String(saved?.status || '');
+        if (['draft', 'planned', 'pending_approval', 'changes_requested'].includes(status)) {
+          await syncMaterialRequestForProduction(request.user, saved, 'draft', client);
+          saved = await findDocument(entity, request.params.id, client);
+        } else if (status === 'pending_procurement') {
+          await syncMaterialRequestForProduction(request.user, saved, 'activate', client);
+          saved = await findDocument(entity, request.params.id, client);
+        } else if (status === 'rejected') {
+          await cancelMaterialRequestsForProduction(saved.id, saved.review_notes, client);
+          saved = await findDocument(entity, request.params.id, client);
+        }
+        return saved;
+      });
+    } else {
+      updated = await updateDocument(entity, request.params.id, preparedPayload);
+    }
     invalidateEntityAccessCaches(entity);
     recordChanged(entity);
-
-    if (entity === 'Production') {
-      const status = String(updated?.status || '');
-      if (['draft', 'pending_approval', 'changes_requested'].includes(status)) {
-        await syncMaterialRequestForProduction(request.user, updated, 'draft');
-        updated = await findDocument(entity, request.params.id);
-      } else if (status === 'approved') {
-        await syncMaterialRequestForProduction(request.user, updated, 'activate');
-        updated = await findDocument(entity, request.params.id);
-      }
-    }
 
     await auditAction({
       user: request.user,
@@ -3230,12 +3703,13 @@ app.post('/api/pos/webhooks/:sourceId', requireAuth, requireRole(['admin']), asy
 app.get('/api/material-requests', requireAuth, requireAnyPermission(['view_material_request', 'create_material_request', 'acknowledge_material_request', 'manage_procurement', 'approve_procurement']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
+    const limit = Math.min(5000, Math.max(1, Number(request.query?.limit) || 1000));
     const records = await listDocuments('MaterialRequest', {
       sort: '-request_date',
-      limit: 200
+      limit,
+      location: scope
     });
-    const scopedRecords = filterRowsByAccessibleSites(records, scope);
-    response.json(await enrichRecordsWithIngredientItemCodes(scopedRecords));
+    response.json(await enrichRecordsWithIngredientItemCodes(records));
   } catch (error) {
     next(error);
   }
@@ -3243,44 +3717,420 @@ app.get('/api/material-requests', requireAuth, requireAnyPermission(['view_mater
 
 app.post('/api/material-requests/from-production/:id', requireAuth, requirePermission('create_material_request'), async (request, response, next) => {
   try {
-    const { production } = await getScopedProduction(request, request.params.id);
-    if (!production) {
-      return response.status(404).json({ message: 'Production record not found' });
+    const scope = await getLocationScope(request.user);
+    const result = await withTransaction(async (client) => {
+      const production = await findDocument('Production', request.params.id, client, true);
+      if (!production) {
+        const error = new Error('Production record not found');
+        error.status = 404;
+        throw error;
+      }
+      if (!filterRowsByAccessibleSites(
+        [production],
+        scope,
+        ['site_id', 'fulfillment_store_id']
+      ).length) {
+        const error = new Error('Production record is outside your assigned Project or Store scope');
+        error.status = 403;
+        throw error;
+      }
+      if (normalizeProductionStatus(production.status) !== 'pending_procurement') {
+        const error = new Error('A production material request can only be activated after Project Manager approval.');
+        error.status = 409;
+        throw error;
+      }
+
+      const materialRequest = await syncMaterialRequestForProduction(
+        request.user,
+        production,
+        'activate',
+        client
+      );
+      const updatedProduction = await findDocument('Production', production.id, client);
+      return { materialRequest, production: updatedProduction };
+    });
+
+    recordChanged('MaterialRequest');
+    recordChanged('Production');
+    await auditAction({
+      user: request.user,
+      action: result.materialRequest
+        ? 'PRODUCTION_MATERIAL_REQUEST_ACTIVATED'
+        : 'PRODUCTION_MATERIAL_REQUEST_NOT_REQUIRED',
+      entity: 'Production',
+      entityId: result.production.id,
+      details: {
+        saved_record: result.production,
+        material_request_id: result.materialRequest?.id || null
+      }
+    });
+
+    if (!result.materialRequest) {
+      return response.status(200).json({
+        material_request: null,
+        production: result.production,
+        message: 'No stock-managed ingredients are required. The request moved to Pending Production.'
+      });
     }
-    const mode = String(request.body?.mode || 'activate').toLowerCase();
-    const materialRequest = await syncMaterialRequestForProduction(request.user, production, mode);
-    if (!materialRequest) {
-      return response.status(400).json({ message: 'Production request has no ingredients to build a material request.' });
+    return response.status(201).json(result.materialRequest);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermission('acknowledge_material_request'), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const scopedRequest = await findDocument('MaterialRequest', request.params.id);
+    if (!scopedRequest || !filterRowsByAccessibleSites([scopedRequest], scope).length) {
+      return response.status(404).json({ message: 'Material request not found' });
     }
-    response.status(201).json(materialRequest);
+    const sourceProductionId = String(scopedRequest.source_production_id || '').trim();
+    const updated = await withTransaction(async (client) => {
+      // Keep the same Production -> MaterialRequest lock order used by Area approval.
+      const production = sourceProductionId
+        ? await findDocument('Production', sourceProductionId, client, true)
+        : null;
+      const materialRequest = await findDocument('MaterialRequest', request.params.id, client, true);
+      if (!materialRequest || !filterRowsByAccessibleSites([materialRequest], scope).length) {
+        const error = new Error('Material request is outside your assigned Store scope');
+        error.status = 403;
+        throw error;
+      }
+      if (String(materialRequest.source_production_id || '').trim() !== sourceProductionId) {
+        const error = new Error('Material request source changed while it was being reviewed. Refresh and try again.');
+        error.status = 409;
+        throw error;
+      }
+      if (String(materialRequest?.status || '').toLowerCase() !== 'pending_procurement_ack') {
+        const error = new Error('Only a material request awaiting Store / Procurement acknowledgement can be approved');
+        error.status = 409;
+        throw error;
+      }
+      const isLegacyApprovedWithoutArea = Boolean(
+        production
+        && normalizeProductionStatus(production.status) === 'approved'
+        && requiresAreaProductionApproval(production)
+      );
+      if (materialRequest.source_type === 'production' && !materialRequest.source_production_id) {
+        const error = new Error('Production material request is missing its source production link');
+        error.status = 409;
+        throw error;
+      }
+      if (materialRequest.source_production_id && String(materialRequest.source_type || '').toLowerCase() !== 'production') {
+        const error = new Error('Linked production material request has an invalid source type');
+        error.status = 409;
+        throw error;
+      }
+      if (
+        materialRequest.source_production_id
+        && (!production || (
+          normalizeProductionStatus(production.status) !== 'pending_procurement'
+          && !isLegacyApprovedWithoutArea
+        ))
+      ) {
+        const error = new Error('The linked production request is not awaiting Store / Procurement action');
+        error.status = 409;
+        throw error;
+      }
+      let fulfillmentStore = null;
+      if (production) {
+        fulfillmentStore = resolveProductionFulfillmentStore(production, scope.sites);
+        if (
+          production.linked_material_request_id
+          && String(production.linked_material_request_id) !== String(materialRequest.id)
+        ) {
+          const error = new Error('Material request does not match the Production linked request');
+          error.status = 409;
+          throw error;
+        }
+        if (String(materialRequest.site_id || '') !== String(fulfillmentStore.id)) {
+          const error = new Error('Material request is not routed to the Production fulfillment Store');
+          error.status = 409;
+          throw error;
+        }
+        if (
+          materialRequest.requesting_site_id
+          && String(materialRequest.requesting_site_id) !== String(production.site_id)
+        ) {
+          const error = new Error('Material request Project does not match the linked Production Project');
+          error.status = 409;
+          throw error;
+        }
+        if (
+          materialRequest.fulfillment_store_id
+          && String(materialRequest.fulfillment_store_id) !== String(fulfillmentStore.id)
+        ) {
+          const error = new Error('Material request fulfillment Store does not match the linked Production');
+          error.status = 409;
+          throw error;
+        }
+      }
+      const acknowledgedAt = new Date().toISOString();
+      const acknowledged = await updateDocument('MaterialRequest', request.params.id, {
+        status: 'acknowledged',
+        acknowledged_by: request.user.email,
+        acknowledged_by_name: request.user.full_name || request.user.email,
+        acknowledged_at: acknowledgedAt,
+        procurement_notes: request.body?.notes || materialRequest.procurement_notes || null
+      }, client);
+      if (production) {
+        await updateDocument('Production', production.id, {
+          status: 'pending_production',
+          material_request_status: 'acknowledged',
+          procurement_approved_by: request.user.email,
+          procurement_approved_by_name: request.user.full_name || request.user.email,
+          procurement_approved_at: acknowledgedAt,
+          area_approval_status: 'pending',
+          linked_material_request_id: materialRequest.id,
+          linked_material_request_number: materialRequest.request_number || null,
+          fulfillment_store_id: fulfillmentStore.id,
+          fulfillment_store_name: fulfillmentStore.name || null
+        }, client);
+      }
+      return acknowledged;
+    });
+    recordChanged('MaterialRequest');
+    recordChanged('Production');
+    await auditAction({
+      user: request.user,
+      action: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGED',
+      entity: 'MaterialRequest',
+      entityId: updated.id,
+      details: { saved_record: updated, notes: request.body?.notes || null }
+    });
+    response.json(updated);
   } catch (error) {
     next(error);
   }
 });
 
-app.post('/api/material-requests/:id/acknowledge', requireAuth, requireAnyPermission(['acknowledge_material_request', 'manage_procurement', 'approve_procurement']), async (request, response, next) => {
+app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('approve_production'), async (request, response, next) => {
   try {
-    const scope = await getLocationScope(request.user);
-    const materialRequest = await findDocument('MaterialRequest', request.params.id);
-    if (!materialRequest || !filterRowsByAccessibleSites([materialRequest], scope).length) {
-      return response.status(404).json({ message: 'Material request not found' });
+    const { production, scope } = await getScopedProduction(request, request.params.id);
+    if (!production) {
+      return response.status(404).json({ message: 'Production record not found' });
     }
 
-    const updated = await updateDocument('MaterialRequest', request.params.id, {
-      status: 'acknowledged',
-      acknowledged_by: request.user.email,
-      acknowledged_by_name: request.user.full_name || request.user.email,
-      acknowledged_at: new Date().toISOString(),
-      procurement_notes: request.body?.notes || materialRequest.procurement_notes || null
+    const result = await withTransaction(async (client) => {
+      const lockedProduction = await findDocument('Production', request.params.id, client, true);
+      const currentStatus = normalizeProductionStatus(lockedProduction?.status);
+      const isApprovedRecord = currentStatus === 'approved';
+      const areaApprovalWasAlreadyRecorded = isApprovedRecord && !requiresAreaProductionApproval(lockedProduction);
+
+      if (currentStatus !== 'pending_production' && !isApprovedRecord) {
+        const error = new Error('Only a Pending Production request can receive Area Manager approval');
+        error.status = 409;
+        throw error;
+      }
+
+      const requestedFulfillmentStoreId = String(request.body?.fulfillment_store_id || '').trim();
+      if (
+        lockedProduction.fulfillment_store_id
+        && requestedFulfillmentStoreId
+        && String(lockedProduction.fulfillment_store_id) !== requestedFulfillmentStoreId
+      ) {
+        const error = new Error('The fulfillment Store cannot be changed after procurement routing');
+        error.status = 409;
+        throw error;
+      }
+      const siteCatalog = await listDocuments('Site', { limit: 5000 }, client);
+      const fulfillmentStore = resolveProductionFulfillmentStore({
+        ...lockedProduction,
+        fulfillment_store_id: lockedProduction.fulfillment_store_id || requestedFulfillmentStoreId
+      }, siteCatalog);
+      if (!scope.unrestricted && !scope.accessibleSiteIds.has(String(fulfillmentStore.id))) {
+        const error = new Error('You do not have access to the selected fulfillment Store');
+        error.status = 403;
+        throw error;
+      }
+      let currentProduction = lockedProduction;
+      let repairedApprovedRecord = false;
+      if (
+        String(lockedProduction.fulfillment_store_id || '') !== String(fulfillmentStore.id)
+        || String(lockedProduction.fulfillment_store_name || '') !== String(fulfillmentStore.name || '')
+      ) {
+        currentProduction = await updateDocument('Production', lockedProduction.id, {
+          fulfillment_store_id: fulfillmentStore.id,
+          fulfillment_store_name: fulfillmentStore.name || null
+        }, client);
+        repairedApprovedRecord = areaApprovalWasAlreadyRecorded;
+      }
+
+      let materialStatus = String(currentProduction.material_request_status || '').toLowerCase();
+      let materialRequest = currentProduction.linked_material_request_id
+        ? await findDocument('MaterialRequest', currentProduction.linked_material_request_id, client, true)
+        : null;
+
+      const linkedAcknowledgementIsValid = Boolean(
+        materialRequest
+        && String(materialRequest.status || '').toLowerCase() === 'acknowledged'
+        && String(materialRequest.source_type || '').toLowerCase() === 'production'
+        && String(materialRequest.source_production_id || '') === String(currentProduction.id)
+        && String(materialRequest.site_id || '') === String(fulfillmentStore.id)
+      );
+      const hasStaleLegacyAcknowledgement = isApprovedRecord
+        && (
+          materialStatus === 'acknowledged'
+          || String(materialRequest?.status || '').toLowerCase() === 'acknowledged'
+        )
+        && !linkedAcknowledgementIsValid;
+
+      if (hasStaleLegacyAcknowledgement) {
+        const requestBelongsToProduction = materialRequest
+          && String(materialRequest.source_production_id || '') === String(currentProduction.id);
+        if (requestBelongsToProduction) {
+          await updateDocument('MaterialRequest', materialRequest.id, {
+            status: 'pending_procurement_ack',
+            source_type: 'production',
+            site_id: fulfillmentStore.id,
+            site_name: fulfillmentStore.name || null,
+            requesting_site_id: currentProduction.site_id || null,
+            requesting_site_name: currentProduction.site_name || null,
+            fulfillment_store_id: fulfillmentStore.id,
+            fulfillment_store_name: fulfillmentStore.name || null,
+            acknowledged_by: null,
+            acknowledged_by_name: null,
+            acknowledged_at: null,
+            procurement_notes: 'Legacy acknowledgement was reset because a fresh Store-level acknowledgement is required.'
+          }, client);
+        }
+        currentProduction = await updateDocument('Production', currentProduction.id, {
+          status: 'pending_procurement',
+          material_request_status: 'pending_procurement_ack',
+          area_approval_status: 'pending',
+          ...(!requestBelongsToProduction ? {
+            linked_material_request_id: null,
+            linked_material_request_number: null
+          } : {})
+        }, client);
+        await syncMaterialRequestForProduction(request.user, currentProduction, 'activate', client, true);
+        currentProduction = await findDocument('Production', currentProduction.id, client);
+        materialStatus = String(currentProduction.material_request_status || '').toLowerCase();
+        materialRequest = currentProduction.linked_material_request_id
+          ? await findDocument('MaterialRequest', currentProduction.linked_material_request_id, client, true)
+          : null;
+        if (!(materialStatus === 'not_required' && normalizeProductionStatus(currentProduction.status) === 'pending_production')) {
+          return {
+            record: currentProduction,
+            mutated: true,
+            action: 'reconciled_to_procurement'
+          };
+        }
+      }
+
+      const hasAuthoritativeEmptyIngredients = hasAuthoritativeNoMaterialRequirement(currentProduction);
+
+      if (
+        isApprovedRecord
+        && materialRequest
+        && String(materialRequest.status || '').toLowerCase() === 'acknowledged'
+      ) {
+        currentProduction = await updateDocument('Production', lockedProduction.id, {
+          material_request_status: 'acknowledged'
+        }, client);
+        materialStatus = 'acknowledged';
+        repairedApprovedRecord = areaApprovalWasAlreadyRecorded;
+      } else if (
+        isApprovedRecord
+        && !(
+          materialStatus === 'acknowledged'
+          || (materialStatus === 'not_required' && hasAuthoritativeEmptyIngredients)
+        )
+      ) {
+        currentProduction = await updateDocument('Production', lockedProduction.id, {
+          status: 'pending_procurement',
+          area_approval_status: 'pending'
+        }, client);
+        await syncMaterialRequestForProduction(request.user, currentProduction, 'activate', client);
+        currentProduction = await findDocument('Production', lockedProduction.id, client);
+        materialStatus = String(currentProduction.material_request_status || '').toLowerCase();
+        if (!(materialStatus === 'not_required' && normalizeProductionStatus(currentProduction.status) === 'pending_production')) {
+          return {
+            record: currentProduction,
+            mutated: true,
+            action: 'reconciled_to_procurement'
+          };
+        }
+      }
+
+      const currentHasAuthoritativeEmptyIngredients = hasAuthoritativeNoMaterialRequirement(currentProduction);
+      if (
+        materialStatus !== 'acknowledged'
+        && !(materialStatus === 'not_required' && currentHasAuthoritativeEmptyIngredients)
+      ) {
+        const error = new Error('Store / Procurement must acknowledge the material request before Area Manager approval');
+        error.status = 409;
+        throw error;
+      }
+      if (materialStatus === 'acknowledged') {
+        materialRequest = currentProduction.linked_material_request_id
+          ? await findDocument('MaterialRequest', currentProduction.linked_material_request_id, client, true)
+          : materialRequest;
+        if (!materialRequest || String(materialRequest.status || '').toLowerCase() !== 'acknowledged') {
+          const error = new Error('The linked material request has not been acknowledged by Store / Procurement');
+          error.status = 409;
+          throw error;
+        }
+        if (String(materialRequest.source_production_id || '') !== String(currentProduction.id)) {
+          const error = new Error('The acknowledged material request belongs to a different Production request');
+          error.status = 409;
+          throw error;
+        }
+      }
+
+      if (
+        materialStatus === 'acknowledged'
+        && String(materialRequest.site_id || '') !== String(fulfillmentStore.id)
+      ) {
+        const error = new Error('The acknowledged material request is not assigned to the current fulfillment Store');
+        error.status = 409;
+        throw error;
+      }
+
+      if (areaApprovalWasAlreadyRecorded) {
+        return {
+          record: currentProduction,
+          mutated: repairedApprovedRecord,
+          action: repairedApprovedRecord ? 'approved_record_repaired' : 'already_approved'
+        };
+      }
+
+      const approvedAt = new Date().toISOString();
+      const record = await updateDocument('Production', lockedProduction.id, {
+        status: 'approved',
+        area_approval_status: 'approved',
+        area_approved_by: request.user.email,
+        area_approved_by_name: request.user.full_name || request.user.email,
+        area_approved_at: approvedAt,
+        fulfillment_store_id: fulfillmentStore.id,
+        fulfillment_store_name: fulfillmentStore.name || null,
+        reviewed_at: approvedAt,
+        review_notes: request.body?.notes || currentProduction.review_notes || null
+      }, client);
+      return { record, mutated: true, action: 'area_approved' };
     });
 
-    if (materialRequest.source_production_id) {
-      await updateDocument('Production', materialRequest.source_production_id, {
-        material_request_status: 'acknowledged'
+    if (result.mutated) {
+      recordChanged('Production');
+      if (result.action === 'reconciled_to_procurement') recordChanged('MaterialRequest');
+      await auditAction({
+        user: request.user,
+        action: result.action === 'area_approved'
+          ? 'PRODUCTION_AREA_APPROVED'
+          : result.action === 'approved_record_repaired'
+            ? 'PRODUCTION_APPROVED_WORKFLOW_REPAIRED'
+            : 'PRODUCTION_LEGACY_WORKFLOW_RECONCILED',
+        entity: 'Production',
+        entityId: result.record.id,
+        details: {
+          saved_record: result.record,
+          workflow_action: result.action,
+          notes: request.body?.notes || null
+        }
       });
     }
-
-    response.json(updated);
+    response.json((await decorateEntityRecords('Production', [result.record]))[0]);
   } catch (error) {
     next(error);
   }
@@ -3526,10 +4376,43 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
   try {
     const scope = await getLocationScope(request.user);
     const production = await findDocument('Production', request.params.id);
-    if (!production || !filterRowsByAccessibleSites([production], scope).length) {
+    if (!production || !filterRowsByAccessibleSites(
+      [production],
+      scope,
+      ['site_id', 'fulfillment_store_id']
+    ).length) {
       return response.status(403).json({ message: 'You do not have access to this production record' });
     }
-    response.json(await completeProduction(request.params.id, request.user));
+    const requestedFulfillmentStoreId = String(request.body?.fulfillment_store_id || '').trim();
+    if (!production.fulfillment_store_id && !requestedFulfillmentStoreId) {
+      return response.status(400).json({ message: 'Select the fulfillment Store before completing this legacy production record' });
+    }
+    if (
+      requestedFulfillmentStoreId
+      && !scope.unrestricted
+      && !scope.accessibleSiteIds.has(requestedFulfillmentStoreId)
+    ) {
+      return response.status(403).json({ message: 'You do not have access to the selected fulfillment Store' });
+    }
+    const result = await completeProduction(request.params.id, request.user, request.body || {});
+    if (result.mutated) {
+      recordChanged('Production');
+      recordChanged('ProductionConsumptionReport');
+      recordChanged('Inventory');
+      recordChanged('InventoryTransaction');
+      await auditAction({
+        user: request.user,
+        action: 'PRODUCTION_CONSUMPTION_POSTED',
+        entity: 'Production',
+        entityId: result.record.id,
+        details: {
+          saved_record: result.record,
+          consumption_report_id: result.record.consumption_report_id,
+          consumption_report_number: result.record.consumption_report_number
+        }
+      });
+    }
+    response.json(result.record);
   } catch (error) {
     next(error);
   }

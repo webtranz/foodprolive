@@ -44,7 +44,7 @@ export const utilityModules = Object.freeze({
     label: 'Production',
     entity: 'Production',
     required: ['production_date'],
-    headers: [...commonSiteFields, 'production_date', 'recipe_id', 'recipe_name', 'meal_type', 'target_servings', 'actual_servings', 'status', 'estimated_cost', 'actual_cost', 'ingredients_used', 'notes']
+    headers: [...commonSiteFields, 'fulfillment_store_id', 'fulfillment_store_name', 'production_date', 'recipe_id', 'recipe_name', 'meal_type', 'target_servings', 'actual_servings', 'status', 'estimated_cost', 'actual_cost', 'ingredients_used', 'notes']
   },
   'material-requests': {
     label: 'Material Requests',

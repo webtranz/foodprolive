@@ -32,8 +32,10 @@ export const ROLE_PERMISSION_SECTIONS = [
       { page: 'AutoSchedule', key: 'access_auto_schedule', label: 'Auto Schedule', description: 'Automated menu scheduling.' }
     ],
     capabilities: [
+      { key: 'view_ingredients', label: 'View ingredient master data' },
       { key: 'manage_ingredients', label: 'Manage ingredients' },
       { key: 'manage_food_categories', label: 'Manage food categories' },
+      { key: 'view_recipes', label: 'View recipes' },
       { key: 'manage_recipes', label: 'Manage recipes' },
       { key: 'manage_menu_planning', label: 'Manage menus and menu planning' },
       { key: 'generate_menu_plan_pr', label: 'Generate purchase requests from menu plans' },
@@ -59,6 +61,7 @@ export const ROLE_PERMISSION_SECTIONS = [
       { page: 'ProductionTransfer', key: 'access_production_transfer', label: 'Production Transfer', description: 'Production and inventory transfers between locations.' }
     ],
     capabilities: [
+      { key: 'view_inventory', label: 'View inventory' },
       { key: 'manage_inventory', label: 'Manage inventory' },
       { key: 'transfer_inventory', label: 'Transfer inventory' },
       { key: 'manage_production', label: 'Manage production plans' },
@@ -70,6 +73,8 @@ export const ROLE_PERMISSION_SECTIONS = [
       { key: 'reject_production_request', label: 'Reject production requests' },
       { key: 'request_changes_production', label: 'Request production changes' },
       { key: 'approve_production', label: 'Approve production plans' },
+      { key: 'request_changes_area_production', label: 'Area review: request production changes' },
+      { key: 'reject_area_production', label: 'Area review: reject production' },
       { key: 'start_production', label: 'Start production' },
       { key: 'complete_production', label: 'Complete production' },
       { key: 'create_material_request', label: 'Create material requests' },

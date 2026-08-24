@@ -177,6 +177,7 @@ const cases = [
         'idx_entity_records_inventory_site_ingredient_unique',
         'idx_pos_sales_items_order',
         'idx_purchase_request_items_request',
+        'idx_purchase_requests_special_event_source_unique',
         'idx_purchase_order_items_order',
         'idx_goods_receipt_items_receipt'
       ].forEach((requiredDefinition) => {
@@ -185,6 +186,9 @@ const cases = [
 
       [
         'getPurchaseRequestById\\(id, client\\)',
+        'getPurchaseRequestBySourceEventId',
+        'source_event_id, notes, total_estimated_cost',
+        'executor \\? createWithExecutor\\(executor\\) : withTransaction\\(createWithExecutor\\)',
         'getPurchaseOrderById\\(id, client\\)',
         'getGoodsReceiptById\\(receiptId, client\\)',
         'applyReceiptToInventory\\(lockedOrder, item, actor, client\\)'

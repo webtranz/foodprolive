@@ -4,7 +4,13 @@ import { prepareEntityPayload } from '../server/entityPreparation.js';
 
 const scope = {
   accessibleSiteIds: new Set(['site-1']),
-  accessibleTreeIds: new Set(['site-1'])
+  accessibleTreeIds: new Set(['site-1']),
+  sites: [{ id: 'site-1', name: 'Yield Test Project', type: 'project', is_active: true }],
+  graph: {
+    byId: new Map([
+      ['site-1', { id: 'site-1', name: 'Yield Test Project', type: 'project', is_active: true }]
+    ])
+  }
 };
 const recipe = {
   id: 'recipe-1',
@@ -30,7 +36,14 @@ const prepared = await prepareEntityPayload(
     site_id: 'site-1',
     recipe_id: recipe.id,
     target_servings: 10,
-    status: 'planned'
+    production_date: '2026-08-24',
+    kitchen_station: 'Yield Test Station',
+    status: 'planned',
+    ingredients_used: [{
+      ingredient_id: ingredient.id,
+      actual_quantity: 0,
+      unit: 'kg'
+    }]
   },
   null,
   {
@@ -45,10 +58,61 @@ assert.equal(prepared.ingredients_used.length, 1);
 assert.equal(prepared.ingredients_used[0].net_quantity, 2);
 assert.equal(prepared.ingredients_used[0].planned_quantity, 2.5);
 assert.equal(prepared.ingredients_used[0].required_quantity, 2.5);
+assert.equal(prepared.ingredients_used[0].actual_quantity, null);
 assert.equal(prepared.ingredients_used[0].yield_percent, 80);
 assert.equal(prepared.ingredients_used[0].item_code, 'ITEM-PROTEIN-001');
 assert.equal(prepared.estimated_batch_cost, 12.5);
 assert.equal(prepared.estimated_cost_per_serving, 1.25);
+
+const sharedRecipePrepared = await prepareEntityPayload(
+  {},
+  'Production',
+  {
+    site_id: 'site-1',
+    recipe_id: recipe.id,
+    target_servings: 10,
+    production_date: '2026-08-24',
+    kitchen_station: 'Yield Test Station',
+    status: 'planned'
+  },
+  null,
+  {
+    scope,
+    recipeCatalog: [{
+      ...recipe,
+      site_scope: 'specific',
+      site_ids: ['site-1', 'site-outside-scope']
+    }],
+    ingredientCatalog: [ingredient]
+  }
+);
+assert.equal(sharedRecipePrepared.recipe_id, recipe.id);
+
+await assert.rejects(
+  () => prepareEntityPayload(
+    {},
+    'Production',
+    {
+      site_id: 'site-1',
+      recipe_id: recipe.id,
+      target_servings: 10,
+      production_date: '2026-08-24',
+      kitchen_station: 'Yield Test Station',
+      status: 'planned'
+    },
+    null,
+    {
+      scope,
+      recipeCatalog: [{
+        ...recipe,
+        site_scope: 'specific',
+        site_ids: ['site-outside-scope']
+      }],
+      ingredientCatalog: [ingredient]
+    }
+  ),
+  /not available to this Production Project/
+);
 
 const statusOnlyUpdate = await prepareEntityPayload(
   {},
@@ -71,6 +135,8 @@ const upgradedLegacyProduction = await prepareEntityPayload(
     recipe_id: recipe.id,
     recipe_name: recipe.name,
     target_servings: 10,
+    production_date: '2026-08-24',
+    kitchen_station: 'Yield Test Station',
     status: 'pending_approval',
     ingredients_used: [{
       ingredient_id: ingredient.id,

@@ -37,6 +37,10 @@ import { formatCurrency } from '@/lib/currency';
 import { buildProductionPlanningDashboard } from '@/lib/productionPlanning';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../../../shared/itemCode.js';
+import {
+  getProductionStatusLabel,
+  requiresAreaProductionApproval
+} from '../../../shared/productionWorkflow.js';
 
 const MEAL_STYLES = {
   breakfast: {
@@ -141,7 +145,11 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
     ? 'Yield-adjusted portion size from recipe master data.'
     : item.portion_size.warnings.join(' ') || 'Portion-size data is incomplete in the recipe master.';
   const requiresAcknowledgement = item.workflow_status === 'approved'
-    && (!materialRequest || String(materialRequest.status || '').toLowerCase() !== 'acknowledged');
+    && !['acknowledged', 'not_required'].includes(
+      String(item.production.material_request_status || '').toLowerCase()
+    );
+  const requiresLegacyAreaReview = item.workflow_status === 'approved'
+    && requiresAreaProductionApproval(item.production);
 
   return (
     <Card className={`overflow-hidden border shadow-none ${item.prep_status.key === 'at_risk' ? 'border-red-300' : 'border-slate-200'}`}>
@@ -160,9 +168,18 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
               <PrepStatusBadge status={item.prep_status} />
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              <Badge variant="outline" className="text-[10px] capitalize">{titleCase(item.workflow_status)}</Badge>
+              <Badge variant="outline" className={requiresLegacyAreaReview ? 'border-purple-300 bg-purple-50 text-[10px] text-purple-800' : 'text-[10px]'}>
+                {requiresLegacyAreaReview
+                  ? 'Legacy approval · Area review required'
+                  : getProductionStatusLabel(item.workflow_status)}
+              </Badge>
               {item.production.site_name ? (
-                <Badge variant="outline" className="text-[10px] text-slate-600">{item.production.site_name}</Badge>
+                <Badge variant="outline" className="text-[10px] text-slate-600">Project: {item.production.site_name}</Badge>
+              ) : null}
+              {item.production.fulfillment_store_name ? (
+                <Badge variant="outline" className="border-cyan-200 bg-cyan-50 text-[10px] text-cyan-800">
+                  Store: {item.production.fulfillment_store_name}
+                </Badge>
               ) : null}
               {materialRequest ? (
                 <Badge variant="outline" className="border-indigo-200 text-[10px] text-indigo-700">
@@ -202,6 +219,24 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
             {materialRequest
               ? 'Procurement acknowledgement is required before production can start.'
               : 'A linked material request is required before production can start.'}
+          </p>
+        ) : null}
+
+        {item.workflow_status === 'pending_procurement' ? (
+          <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2 text-xs text-sky-800">
+            PM approved. Waiting for Store Keeper / Procurement Officer acknowledgement.
+          </p>
+        ) : null}
+
+        {item.workflow_status === 'pending_production' ? (
+          <p className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-2 text-xs text-purple-800">
+            Procurement completed. Area Manager approval is required before production can start.
+          </p>
+        ) : null}
+
+        {requiresLegacyAreaReview ? (
+          <p className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-2 text-xs text-purple-800">
+            This legacy record is not ready to start. Reconcile its Store / Procurement state, then record a fresh Area Manager approval.
           </p>
         ) : null}
 
@@ -455,8 +490,9 @@ export default function ProductionPlanningDashboard({
     productions,
     recipes,
     ingredients,
-    inventory
-  }), [productions, recipes, ingredients, inventory]);
+    inventory,
+    sites: sites.filter((site) => site.id !== 'all')
+  }), [productions, recipes, ingredients, inventory, sites]);
   const hasItems = dashboard.items.length > 0;
   const shiftDate = (amount) => {
     const base = new Date(`${selectedDate}T00:00:00`);

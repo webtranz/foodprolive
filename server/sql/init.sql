@@ -393,11 +393,15 @@ CREATE TABLE IF NOT EXISTS purchase_requests (
   approved_at TIMESTAMPTZ,
   auto_generated BOOLEAN NOT NULL DEFAULT FALSE,
   source_type TEXT NOT NULL DEFAULT 'manual',
+  source_event_id TEXT,
   notes TEXT,
   total_estimated_cost NUMERIC(14, 2) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE purchase_requests
+  ADD COLUMN IF NOT EXISTS source_event_id TEXT;
 
 CREATE TABLE IF NOT EXISTS purchase_request_items (
   id TEXT PRIMARY KEY,
@@ -715,6 +719,9 @@ CREATE INDEX IF NOT EXISTS idx_supplier_invoices_receipt ON supplier_invoices(go
 CREATE INDEX IF NOT EXISTS idx_supplier_price_history_order_item ON supplier_price_history(purchase_order_item_id);
 
 CREATE INDEX IF NOT EXISTS idx_purchase_requests_status ON purchase_requests(status, request_date DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_requests_special_event_source_unique
+  ON purchase_requests(source_event_id)
+  WHERE source_type = 'special_event' AND source_event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status, order_date DESC);
 CREATE INDEX IF NOT EXISTS idx_goods_receipts_order ON goods_receipts(purchase_order_id, receipt_date DESC);
 CREATE INDEX IF NOT EXISTS idx_supplier_invoices_supplier ON supplier_invoices(supplier_id, invoice_date DESC);

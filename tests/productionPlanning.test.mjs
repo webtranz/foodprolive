@@ -75,6 +75,7 @@ const productions = [
         ingredient_name: 'Basmati Rice',
         net_quantity: 5,
         planned_quantity: 6,
+        actual_quantity: 0,
         yield_percent: 83.33,
         unit: 'kg'
       }
@@ -225,5 +226,54 @@ assert.equal(statusDashboard.items.find((item) => item.id === 'complete').prep_s
 assert.equal(statusDashboard.items.find((item) => item.id === 'progress').prep_status.key, 'in_progress');
 assert.equal(statusDashboard.items.find((item) => item.id === 'pending').prep_status.key, 'pending');
 assert.equal(statusDashboard.items.find((item) => item.id === 'risk').prep_status.key, 'at_risk');
+
+const storeRoutedDashboard = buildProductionPlanningDashboard({
+  productions: [{
+    id: 'store-routed',
+    site_id: 'project-a',
+    site_name: 'Project A',
+    fulfillment_store_id: 'store-a',
+    fulfillment_store_name: 'Project A Main Store',
+    meal_type: 'lunch',
+    target_servings: 10,
+    status: 'pending_production',
+    ingredients_used: [{
+      ingredient_id: 'rice',
+      ingredient_name: 'Basmati Rice',
+      planned_quantity: 4,
+      actual_quantity: 0,
+      unit: 'kg'
+    }]
+  }],
+  ingredients,
+  inventory: [
+    { site_id: 'project-a', ingredient_id: 'rice', quantity: 100, unit: 'kg' },
+    { site_id: 'store-a', site_name: 'Project A Main Store', ingredient_id: 'rice', quantity: 1, unit: 'kg' }
+  ]
+});
+assert.equal(storeRoutedDashboard.shortages.length, 1);
+assert.equal(storeRoutedDashboard.shortages[0].site_id, 'store-a');
+assert.equal(storeRoutedDashboard.shortages[0].site_name, 'Project A Main Store');
+assert.equal(storeRoutedDashboard.shortages[0].available_quantity, 1);
+assert.equal(storeRoutedDashboard.shortages[0].shortage_quantity, 3);
+
+const legacySingleStoreDashboard = buildProductionPlanningDashboard({
+  productions: [{
+    id: 'legacy-single-store',
+    site_id: 'project-a',
+    site_name: 'Project A',
+    meal_type: 'lunch',
+    target_servings: 10,
+    status: 'approved',
+    ingredients_used: [{ ingredient_id: 'rice', ingredient_name: 'Basmati Rice', planned_quantity: 5, unit: 'kg' }]
+  }],
+  ingredients,
+  sites: [
+    { id: 'project-a', name: 'Project A', type: 'project', is_active: true },
+    { id: 'store-a', name: 'Project A Main Store', type: 'store', parent_site_id: 'project-a', is_active: true }
+  ],
+  inventory: [{ site_id: 'store-a', ingredient_id: 'rice', quantity: 10, unit: 'kg' }]
+});
+assert.equal(legacySingleStoreDashboard.shortages.length, 0);
 
 console.log('Production planning dashboard tests passed.');

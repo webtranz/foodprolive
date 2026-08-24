@@ -1,5 +1,6 @@
 import { DASHBOARD_VIEWS } from './managementDashboardRoles.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from './siteHierarchy.js';
+import { requiresAreaProductionApproval } from './productionWorkflow.js';
 
 const MEAL_PERIODS = ['breakfast', 'lunch', 'dinner'];
 const CLOSED_PRODUCTION_STATUSES = new Set(['completed', 'complete']);
@@ -7,6 +8,8 @@ const ACTIVE_PRODUCTION_STATUSES = new Set(['completed', 'complete', 'in_progres
 const PENDING_APPROVAL_STATUSES = new Set([
   'pending',
   'pending_approval',
+  'pending_procurement',
+  'pending_production',
   'awaiting_approval',
   'submitted',
   'under_review'
@@ -417,7 +420,9 @@ function computeMenuCompletion(
 }
 
 function countApprovals({ productions, foodWaste, attendanceRecords, menuPlans, purchaseRequests }) {
-  const production = productions.filter((record) => isPending(record.status)).length;
+  const production = productions.filter((record) => (
+    isPending(record.status) || requiresAreaProductionApproval(record)
+  )).length;
   const waste = foodWaste.filter((record) => isPending(record.approval_status || record.status)).length;
   const attendance = attendanceRecords.filter((record) => isPending(record.approval_status)).length;
   const events = menuPlans.filter((record) => record.event_name && isPending(record.approval_status || record.status)).length;

@@ -12,6 +12,8 @@ import {
 } from '../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
+import { getItemCodeFromRecords } from '../shared/itemCode.js';
+import { resolveProductionFulfillmentStore } from '../shared/productionFulfillment.js';
 import {
   deriveInventoryRecord,
   deriveInventoryStatus,
@@ -35,6 +37,67 @@ function normalizeText(value) {
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+export function buildReportedProductionActuals(productionIngredients = [], reportedLines = []) {
+  const safeProductionIngredients = Array.isArray(productionIngredients) ? productionIngredients : [];
+  const safeReportedLines = Array.isArray(reportedLines) ? reportedLines : [];
+  const reportedActuals = new Map(
+    safeReportedLines.map((line) => [String(line?.ingredient_id || ''), line])
+  );
+
+  if (reportedActuals.size !== safeReportedLines.length || reportedActuals.has('')) {
+    const error = new Error('Each reconciled ingredient must have one unique ingredient ID');
+    error.status = 400;
+    throw error;
+  }
+
+  const productionIngredientIds = new Set(
+    safeProductionIngredients.map((line) => String(line?.ingredient_id || ''))
+  );
+  const unknownActual = [...reportedActuals.keys()].find(
+    (ingredientId) => !productionIngredientIds.has(ingredientId)
+  );
+  if (unknownActual) {
+    const error = new Error('Actual consumption contains an ingredient that is not part of this production plan');
+    error.status = 400;
+    throw error;
+  }
+
+  if (safeReportedLines.length > 0) {
+    const missingIngredient = [...productionIngredientIds].find(
+      (ingredientId) => ingredientId && !reportedActuals.has(ingredientId)
+    );
+    if (missingIngredient || reportedActuals.size !== productionIngredientIds.size) {
+      const error = new Error(
+        'Actual consumption must include every production ingredient, or be omitted to use the yield-adjusted plan'
+      );
+      error.status = 400;
+      throw error;
+    }
+  }
+
+  for (const line of reportedActuals.values()) {
+    const value = line?.actual_quantity;
+    if (
+      value === ''
+      || value === null
+      || typeof value === 'undefined'
+      || !Number.isFinite(Number(value))
+      || Number(value) < 0
+    ) {
+      const ingredient = safeProductionIngredients.find(
+        (candidate) => String(candidate?.ingredient_id || '') === String(line?.ingredient_id || '')
+      );
+      const error = new Error(
+        `Actual consumption for ${ingredient?.ingredient_name || 'ingredient'} must be zero or greater`
+      );
+      error.status = 400;
+      throw error;
+    }
+  }
+
+  return reportedActuals;
 }
 
 function toDateOnly(value = new Date()) {
@@ -386,17 +449,18 @@ async function deductStockWithExecutor({
     remainingToDeduct -= layerQuantity;
   }
 
+  const issuedQuantity = Math.max(0, qty - remainingToDeduct);
   const valuationMethod = normalizeText(inventory.valuation_method || valuation_method || 'fifo') || 'fifo';
-  const weightedCost = qty * toNumber(inventory.average_unit_cost, 0);
+  const weightedCost = issuedQuantity * toNumber(inventory.average_unit_cost, 0);
   const totalCost = valuationMethod === 'weighted_average' ? weightedCost : fifoCost;
 
-  await postInventoryTransaction({
+  const transaction = issuedQuantity > 0 ? await postInventoryTransaction({
     site_id,
     site_name,
     ingredient_id,
     ingredient_name,
     transaction_type,
-    quantity: qty * -1,
+    quantity: issuedQuantity * -1,
     unit,
     transaction_date: transaction_date || toDateOnly(),
     reference_id,
@@ -404,16 +468,19 @@ async function deductStockWithExecutor({
     notes: remainingToDeduct > 0 ? `${notes} (shortage ${remainingToDeduct.toFixed(2)} ${unit})` : notes,
     performed_by,
     total_cost: totalCost,
-    unit_cost: qty > 0 ? totalCost / qty : 0,
+    unit_cost: issuedQuantity > 0 ? totalCost / issuedQuantity : 0,
     reason_code,
     movement_layers: movementLayers
-  }, executor);
+  }, executor) : null;
 
   const refreshed = await recalculateInventoryRecord(inventory, executor);
   return {
     inventory: refreshed,
     shortage_quantity: Number(remainingToDeduct.toFixed(3)),
+    requested_quantity: Number(qty.toFixed(3)),
+    issued_quantity: Number(issuedQuantity.toFixed(3)),
     total_cost: Number(totalCost.toFixed(2)),
+    transaction_id: transaction?.id || null,
     movement_layers: movementLayers
   };
 }
@@ -571,7 +638,7 @@ async function transferStock(payload, executor = null) {
   );
 }
 
-async function completeProductionWithExecutor(productionId, actor, executor) {
+async function completeProductionWithExecutor(productionId, actor, options, executor) {
   const production = await findDocument('Production', productionId, executor, true);
   if (!production) {
     const error = new Error('Production record not found');
@@ -580,22 +647,39 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
   }
 
   if (production.status === 'completed') {
-    return production;
+    return { record: production, mutated: false };
   }
 
-  if (!['approved', 'in_progress'].includes(String(production.status || ''))) {
-    const error = new Error('Production can only be completed after approval or while in progress');
+  if (String(production.status || '') !== 'in_progress') {
+    const error = new Error('Production can only be completed after it has been approved and started');
     error.status = 400;
     throw error;
   }
 
+  const siteCatalog = await listDocuments('Site', { limit: 5000 }, executor);
+  const requestedFulfillmentStoreId = String(options?.fulfillment_store_id || '').trim();
+  if (
+    production.fulfillment_store_id
+    && requestedFulfillmentStoreId
+    && String(production.fulfillment_store_id) !== requestedFulfillmentStoreId
+  ) {
+    const error = new Error('The fulfillment Store cannot be changed when completing production');
+    error.status = 409;
+    throw error;
+  }
+  const fulfillmentStore = resolveProductionFulfillmentStore({
+    ...production,
+    fulfillment_store_id: production.fulfillment_store_id || requestedFulfillmentStoreId
+  }, siteCatalog);
+  const stockSiteId = fulfillmentStore.id;
+  const stockSiteName = fulfillmentStore.name || production.fulfillment_store_name || production.site_name;
   const [ingredientCatalog, inventoryCatalog, recipeCatalog] = await Promise.all([
     listDocuments('Ingredient', { limit: 10000 }, executor),
     listDocuments('Inventory', {
-      filters: { site_id: production.site_id },
+      filters: { site_id: stockSiteId },
       limit: 10000
     }, executor),
-    production.yield_adjustment_applied === true
+    production.yield_snapshot_source === 'server_recipe_expansion'
       ? Promise.resolve([])
       : listDocuments('Recipe', { limit: 5000 }, executor)
   ]);
@@ -604,7 +688,7 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
   let productionIngredients = Array.isArray(production.ingredients_used) ? production.ingredients_used : [];
   let upgradedLegacyYield = false;
 
-  if (production.yield_adjustment_applied !== true && production.recipe_id) {
+  if (production.yield_snapshot_source !== 'server_recipe_expansion' && production.recipe_id) {
     const recipe = recipeCatalog.find((candidate) => String(candidate.id) === String(production.recipe_id));
     if (recipe) {
       const multiplier = Math.max(0, toNumber(production.target_servings, 0))
@@ -631,15 +715,6 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
           unit,
           ingredientData
         );
-        const submittedActual = submitted.actual_quantity;
-        const actualQuantity = submittedActual === null || submittedActual === undefined || submittedActual === ''
-          ? null
-          : convertIngredientQuantity(
-            submittedActual,
-            submitted.unit || unit,
-            unit,
-            ingredientData
-          );
         const unitCost = toNumber(
           ingredientData.cost_per_unit
             ?? ingredientData.last_cost
@@ -658,7 +733,7 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
           yield_multiplier: Number(yieldAdjustment.yield_multiplier.toFixed(6)),
           yield_percent: Number(yieldAdjustment.yield_percent.toFixed(2)),
           yield_source: yieldAdjustment.yield_source,
-          actual_quantity: actualQuantity === null ? null : Number(actualQuantity.toFixed(4)),
+          actual_quantity: null,
           unit,
           cost_quantity: Number(rawQuantity.toFixed(4)),
           cost_unit: unit,
@@ -673,11 +748,31 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
   const consumptionSummary = [];
   let totalProductionCost = 0;
   let totalShortageQuantity = 0;
+  let totalShortageCost = 0;
+  const shortageTotalsByUnit = {};
+  const reportedActualLines = Array.isArray(options?.ingredient_quantities) ? options.ingredient_quantities : [];
+  const reportedActuals = buildReportedProductionActuals(productionIngredients, reportedActualLines);
 
   for (const ingredient of productionIngredients) {
     const ingredientData = ingredientMap.get(ingredient.ingredient_id);
+    const reportedActual = reportedActuals.get(String(ingredient.ingredient_id));
+    const reportedValue = reportedActual?.actual_quantity;
+    const hasReportedActual = Boolean(reportedActual);
+    const normalizedReportedQuantity = hasReportedActual
+      ? convertIngredientQuantity(
+        Number(reportedValue),
+        reportedActual.unit || ingredient.unit || ingredientData?.unit,
+        ingredient.unit || ingredientData?.unit,
+        ingredientData
+      )
+      : null;
     const sourceQuantity = toNumber(
-      ingredient.actual_quantity ?? ingredient.planned_quantity ?? ingredient.adjusted_quantity,
+      hasReportedActual
+        ? normalizedReportedQuantity
+        : ingredient.planned_quantity
+          ?? ingredient.yield_adjusted_quantity
+          ?? ingredient.required_quantity
+          ?? ingredient.adjusted_quantity,
       0
     );
     const inventoryItem = inventoryMap.get(ingredient.ingredient_id);
@@ -688,9 +783,15 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
       inventoryUnit,
       ingredientData
     );
-    const movement = await deductStock({
-      site_id: production.site_id,
-      site_name: production.site_name,
+    const plannedInventoryQuantity = convertIngredientQuantity(
+      toNumber(ingredient.planned_quantity ?? ingredient.adjusted_quantity, sourceQuantity),
+      ingredient.unit || inventoryUnit,
+      inventoryUnit,
+      ingredientData
+    );
+    const movement = inventoryQuantity > 0 ? await deductStock({
+      site_id: stockSiteId,
+      site_name: stockSiteName,
       ingredient_id: ingredient.ingredient_id,
       ingredient_name: ingredient.ingredient_name,
       quantity: inventoryQuantity,
@@ -703,7 +804,14 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
       performed_by: actor.email,
       reason_code: 'production_consumption',
       allow_shortage: true
-    }, executor);
+    }, executor) : {
+      shortage_quantity: 0,
+      requested_quantity: 0,
+      issued_quantity: 0,
+      total_cost: 0,
+      transaction_id: null,
+      movement_layers: []
+    };
 
     const fallbackUnitCost = toNumber(ingredientData?.cost_per_unit, 0);
     const fallbackShortageCost = calculateIngredientCost(
@@ -714,43 +822,125 @@ async function completeProductionWithExecutor(productionId, actor, executor) {
     );
     const movementCost = toNumber(movement.total_cost, 0);
 
-    totalProductionCost += movementCost + fallbackShortageCost;
+    totalProductionCost += movementCost;
     totalShortageQuantity += toNumber(movement.shortage_quantity, 0);
+    shortageTotalsByUnit[inventoryUnit] = Number((
+      toNumber(shortageTotalsByUnit[inventoryUnit], 0)
+      + toNumber(movement.shortage_quantity, 0)
+    ).toFixed(4));
+    totalShortageCost += fallbackShortageCost;
     consumptionSummary.push({
       ingredient_id: ingredient.ingredient_id,
+      item_code: getItemCodeFromRecords([ingredientData, ingredient], null),
       ingredient_name: ingredient.ingredient_name,
       unit: inventoryUnit,
-      planned_quantity: Number(inventoryQuantity.toFixed(4)),
+      planned_quantity: Number(plannedInventoryQuantity.toFixed(4)),
+      actual_requested_quantity: Number(inventoryQuantity.toFixed(4)),
+      issued_quantity: toNumber(movement.issued_quantity, 0),
       shortage_quantity: toNumber(movement.shortage_quantity, 0),
       posted_cost: Number(movementCost.toFixed(2)),
       estimated_shortage_cost: Number(fallbackShortageCost.toFixed(2)),
+      quantity_basis: hasReportedActual ? 'operator_reported_actual' : 'yield_adjusted_plan',
+      source_recipe_names: Array.isArray(ingredient.source_recipe_names) ? ingredient.source_recipe_names : [],
+      yield_percent: toNumber(ingredient.yield_percent, 100),
+      inventory_transaction_id: movement.transaction_id || null,
       movement_layers: movement.movement_layers || []
     });
   }
 
   const servings = Math.max(1, toNumber(production.target_servings, 0));
-  return updateDocument('Production', productionId, {
-    status: 'completed',
-    completed_date: nowIso(),
+  const completedAt = nowIso();
+  const dateToken = String(production.production_date || completedAt.slice(0, 10)).replace(/[^0-9]/g, '').slice(0, 8);
+  const reportNumber = `PCR-${dateToken}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+  const reportName = `${reportNumber} · ${production.recipe_name || 'Production Consumption'}`;
+  const lotLines = consumptionSummary.flatMap((line) => line.movement_layers.map((layer) => ({
+    item_code: line.item_code,
+    ingredient_id: line.ingredient_id,
+    ingredient_name: line.ingredient_name,
+    unit: line.unit,
+    ...layer
+  })));
+  const shortageLines = consumptionSummary.filter((line) => line.shortage_quantity > 0);
+  const report = await createDocument('ProductionConsumptionReport', {
+    report_number: reportNumber,
+    report_name: reportName,
+    production_id: production.id,
+    production_name: production.recipe_name || production.id,
+    production_date: production.production_date || null,
+    site_id: stockSiteId || null,
+    site_name: stockSiteName || null,
+    requesting_site_id: production.site_id || null,
+    requesting_site_name: production.site_name || null,
+    fulfillment_store_id: fulfillmentStore.id,
+    fulfillment_store_name: fulfillmentStore.name || null,
+    recipe_id: production.recipe_id || null,
+    recipe_name: production.recipe_name || null,
+    meal_type: production.meal_type || null,
+    kitchen_station: production.kitchen_station || production.assigned_station || production.station || null,
+    target_servings: production.target_servings || 0,
     completed_by: actor.email,
+    completed_by_name: actor.full_name || actor.email,
+    completed_at: completedAt,
+    quantity_basis: options?.ingredient_quantities?.length ? 'operator_reconciled' : 'yield_adjusted_plan',
+    total_consumption_cost: Number(totalProductionCost.toFixed(2)),
+    total_shortage_cost: Number(totalShortageCost.toFixed(2)),
+    shortage_line_count: shortageLines.length,
+    shortage_totals_by_unit: shortageTotalsByUnit,
+    ingredient_line_count: consumptionSummary.length,
+    ingredient_lines: consumptionSummary,
+    sections: [
+      {
+        key: 'ingredient_consumption',
+        title: 'Ingredient Consumption',
+        lines: consumptionSummary
+      },
+      {
+        key: 'inventory_lot_usage',
+        title: 'Inventory Lots Consumed',
+        lines: lotLines
+      },
+      {
+        key: 'shortages',
+        title: 'Shortages and Exceptions',
+        lines: shortageLines
+      }
+    ],
+    status: 'posted'
+  }, executor);
+
+  const completed = await updateDocument('Production', productionId, {
+    status: 'completed',
+    completed_date: completedAt,
+    completed_by: actor.email,
+    completed_by_name: actor.full_name || actor.email,
     ingredient_cost_total: Number(totalProductionCost.toFixed(2)),
     production_cost_total: Number(totalProductionCost.toFixed(2)),
     cost_per_serving: Number((totalProductionCost / servings).toFixed(2)),
     total_shortage_quantity: Number(totalShortageQuantity.toFixed(3)),
+    shortage_totals_by_unit: shortageTotalsByUnit,
     completion_lines: consumptionSummary,
+    consumption_report_id: report.id,
+    consumption_report_number: report.report_number,
+    consumption_report_name: report.report_name,
+    consumption_report_generated_at: completedAt,
+    fulfillment_store_id: fulfillmentStore.id,
+    fulfillment_store_name: fulfillmentStore.name || null,
     ...(upgradedLegacyYield ? {
       ingredients_used: productionIngredients,
       yield_adjustment_applied: true,
       yield_adjustment_version: 1,
-      yield_adjustment_updated_at: nowIso()
+      yield_adjustment_updated_at: nowIso(),
+      yield_snapshot_source: 'server_recipe_expansion'
     } : {})
   }, executor);
+
+  return { record: completed, mutated: true };
 }
 
-async function completeProduction(productionId, actor, executor = null) {
+async function completeProduction(productionId, actor, options = {}, executor = null) {
   return runInTransaction(
     executor,
-    (client) => completeProductionWithExecutor(productionId, actor, client)
+    (client) => completeProductionWithExecutor(productionId, actor, options, client)
   );
 }
 

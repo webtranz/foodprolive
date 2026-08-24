@@ -31,13 +31,31 @@ const managementDashboardPermissions = Object.freeze([
   'export_data'
 ]);
 
+const areaManagerPermissions = Object.freeze([
+  ...managementDashboardPermissions,
+  'access_production',
+  'manage_production',
+  'view_inventory',
+  'view_ingredients',
+  'view_recipes',
+  'view_material_request',
+  'approve_production',
+  'request_changes_area_production',
+  'reject_area_production'
+]);
+
 const projectManagerPermissions = Object.freeze([
-  'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
+  'granular_page_access', 'access_dashboard', 'access_sites', 'access_menu',
+  'access_menu_planning', 'access_event_planning', 'access_production',
+  'access_inventory', 'access_material_requests', 'access_food_waste',
+  'access_reports', 'access_advanced_reports', 'access_data_exports',
+  'access_reports_preview', 'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
+  'view_ingredients', 'view_recipes', 'view_inventory',
   'manage_inventory', 'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event',
   'edit_special_event', 'submit_special_event', 'review_special_event', 'approve_special_event',
   'reject_special_event', 'manage_production',
   'review_production_request', 'approve_production_request', 'reject_production_request',
-  'request_changes_production', 'approve_production', 'view_material_request',
+  'request_changes_production', 'view_material_request',
   'manage_waste', 'approve_waste'
 ]);
 
@@ -64,7 +82,7 @@ export const MANAGEMENT_ROLE_DEFINITIONS = Object.freeze({
     access_level: 'manager',
     dashboard_variant: DASHBOARD_VIEWS.AREA_MANAGER,
     description: 'Area-level visibility for assigned regions, projects, and descendant locations.',
-    permissions: managementDashboardPermissions
+    permissions: areaManagerPermissions
   }),
   project_manager: Object.freeze({
     role_key: 'project_manager',
@@ -95,73 +113,211 @@ export const MANAGEMENT_ROLE_FALLBACK_PROFILES = Object.freeze(
   }))
 );
 
+const allGranularPagePermissions = Object.freeze([
+  'granular_page_access',
+  'access_dashboard', 'access_sites', 'access_ingredients', 'access_food_categories',
+  'access_recipes', 'access_nutrition_allergen', 'access_ai_recipes', 'access_food_cost',
+  'access_menu', 'access_menu_planning', 'access_event_planning', 'access_menu_builder',
+  'access_auto_schedule', 'access_production', 'access_inventory', 'access_material_requests',
+  'access_yield_cost', 'access_batch_tracking', 'access_branch_orders',
+  'access_production_transfer', 'access_procurement_planning', 'access_procurement',
+  'access_supplier_portal', 'access_pos', 'access_d365', 'access_forecasting',
+  'access_attendance', 'access_daily_meal_checkin', 'access_dining_scanner',
+  'access_event_dining_checkin', 'access_event_inquiry', 'access_qr_management',
+  'access_user_roles', 'access_food_waste', 'access_food_waste_qr',
+  'access_quality_control', 'access_reports', 'access_advanced_reports',
+  'access_cost_control', 'access_productivity_tracking', 'access_production_calculator',
+  'access_calories_calculator', 'access_bulk_upload_center', 'access_bulk_upload_templates',
+  'access_data_exports', 'access_audit_logs', 'access_bulk_upload_progress',
+  'access_reports_preview'
+]);
+
+const allCapabilityPermissions = Object.freeze([
+  'scan_qr', 'create_session', 'manage_sessions', 'manage_groups', 'delete_records',
+  'view_ai_waste', 'camera_detection', 'view_dashboard', 'view_reports', 'export_data',
+  'manage_bulk_uploads', 'view_audit_logs', 'view_bulk_upload_progress', 'manage_projects',
+  'view_ingredients', 'manage_ingredients', 'manage_food_categories', 'view_inventory', 'manage_inventory',
+  'transfer_inventory', 'view_recipes', 'manage_recipes', 'manage_menu_planning',
+  'generate_menu_plan_pr', 'create_special_event',
+  'edit_special_event', 'submit_special_event', 'review_special_event',
+  'approve_special_event', 'reject_special_event', 'manage_production',
+  'create_production_request', 'edit_production_request', 'submit_production_request',
+  'review_production_request', 'approve_production_request', 'reject_production_request',
+  'request_changes_production', 'approve_production', 'request_changes_area_production',
+  'reject_area_production', 'start_production',
+  'complete_production', 'create_material_request', 'view_material_request',
+  'acknowledge_material_request', 'manage_procurement', 'approve_procurement',
+  'manage_suppliers', 'manage_waste', 'approve_waste', 'manage_pos', 'manage_erp',
+  'manage_forecasting', 'manage_attendance', 'approve_attendance', 'manage_quality',
+  'manage_users', 'manage_roles'
+]);
+
+const adminPermissions = Object.freeze([
+  ...allGranularPagePermissions,
+  ...allCapabilityPermissions
+]);
+
+const managerPermissions = Object.freeze([
+  'granular_page_access', 'access_dashboard', 'access_sites', 'access_ingredients',
+  'access_food_categories', 'access_recipes', 'access_nutrition_allergen', 'access_food_cost',
+  'access_menu', 'access_menu_planning', 'access_event_planning', 'access_menu_builder',
+  'access_auto_schedule', 'access_production', 'access_inventory', 'access_material_requests',
+  'access_yield_cost', 'access_batch_tracking', 'access_branch_orders',
+  'access_production_transfer', 'access_procurement_planning', 'access_procurement',
+  'access_supplier_portal', 'access_pos', 'access_forecasting', 'access_attendance',
+  'access_daily_meal_checkin', 'access_dining_scanner', 'access_event_dining_checkin',
+  'access_event_inquiry', 'access_qr_management', 'access_food_waste',
+  'access_food_waste_qr', 'access_quality_control', 'access_reports',
+  'access_advanced_reports', 'access_cost_control', 'access_productivity_tracking',
+  'access_production_calculator', 'access_calories_calculator',
+  'access_bulk_upload_center', 'access_bulk_upload_templates', 'access_data_exports',
+  'access_audit_logs', 'access_bulk_upload_progress', 'access_reports_preview',
+  'scan_qr', 'view_dashboard', 'view_reports', 'export_data', 'create_session',
+  'manage_bulk_uploads', 'view_audit_logs', 'view_bulk_upload_progress', 'manage_sessions',
+  'manage_groups', 'view_ai_waste', 'camera_detection', 'manage_projects',
+  'manage_ingredients', 'manage_food_categories', 'view_inventory', 'manage_inventory', 'transfer_inventory',
+  'manage_recipes', 'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event',
+  'edit_special_event', 'submit_special_event', 'review_special_event',
+  'approve_special_event', 'reject_special_event', 'manage_production',
+  'create_production_request', 'edit_production_request', 'submit_production_request',
+  'start_production', 'complete_production', 'create_material_request', 'view_material_request',
+  'acknowledge_material_request', 'manage_procurement', 'approve_procurement',
+  'manage_suppliers', 'manage_waste', 'approve_waste', 'manage_pos',
+  'manage_forecasting', 'manage_attendance', 'approve_attendance', 'manage_quality'
+]);
+
+const userPermissions = Object.freeze([
+  'granular_page_access', 'access_dashboard', 'access_dining_scanner',
+  'view_dashboard', 'scan_qr'
+]);
+
+const chefPermissions = Object.freeze([
+  'granular_page_access', 'access_dashboard', 'access_ingredients', 'access_recipes',
+  'access_menu', 'access_menu_planning', 'access_event_planning', 'access_production',
+  'access_material_requests', 'access_food_waste', 'access_quality_control', 'access_reports',
+  'view_dashboard', 'view_reports', 'view_inventory', 'manage_ingredients', 'manage_recipes',
+  'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event',
+  'edit_special_event', 'submit_special_event', 'manage_production',
+  'create_production_request', 'edit_production_request', 'submit_production_request',
+  'start_production', 'complete_production', 'create_material_request',
+  'view_material_request', 'manage_waste', 'approve_waste', 'manage_quality'
+]);
+
+const storekeeperPermissions = Object.freeze([
+  'granular_page_access', 'access_dashboard', 'access_ingredients', 'access_inventory',
+  'access_material_requests', 'access_production_transfer', 'access_reports',
+  'access_data_exports', 'view_dashboard', 'view_reports', 'export_data',
+  'manage_inventory', 'transfer_inventory', 'manage_ingredients',
+  'view_material_request', 'acknowledge_material_request'
+]);
+
+const procurementOfficerPermissions = Object.freeze([
+  'granular_page_access', 'access_dashboard', 'access_material_requests',
+  'access_procurement_planning', 'access_procurement', 'access_supplier_portal',
+  'access_reports', 'access_data_exports', 'view_dashboard', 'view_reports', 'export_data',
+  'manage_procurement', 'approve_procurement', 'manage_suppliers',
+  'view_material_request', 'acknowledge_material_request'
+]);
+
+const productionSupervisorPermissions = Object.freeze([
+  'granular_page_access', 'access_dashboard', 'access_menu_planning',
+  'access_event_planning', 'access_production', 'access_material_requests',
+  'access_batch_tracking', 'access_yield_cost', 'access_food_waste',
+  'access_quality_control', 'access_reports', 'view_dashboard', 'view_reports',
+  'view_ingredients', 'view_recipes', 'view_inventory',
+  'create_special_event', 'edit_special_event', 'submit_special_event',
+  'review_special_event', 'approve_special_event', 'reject_special_event',
+  'manage_production', 'start_production', 'complete_production', 'view_material_request',
+  'manage_menu_planning', 'manage_quality', 'manage_waste'
+]);
+
+const qualityControllerPermissions = Object.freeze([
+  'granular_page_access', 'access_dashboard', 'access_food_waste',
+  'access_food_waste_qr', 'access_quality_control', 'access_reports',
+  'view_dashboard', 'view_reports', 'manage_quality', 'manage_waste', 'approve_waste'
+]);
+
+const financeControllerPermissions = Object.freeze([
+  'granular_page_access', 'access_dashboard', 'access_d365', 'access_forecasting',
+  'access_reports', 'access_advanced_reports', 'access_cost_control',
+  'access_data_exports', 'view_dashboard', 'view_reports', 'export_data',
+  'manage_erp', 'manage_forecasting'
+]);
+
 // RoleProfile records are configurable data, so a new installation can have an
-// empty RoleProfile table even though these operational roles are built into the
-// server. Keep lightweight assignment profiles here so the administration UI
-// can always offer every supported built-in role. Authentication and permission
-// enforcement continue to use the server's authoritative role definitions.
-const OPERATIONAL_ROLE_FALLBACK_DEFINITIONS = Object.freeze({
+// empty RoleProfile table even though these operational roles are built in. The
+// shared definitions keep both the fallback UI and effective-permission clients
+// aligned on the non-removable permission floor for each built-in role.
+export const OPERATIONAL_ROLE_DEFINITIONS = Object.freeze({
   admin: Object.freeze({
     role_key: 'admin',
     name: 'Administrator',
     access_level: 'admin',
-    description: 'Central administration with unrestricted access across all modules and locations.'
+    description: 'Central administration with unrestricted access across all modules and locations.',
+    permissions: adminPermissions
   }),
   manager: Object.freeze({
     role_key: 'manager',
     name: 'Operations Manager',
     access_level: 'manager',
-    description: 'Cross-functional operational management for assigned projects and stores.'
+    description: 'Cross-functional operational management for assigned projects and stores.',
+    permissions: managerPermissions
   }),
   user: Object.freeze({
     role_key: 'user',
     name: 'General User',
     access_level: 'user',
-    description: 'Basic operational visibility for assigned projects.'
+    description: 'Basic operational visibility for assigned projects.',
+    permissions: userPermissions
   }),
   chef: Object.freeze({
     role_key: 'chef',
     name: 'Chef',
     access_level: 'user',
-    description: 'Kitchen leadership focused on recipes, menus, production, and food quality.'
+    description: 'Kitchen leadership focused on recipes, menus, production, and food quality.',
+    permissions: chefPermissions
   }),
   storekeeper: Object.freeze({
     role_key: 'storekeeper',
     name: 'Storekeeper',
     access_level: 'manager',
-    description: 'Store-level stock control for receiving, adjustments, and transfers.'
+    description: 'Store-level stock control for receiving, adjustments, transfers, and material-request acknowledgement.',
+    permissions: storekeeperPermissions
   }),
   procurement_officer: Object.freeze({
     role_key: 'procurement_officer',
     name: 'Procurement Officer',
     access_level: 'manager',
-    description: 'Procurement operations for suppliers, requests, purchase orders, and invoices.'
+    description: 'Procurement operations for suppliers, requests, purchase orders, and invoices.',
+    permissions: procurementOfficerPermissions
   }),
   production_supervisor: Object.freeze({
     role_key: 'production_supervisor',
     name: 'Production Supervisor',
     access_level: 'manager',
-    description: 'Supervises production planning, approvals, batches, and kitchen execution.'
+    description: 'Supervises production planning, approvals, batches, and kitchen execution.',
+    permissions: productionSupervisorPermissions
   }),
   quality_controller: Object.freeze({
     role_key: 'quality_controller',
     name: 'Quality Controller',
     access_level: 'manager',
-    description: 'Monitors quality, compliance, and food-waste controls.'
+    description: 'Monitors quality, compliance, and food-waste controls.',
+    permissions: qualityControllerPermissions
   }),
   finance_controller: Object.freeze({
     role_key: 'finance_controller',
     name: 'Finance Controller',
     access_level: 'manager',
-    description: 'Reviews costs, reports, exports, and accounting integrations.'
+    description: 'Reviews costs, reports, exports, and accounting integrations.',
+    permissions: financeControllerPermissions
   })
 });
 
 export const OPERATIONAL_ROLE_FALLBACK_PROFILES = Object.freeze(
-  Object.values(OPERATIONAL_ROLE_FALLBACK_DEFINITIONS).map((definition) => Object.freeze({
+  Object.values(OPERATIONAL_ROLE_DEFINITIONS).map((definition) => Object.freeze({
     id: `system-role:${definition.role_key}`,
     ...definition,
-    permissions: Object.freeze([]),
     is_system: true,
     is_active: true,
     is_fallback: true
@@ -172,6 +328,11 @@ export const SYSTEM_ROLE_KEYS = Object.freeze([
   ...MANAGEMENT_ROLE_KEYS,
   ...OPERATIONAL_ROLE_FALLBACK_PROFILES.map((profile) => profile.role_key)
 ]);
+
+export const SYSTEM_ROLE_DEFINITIONS = Object.freeze({
+  ...OPERATIONAL_ROLE_DEFINITIONS,
+  ...MANAGEMENT_ROLE_DEFINITIONS
+});
 
 function normalizeRoleToken(value) {
   return String(value || '')
@@ -244,6 +405,18 @@ export function isReservedManagementRoleKey(roleKey) {
   return Object.prototype.hasOwnProperty.call(MANAGEMENT_ROLE_DEFINITIONS, normalizeRoleToken(roleKey));
 }
 
+export function getSystemRoleDefinition(roleKey) {
+  return SYSTEM_ROLE_DEFINITIONS[normalizeRoleToken(roleKey)] || null;
+}
+
+export function isSystemRoleKey(roleKey) {
+  return Boolean(getSystemRoleDefinition(roleKey));
+}
+
+export function getRequiredSystemRolePermissions(roleKey) {
+  return getSystemRoleDefinition(roleKey)?.permissions || Object.freeze([]);
+}
+
 export function isManagementScopeSiteType(view, siteType) {
   const allowedTypes = MANAGEMENT_SCOPE_TYPES[view];
   return Boolean(allowedTypes?.has(normalizeSiteType(siteType)));
@@ -253,20 +426,21 @@ export function normalizeManagementRoleProfile(profile = {}) {
   if (!profile || typeof profile !== 'object') return profile;
 
   const normalizedRoleKey = normalizeRoleToken(profile.role_key);
-  const canonical = MANAGEMENT_ROLE_DEFINITIONS[normalizedRoleKey] || null;
-  const dashboardVariant = canonical?.dashboard_variant || resolveManagementDashboardView({
+  const canonical = getSystemRoleDefinition(normalizedRoleKey);
+  const managementCanonical = MANAGEMENT_ROLE_DEFINITIONS[normalizedRoleKey] || null;
+  const dashboardVariant = managementCanonical?.dashboard_variant || resolveManagementDashboardView({
     role: normalizedRoleKey,
     dashboardVariant: profile.dashboard_variant,
     roleName: profile.name
   });
-  if (!dashboardVariant) return profile;
+  if (!canonical && !dashboardVariant) return profile;
 
   const requiredPermissions = canonical?.permissions || managementDashboardPermissions;
   return {
     ...profile,
     ...(canonical ? { role_key: canonical.role_key } : {}),
-    access_level: 'manager',
-    dashboard_variant: dashboardVariant,
+    access_level: canonical?.access_level || 'manager',
+    ...(dashboardVariant ? { dashboard_variant: dashboardVariant } : {}),
     permissions: Array.from(new Set([
       ...requiredPermissions,
       ...(Array.isArray(profile.permissions) ? profile.permissions.filter(Boolean) : [])
@@ -292,7 +466,8 @@ export function mergeManagementRoleProfiles(roleProfiles = []) {
 }
 
 export function mergeSystemRoleProfiles(roleProfiles = []) {
-  const withManagementFallbacks = mergeManagementRoleProfiles(roleProfiles);
+  const withManagementFallbacks = mergeManagementRoleProfiles(roleProfiles)
+    .map((profile) => normalizeManagementRoleProfile(profile));
   const existingRoleKeys = new Set(
     withManagementFallbacks
       .map((profile) => normalizeRoleToken(profile?.role_key))

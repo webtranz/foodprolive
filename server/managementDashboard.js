@@ -26,7 +26,8 @@ const PURCHASE_ORDER_OPEN_STATUSES = Object.freeze([
   'pending', 'approved', 'partially_received'
 ]);
 const APPROVAL_OPEN_STATUSES = Object.freeze([
-  'pending', 'pending_approval', 'awaiting_approval', 'submitted', 'under_review'
+  'pending', 'pending_approval', 'pending_procurement', 'pending_production',
+  'awaiting_approval', 'submitted', 'under_review'
 ]);
 
 function httpError(status, message) {

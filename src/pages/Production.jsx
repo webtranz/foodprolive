@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertCircle, CheckCircle2, XCircle, Brain } from 'lucide-react';
+import { AlertCircle, CheckCircle2, XCircle, Brain, FileText } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
 import { format } from 'date-fns';
 import { usePermissions } from '@/components/auth/usePermissions';
@@ -26,6 +26,12 @@ import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 import { calculateYieldAdjustedQuantity } from '../../shared/ingredientYield.js';
 import { formatRecipeQuantity, getRecipeQuantityPrecision, roundStandardDecimal } from '../../shared/recipeNumbers.js';
 import { getItemCode } from '../../shared/itemCode.js';
+import {
+  canStartApprovedProduction,
+  getProductionStatusLabel,
+  requiresAreaProductionApproval
+} from '../../shared/productionWorkflow.js';
+import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -39,14 +45,19 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function isAreaApprovalReview(production) {
+  return requiresAreaProductionApproval(production);
+}
+
 export default function Production() {
-  const { can } = usePermissions();
+  const { can, role: currentRole } = usePermissions();
   const { allowedSiteIds, isAdmin, siteId: assignedSiteId } = useSiteContext();
   const [formOpen, setFormOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState('all');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [formData, setFormData] = useState({
     site_id: '',
+    fulfillment_store_id: '',
     production_date: format(new Date(), 'yyyy-MM-dd'),
     meal_type: 'lunch',
     recipe_id: '',
@@ -63,6 +74,14 @@ export default function Production() {
   const [estimatedBatchCost, setEstimatedBatchCost] = useState(0);
   const [estimatedCostPerServing, setEstimatedCostPerServing] = useState(0);
   const [reviewNotes, setReviewNotes] = useState('');
+  const [reviewAction, setReviewAction] = useState('');
+  const [reviewFulfillmentStoreId, setReviewFulfillmentStoreId] = useState('');
+  const [completionOpen, setCompletionOpen] = useState(false);
+  const [completionProduction, setCompletionProduction] = useState(null);
+  const [completionQuantities, setCompletionQuantities] = useState([]);
+  const [completionFulfillmentStoreId, setCompletionFulfillmentStoreId] = useState('');
+  const [selectedConsumptionReport, setSelectedConsumptionReport] = useState(null);
+  const [reportLoadingId, setReportLoadingId] = useState('');
 
   const queryClient = useQueryClient();
 
@@ -82,10 +101,9 @@ export default function Production() {
   });
 
   const { data: productions = [], isLoading, error: productionsError } = useQuery({
-    queryKey: ['productions', selectedSite, selectedDate],
+    queryKey: ['productions', selectedDate],
     queryFn: () => base44.entities.Production.filter({
-      production_date: selectedDate,
-      ...(selectedSite && selectedSite !== 'all' ? { site_id: selectedSite } : {})
+      production_date: selectedDate
     }, '-production_date'),
     enabled: Boolean(selectedDate),
     refetchInterval: 300000
@@ -99,12 +117,14 @@ export default function Production() {
   const { data: materialRequests = [], error: materialRequestsError } = useQuery({
     queryKey: ['materialRequestsWorkflow'],
     queryFn: () => base44.materialRequests.list(),
+    enabled: can('view_material_request') || can('acknowledge_material_request') || can('manage_procurement') || can('approve_procurement'),
     refetchInterval: 300000
   });
 
   const { data: foodWaste = [] } = useQuery({
     queryKey: ['foodWasteForProduction'],
-    queryFn: () => base44.entities.FoodWaste.list('-waste_date', 1000)
+    queryFn: () => base44.entities.FoodWaste.list('-waste_date', 1000),
+    enabled: can('manage_waste')
   });
 
   const createMutation = useMutation({
@@ -156,24 +176,66 @@ export default function Production() {
       ? sites
       : sites.filter((site) => allowedSiteIds.includes(site.id))
   ), [allowedSiteIds, isAdmin, sites]);
+  const productionSiteOptions = useMemo(() => visibleSites.filter((site) => (
+    site.is_active !== false
+    && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT
+  )), [visibleSites]);
+  const selectedProductionSite = useMemo(() => (
+    sites.find((site) => String(site.id) === String(formData.site_id)) || null
+  ), [formData.site_id, sites]);
+  const fulfillmentStoreOptions = useMemo(() => {
+    if (!selectedProductionSite) return [];
+    return visibleSites.filter((site) => (
+      site.is_active !== false
+      &&
+      normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
+      && String(site.parent_site_id || '') === String(selectedProductionSite.id)
+    ));
+  }, [selectedProductionSite, visibleSites]);
+  const canViewAllAccessibleSites = isAdmin || [
+    'general_manager',
+    'assistant_general_manager',
+    'area_manager'
+  ].includes(currentRole);
 
   useEffect(() => {
-    if (isAdmin) {
+    if (canViewAllAccessibleSites) {
       return;
     }
 
-    const fallbackSiteId = assignedSiteId || visibleSites[0]?.id || '';
+    const assignedProductionSite = productionSiteOptions.find(
+      (site) => String(site.id) === String(assignedSiteId || '')
+    );
+    const fallbackSiteId = assignedProductionSite?.id || productionSiteOptions[0]?.id || '';
     setSelectedSite((current) => (current === 'all' || !current ? fallbackSiteId : current));
     setFormData((current) => ({
       ...current,
       site_id: current.site_id || fallbackSiteId
     }));
-  }, [isAdmin, assignedSiteId, visibleSites]);
+  }, [canViewAllAccessibleSites, assignedSiteId, productionSiteOptions]);
+
+  useEffect(() => {
+    if (!formData.site_id) return;
+    const currentStoreIsValid = fulfillmentStoreOptions.some(
+      (store) => String(store.id) === String(formData.fulfillment_store_id)
+    );
+    const nextStoreId = currentStoreIsValid
+      ? formData.fulfillment_store_id
+      : fulfillmentStoreOptions.length === 1
+        ? fulfillmentStoreOptions[0].id
+        : '';
+    if (nextStoreId !== formData.fulfillment_store_id) {
+      setFormData((current) => ({ ...current, fulfillment_store_id: nextStoreId }));
+    }
+  }, [formData.fulfillment_store_id, formData.site_id, fulfillmentStoreOptions]);
 
   const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status }) => {
+    mutationFn: async ({ id, status, ingredientQuantities = [], fulfillmentStoreId = '' }) => {
       if (status === 'completed') {
-        await base44.inventory.completeProduction(id);
+        await base44.inventory.completeProduction(id, {
+          ingredient_quantities: ingredientQuantities,
+          fulfillment_store_id: fulfillmentStoreId || undefined
+        });
         return;
       }
 
@@ -184,6 +246,11 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
+      setCompletionOpen(false);
+      setCompletionProduction(null);
+      setCompletionQuantities([]);
+      setCompletionFulfillmentStoreId('');
       setActionError('');
     },
     onError: (error) => {
@@ -193,7 +260,12 @@ export default function Production() {
 
   const resetForm = () => {
     setFormData({
-      site_id: isAdmin ? '' : (assignedSiteId || visibleSites[0]?.id || ''),
+      site_id: isAdmin
+        ? ''
+        : (productionSiteOptions.find((site) => String(site.id) === String(assignedSiteId || ''))?.id
+          || productionSiteOptions[0]?.id
+          || ''),
+      fulfillment_store_id: '',
       production_date: format(new Date(), 'yyyy-MM-dd'),
       meal_type: 'lunch',
       recipe_id: '',
@@ -206,11 +278,18 @@ export default function Production() {
     setInventoryCheck([]);
     setEstimatedBatchCost(0);
     setEstimatedCostPerServing(0);
+    setReviewFulfillmentStoreId('');
+    setCompletionFulfillmentStoreId('');
   };
 
   // Calculate required ingredients and check inventory when recipe or servings change
   useEffect(() => {
-    if (formData.recipe_id && formData.target_servings && formData.site_id) {
+    if (
+      formData.recipe_id
+      && formData.target_servings
+      && formData.site_id
+      && formData.fulfillment_store_id
+    ) {
       const recipe = recipes.find(r => r.id === formData.recipe_id);
       const hasRecipeComponents = recipe
         && ((Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0)
@@ -219,7 +298,8 @@ export default function Production() {
         const multiplier = recipe.servings > 0
           ? Number(formData.target_servings) / recipe.servings
           : Number(formData.target_servings) || 1;
-        const siteInventory = inventory.filter(i => i.site_id === formData.site_id);
+        const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
+        const siteInventory = inventory.filter(i => i.site_id === inventorySiteId);
         const expandedRecipe = expandRecipeIngredients(
           recipe,
           recipes,
@@ -288,10 +368,20 @@ export default function Production() {
       setEstimatedBatchCost(0);
       setEstimatedCostPerServing(0);
     }
-  }, [formData.recipe_id, formData.target_servings, formData.site_id, recipes, ingredients, inventory]);
+  }, [
+    formData.fulfillment_store_id,
+    formData.recipe_id,
+    formData.target_servings,
+    formData.site_id,
+    recipes,
+    ingredients,
+    inventory
+  ]);
 
   const filteredProductions = productions.filter(p => {
-    const matchesSite = selectedSite === 'all' || p.site_id === selectedSite;
+    const matchesSite = selectedSite === 'all'
+      || p.site_id === selectedSite
+      || p.fulfillment_store_id === selectedSite;
     const matchesDate = p.production_date === selectedDate;
     return matchesSite && matchesDate;
   });
@@ -399,11 +489,14 @@ export default function Production() {
 
   const buildSubmitData = (status) => {
     const site = visibleSites.find((s) => s.id === formData.site_id) || sites.find((s) => s.id === formData.site_id);
+    const fulfillmentStore = sites.find((s) => s.id === formData.fulfillment_store_id);
     const recipe = recipes.find(r => r.id === formData.recipe_id);
 
     return {
       ...formData,
       site_name: site?.name || '',
+      fulfillment_store_id: fulfillmentStore?.id || '',
+      fulfillment_store_name: fulfillmentStore?.name || '',
       recipe_name: recipe?.name || '',
       target_servings: Number(formData.target_servings) || 0,
       ingredients_used: calculatedIngredients.map(ing => ({
@@ -441,60 +534,59 @@ export default function Production() {
       form.reportValidity();
       return;
     }
-    if (!formData.site_id || !formData.production_date || !formData.recipe_id || !formData.kitchen_station.trim()) {
-      setActionError('Complete the site, production date, recipe, servings, and kitchen station before saving.');
+    if (
+      !formData.site_id
+      || !formData.fulfillment_store_id
+      || !formData.production_date
+      || !formData.recipe_id
+      || !formData.kitchen_station.trim()
+    ) {
+      setActionError('Complete the project/site, fulfillment store, production date, recipe, servings, and kitchen station before saving.');
+      return;
+    }
+    if (normalizeSiteType(selectedProductionSite?.type) !== SITE_HIERARCHY_TYPES.PROJECT) {
+      setActionError('Select a Project first, then choose its fulfillment Store.');
       return;
     }
     setActionError('');
     createMutation.mutate(buildSubmitData(status));
   };
 
-  const handleReview = async (action) => {
-    if (!selectedProduction) return;
-
-    try {
-      const status = action === 'approve'
-        ? 'approved'
-        : action === 'request_changes'
-          ? 'changes_requested'
-          : 'rejected';
-      await base44.entities.Production.update(selectedProduction.id, {
-        status,
-        review_notes: reviewNotes || null,
-        reviewed_at: new Date().toISOString()
-      });
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
-      setShowApprovalDialog(false);
-      setSelectedProduction(null);
-      setReviewNotes('');
-      setActionError('');
-    } catch (error) {
-      setActionError(error.message || 'Unable to review the production request.');
+  const getProductionStoreOptions = (production) => {
+    const productionSite = sites.find((site) => String(site.id) === String(production?.site_id || ''));
+    if (!productionSite) return [];
+    if (normalizeSiteType(productionSite.type) === SITE_HIERARCHY_TYPES.STORE) {
+      return productionSite.is_active === false ? [] : [productionSite];
     }
+    return visibleSites.filter((site) => (
+      site.is_active !== false
+      && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
+      && String(site.parent_site_id || '') === String(productionSite.id)
+    ));
   };
 
-  const openApprovalDialog = (production) => {
-    const siteInventory = inventory.filter(i => i.site_id === production.site_id);
-    
-    const check = production.ingredients_used?.map(ing => {
-      const invItem = siteInventory.find(i => i.ingredient_id === ing.ingredient_id);
-      const ingredientData = ingredients.find((ingredient) => ingredient.id === ing.ingredient_id);
-      const inventoryUnit = invItem?.unit || ingredientData?.unit || ing.unit;
+  const buildProductionInventoryCheck = (production, fulfillmentStoreId = '') => {
+    const inventorySiteId = fulfillmentStoreId || production?.fulfillment_store_id;
+    if (!inventorySiteId) return [];
+    const siteInventory = inventory.filter((item) => String(item.site_id) === String(inventorySiteId || ''));
+
+    return production?.ingredients_used?.map((line) => {
+      const inventoryItem = siteInventory.find((item) => item.ingredient_id === line.ingredient_id);
+      const ingredientData = ingredients.find((ingredient) => ingredient.id === line.ingredient_id);
+      const inventoryUnit = inventoryItem?.unit || ingredientData?.unit || line.unit;
       const requiredQuantity = convertIngredientQuantity(
-        ing.actual_quantity ?? ing.planned_quantity ?? ing.adjusted_quantity ?? 0,
-        ing.unit || inventoryUnit,
+        line.actual_quantity ?? line.planned_quantity ?? line.adjusted_quantity ?? 0,
+        line.unit || inventoryUnit,
         inventoryUnit,
         ingredientData
       );
-      const currentStock = toNumber(invItem?.quantity, 0);
+      const currentStock = toNumber(inventoryItem?.quantity, 0);
       const shortage = Math.max(0, requiredQuantity - currentStock);
-      
+
       return {
-        item_code: getItemCode(ingredientData, getItemCode(ing)),
-        ingredient_id: ing.ingredient_id,
-        ingredient_name: ing.ingredient_name,
+        item_code: getItemCode(ingredientData, getItemCode(line)),
+        ingredient_id: line.ingredient_id,
+        ingredient_name: line.ingredient_name,
         adjusted_quantity: roundStandardDecimal(requiredQuantity, getRecipeQuantityPrecision(inventoryUnit)),
         current_stock: roundStandardDecimal(currentStock, getRecipeQuantityPrecision(inventoryUnit)),
         shortage: roundStandardDecimal(shortage, getRecipeQuantityPrecision(inventoryUnit)),
@@ -503,11 +595,70 @@ export default function Production() {
         sufficient: currentStock >= requiredQuantity
       };
     }) || [];
-    
-    setInventoryCheck(check);
+  };
+
+  const handleReview = async (action) => {
+    if (!selectedProduction || reviewAction) return;
+
+    if (action !== 'approve' && !reviewNotes.trim()) {
+      setActionError('Review notes are required when requesting changes or rejecting production.');
+      return;
+    }
+    if (action === 'approve' && !reviewFulfillmentStoreId) {
+      setActionError('Select the fulfillment Store before approving this production request.');
+      return;
+    }
+
+    setReviewAction(action);
+    try {
+      if (action === 'approve' && isAreaApprovalReview(selectedProduction)) {
+        await base44.productionWorkflow.approveForArea(selectedProduction.id, {
+          notes: reviewNotes || null,
+          fulfillment_store_id: reviewFulfillmentStoreId
+        });
+      } else {
+        const status = action === 'approve'
+          ? 'pending_procurement'
+          : action === 'request_changes'
+            ? 'changes_requested'
+            : 'rejected';
+        await base44.entities.Production.update(selectedProduction.id, {
+          status,
+          review_notes: reviewNotes || null,
+          ...(action === 'approve' ? { fulfillment_store_id: reviewFulfillmentStoreId } : {})
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      setShowApprovalDialog(false);
+      setSelectedProduction(null);
+      setReviewNotes('');
+      setReviewFulfillmentStoreId('');
+      setActionError('');
+    } catch (error) {
+      setActionError(error.message || 'Unable to review the production request.');
+    } finally {
+      setReviewAction('');
+    }
+  };
+
+  const openApprovalDialog = (production) => {
+    const storeOptions = getProductionStoreOptions(production);
+    const fulfillmentStoreId = storeOptions.some(
+      (store) => String(store.id) === String(production.fulfillment_store_id || '')
+    )
+      ? production.fulfillment_store_id
+      : storeOptions.length === 1
+        ? storeOptions[0].id
+        : '';
+
+    setReviewFulfillmentStoreId(fulfillmentStoreId);
+    setInventoryCheck(buildProductionInventoryCheck(production, fulfillmentStoreId));
     setActionError('');
     setSelectedProduction(production);
     setReviewNotes(production.review_notes || '');
+    setReviewAction('');
     setShowApprovalDialog(true);
   };
 
@@ -516,6 +667,7 @@ export default function Production() {
     setEditingProduction(production);
     setFormData({
       site_id: production.site_id || '',
+      fulfillment_store_id: production.fulfillment_store_id || '',
       production_date: production.production_date || format(new Date(), 'yyyy-MM-dd'),
       meal_type: production.meal_type || 'lunch',
       recipe_id: production.recipe_id || '',
@@ -526,19 +678,58 @@ export default function Production() {
     setFormOpen(true);
   };
 
-  const canStartWithMaterialRequest = (linkedMaterialRequest) => {
-    if (!linkedMaterialRequest) return false;
-    return String(linkedMaterialRequest.status || '').toLowerCase() === 'acknowledged';
+  const openCompletionDialog = (production) => {
+    const storeOptions = getProductionStoreOptions(production);
+    const fulfillmentStoreId = storeOptions.some(
+      (store) => String(store.id) === String(production.fulfillment_store_id || '')
+    )
+      ? production.fulfillment_store_id
+      : storeOptions.length === 1
+        ? storeOptions[0].id
+        : '';
+    setCompletionProduction(production);
+    setCompletionFulfillmentStoreId(fulfillmentStoreId);
+    setCompletionQuantities((production.ingredients_used || []).map((line) => ({
+      ingredient_id: line.ingredient_id,
+      item_code: line.item_code || getItemCode(ingredients.find((item) => item.id === line.ingredient_id), ''),
+      ingredient_name: line.ingredient_name,
+      actual_quantity: Number(line.actual_quantity ?? line.planned_quantity ?? line.adjusted_quantity ?? 0),
+      planned_quantity: Number(line.planned_quantity ?? line.adjusted_quantity ?? 0),
+      unit: line.unit || 'unit'
+    })));
+    setActionError('');
+    setCompletionOpen(true);
   };
 
-  const renderProductionActions = (production, linkedMaterialRequest) => (
+  const openConsumptionReport = async (production) => {
+    const reportId = production.consumption_report_id;
+    if (!reportId || reportLoadingId) return;
+    setReportLoadingId(String(production.id));
+    setActionError('');
+    try {
+      const report = await base44.entities.ProductionConsumptionReport.get(reportId);
+      setSelectedConsumptionReport(report);
+    } catch (error) {
+      setActionError(error.message || 'Unable to load the production consumption report.');
+    } finally {
+      setReportLoadingId('');
+    }
+  };
+
+  const isStatusActionPending = (production, status) => (
+    updateStatusMutation.isPending
+    && String(updateStatusMutation.variables?.id || '') === String(production.id)
+    && updateStatusMutation.variables?.status === status
+  );
+
+  const renderProductionActions = (production) => (
     <div className="flex flex-wrap gap-2">
-      {['draft', 'changes_requested'].includes(production.status) && can('edit_production_request') ? (
+      {['draft', 'planned', 'changes_requested'].includes(production.status) && can('edit_production_request') ? (
         <Button size="sm" variant="outline" onClick={() => openEditDialog(production)}>
           Edit Request
         </Button>
       ) : null}
-      {['draft', 'changes_requested'].includes(production.status) && can('submit_production_request') ? (
+      {['draft', 'planned', 'changes_requested'].includes(production.status) && can('submit_production_request') ? (
         <Button
           size="sm"
           className="bg-amber-600 hover:bg-amber-700"
@@ -549,12 +740,19 @@ export default function Production() {
           })}
           disabled={updateStatusMutation.isPending}
         >
-          Submit for Approval
+          Submit to Project Manager
         </Button>
       ) : null}
-      {production.status === 'pending_approval' && can('review_production_request') ? (
+      {production.status === 'pending_approval'
+        && can('review_production_request')
+        && (can('approve_production_request') || can('request_changes_production') || can('reject_production_request')) ? (
         <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => openApprovalDialog(production)}>
           Review Request
+        </Button>
+      ) : null}
+      {isAreaApprovalReview(production) && can('approve_production') ? (
+        <Button size="sm" className="bg-purple-700 hover:bg-purple-800" onClick={() => openApprovalDialog(production)}>
+          Area Manager Review
         </Button>
       ) : null}
       {production.status === 'approved' && can('start_production') ? (
@@ -566,23 +764,30 @@ export default function Production() {
             status: 'in_progress',
             production
           })}
-          disabled={!canStartWithMaterialRequest(linkedMaterialRequest) || updateStatusMutation.isPending}
+          disabled={!canStartApprovedProduction(production) || isStatusActionPending(production, 'in_progress')}
         >
-          Start Production
+          {isStatusActionPending(production, 'in_progress') ? 'Starting...' : 'Start Production'}
         </Button>
       ) : null}
       {production.status === 'in_progress' && can('complete_production') ? (
         <Button
           size="sm"
           className="bg-emerald-600 hover:bg-emerald-700"
-          onClick={() => updateStatusMutation.mutate({
-            id: production.id,
-            status: 'completed',
-            production
-          })}
-          disabled={updateStatusMutation.isPending}
+          onClick={() => openCompletionDialog(production)}
+          disabled={isStatusActionPending(production, 'completed')}
         >
-          {updateStatusMutation.isPending ? 'Completing...' : 'Complete'}
+          {isStatusActionPending(production, 'completed') ? 'Completing...' : 'Reconcile & Complete'}
+        </Button>
+      ) : null}
+      {production.status === 'completed' && production.consumption_report_id ? (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => openConsumptionReport(production)}
+          disabled={Boolean(reportLoadingId)}
+        >
+          <FileText className="mr-1.5 h-4 w-4" />
+          {reportLoadingId === String(production.id) ? 'Loading Report...' : 'Consumption Report'}
         </Button>
       ) : null}
     </div>
@@ -596,9 +801,25 @@ export default function Production() {
     || inventoryError?.message
     || materialRequestsError?.message
     || '';
-  const siteOptions = isAdmin
-    ? [{ id: 'all', name: 'All Sites' }, ...visibleSites]
-    : visibleSites;
+  const selectedIsAreaReview = isAreaApprovalReview(selectedProduction);
+  const selectedReviewStoreOptions = selectedProduction
+    ? getProductionStoreOptions(selectedProduction)
+    : [];
+  const completionStoreOptions = completionProduction
+    ? getProductionStoreOptions(completionProduction)
+    : [];
+  const canRequestSelectedChanges = selectedIsAreaReview
+    ? selectedProduction?.status !== 'approved' && can('request_changes_area_production')
+    : can('review_production_request') && can('request_changes_production');
+  const canRejectSelected = selectedIsAreaReview
+    ? selectedProduction?.status !== 'approved' && can('reject_area_production')
+    : can('review_production_request') && can('reject_production_request');
+  const canApproveSelected = selectedIsAreaReview
+    ? can('approve_production')
+    : can('review_production_request') && can('approve_production_request');
+  const siteOptions = canViewAllAccessibleSites
+    ? [{ id: 'all', name: 'All Sites' }, ...productionSiteOptions]
+    : productionSiteOptions;
 
   return (
     <>
@@ -622,7 +843,8 @@ export default function Production() {
           setFormData((current) => ({
             ...current,
             production_date: selectedDate,
-            site_id: selectedSite === 'all' ? '' : selectedSite
+            site_id: selectedSite === 'all' ? '' : selectedSite,
+            fulfillment_store_id: ''
           }));
           setFormOpen(true);
         }}
@@ -657,20 +879,53 @@ export default function Production() {
             <form onSubmit={(event) => handleSubmit(event, editingProduction ? editingProduction.status || 'draft' : 'draft')} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="site">Project / Site *</Label>
+                  <Label htmlFor="site">Project / Production Site *</Label>
                   <Select
                     value={formData.site_id}
-                    onValueChange={(value) => setFormData({ ...formData, site_id: value })}
+                    onValueChange={(value) => setFormData({
+                      ...formData,
+                      site_id: value,
+                      fulfillment_store_id: ''
+                    })}
                   >
                     <SelectTrigger id="site" className="mt-1">
                       <SelectValue placeholder="Select site" />
                     </SelectTrigger>
                     <SelectContent>
-                      {visibleSites.map(site => (
+                      {productionSiteOptions.map(site => (
                         <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="fulfillment_store">Fulfillment Store *</Label>
+                  <Select
+                    value={formData.fulfillment_store_id}
+                    onValueChange={(value) => setFormData({ ...formData, fulfillment_store_id: value })}
+                    disabled={!formData.site_id || fulfillmentStoreOptions.length === 0}
+                  >
+                    <SelectTrigger id="fulfillment_store" className="mt-1">
+                      <SelectValue placeholder={
+                        !formData.site_id
+                          ? 'Select a project first'
+                          : fulfillmentStoreOptions.length === 0
+                            ? 'No store configured under this project'
+                            : 'Select fulfillment store'
+                      } />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {fulfillmentStoreOptions.map((store) => (
+                        <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {formData.site_id && fulfillmentStoreOptions.length === 0 ? (
+                    <p className="mt-1 text-xs text-red-600">
+                      Add a Store under this Project before creating production.
+                    </p>
+                  ) : null}
                 </div>
 
                 <div>
@@ -891,13 +1146,18 @@ export default function Production() {
         <Dialog
           open={showApprovalDialog}
           onOpenChange={(open) => {
+            if (reviewAction) return;
             setShowApprovalDialog(open);
             if (!open) setActionError('');
           }}
         >
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Review Production Request</DialogTitle>
+              <DialogTitle>
+                {isAreaApprovalReview(selectedProduction)
+                  ? 'Area Manager Production Approval'
+                  : 'Project Manager Production Review'}
+              </DialogTitle>
             </DialogHeader>
             {actionError ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -912,7 +1172,33 @@ export default function Production() {
                   <p>Site: {selectedProduction?.site_name}</p>
                   <p>Date: {selectedProduction?.production_date}</p>
                   <p>Servings: {formatRecipeQuantity(selectedProduction?.target_servings, 'servings')}</p>
+                  <p>Stage: {getProductionStatusLabel(selectedProduction?.status)}</p>
                 </div>
+              </div>
+
+              <div>
+                <Label htmlFor="review_fulfillment_store">Fulfillment Store *</Label>
+                <Select
+                  value={reviewFulfillmentStoreId}
+                  onValueChange={(value) => {
+                    setReviewFulfillmentStoreId(value);
+                    setInventoryCheck(buildProductionInventoryCheck(selectedProduction, value));
+                    setActionError('');
+                  }}
+                  disabled={Boolean(selectedProduction?.fulfillment_store_id) || selectedReviewStoreOptions.length === 0}
+                >
+                  <SelectTrigger id="review_fulfillment_store" className="mt-1">
+                    <SelectValue placeholder={selectedReviewStoreOptions.length ? 'Select fulfillment store' : 'No accessible Store under this Project'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectedReviewStoreOptions.map((store) => (
+                      <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!reviewFulfillmentStoreId ? (
+                  <p className="mt-1 text-xs text-red-600">A fulfillment Store is required before this approval can continue.</p>
+                ) : null}
               </div>
 
               <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
@@ -952,9 +1238,15 @@ export default function Production() {
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5" />
                     <div>
-                      <p className="font-medium text-amber-900">Material Request Required After Approval</p>
+                      <p className="font-medium text-amber-900">
+                        {isAreaApprovalReview(selectedProduction)
+                          ? 'Shortage Review Before Final Approval'
+                          : 'Store / Procurement Action Required After PM Approval'}
+                      </p>
                       <p className="text-sm text-amber-700 mt-1">
-                        Once the manager approves this production request, the linked material request moves to procurement for acknowledgement. After procurement acknowledges it, the chef can start production.
+                        {isAreaApprovalReview(selectedProduction)
+                          ? 'Procurement has completed its workflow step. Confirm the remaining shortages and operational readiness before allowing production to start.'
+                          : 'After PM approval, the linked material request moves to the Store Keeper / Procurement Officer. Production then waits for Area Manager approval before it can start.'}
                       </p>
                     </div>
                   </div>
@@ -974,31 +1266,252 @@ export default function Production() {
               </div>
 
               <DialogFooter>
-                <Button 
-                  variant="outline" 
-                  onClick={() => handleReview('request_changes')}
-                  className="border-amber-300 text-amber-700 hover:bg-amber-50"
-                >
-                  <AlertCircle className="w-4 h-4 mr-2" />
-                  Request Changes
-                </Button>
-                <Button 
-                  variant="outline" 
-                  onClick={() => handleReview('reject')}
-                  className="border-red-300 text-red-700 hover:bg-red-50"
-                >
-                  <XCircle className="w-4 h-4 mr-2" />
-                  Reject
-                </Button>
-                <Button 
-                  onClick={() => handleReview('approve')}
-                  className="bg-green-600 hover:bg-green-700"
-                >
-                  <CheckCircle2 className="w-4 h-4 mr-2" />
-                  Approve Request
-                </Button>
+                {canRequestSelectedChanges ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleReview('request_changes')}
+                      className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                      disabled={Boolean(reviewAction) || !reviewNotes.trim()}
+                    >
+                      <AlertCircle className="w-4 h-4 mr-2" />
+                      Request Changes
+                    </Button>
+                ) : null}
+                {canRejectSelected ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleReview('reject')}
+                      className="border-red-300 text-red-700 hover:bg-red-50"
+                      disabled={Boolean(reviewAction) || !reviewNotes.trim()}
+                    >
+                      <XCircle className="w-4 h-4 mr-2" />
+                      Reject
+                    </Button>
+                ) : null}
+                {canApproveSelected ? (
+                  <Button
+                    onClick={() => handleReview('approve')}
+                    className="bg-green-600 hover:bg-green-700"
+                    disabled={Boolean(reviewAction) || !reviewFulfillmentStoreId}
+                  >
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    {reviewAction === 'approve'
+                      ? 'Approving...'
+                      : selectedIsAreaReview
+                        ? 'Approve & Mark Ready'
+                        : 'Approve & Send to Store / Procurement'}
+                  </Button>
+                ) : null}
               </DialogFooter>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={completionOpen}
+          onOpenChange={(open) => {
+            setCompletionOpen(open);
+            if (!open) {
+              setCompletionProduction(null);
+              setCompletionQuantities([]);
+              setCompletionFulfillmentStoreId('');
+              setActionError('');
+            }
+          }}
+        >
+          <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Complete Production & Reconcile Consumption</DialogTitle>
+            </DialogHeader>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              Confirm the actual raw quantity consumed for each ingredient. Posting completion deducts inventory and creates one immutable Production Consumption Report.
+            </div>
+            {actionError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
+            ) : null}
+            <div>
+              <Label htmlFor="completion_fulfillment_store">Inventory Fulfillment Store *</Label>
+              <Select
+                value={completionFulfillmentStoreId}
+                onValueChange={(value) => {
+                  setCompletionFulfillmentStoreId(value);
+                  setActionError('');
+                }}
+                disabled={Boolean(completionProduction?.fulfillment_store_id) || completionStoreOptions.length === 0}
+              >
+                <SelectTrigger id="completion_fulfillment_store" className="mt-1">
+                  <SelectValue placeholder={completionStoreOptions.length ? 'Select fulfillment store' : 'No accessible Store under this Project'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {completionStoreOptions.map((store) => (
+                    <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!completionFulfillmentStoreId ? (
+                <p className="mt-1 text-xs text-red-600">Select the Store whose inventory will be consumed.</p>
+              ) : null}
+            </div>
+            <div className="rounded-lg border border-slate-200">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item Code</TableHead>
+                    <TableHead>Item Name</TableHead>
+                    <TableHead>Yield-Adjusted Plan</TableHead>
+                    <TableHead>Actual Consumed</TableHead>
+                    <TableHead>Unit</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {completionQuantities.map((line, index) => (
+                    <TableRow key={line.ingredient_id || index}>
+                      <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
+                      <TableCell className="font-medium">{line.ingredient_name}</TableCell>
+                      <TableCell>{formatRecipeQuantity(line.planned_quantity, line.unit)} {line.unit}</TableCell>
+                      <TableCell className="w-48">
+                        <StandardDecimalInput
+                          value={line.actual_quantity}
+                          unit={line.unit}
+                          min={0}
+                          allowZero
+                          allowEmpty={false}
+                          label={`Actual consumption for ${line.ingredient_name}`}
+                          onValueChange={(value) => setCompletionQuantities((current) => current.map((entry, entryIndex) => (
+                            entryIndex === index ? { ...entry, actual_quantity: value } : entry
+                          )))}
+                        />
+                      </TableCell>
+                      <TableCell>{line.unit}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCompletionOpen(false)}>Cancel</Button>
+              <Button
+                className="bg-emerald-700 hover:bg-emerald-800"
+                disabled={updateStatusMutation.isPending || !completionFulfillmentStoreId || completionQuantities.some((line) => !Number.isFinite(Number(line.actual_quantity)) || Number(line.actual_quantity) < 0)}
+                onClick={() => updateStatusMutation.mutate({
+                  id: completionProduction.id,
+                  status: 'completed',
+                  fulfillmentStoreId: completionFulfillmentStoreId,
+                  ingredientQuantities: completionQuantities.map((line) => ({
+                    ingredient_id: line.ingredient_id,
+                    actual_quantity: Number(line.actual_quantity),
+                    unit: line.unit
+                  }))
+                })}
+              >
+                {updateStatusMutation.isPending ? 'Posting...' : 'Post Consumption & Complete'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={Boolean(selectedConsumptionReport)}
+          onOpenChange={(open) => {
+            if (!open) setSelectedConsumptionReport(null);
+          }}
+        >
+          <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-emerald-700" />
+                {selectedConsumptionReport?.report_name || 'Production Consumption Report'}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div><p className="text-xs text-slate-500">Report Number</p><p className="font-semibold">{selectedConsumptionReport?.report_number}</p></div>
+              <div><p className="text-xs text-slate-500">Project / Store</p><p className="font-semibold">{selectedConsumptionReport?.requesting_site_name || selectedConsumptionReport?.site_name} / {selectedConsumptionReport?.fulfillment_store_name || selectedConsumptionReport?.site_name}</p></div>
+              <div><p className="text-xs text-slate-500">Completed By</p><p className="font-semibold">{selectedConsumptionReport?.completed_by_name || selectedConsumptionReport?.completed_by}</p></div>
+              <div><p className="text-xs text-slate-500">Total Consumption Cost</p><p className="font-semibold text-emerald-700">{formatCurrency(selectedConsumptionReport?.total_consumption_cost || 0)}</p></div>
+            </div>
+
+            <section className="space-y-2">
+              <h3 className="font-semibold text-slate-900">Ingredient Consumption</h3>
+              <div className="rounded-lg border border-slate-200">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Item Name</TableHead>
+                      <TableHead>Planned Raw</TableHead>
+                      <TableHead>Actual Requested</TableHead>
+                      <TableHead>Stock Issued</TableHead>
+                      <TableHead>Shortage</TableHead>
+                      <TableHead>Basis</TableHead>
+                      <TableHead>Cost</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(selectedConsumptionReport?.ingredient_lines || []).map((line, index) => (
+                      <TableRow key={`${line.ingredient_id}-${index}`}>
+                        <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
+                        <TableCell className="font-medium">{line.ingredient_name}</TableCell>
+                        <TableCell>{formatRecipeQuantity(line.planned_quantity, line.unit)} {line.unit}</TableCell>
+                        <TableCell>{formatRecipeQuantity(line.actual_requested_quantity, line.unit)} {line.unit}</TableCell>
+                        <TableCell>{formatRecipeQuantity(line.issued_quantity, line.unit)} {line.unit}</TableCell>
+                        <TableCell className={Number(line.shortage_quantity) > 0 ? 'font-semibold text-red-600' : ''}>{formatRecipeQuantity(line.shortage_quantity, line.unit)} {line.unit}</TableCell>
+                        <TableCell>{String(line.quantity_basis || '').replace(/_/g, ' ')}</TableCell>
+                        <TableCell>{formatCurrency(line.posted_cost || 0)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <h3 className="font-semibold text-slate-900">Inventory Lots Consumed</h3>
+              <div className="rounded-lg border border-slate-200">
+                <Table>
+                  <TableHeader>
+                    <TableRow><TableHead>Item Code</TableHead><TableHead>Item Name</TableHead><TableHead>Batch</TableHead><TableHead>Expiry</TableHead><TableHead>Quantity</TableHead><TableHead>Cost</TableHead></TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {((selectedConsumptionReport?.sections || []).find((section) => section.key === 'inventory_lot_usage')?.lines || []).map((line, index) => (
+                      <TableRow key={`${line.inventory_lot_id}-${index}`}>
+                        <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
+                        <TableCell>{line.ingredient_name}</TableCell>
+                        <TableCell>{line.batch_number || '—'}</TableCell>
+                        <TableCell>{line.expiry_date || '—'}</TableCell>
+                        <TableCell>{formatRecipeQuantity(line.quantity, line.unit)} {line.unit}</TableCell>
+                        <TableCell>{formatCurrency(line.total_cost || 0)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <h3 className="font-semibold text-slate-900">Shortages and Exceptions</h3>
+              <div className="rounded-lg border border-slate-200">
+                <Table>
+                  <TableHeader>
+                    <TableRow><TableHead>Item Code</TableHead><TableHead>Item Name</TableHead><TableHead>Requested</TableHead><TableHead>Issued</TableHead><TableHead>Shortage</TableHead><TableHead>Estimated Shortage Cost</TableHead></TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {((selectedConsumptionReport?.sections || []).find((section) => section.key === 'shortages')?.lines || []).map((line, index) => (
+                      <TableRow key={`${line.ingredient_id}-${index}`}>
+                        <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
+                        <TableCell>{line.ingredient_name}</TableCell>
+                        <TableCell>{formatRecipeQuantity(line.actual_requested_quantity, line.unit)} {line.unit}</TableCell>
+                        <TableCell>{formatRecipeQuantity(line.issued_quantity, line.unit)} {line.unit}</TableCell>
+                        <TableCell className="font-semibold text-red-600">{formatRecipeQuantity(line.shortage_quantity, line.unit)} {line.unit}</TableCell>
+                        <TableCell>{formatCurrency(line.estimated_shortage_cost || 0)}</TableCell>
+                      </TableRow>
+                    ))}
+                    {((selectedConsumptionReport?.sections || []).find((section) => section.key === 'shortages')?.lines || []).length === 0 ? (
+                      <TableRow><TableCell colSpan={6} className="py-6 text-center text-sm text-emerald-700">No shortages or consumption exceptions were posted.</TableCell></TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </div>
+            </section>
           </DialogContent>
         </Dialog>
     </>

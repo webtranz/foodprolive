@@ -5,6 +5,7 @@ import { normalizeRecipeNumericFields } from '../shared/recipeNumbers.js';
 import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
 import { calculateIngredientCost, convertIngredientQuantity } from '../shared/ingredientUnits.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
+import { normalizeProductionStatus } from '../shared/productionWorkflow.js';
 import {
   applyLinkedProductionLocation,
   applyRequiredOperationalLocation
@@ -322,33 +323,129 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
   }
 
   if (entity === 'Production') {
+    const workflowManagedFields = [
+      'linked_material_request_id', 'linked_material_request_number', 'material_request_status',
+      'pm_approval_status', 'pm_approved_by', 'pm_approved_by_name', 'pm_approved_at',
+      'area_approval_status', 'area_approved_by', 'area_approved_by_name', 'area_approved_at',
+      'submitted_by', 'submitted_by_name', 'submitted_at',
+      'started_by', 'started_by_name', 'started_at',
+      'completed_by', 'completed_by_name', 'completed_date',
+      'completion_lines', 'ingredient_cost_total', 'production_cost_total', 'cost_per_serving',
+      'total_shortage_quantity', 'consumption_report_id', 'consumption_report_number',
+      'consumption_report_name', 'consumption_report_generated_at',
+      'yield_adjustment_applied', 'yield_adjustment_version', 'yield_adjustment_updated_at',
+      'yield_snapshot_source'
+    ];
+    if (!context.trustedProductionSource) {
+      workflowManagedFields.push(
+        'source_type',
+        'source_event_id',
+        'source_event_name',
+        'source_event_recipe_id'
+      );
+    }
+    const userPayload = { ...payload };
+    workflowManagedFields.forEach((field) => delete userPayload[field]);
+    const productionRecord = existing ? { ...existing, ...userPayload } : userPayload;
+    if (productionRecord.status) {
+      productionRecord.status = normalizeProductionStatus(productionRecord.status, 'draft');
+    }
+    if (!existing && productionRecord.site_id) {
+      const productionProject = (scope.sites || []).find(
+        (site) => String(site.id) === String(productionRecord.site_id)
+      );
+      if (!productionProject || normalizeSiteType(productionProject.type) !== 'project') {
+        const error = new Error('New production requests must be assigned to a Project, with a separate fulfillment Store.');
+        error.status = 400;
+        throw error;
+      }
+    }
     const isOpenLegacyProduction = Boolean(
       existing
       && existing.yield_adjustment_applied !== true
-      && String(merged.status || '').toLowerCase() !== 'completed'
+      && String(productionRecord.status || '').toLowerCase() !== 'completed'
     );
     const shouldRecalculate = !existing
       || isOpenLegacyProduction
       || Object.prototype.hasOwnProperty.call(payload, 'recipe_id')
       || Object.prototype.hasOwnProperty.call(payload, 'target_servings')
-      || Object.prototype.hasOwnProperty.call(payload, 'ingredients_used');
+      || Object.prototype.hasOwnProperty.call(payload, 'ingredients_used')
+      || normalizeProductionStatus(payload?.status) === 'pending_approval';
 
-    if (!shouldRecalculate || !merged.recipe_id) {
-      return merged;
+    const statusRequiresCompletePlan = !['draft', 'planned', 'changes_requested'].includes(
+      normalizeProductionStatus(productionRecord.status, 'draft')
+    );
+    if (statusRequiresCompletePlan) {
+      if (!String(productionRecord.recipe_id || '').trim()) {
+        const error = new Error('Select a valid recipe before submitting production for approval.');
+        error.status = 400;
+        throw error;
+      }
+      if (!String(productionRecord.production_date || '').trim()) {
+        const error = new Error('Production date is required before submission.');
+        error.status = 400;
+        throw error;
+      }
+      if (!String(productionRecord.site_id || '').trim()) {
+        const error = new Error('Production Project is required before submission.');
+        error.status = 400;
+        throw error;
+      }
+      if (!String(productionRecord.kitchen_station || productionRecord.assigned_station || productionRecord.station || '').trim()) {
+        const error = new Error('Kitchen station is required before submission.');
+        error.status = 400;
+        throw error;
+      }
+    }
+
+    if (!shouldRecalculate || !productionRecord.recipe_id) {
+      return productionRecord;
     }
 
     const [recipeCatalog, ingredientCatalog] = await Promise.all([
       context.recipeCatalog || listDocuments('Recipe', { limit: 5000 }),
       context.ingredientCatalog || listDocuments('Ingredient', { limit: 10000 })
     ]);
-    const recipe = recipeCatalog.find((candidate) => String(candidate.id) === String(merged.recipe_id));
+    const recipe = recipeCatalog.find((candidate) => String(candidate.id) === String(productionRecord.recipe_id));
     if (!recipe) {
       const error = new Error('The selected production recipe no longer exists.');
       error.status = 400;
       throw error;
     }
+    const recipeSiteIds = [
+      recipe.site_id,
+      ...(Array.isArray(recipe.site_ids) ? recipe.site_ids : [])
+    ].filter(Boolean).map(String);
+    const recipeIsGlobal = recipeSiteIds.length === 0
+      && String(recipe.site_scope || 'global').toLowerCase() === 'global';
+    if (!recipeIsGlobal && productionRecord.site_id) {
+      const productionProjectId = String(productionRecord.site_id);
+      const isRelatedToProductionProject = (candidateId) => {
+        let cursor = scope.graph?.byId?.get(String(candidateId)) || null;
+        while (cursor) {
+          if (String(cursor.id) === productionProjectId) return true;
+          cursor = cursor.parent_site_id
+            ? scope.graph?.byId?.get(String(cursor.parent_site_id)) || null
+            : null;
+        }
 
-    const targetServings = Math.max(0, Number(merged.target_servings) || 0);
+        cursor = scope.graph?.byId?.get(productionProjectId) || null;
+        while (cursor) {
+          if (String(cursor.id) === String(candidateId)) return true;
+          cursor = cursor.parent_site_id
+            ? scope.graph?.byId?.get(String(cursor.parent_site_id)) || null
+            : null;
+        }
+        return false;
+      };
+      if (!recipeSiteIds.some(isRelatedToProductionProject)) {
+        const error = new Error('The selected recipe is not available to this Production Project.');
+        error.status = 403;
+        throw error;
+      }
+    }
+
+    const targetServings = Math.max(0, Number(productionRecord.target_servings) || 0);
     if (targetServings <= 0) {
       const error = new Error('Production target servings must be greater than zero.');
       error.status = 400;
@@ -359,7 +456,7 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
       ingredientCatalog.map((ingredient) => [String(ingredient.id), ingredient])
     );
     const submittedLines = new Map(
-      (Array.isArray(merged.ingredients_used) ? merged.ingredients_used : [])
+      (Array.isArray(productionRecord.ingredients_used) ? productionRecord.ingredients_used : [])
         .map((line) => [String(line?.ingredient_id || ''), line])
     );
     const multiplier = targetServings / Math.max(1, Number(recipe.servings) || 1);
@@ -387,15 +484,6 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
         unit,
         ingredient
       );
-      const submittedActual = submitted.actual_quantity;
-      const actualQuantity = submittedActual === null || submittedActual === undefined || submittedActual === ''
-        ? null
-        : convertIngredientQuantity(
-          Number(submittedActual) || 0,
-          submitted.unit || unit,
-          unit,
-          ingredient
-        );
       const unitCost = Number(
         ingredient.cost_per_unit
           ?? ingredient.last_cost
@@ -417,7 +505,10 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
         yield_multiplier: Number(yieldAdjustment.yield_multiplier.toFixed(6)),
         yield_percent: Number(yieldAdjustment.yield_percent.toFixed(2)),
         yield_source: yieldAdjustment.yield_source,
-        actual_quantity: actualQuantity === null ? null : Number(actualQuantity.toFixed(4)),
+        // Actual consumption is accepted only by the dedicated completion action.
+        // Keeping it out of editable production snapshots prevents a client from
+        // pre-seeding a lower quantity that would later suppress stock posting.
+        actual_quantity: null,
         unit,
         cost_quantity: Number(rawQuantity.toFixed(4)),
         cost_unit: unit,
@@ -431,8 +522,8 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
     );
 
     return {
-      ...merged,
-      recipe_name: recipe.name || merged.recipe_name || '',
+      ...productionRecord,
+      recipe_name: recipe.name || productionRecord.recipe_name || '',
       target_servings: targetServings,
       ingredients_used: productionIngredients,
       estimated_batch_cost: Number(estimatedBatchCost.toFixed(2)),
@@ -440,8 +531,9 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
       yield_adjustment_applied: true,
       yield_adjustment_version: 1,
       yield_adjustment_updated_at: new Date().toISOString(),
+      yield_snapshot_source: 'server_recipe_expansion',
       production_warnings: [...new Set([
-        ...(Array.isArray(merged.production_warnings) ? merged.production_warnings : []),
+        ...(Array.isArray(productionRecord.production_warnings) ? productionRecord.production_warnings : []),
         ...expansion.warnings,
         ...expansion.cycles.map((cycle) => `Circular recipe reference: ${cycle.join(' → ')}`)
       ])]

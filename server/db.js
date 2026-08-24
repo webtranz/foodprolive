@@ -7,13 +7,14 @@ import {
   entityRegistry,
   ensureKnownEntity,
   validateEntityPayload,
-  getSystemRoleDefinition
+  getSystemRoleDefinition as getEntitySystemRoleDefinition
 } from './entities.js';
 import { buildEntityListQuery } from './entityQuery.js';
 import { deriveInventoryRecord } from '../shared/inventoryStatus.js';
 import {
+  getSystemRoleDefinition as getSharedSystemRoleDefinition,
   isManagementScopeSiteType,
-  isReservedManagementRoleKey,
+  isSystemRoleKey,
   normalizeManagementRoleProfile,
   resolveManagementDashboardView
 } from '../shared/managementDashboardRoles.js';
@@ -240,13 +241,13 @@ async function findRoleProfileByKey(roleKey, executor = pool) {
 
   let value = result.rowCount ? normalizeManagementRoleProfile(result.rows[0].data) : null;
   if (!value) {
-    const builtIn = getSystemRoleDefinition(normalized);
-    value = builtIn ? {
+    const builtIn = getEntitySystemRoleDefinition(normalized);
+    value = builtIn ? normalizeManagementRoleProfile({
       id: `role_${builtIn.role_key}`,
       ...builtIn,
       is_system: true,
       is_active: true
-    } : null;
+    }) : null;
   }
 
   if (canUseCache && cacheGeneration === roleProfileCacheGeneration) {
@@ -480,6 +481,8 @@ async function withTransaction(handler) {
 
 const singleReferenceTargets = new Map([
   ['site_id', 'Site'],
+  ['requesting_site_id', 'Site'],
+  ['fulfillment_store_id', 'Site'],
   ['from_site_id', 'Site'],
   ['to_site_id', 'Site'],
   ['parent_site_id', 'Site'],
@@ -1109,13 +1112,16 @@ async function createDocument(entity, payload, executor = null) {
   if (entity === 'User') {
     return createUser(payload, executor);
   }
-  if (entity === 'RoleProfile' && isReservedManagementRoleKey(payload?.role_key)) {
-    const error = new Error('This management role key is reserved by the system');
-    error.status = 409;
-    throw error;
-  }
 
-  const validated = validateEntityPayload(entity, payload);
+  const preparedPayload = entity === 'RoleProfile' && isSystemRoleKey(payload?.role_key)
+    ? normalizeManagementRoleProfile({
+      ...payload,
+      role_key: getSharedSystemRoleDefinition(payload.role_key).role_key,
+      access_level: getSharedSystemRoleDefinition(payload.role_key).access_level,
+      is_system: true
+    })
+    : payload;
+  const validated = validateEntityPayload(entity, preparedPayload);
   const record = normalizeRecord(entity, validated);
   await validateDocumentRelationships(entity, record, null, executor);
   await ensureEntityUniqueness(entity, record, null, executor);
@@ -1142,13 +1148,35 @@ async function updateDocument(entity, id, patch, executor = null) {
 
   const existing = await findDocument(entity, id, executor);
   if (!existing) return null;
-  if (entity === 'RoleProfile' && isReservedManagementRoleKey(existing.role_key)) {
-    const error = new Error('Built-in management roles cannot be edited');
-    error.status = 409;
-    throw error;
+
+  let preparedPatch = patch;
+  if (entity === 'RoleProfile' && isSystemRoleKey(existing.role_key)) {
+    const builtIn = getSharedSystemRoleDefinition(existing.role_key);
+    if (
+      Object.prototype.hasOwnProperty.call(patch || {}, 'role_key')
+      && getSharedSystemRoleDefinition(patch?.role_key)?.role_key !== builtIn.role_key
+    ) {
+      const error = new Error('Built-in role keys cannot be changed');
+      error.status = 409;
+      throw error;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(patch || {}, 'access_level')
+      && patch?.access_level !== builtIn.access_level
+    ) {
+      const error = new Error('Built-in role access levels cannot be changed');
+      error.status = 409;
+      throw error;
+    }
+    preparedPatch = {
+      ...patch,
+      role_key: builtIn.role_key,
+      access_level: builtIn.access_level,
+      is_system: true
+    };
   }
 
-  const validated = validateEntityPayload(entity, { ...existing, ...patch });
+  const validated = validateEntityPayload(entity, { ...existing, ...preparedPatch });
   const record = normalizeRecord(entity, validated, existing);
   await validateDocumentRelationships(entity, record, id, executor);
   if (entity === 'Site') {

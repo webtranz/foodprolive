@@ -479,6 +479,7 @@ export default function ProcurementModule() {
                     <TableRow>
                       <TableHead>Request #</TableHead>
                       <TableHead>Project</TableHead>
+                      <TableHead>Fulfillment Store</TableHead>
                       <TableHead>Production</TableHead>
                       <TableHead>Created By</TableHead>
                       <TableHead>Items</TableHead>
@@ -491,7 +492,8 @@ export default function ProcurementModule() {
                     {visibleMaterialRequests.map((request) => (
                       <TableRow key={request.id}>
                         <TableCell className="font-medium">{request.request_number}</TableCell>
-                        <TableCell>{request.site_name || '-'}</TableCell>
+                        <TableCell>{request.requesting_site_name || request.site_name || '-'}</TableCell>
+                        <TableCell>{request.fulfillment_store_name || request.site_name || '-'}</TableCell>
                         <TableCell>{request.source_production_name || '-'}</TableCell>
                         <TableCell>{request.created_by_name || request.created_by || '-'}</TableCell>
                         <TableCell>{request.items?.length || 0}</TableCell>
@@ -520,7 +522,7 @@ export default function ProcurementModule() {
                     ))}
                     {visibleMaterialRequests.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="py-10 text-center text-sm text-slate-500">
+                        <TableCell colSpan={9} className="py-10 text-center text-sm text-slate-500">
                           No production material requests are waiting for procurement.
                         </TableCell>
                       </TableRow>

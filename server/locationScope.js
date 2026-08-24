@@ -13,6 +13,7 @@ const LOCATION_SCOPED_ENTITIES = new Set([
   'InventoryLot',
   'InventoryTransaction',
   'Production',
+  'ProductionConsumptionReport',
   'ProductionBatch',
   'ProductionTransfer',
   'Budget',
@@ -137,6 +138,7 @@ function canAccessLocationRecord(user, entity, record, accessibleSiteIds, access
 
   const siteFields = [
     record.site_id,
+    record.fulfillment_store_id,
     record.from_site_id,
     record.to_site_id
   ].filter(Boolean).map(String);
@@ -278,6 +280,7 @@ function assertPayloadLocationAccess(user, entity, payload = {}, scope) {
 
   const referencedSiteIds = normalizeArray([
     payload.site_id,
+    payload.fulfillment_store_id,
     payload.from_site_id,
     payload.to_site_id,
     ...normalizeArray(payload.allowed_site_ids),
