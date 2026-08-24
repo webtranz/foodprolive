@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertCircle, CheckCircle2, XCircle, Brain, FileText } from 'lucide-react';
+import { AlertCircle, CheckCircle2, XCircle, Brain, FileText, History } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
 import { format } from 'date-fns';
 import { usePermissions } from '@/components/auth/usePermissions';
@@ -28,6 +28,10 @@ import { formatRecipeQuantity, getRecipeQuantityPrecision, roundStandardDecimal 
 import { getItemCode } from '../../shared/itemCode.js';
 import {
   canStartApprovedProduction,
+  getPendingAreaApprovalProductions,
+  getProductionApprovalHistory,
+  getProductionRejectionReturnStatus,
+  getProductionStartBlockReason,
   getProductionStatusLabel,
   requiresAreaProductionApproval
 } from '../../shared/productionWorkflow.js';
@@ -49,9 +53,56 @@ function isAreaApprovalReview(production) {
   return requiresAreaProductionApproval(production);
 }
 
+function formatWorkflowTimestamp(value) {
+  if (!value) return 'Date and time not recorded';
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) return String(value);
+  return format(timestamp, 'dd MMM yyyy, hh:mm a');
+}
+
+function ApprovalHistoryList({ production, emptyMessage = 'No approval actions have been recorded yet.' }) {
+  const history = getProductionApprovalHistory(production);
+  if (history.length === 0) {
+    return <p className="text-sm text-slate-500">{emptyMessage}</p>;
+  }
+
+  return (
+    <ol className="space-y-2">
+      {history.map((entry) => {
+        const actor = entry.actor_name || entry.actor_email || 'System';
+        const transition = entry.from_status || entry.to_status
+          ? `${getProductionStatusLabel(entry.from_status || 'draft')} → ${getProductionStatusLabel(entry.to_status || entry.from_status)}`
+          : '';
+        return (
+          <li key={entry.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">{entry.action_label}</p>
+                <p className="text-xs text-slate-600">By {actor}</p>
+              </div>
+              <time className="text-xs text-slate-500" dateTime={entry.timestamp || undefined}>
+                {formatWorkflowTimestamp(entry.timestamp)}
+              </time>
+            </div>
+            {transition ? <p className="mt-1 text-xs text-slate-500">{transition}</p> : null}
+            {entry.reason ? (
+              <p className="mt-2 rounded-md bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
+                <span className="font-medium">Reason / notes:</span> {entry.reason}
+              </p>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export default function Production() {
   const { can, role: currentRole } = usePermissions();
   const { allowedSiteIds, isAdmin, siteId: assignedSiteId } = useSiteContext();
+  const canReviewAreaApprovals = can('approve_production')
+    || can('reject_area_production')
+    || can('request_changes_area_production');
   const [formOpen, setFormOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState('all');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -82,6 +133,7 @@ export default function Production() {
   const [completionFulfillmentStoreId, setCompletionFulfillmentStoreId] = useState('');
   const [selectedConsumptionReport, setSelectedConsumptionReport] = useState(null);
   const [reportLoadingId, setReportLoadingId] = useState('');
+  const [historyProduction, setHistoryProduction] = useState(null);
 
   const queryClient = useQueryClient();
 
@@ -106,6 +158,24 @@ export default function Production() {
       production_date: selectedDate
     }, '-production_date'),
     enabled: Boolean(selectedDate),
+    refetchInterval: 300000
+  });
+
+  const {
+    data: areaApprovalCandidates = [],
+    isLoading: isAreaApprovalQueueLoading,
+    error: areaApprovalQueueError
+  } = useQuery({
+    queryKey: ['productionAreaApprovalQueue'],
+    queryFn: async () => {
+      const [pending, legacyApproved] = await Promise.all([
+        base44.entities.Production.filter({ status: 'pending_production' }, 'production_date', 5000),
+        base44.entities.Production.filter({ status: 'approved' }, 'production_date', 5000)
+      ]);
+      const records = [...pending, ...legacyApproved];
+      return [...new Map(records.map((record) => [String(record.id), record])).values()];
+    },
+    enabled: canReviewAreaApprovals,
     refetchInterval: 300000
   });
 
@@ -157,6 +227,7 @@ export default function Production() {
     const unsubscribeProduction = base44.entities.Production.subscribe(() => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });
     });
     const unsubscribeRequests = base44.entities.MaterialRequest.subscribe(() => {
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
@@ -385,6 +456,10 @@ export default function Production() {
     const matchesDate = p.production_date === selectedDate;
     return matchesSite && matchesDate;
   });
+  const areaApprovalQueue = getPendingAreaApprovalProductions(
+    areaApprovalCandidates,
+    isAdmin ? [] : allowedSiteIds
+  );
 
   const materialRequestMap = materialRequests.reduce((map, request) => {
     if (request?.source_production_id && !map[request.source_production_id]) {
@@ -611,7 +686,8 @@ export default function Production() {
 
     setReviewAction(action);
     try {
-      if (action === 'approve' && isAreaApprovalReview(selectedProduction)) {
+      const areaReview = isAreaApprovalReview(selectedProduction);
+      if (action === 'approve' && areaReview) {
         await base44.productionWorkflow.approveForArea(selectedProduction.id, {
           notes: reviewNotes || null,
           fulfillment_store_id: reviewFulfillmentStoreId
@@ -621,16 +697,26 @@ export default function Production() {
           ? 'pending_procurement'
           : action === 'request_changes'
             ? 'changes_requested'
-            : 'rejected';
+            : getProductionRejectionReturnStatus(selectedProduction.status);
+        if (!status) {
+          throw new Error('This production request cannot be returned from its current stage.');
+        }
         await base44.entities.Production.update(selectedProduction.id, {
           status,
           review_notes: reviewNotes || null,
+          review_action: action === 'approve'
+            ? 'approved'
+            : action === 'reject'
+              ? 'rejected'
+              : 'changes_requested',
+          ...(action === 'reject' ? { rejection_reason: reviewNotes.trim() } : {}),
           ...(action === 'approve' ? { fulfillment_store_id: reviewFulfillmentStoreId } : {})
         });
       }
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });
       setShowApprovalDialog(false);
       setSelectedProduction(null);
       setReviewNotes('');
@@ -657,7 +743,7 @@ export default function Production() {
     setInventoryCheck(buildProductionInventoryCheck(production, fulfillmentStoreId));
     setActionError('');
     setSelectedProduction(production);
-    setReviewNotes(production.review_notes || '');
+    setReviewNotes('');
     setReviewAction('');
     setShowApprovalDialog(true);
   };
@@ -722,8 +808,11 @@ export default function Production() {
     && updateStatusMutation.variables?.status === status
   );
 
-  const renderProductionActions = (production) => (
-    <div className="flex flex-wrap gap-2">
+  const renderProductionActions = (production) => {
+    const approvalHistory = getProductionApprovalHistory(production);
+    const startBlockReason = getProductionStartBlockReason(production);
+    return (
+      <div className="flex flex-wrap gap-2">
       {['draft', 'planned', 'changes_requested'].includes(production.status) && can('edit_production_request') ? (
         <Button size="sm" variant="outline" onClick={() => openEditDialog(production)}>
           Edit Request
@@ -750,9 +839,14 @@ export default function Production() {
           Review Request
         </Button>
       ) : null}
-      {isAreaApprovalReview(production) && can('approve_production') ? (
+      {isAreaApprovalReview(production) && canReviewAreaApprovals ? (
         <Button size="sm" className="bg-purple-700 hover:bg-purple-800" onClick={() => openApprovalDialog(production)}>
           Area Manager Review
+        </Button>
+      ) : null}
+      {production.status === 'pending_production' && can('start_production') ? (
+        <Button size="sm" variant="outline" disabled title={startBlockReason}>
+          Area Approval Required
         </Button>
       ) : null}
       {production.status === 'approved' && can('start_production') ? (
@@ -765,6 +859,7 @@ export default function Production() {
             production
           })}
           disabled={!canStartApprovedProduction(production) || isStatusActionPending(production, 'in_progress')}
+          title={!canStartApprovedProduction(production) ? startBlockReason : undefined}
         >
           {isStatusActionPending(production, 'in_progress') ? 'Starting...' : 'Start Production'}
         </Button>
@@ -790,8 +885,15 @@ export default function Production() {
           {reportLoadingId === String(production.id) ? 'Loading Report...' : 'Consumption Report'}
         </Button>
       ) : null}
-    </div>
-  );
+      {approvalHistory.length > 0 ? (
+        <Button size="sm" variant="ghost" onClick={() => setHistoryProduction(production)}>
+          <History className="mr-1.5 h-4 w-4" />
+          Approval History
+        </Button>
+      ) : null}
+      </div>
+    );
+  };
 
   const loadError = actionError
     || productionsError?.message
@@ -809,10 +911,10 @@ export default function Production() {
     ? getProductionStoreOptions(completionProduction)
     : [];
   const canRequestSelectedChanges = selectedIsAreaReview
-    ? selectedProduction?.status !== 'approved' && can('request_changes_area_production')
+    ? can('request_changes_area_production')
     : can('review_production_request') && can('request_changes_production');
   const canRejectSelected = selectedIsAreaReview
-    ? selectedProduction?.status !== 'approved' && can('reject_area_production')
+    ? can('reject_area_production')
     : can('review_production_request') && can('reject_production_request');
   const canApproveSelected = selectedIsAreaReview
     ? can('approve_production')
@@ -854,6 +956,12 @@ export default function Production() {
         )}
         onPrint={() => window.print()}
         renderActions={renderProductionActions}
+        showAreaApprovalQueue={canReviewAreaApprovals}
+        areaApprovalQueue={areaApprovalQueue}
+        isAreaApprovalQueueLoading={isAreaApprovalQueueLoading}
+        areaApprovalQueueError={areaApprovalQueueError?.message || ''}
+        onReviewAreaApproval={openApprovalDialog}
+        onViewApprovalHistory={setHistoryProduction}
       />
 
         {/* Form Dialog */}
@@ -1151,7 +1259,7 @@ export default function Production() {
             if (!open) setActionError('');
           }}
         >
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {isAreaApprovalReview(selectedProduction)
@@ -1176,8 +1284,16 @@ export default function Production() {
                 </div>
               </div>
 
+              <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                <h4 className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-900">
+                  <History className="h-4 w-4" aria-hidden="true" />
+                  Approval History
+                </h4>
+                <ApprovalHistoryList production={selectedProduction} />
+              </div>
+
               <div>
-                <Label htmlFor="review_fulfillment_store">Fulfillment Store *</Label>
+                <Label htmlFor="review_fulfillment_store">Fulfillment Store (required for approval)</Label>
                 <Select
                   value={reviewFulfillmentStoreId}
                   onValueChange={(value) => {
@@ -1196,8 +1312,8 @@ export default function Production() {
                     ))}
                   </SelectContent>
                 </Select>
-                {!reviewFulfillmentStoreId ? (
-                  <p className="mt-1 text-xs text-red-600">A fulfillment Store is required before this approval can continue.</p>
+                {canApproveSelected && !reviewFulfillmentStoreId ? (
+                  <p className="mt-1 text-xs text-amber-700">Select a fulfillment Store to approve. You can still return or reject the request with a reason.</p>
                 ) : null}
               </div>
 
@@ -1304,6 +1420,31 @@ export default function Production() {
                 ) : null}
               </DialogFooter>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={Boolean(historyProduction)}
+          onOpenChange={(open) => {
+            if (!open) setHistoryProduction(null);
+          }}
+        >
+          <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <History className="h-5 w-5" aria-hidden="true" />
+                Production Approval History
+              </DialogTitle>
+            </DialogHeader>
+            <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              <p className="font-medium text-slate-900">
+                {historyProduction?.recipe_name || historyProduction?.name || 'Production request'}
+              </p>
+              <p className="mt-0.5 text-xs">
+                {historyProduction?.site_name || 'Site not named'} · {historyProduction?.production_date || 'Date not set'}
+              </p>
+            </div>
+            <ApprovalHistoryList production={historyProduction} />
           </DialogContent>
         </Dialog>
 

@@ -925,6 +925,22 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     consumption_report_generated_at: completedAt,
     fulfillment_store_id: fulfillmentStore.id,
     fulfillment_store_name: fulfillmentStore.name || null,
+    last_review_action: 'production_completed',
+    approval_history: [
+      ...(Array.isArray(production.approval_history) ? production.approval_history : []),
+      {
+        action: 'production_completed',
+        stage: 'production',
+        from_status: String(production.status || 'in_progress').toLowerCase(),
+        to_status: 'completed',
+        actor_id: actor.id || null,
+        actor_email: actor.email || null,
+        actor_name: actor.full_name || actor.email || null,
+        reason: null,
+        note: null,
+        timestamp: completedAt
+      }
+    ],
     ...(upgradedLegacyYield ? {
       ingredients_used: productionIngredients,
       yield_adjustment_applied: true,

@@ -227,11 +227,11 @@ const cases = [
         ['changes_requested', 'pending_approval'],
         ['pending_approval', 'pending_procurement'],
         ['pending_approval', 'changes_requested'],
-        ['pending_approval', 'rejected'],
         ['pending_procurement', 'pending_production'],
         ['pending_production', 'approved'],
+        ['pending_production', 'pending_procurement'],
         ['pending_production', 'changes_requested'],
-        ['pending_production', 'rejected'],
+        ['approved', 'pending_procurement'],
         ['approved', 'in_progress'],
         ['in_progress', 'completed']
       ];
@@ -242,8 +242,10 @@ const cases = [
       const invalidTransitions = [
         ['draft', 'approved'],
         ['pending_approval', 'approved'],
+        ['pending_approval', 'rejected'],
         ['pending_procurement', 'in_progress'],
         ['pending_production', 'in_progress'],
+        ['pending_production', 'rejected'],
         ['approved', 'completed'],
         ['completed', 'in_progress'],
         ['draft', 'arbitrary_status']
@@ -256,7 +258,14 @@ const cases = [
       assert.equal(getProductionTransitionPermission('pending_approval', 'pending_procurement'), 'approve_production_request');
       assert.equal(getProductionTransitionPermission('pending_production', 'approved'), 'approve_production');
       assert.equal(getProductionTransitionPermission('pending_production', 'changes_requested'), 'request_changes_area_production');
-      assert.equal(getProductionTransitionPermission('pending_production', 'rejected'), 'reject_area_production');
+      assert.equal(
+        getProductionTransitionPermission('pending_approval', 'changes_requested', { reviewAction: 'rejected' }),
+        'reject_production_request'
+      );
+      assert.equal(
+        getProductionTransitionPermission('pending_production', 'pending_procurement', { reviewAction: 'rejected' }),
+        'reject_area_production'
+      );
       assert.equal(getProductionTransitionPermission('approved', 'in_progress'), 'start_production');
       assert.equal(getProductionTransitionPermission('in_progress', 'completed'), 'complete_production');
     }
@@ -360,28 +369,47 @@ const cases = [
         projectManager,
         'Production',
         'update',
-        { status: 'rejected' },
+        { status: 'rejected', review_notes: 'Do not proceed.' },
         { status: 'pending_approval' }
-      ), /Review notes are required/i);
+      ), /Invalid production workflow transition|must return to an actionable previous stage/i);
+      assert.throws(() => authorizeEntityAction(
+        projectManager,
+        'Production',
+        'update',
+        { status: 'changes_requested', review_action: 'rejected' },
+        { status: 'pending_approval' }
+      ), /reason is required/i);
       assert.doesNotThrow(() => authorizeEntityAction(
         projectManager,
         'Production',
         'update',
-        { status: 'rejected', review_notes: 'Recipe quantities need correction.' },
+        {
+          status: 'changes_requested',
+          review_action: 'rejected',
+          rejection_reason: 'Recipe quantities need correction.'
+        },
         { status: 'pending_approval' }
       ));
       assert.throws(() => authorizeEntityAction(
         projectManager,
         'Production',
         'update',
-        { status: 'rejected', review_notes: 'Not operationally ready.' },
+        {
+          status: 'pending_procurement',
+          review_action: 'rejected',
+          rejection_reason: 'Not operationally ready.'
+        },
         { status: 'pending_production' }
       ), /do not have permission/i);
       assert.doesNotThrow(() => authorizeEntityAction(
         areaManager,
         'Production',
         'update',
-        { status: 'rejected', review_notes: 'Not operationally ready.' },
+        {
+          status: 'pending_procurement',
+          review_action: 'rejected',
+          rejection_reason: 'Not operationally ready.'
+        },
         { status: 'pending_production' }
       ));
       assert.doesNotThrow(() => authorizeEntityAction(

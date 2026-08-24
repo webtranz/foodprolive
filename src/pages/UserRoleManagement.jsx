@@ -42,6 +42,7 @@ import {
   Shield,
   ShieldAlert,
   User,
+  UserX,
   UserPlus,
   Users2
 } from 'lucide-react';
@@ -95,6 +96,12 @@ function buildChildMap(sites) {
 
 function normalizeRoleLabel(role) {
   return role?.name || role?.role_key?.replace(/_/g, ' ') || 'Role';
+}
+
+const DISABLED_USER_STATUSES = new Set(['deactivated', 'disabled', 'inactive', 'deleted']);
+
+function isUserAccountDisabled(user) {
+  return DISABLED_USER_STATUSES.has(String(user?.status || 'active').trim().toLowerCase());
 }
 
 function preparePermissionsForEditing(permissions = [], requiredPermissions = []) {
@@ -348,18 +355,25 @@ function PermissionChecklist({ selected = [], required = [], onToggleMany }) {
 }
 
 export default function UserRoleManagement() {
-  const { can, loading: permissionLoading } = usePermissions();
+  const { can, accessLevel, currentUser, loading: permissionLoading } = usePermissions();
   const canManageUsers = can('manage_users');
   const canManageRoles = can('manage_roles');
+  const canDeactivateUsers = accessLevel === 'admin';
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('users');
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [roleOpen, setRoleOpen] = useState(false);
   const [roleEditOpen, setRoleEditOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
+  const [deactivationTarget, setDeactivationTarget] = useState(null);
   const [editingRole, setEditingRole] = useState(null);
   const [userError, setUserError] = useState('');
+  const [userNotice, setUserNotice] = useState('');
+  const [deactivationError, setDeactivationError] = useState('');
+  const [deactivationReason, setDeactivationReason] = useState('');
+  const [deactivationConfirmation, setDeactivationConfirmation] = useState('');
   const [roleError, setRoleError] = useState('');
   const [createForm, setCreateForm] = useState(emptyUserForm);
   const [editForm, setEditForm] = useState(emptyUserForm);
@@ -392,7 +406,10 @@ export default function UserRoleManagement() {
     [selectableRoleProfiles]
   );
   const adminUsers = useMemo(
-    () => users.filter((user) => (user.role_access_level || roleMap[user.role]?.access_level || user.role) === 'admin'),
+    () => users.filter((user) => (
+      String(user?.status || 'active').trim().toLowerCase() === 'active'
+      && (user.role_access_level || roleMap[user.role]?.access_level || user.role) === 'admin'
+    )),
     [users, roleMap]
   );
   const managementViewForRole = (roleKey) => {
@@ -492,6 +509,20 @@ export default function UserRoleManagement() {
     onError: (error) => setUserError(error.message || 'Failed to update user')
   });
 
+  const deactivateUserMutation = useMutation({
+    mutationFn: ({ id, confirmation, reason }) => base44.users.deactivateUser(id, { confirmation, reason }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setDeactivateOpen(false);
+      setDeactivationTarget(null);
+      setDeactivationReason('');
+      setDeactivationConfirmation('');
+      setDeactivationError('');
+      setUserNotice(result?.message || 'User account deactivated and existing sessions revoked.');
+    },
+    onError: (error) => setDeactivationError(error.message || 'Failed to deactivate user')
+  });
+
   const createRoleMutation = useMutation({
     mutationFn: (payload) => base44.entities.RoleProfile.create(payload),
     onSuccess: () => {
@@ -533,6 +564,24 @@ export default function UserRoleManagement() {
     });
     setUserError('');
     setEditOpen(true);
+  };
+
+  const openDeactivateUser = (user) => {
+    setDeactivationTarget(user);
+    setDeactivationReason('');
+    setDeactivationConfirmation('');
+    setDeactivationError('');
+    setUserNotice('');
+    setDeactivateOpen(true);
+  };
+
+  const closeDeactivateDialog = () => {
+    if (deactivateUserMutation.isPending) return;
+    setDeactivateOpen(false);
+    setDeactivationTarget(null);
+    setDeactivationReason('');
+    setDeactivationConfirmation('');
+    setDeactivationError('');
   };
 
   const openEditRole = (role) => {
@@ -606,6 +655,27 @@ export default function UserRoleManagement() {
         visibility_scope: hasGlobalAccess ? 'all_locations' : (editRolePolicy?.visibility_scope || editForm.visibility_scope),
         ...(editForm.password.trim() ? { password: editForm.password.trim() } : {})
       }
+    });
+  };
+
+  const handleDeactivateUser = (event) => {
+    event.preventDefault();
+    if (!deactivationTarget) return;
+    setDeactivationError('');
+
+    if (!deactivationReason.trim()) {
+      setDeactivationError('Enter a reason for deactivating this account');
+      return;
+    }
+    if (deactivationConfirmation.trim().toLowerCase() !== String(deactivationTarget.email || '').trim().toLowerCase()) {
+      setDeactivationError('Type the user email exactly to confirm deactivation');
+      return;
+    }
+
+    deactivateUserMutation.mutate({
+      id: deactivationTarget.id,
+      confirmation: deactivationConfirmation,
+      reason: deactivationReason.trim()
     });
   };
 
@@ -697,6 +767,12 @@ export default function UserRoleManagement() {
           </div>
         ) : null}
 
+        {userNotice ? (
+          <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            {userNotice}
+          </div>
+        ) : null}
+
         <Tabs value={visibleTab} onValueChange={setActiveTab}>
           <TabsList className={`grid w-full ${canManageUsers && canManageRoles ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {canManageUsers ? <TabsTrigger value="users">Users</TabsTrigger> : null}
@@ -738,6 +814,7 @@ export default function UserRoleManagement() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
+                      <TableHead>Status</TableHead>
                       <TableHead>Role</TableHead>
                       <TableHead>Assigned Scope</TableHead>
                       <TableHead>Visibility</TableHead>
@@ -751,10 +828,29 @@ export default function UserRoleManagement() {
                       const Icon = style.icon;
                       const rolePolicy = getRoleLocationPolicy(role.role_key);
                       const assignedCount = Array.isArray(user.allowed_site_ids) ? user.allowed_site_ids.length : (user.site_id ? 1 : 0);
+                      const accountDisabled = isUserAccountDisabled(user);
+                      const isCurrentUser = String(user.id || '') === String(currentUser?.id || '');
+                      const isLastActiveAdministrator = (
+                        !accountDisabled
+                        && role.access_level === 'admin'
+                        && adminUsers.length <= 1
+                      );
+                      const deactivationBlockedReason = accountDisabled
+                        ? 'This account is already deactivated.'
+                        : isCurrentUser
+                          ? 'You cannot deactivate your own account.'
+                          : isLastActiveAdministrator
+                            ? 'At least one active administrator must remain.'
+                            : '';
                       return (
-                        <TableRow key={user.id}>
+                        <TableRow key={user.id} className={accountDisabled ? 'bg-slate-50' : ''}>
                           <TableCell className="font-medium">{user.full_name || '-'}</TableCell>
                           <TableCell>{user.email}</TableCell>
+                          <TableCell>
+                            <Badge variant={accountDisabled ? 'secondary' : 'default'}>
+                              {accountDisabled ? 'Deactivated' : 'Active'}
+                            </Badge>
+                          </TableCell>
                           <TableCell>
                             <Badge className={`${style.color} flex w-fit items-center gap-1`}>
                               <Icon className="w-3 h-3" />
@@ -786,15 +882,34 @@ export default function UserRoleManagement() {
                                   : `${user.visibility_scope || 'subtree'} • ${assignedCount} assigned`}
                           </TableCell>
                           <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              aria-label={`Edit ${user.full_name || user.email}`}
-                              onClick={() => openEditUser(user)}
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                aria-label={`Edit ${user.full_name || user.email}`}
+                                title={accountDisabled ? 'Deactivated accounts cannot be edited' : 'Edit user'}
+                                disabled={accountDisabled}
+                                onClick={() => openEditUser(user)}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                              {canDeactivateUsers ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                  aria-label={`Delete or deactivate ${user.full_name || user.email}`}
+                                  title={deactivationBlockedReason || 'Delete user access by deactivating the account'}
+                                  disabled={Boolean(deactivationBlockedReason)}
+                                  onClick={() => openDeactivateUser(user)}
+                                >
+                                  <UserX className="mr-1.5 h-3.5 w-3.5" />
+                                  Delete User
+                                </Button>
+                              ) : null}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -1009,6 +1124,80 @@ export default function UserRoleManagement() {
               <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
               <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={updateUserMutation.isPending}>
                 {updateUserMutation.isPending ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deactivateOpen}
+        onOpenChange={(open) => {
+          if (!open) closeDeactivateDialog();
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <UserX className="h-5 w-5" /> Delete User Access
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleDeactivateUser} className="space-y-4">
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+              <p className="font-semibold">Deactivate {deactivationTarget?.full_name || deactivationTarget?.email}?</p>
+              <p className="mt-1 text-red-700">
+                The user will be unable to sign in and all existing sessions will end immediately. Their business records and audit history will be preserved.
+              </p>
+            </div>
+
+            <div>
+              <Label className="mb-1.5 block" htmlFor="deactivation-reason">Reason *</Label>
+              <Textarea
+                id="deactivation-reason"
+                rows={3}
+                maxLength={500}
+                value={deactivationReason}
+                onChange={(event) => setDeactivationReason(event.target.value)}
+                placeholder="Explain why this account should be deactivated"
+                required
+              />
+            </div>
+
+            <div>
+              <Label className="mb-1.5 block" htmlFor="deactivation-confirmation">
+                Type <span className="font-mono font-semibold text-slate-800">{deactivationTarget?.email}</span> to confirm
+              </Label>
+              <Input
+                id="deactivation-confirmation"
+                value={deactivationConfirmation}
+                onChange={(event) => setDeactivationConfirmation(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={deactivationTarget?.email || 'User email'}
+                required
+              />
+            </div>
+
+            {deactivationError ? (
+              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {deactivationError}
+              </div>
+            ) : null}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={closeDeactivateDialog} disabled={deactivateUserMutation.isPending}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="destructive"
+                disabled={
+                  deactivateUserMutation.isPending
+                  || !deactivationReason.trim()
+                  || deactivationConfirmation.trim().toLowerCase() !== String(deactivationTarget?.email || '').trim().toLowerCase()
+                }
+              >
+                {deactivateUserMutation.isPending ? 'Deactivating...' : 'Deactivate User'}
               </Button>
             </DialogFooter>
           </form>

@@ -38,6 +38,7 @@ import {
   revokeToken,
   loginUser,
   inviteUser,
+  deactivateUserAccount,
   createAppLog,
   listAuditLogs,
   createBulkUploadJob,
@@ -595,15 +596,48 @@ function buildInventoryShortages(production = {}, inventoryRows = [], ingredient
     .filter((item) => item.ingredient_id && item.shortage_quantity > 0);
 }
 
-function applyProductionWorkflowMetadata(user, payload, existing = null) {
+function normalizeProductionReviewAction(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function appendProductionApprovalHistory(existing, entry) {
+  return [
+    ...(Array.isArray(existing?.approval_history) ? existing.approval_history : []),
+    entry
+  ];
+}
+
+function getProductionWorkflowAuditAction(record) {
+  return {
+    submitted: 'PRODUCTION_SUBMITTED_FOR_PM_APPROVAL',
+    pm_approved: 'PRODUCTION_PM_APPROVED',
+    pm_rejected: 'PRODUCTION_PM_REJECTED_AND_RETURNED',
+    changes_requested: 'PRODUCTION_CHANGES_REQUESTED',
+    area_approved: 'PRODUCTION_AREA_APPROVED',
+    area_rejected: 'PRODUCTION_AREA_REJECTED_AND_RETURNED',
+    procurement_acknowledged: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGED',
+    procurement_not_required: 'PRODUCTION_PROCUREMENT_NOT_REQUIRED',
+    production_started: 'PRODUCTION_STARTED',
+    production_completed: 'PRODUCTION_COMPLETED'
+  }[normalizeProductionReviewAction(record?.last_review_action)] || 'PRODUCTION_UPDATE';
+}
+
+function applyProductionWorkflowMetadata(user, payload, existing = null, workflowIntent = {}) {
   const now = new Date().toISOString();
   const currentStatus = normalizeProductionStatus(existing?.status, 'draft');
   const nextStatus = normalizeProductionStatus(payload?.status, currentStatus);
+  const reviewAction = normalizeProductionReviewAction(workflowIntent?.review_action);
+  const reviewReason = String(
+    workflowIntent?.rejection_reason || workflowIntent?.review_notes || ''
+  ).trim() || null;
   const actor = {
+    id: user?.id || null,
     email: user?.email || null,
     name: user?.full_name || user?.email || null
   };
   const prepared = { ...payload };
+  let historyAction = '';
+  let historyStage = '';
 
   if (!existing && nextStatus === 'pending_approval') {
     Object.assign(prepared, {
@@ -614,55 +648,153 @@ function applyProductionWorkflowMetadata(user, payload, existing = null) {
   }
 
   if (currentStatus !== nextStatus && nextStatus === 'pending_approval') {
+    historyAction = 'submitted';
+    historyStage = 'project_manager';
     Object.assign(prepared, {
       submitted_by: actor.email,
       submitted_by_name: actor.name,
       submitted_at: now,
       pm_approval_status: 'pending',
-      area_approval_status: null
+      area_approval_status: null,
+      area_approved_by: null,
+      area_approved_by_name: null,
+      area_approved_at: null,
+      procurement_approved_by: null,
+      procurement_approved_by_name: null,
+      procurement_approved_at: null,
+      rejection_reason: null,
+      rejection_stage: null,
+      rejection_return_status: null,
+      last_review_action: 'submitted'
     });
   }
 
   if (currentStatus === 'pending_approval' && nextStatus === 'pending_procurement') {
+    historyAction = 'pm_approved';
+    historyStage = 'project_manager';
     Object.assign(prepared, {
       pm_approval_status: 'approved',
       pm_approved_by: actor.email,
       pm_approved_by_name: actor.name,
       pm_approved_at: now,
-      reviewed_at: now
+      reviewed_at: now,
+      procurement_approved_by: null,
+      procurement_approved_by_name: null,
+      procurement_approved_at: null,
+      rejection_reason: null,
+      rejection_stage: null,
+      rejection_return_status: null,
+      last_review_action: 'pm_approved'
     });
   }
 
   if (currentStatus === 'pending_production' && nextStatus === 'approved') {
+    historyAction = 'area_approved';
+    historyStage = 'area_manager';
     Object.assign(prepared, {
       area_approval_status: 'approved',
       area_approved_by: actor.email,
       area_approved_by_name: actor.name,
       area_approved_at: now,
-      reviewed_at: now
+      reviewed_at: now,
+      rejection_reason: null,
+      rejection_stage: null,
+      rejection_return_status: null,
+      last_review_action: 'area_approved'
     });
   }
 
-  if (['changes_requested', 'rejected'].includes(nextStatus) && currentStatus !== nextStatus) {
-    const areaReview = currentStatus === 'pending_production';
-    Object.assign(prepared, areaReview ? {
-      area_approval_status: nextStatus,
-      area_reviewed_by: actor.email,
-      area_reviewed_by_name: actor.name,
-      area_reviewed_at: now
-    } : {
-      pm_approval_status: nextStatus,
+  if (
+    currentStatus === 'pending_approval'
+    && nextStatus === 'changes_requested'
+    && ['changes_requested', 'rejected'].includes(reviewAction)
+  ) {
+    historyAction = reviewAction === 'rejected' ? 'pm_rejected' : 'changes_requested';
+    historyStage = 'project_manager';
+    Object.assign(prepared, {
+      pm_approval_status: reviewAction,
       pm_reviewed_by: actor.email,
       pm_reviewed_by_name: actor.name,
-      pm_reviewed_at: now
+      pm_reviewed_at: now,
+      reviewed_at: now,
+      procurement_approved_by: null,
+      procurement_approved_by_name: null,
+      procurement_approved_at: null,
+      rejection_reason: reviewReason,
+      rejection_stage: 'project_manager',
+      rejection_return_status: 'changes_requested',
+      last_review_action: historyAction
+    });
+  }
+
+  if (
+    ['pending_production', 'approved'].includes(currentStatus)
+    && nextStatus === 'pending_procurement'
+    && reviewAction === 'rejected'
+  ) {
+    historyAction = 'area_rejected';
+    historyStage = 'area_manager';
+    Object.assign(prepared, {
+      area_approval_status: 'rejected',
+      area_approved_by: null,
+      area_approved_by_name: null,
+      area_approved_at: null,
+      area_reviewed_by: actor.email,
+      area_reviewed_by_name: actor.name,
+      area_reviewed_at: now,
+      reviewed_at: now,
+      procurement_approved_by: null,
+      procurement_approved_by_name: null,
+      procurement_approved_at: null,
+      rejection_reason: reviewReason,
+      rejection_stage: 'area_manager',
+      rejection_return_status: 'pending_procurement',
+      last_review_action: 'area_rejected'
+    });
+  }
+
+  if (nextStatus === 'changes_requested' && currentStatus === 'pending_production') {
+    historyAction = 'changes_requested';
+    historyStage = 'area_manager';
+    Object.assign(prepared, {
+      area_approval_status: 'changes_requested',
+      area_reviewed_by: actor.email,
+      area_reviewed_by_name: actor.name,
+      area_reviewed_at: now,
+      reviewed_at: now,
+      procurement_approved_by: null,
+      procurement_approved_by_name: null,
+      procurement_approved_at: null,
+      rejection_reason: reviewReason,
+      rejection_stage: 'area_manager',
+      rejection_return_status: 'changes_requested',
+      last_review_action: 'changes_requested'
     });
   }
 
   if (currentStatus === 'approved' && nextStatus === 'in_progress') {
+    historyAction = 'production_started';
+    historyStage = 'production';
     Object.assign(prepared, {
       started_by: actor.email,
       started_by_name: actor.name,
-      started_at: now
+      started_at: now,
+      last_review_action: 'production_started'
+    });
+  }
+
+  if (currentStatus !== nextStatus && historyAction) {
+    prepared.approval_history = appendProductionApprovalHistory(existing, {
+      action: historyAction,
+      stage: historyStage || null,
+      from_status: currentStatus || null,
+      to_status: nextStatus || null,
+      actor_id: actor.id,
+      actor_email: actor.email,
+      actor_name: actor.name,
+      reason: reviewReason,
+      note: String(workflowIntent?.review_notes || '').trim() || reviewReason,
+      timestamp: now
     });
   }
 
@@ -812,13 +944,30 @@ async function syncMaterialRequestForProduction(
         procurement_notes: 'Cancelled automatically because the production recipe has no stock-managed ingredients.'
       }, executor);
     }
+    const noMaterialReviewAt = new Date().toISOString();
     await updateDocument('Production', production.id, {
       status: isDraftMode ? production.status : 'pending_production',
       material_request_status: 'not_required',
       linked_material_request_id: null,
       linked_material_request_number: null,
       fulfillment_store_id: fulfillmentStore?.id || null,
-      fulfillment_store_name: fulfillmentStore?.name || null
+      fulfillment_store_name: fulfillmentStore?.name || null,
+      ...(!isDraftMode ? {
+        area_approval_status: 'pending',
+        last_review_action: 'procurement_not_required',
+        approval_history: appendProductionApprovalHistory(production, {
+          action: 'procurement_not_required',
+          stage: 'store_procurement',
+          from_status: normalizeProductionStatus(production.status),
+          to_status: 'pending_production',
+          actor_id: user?.id || null,
+          actor_email: user?.email || null,
+          actor_name: user?.full_name || user?.email || null,
+          reason: 'No stock-managed ingredients are required.',
+          note: 'No stock-managed ingredients are required.',
+          timestamp: noMaterialReviewAt
+        })
+      } : {})
     }, executor);
     return null;
   }
@@ -846,17 +995,25 @@ async function syncMaterialRequestForProduction(
     notes: `Requested from production batch ${production.recipe_name || production.id}`
   };
 
+  const preserveExistingAcknowledgement = Boolean(
+    existingRequest
+    && !isDraftMode
+    && !forceFreshAcknowledgement
+    && String(existingRequest.status || '').toLowerCase() === 'acknowledged'
+  );
+
   const materialRequest = existingRequest
     ? await updateDocument('MaterialRequest', existingRequest.id, {
         ...payload,
         created_by: existingRequest.created_by || payload.created_by,
         created_by_name: existingRequest.created_by_name || payload.created_by_name,
         request_number: existingRequest.request_number || `MR-PROD-${Date.now()}`,
-        status: !isDraftMode
-          && !forceFreshAcknowledgement
-          && String(existingRequest.status || '') === 'acknowledged'
-          ? 'acknowledged'
-          : targetStatus
+        status: preserveExistingAcknowledgement ? 'acknowledged' : targetStatus,
+        ...(!preserveExistingAcknowledgement ? {
+          acknowledged_by: null,
+          acknowledged_by_name: null,
+          acknowledged_at: null
+        } : {})
       }, executor)
     : await createDocument('MaterialRequest', {
         request_number: `MR-PROD-${Date.now()}`,
@@ -1712,6 +1869,25 @@ app.post('/api/users/invite', requireAuth, async (request, response, next) => {
     response.json(invited);
   } catch (error) {
     next(error);
+  }
+});
+
+app.post('/api/users/:id/deactivate', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const result = await deactivateUserAccount({
+      actor: request.user,
+      targetId: request.params.id,
+      confirmation: request.body?.confirmation,
+      reason: request.body?.reason
+    });
+    recordChanged('User');
+    return response.json({
+      success: true,
+      message: 'User account deactivated. Existing sessions have been revoked.',
+      ...result
+    });
+  } catch (error) {
+    return next(error);
   }
 });
 
@@ -3070,7 +3246,7 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
     authorizeEntityAction(request.user, entity, 'create', request.body || {});
     let preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {});
     if (entity === 'Production') {
-      preparedPayload = applyProductionWorkflowMetadata(request.user, preparedPayload);
+      preparedPayload = applyProductionWorkflowMetadata(request.user, preparedPayload, null, request.body || {});
     }
     let record;
     if (entity === 'Production') {
@@ -3118,16 +3294,36 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       return response.status(400).json({ message: 'Special events must be edited from the event planning module.' });
     }
     authorizeEntityAction(request.user, entity, 'update', request.body || {}, existing);
-    let preparedPayload = await prepareEntityPayload(request.user, entity, request.body || {}, existing);
-    if (entity === 'Production') {
-      preparedPayload = applyProductionWorkflowMetadata(request.user, preparedPayload, existing);
-    }
+    const preparedPayload = entity === 'Production'
+      ? null
+      : await prepareEntityPayload(request.user, entity, request.body || {}, existing);
     let updated;
     if (entity === 'Production') {
       updated = await withTransaction(async (client) => {
         const lockedExisting = await findDocument(entity, request.params.id, client, true);
+        if (!lockedExisting) {
+          const error = new Error('Record not found');
+          error.status = 404;
+          throw error;
+        }
         authorizeEntityAction(request.user, entity, 'update', request.body || {}, lockedExisting);
-        let transactionPayload = preparedPayload;
+        const lockedPreparedPayload = await prepareEntityPayload(
+          request.user,
+          entity,
+          request.body || {},
+          lockedExisting
+        );
+        let transactionPayload = applyProductionWorkflowMetadata(
+          request.user,
+          lockedPreparedPayload,
+          lockedExisting,
+          request.body || {}
+        );
+        const isAreaRejectionRollback = (
+          ['pending_production', 'approved'].includes(normalizeProductionStatus(lockedExisting.status))
+          && normalizeProductionStatus(request.body?.status) === 'pending_procurement'
+          && normalizeProductionReviewAction(request.body?.review_action) === 'rejected'
+        );
         if (
           normalizeProductionStatus(request.body?.status) === 'in_progress'
           && normalizeProductionStatus(lockedExisting.status) !== 'in_progress'
@@ -3145,10 +3341,13 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
           await syncMaterialRequestForProduction(request.user, saved, 'draft', client);
           saved = await findDocument(entity, request.params.id, client);
         } else if (status === 'pending_procurement') {
-          await syncMaterialRequestForProduction(request.user, saved, 'activate', client);
-          saved = await findDocument(entity, request.params.id, client);
-        } else if (status === 'rejected') {
-          await cancelMaterialRequestsForProduction(saved.id, saved.review_notes, client);
+          await syncMaterialRequestForProduction(
+            request.user,
+            saved,
+            'activate',
+            client,
+            isAreaRejectionRollback
+          );
           saved = await findDocument(entity, request.params.id, client);
         }
         return saved;
@@ -3161,7 +3360,9 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
 
     await auditAction({
       user: request.user,
-      action: `${entity.toUpperCase()}_UPDATE`,
+      action: entity === 'Production'
+        ? getProductionWorkflowAuditAction(updated)
+        : `${entity.toUpperCase()}_UPDATE`,
       entity,
       entityId: updated.id,
       details: { before: existing, input: request.body || {}, after: updated }
@@ -3885,7 +4086,20 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
           linked_material_request_id: materialRequest.id,
           linked_material_request_number: materialRequest.request_number || null,
           fulfillment_store_id: fulfillmentStore.id,
-          fulfillment_store_name: fulfillmentStore.name || null
+          fulfillment_store_name: fulfillmentStore.name || null,
+          last_review_action: 'procurement_acknowledged',
+          approval_history: appendProductionApprovalHistory(production, {
+            action: 'procurement_acknowledged',
+            stage: 'store_procurement',
+            from_status: normalizeProductionStatus(production.status),
+            to_status: 'pending_production',
+            actor_id: request.user.id || null,
+            actor_email: request.user.email || null,
+            actor_name: request.user.full_name || request.user.email || null,
+            reason: String(request.body?.notes || '').trim() || null,
+            note: String(request.body?.notes || '').trim() || null,
+            timestamp: acknowledgedAt
+          })
         }, client);
       }
       return acknowledged;
@@ -4097,6 +4311,7 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
       }
 
       const approvedAt = new Date().toISOString();
+      const approvalNote = String(request.body?.notes || '').trim() || null;
       const record = await updateDocument('Production', lockedProduction.id, {
         status: 'approved',
         area_approval_status: 'approved',
@@ -4106,7 +4321,23 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
         fulfillment_store_id: fulfillmentStore.id,
         fulfillment_store_name: fulfillmentStore.name || null,
         reviewed_at: approvedAt,
-        review_notes: request.body?.notes || currentProduction.review_notes || null
+        review_notes: approvalNote || currentProduction.review_notes || null,
+        rejection_reason: null,
+        rejection_stage: null,
+        rejection_return_status: null,
+        last_review_action: 'area_approved',
+        approval_history: appendProductionApprovalHistory(currentProduction, {
+          action: 'area_approved',
+          stage: 'area_manager',
+          from_status: normalizeProductionStatus(currentProduction.status),
+          to_status: 'approved',
+          actor_id: request.user.id || null,
+          actor_email: request.user.email || null,
+          actor_name: request.user.full_name || request.user.email || null,
+          reason: approvalNote,
+          note: approvalNote,
+          timestamp: approvedAt
+        })
       }, client);
       return { record, mutated: true, action: 'area_approved' };
     });

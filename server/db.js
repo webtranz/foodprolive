@@ -28,6 +28,11 @@ import {
   isRolePrimarySiteType,
   normalizeRoleLocationFields
 } from '../shared/roleLocationPolicy.js';
+import {
+  assertUserDeactivationAllowed,
+  isActiveAdministratorAccount,
+  isUserAuthenticationAllowed
+} from './userDeactivation.js';
 
 const rootDir = path.resolve(process.cwd());
 const uploadsDir = path.join(rootDir, 'uploads');
@@ -812,7 +817,10 @@ async function ensureAdminAccounts(executor = pool) {
         `UPDATE users
          SET full_name = $2,
              role = 'admin',
-             status = 'active',
+             status = CASE
+               WHEN LOWER(COALESCE(status, 'active')) IN ('deactivated', 'disabled', 'inactive', 'deleted') THEN status
+               ELSE 'active'
+             END,
              password_hash = $3,
              updated_at = NOW()
          WHERE email = $1`,
@@ -1011,6 +1019,82 @@ async function updateUser(id, patch, executor = pool) {
   );
 
   return sanitizeUser(await findUserById(id, executor));
+}
+
+async function deactivateUserAccount({ actor, targetId, confirmation, reason }, executor = null) {
+  if (!executor) {
+    return withTransaction((client) => deactivateUserAccount({
+      actor,
+      targetId,
+      confirmation,
+      reason
+    }, client));
+  }
+
+  // Lock the user set so two administrators cannot concurrently deactivate the
+  // final accounts that keep administrative access available.
+  await query('SELECT id FROM users ORDER BY id FOR UPDATE', [], executor);
+
+  const target = await findUserById(targetId, executor);
+  const users = await listUsers(executor);
+  const activeAdministratorCount = users.filter(isActiveAdministratorAccount).length;
+  const validated = assertUserDeactivationAllowed({
+    actor,
+    target,
+    activeAdministratorCount,
+    confirmation,
+    reason
+  });
+  const deactivatedAt = nowIso();
+  const deactivationMetadata = {
+    deactivated_at: deactivatedAt,
+    deactivated_by: actor.id,
+    deactivated_by_email: actor.email || null,
+    deactivation_reason: validated.reason
+  };
+  await query(
+    `UPDATE users
+     SET status = 'deactivated',
+         profile = COALESCE(profile, '{}'::jsonb) || $2::jsonb,
+         updated_at = $3
+     WHERE id = $1`,
+    [target.id, JSON.stringify(deactivationMetadata), deactivatedAt],
+    executor
+  );
+  const deactivated = sanitizeUser(await findUserById(target.id, executor));
+
+  await query('DELETE FROM auth_tokens WHERE user_id = $1', [target.id], executor);
+  const auditLog = await createAuditLog({
+    actor_id: actor.id,
+    actor_email: actor.email || null,
+    actor_name: actor.full_name || actor.email || 'Administrator',
+    role: actor.role_name || actor.role || 'Administrator',
+    action: 'USER_DEACTIVATED',
+    entity: 'User',
+    entity_id: target.id,
+    site_id: target.site_id || null,
+    site_name: target.site_name || null,
+    details: {
+      at: deactivatedAt,
+      reason: validated.reason,
+      target: {
+        id: target.id,
+        email: target.email,
+        name: target.full_name || null,
+        role: target.role,
+        previous_status: target.status || 'active',
+        status: 'deactivated'
+      },
+      acting_admin: {
+        id: actor.id,
+        email: actor.email || null,
+        name: actor.full_name || null,
+        role: actor.role_name || actor.role || null
+      }
+    }
+  }, executor);
+
+  return { user: deactivated, audit_log_id: auditLog.id };
 }
 
 async function listDocuments(
@@ -1233,7 +1317,9 @@ async function getUserByToken(token) {
      LIMIT 1`,
     [token]
   );
-  return result.rowCount ? sanitizeUser(await hydrateUserRole(toUserRecord(result.rows[0]))) : null;
+  if (!result.rowCount) return null;
+  const user = await hydrateUserRole(toUserRecord(result.rows[0]));
+  return isUserAuthenticationAllowed(user) ? sanitizeUser(user) : null;
 }
 
 async function revokeToken(token) {
@@ -1242,7 +1328,7 @@ async function revokeToken(token) {
 
 async function loginUser(email, password) {
   const user = await findUserByEmail(email);
-  if (!user || !user.password_hash) {
+  if (!user || !user.password_hash || !isUserAuthenticationAllowed(user)) {
     return null;
   }
 
@@ -1586,6 +1672,7 @@ export {
   revokeToken,
   loginUser,
   inviteUser,
+  deactivateUserAccount,
   createAppLog,
   createAuditLog,
   listAuditLogs,

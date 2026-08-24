@@ -327,6 +327,15 @@ export const base44 = {
         method: 'POST',
         body: JSON.stringify({ email, role })
       });
+    },
+    deactivateUser(id, { confirmation, reason }) {
+      return apiRequest(`/api/users/${id}/deactivate`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmation, reason })
+      }).then((result) => {
+        emitEntityChange('User', { action: 'deactivate', result, id });
+        return result;
+      });
     }
   },
   pos: {

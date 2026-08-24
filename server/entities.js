@@ -9,7 +9,8 @@ import {
   canStartApprovedProduction,
   getProductionTransitionPermission,
   isAllowedProductionTransition,
-  normalizeProductionStatus
+  normalizeProductionStatus,
+  requiresAreaProductionApproval
 } from '../shared/productionWorkflow.js';
 
 export { getUserEffectiveRole } from './accessControl.js';
@@ -908,6 +909,23 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     return assertCanManageSiteStructure(user);
   }
 
+  if (entity === 'User' && action === 'delete') {
+    const error = new Error('User accounts must be deactivated from User & Role Management so access and audit history are preserved');
+    error.status = 409;
+    throw error;
+  }
+
+  if (
+    entity === 'User'
+    && action === 'update'
+    && Object.prototype.hasOwnProperty.call(payload || {}, 'status')
+    && String(payload.status || '').trim().toLowerCase() !== String(resource?.status || 'active').trim().toLowerCase()
+  ) {
+    const error = new Error('User account status can only be changed through the protected deactivation workflow');
+    error.status = 409;
+    throw error;
+  }
+
   if (entity === 'ProductionConsumptionReport' && ['create', 'update', 'delete'].includes(action)) {
     const error = new Error('Production consumption reports are immutable and are generated only by completing production');
     error.status = 409;
@@ -966,8 +984,9 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
       }
 
       if (nextStatus && nextStatus !== currentStatus) {
+        const reviewAction = String(payload?.review_action || '').trim().toLowerCase();
         const transitionFieldAllowlist = new Set([
-          'status', 'review_notes', 'reviewed_at',
+          'status', 'review_action', 'review_notes', 'rejection_reason', 'reviewed_at',
           'pm_approval_status', 'pm_approved_by', 'pm_approved_by_name', 'pm_approved_at',
           'area_approval_status', 'area_approved_by', 'area_approved_by_name', 'area_approved_at',
           'submitted_by', 'submitted_by_name', 'submitted_at',
@@ -987,6 +1006,42 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
           throw error;
         }
 
+        if (nextStatus === 'rejected') {
+          const error = new Error('Rejected production requests must return to an actionable previous stage');
+          error.status = 409;
+          throw error;
+        }
+
+        if (
+          currentStatus === 'pending_approval'
+          && nextStatus === 'changes_requested'
+          && !['changes_requested', 'rejected'].includes(reviewAction)
+        ) {
+          const error = new Error('Select Request Changes or Reject when returning a PM review');
+          error.status = 400;
+          throw error;
+        }
+
+        if (
+          ['pending_production', 'approved'].includes(currentStatus)
+          && nextStatus === 'pending_procurement'
+          && reviewAction !== 'rejected'
+        ) {
+          const error = new Error('Only an Area Manager rejection can return production to Store / Procurement');
+          error.status = 400;
+          throw error;
+        }
+
+        if (
+          currentStatus === 'approved'
+          && nextStatus === 'pending_procurement'
+          && !requiresAreaProductionApproval(resource)
+        ) {
+          const error = new Error('A production that is already Area-approved cannot be returned through the pending approval action');
+          error.status = 409;
+          throw error;
+        }
+
         if (nextStatus === 'pending_production') {
           const error = new Error('Pending Production is set only after Store Keeper / Procurement acknowledgement');
           error.status = 409;
@@ -1000,10 +1055,10 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
         }
 
         if (
-          ['changes_requested', 'rejected'].includes(nextStatus)
-          && !String(payload?.review_notes || '').trim()
+          ['changes_requested', 'rejected'].includes(reviewAction)
+          && !String(payload?.rejection_reason || payload?.review_notes || '').trim()
         ) {
-          const error = new Error('Review notes are required when requesting changes or rejecting production');
+          const error = new Error('A reason is required when requesting changes or rejecting production');
           error.status = 400;
           throw error;
         }
@@ -1014,7 +1069,7 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
           throw error;
         }
 
-        const requiredPermission = getProductionTransitionPermission(currentStatus, nextStatus);
+        const requiredPermission = getProductionTransitionPermission(currentStatus, nextStatus, { reviewAction });
         if (requiredPermission && !hasPermission(user, requiredPermission)) {
           const error = new Error('You do not have permission to update this production status');
           error.status = 403;

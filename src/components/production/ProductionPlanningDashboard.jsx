@@ -19,6 +19,7 @@ import {
   Plus,
   Printer,
   Scale,
+  ShieldCheck,
   Sun,
   Sunrise,
   Users,
@@ -38,6 +39,8 @@ import { buildProductionPlanningDashboard } from '@/lib/productionPlanning';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../../../shared/itemCode.js';
 import {
+  getProductionApprovalHistory,
+  getProductionReviewNotice,
   getProductionStatusLabel,
   requiresAreaProductionApproval
 } from '../../../shared/productionWorkflow.js';
@@ -150,6 +153,7 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
     );
   const requiresLegacyAreaReview = item.workflow_status === 'approved'
     && requiresAreaProductionApproval(item.production);
+  const reviewNotice = getProductionReviewNotice(item.production);
 
   return (
     <Card className={`overflow-hidden border shadow-none ${item.prep_status.key === 'at_risk' ? 'border-red-300' : 'border-slate-200'}`}>
@@ -222,7 +226,14 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
           </p>
         ) : null}
 
-        {item.workflow_status === 'pending_procurement' ? (
+        {reviewNotice ? (
+          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-800">
+            <p className="font-semibold">{reviewNotice.label}</p>
+            <p className="mt-1"><span className="font-medium">Reason:</span> {reviewNotice.reason}</p>
+          </div>
+        ) : null}
+
+        {item.workflow_status === 'pending_procurement' && !reviewNotice ? (
           <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2 text-xs text-sky-800">
             PM approved. Waiting for Store Keeper / Procurement Officer acknowledgement.
           </p>
@@ -394,6 +405,95 @@ function PlanSummary({ dashboard }) {
   );
 }
 
+function AreaApprovalQueue({
+  productions,
+  materialRequestMap,
+  isLoading,
+  errorMessage,
+  onReview,
+  onViewHistory
+}) {
+  return (
+    <section className="production-plan-no-print mb-5 overflow-hidden rounded-xl border border-purple-200 bg-white shadow-sm" aria-labelledby="area-approval-queue-title">
+      <header className="flex flex-col gap-2 border-b border-purple-100 bg-purple-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-2.5">
+          <ShieldCheck className="mt-0.5 h-5 w-5 text-purple-700" aria-hidden="true" />
+          <div>
+            <h2 id="area-approval-queue-title" className="font-semibold text-purple-950">Pending Area Manager Approvals</h2>
+            <p className="text-xs text-purple-700">All pending production approvals across your accessible sites and dates.</p>
+          </div>
+        </div>
+        <Badge className="w-fit bg-purple-700 hover:bg-purple-700">
+          {productions.length} pending
+        </Badge>
+      </header>
+
+      {errorMessage ? (
+        <div className="m-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          Unable to load the approval queue: {errorMessage}
+        </div>
+      ) : isLoading ? (
+        <div className="grid gap-3 p-3 lg:grid-cols-2">
+          <Skeleton className="h-36 rounded-lg" />
+          <Skeleton className="h-36 rounded-lg" />
+        </div>
+      ) : productions.length === 0 ? (
+        <div className="flex items-center gap-2 px-4 py-5 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+          No production requests are waiting for Area Manager approval.
+        </div>
+      ) : (
+        <div className="grid gap-3 p-3 lg:grid-cols-2 2xl:grid-cols-3">
+          {productions.map((production) => {
+            const materialRequest = materialRequestMap[production.id] || null;
+            const historyCount = getProductionApprovalHistory(production).length;
+            return (
+              <article key={production.id} className="rounded-lg border border-purple-100 bg-white p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-sm font-semibold text-slate-950" title={production.recipe_name || production.name}>
+                      {production.recipe_name || production.name || 'Production request'}
+                    </h3>
+                    <p className="mt-1 truncate text-xs text-slate-500">
+                      {production.site_name || 'Site not named'}
+                      {production.fulfillment_store_name ? ` · ${production.fulfillment_store_name}` : ''}
+                    </p>
+                  </div>
+                  <Badge variant="outline" className="flex-none border-purple-300 bg-purple-50 text-[10px] text-purple-800">
+                    {getProductionStatusLabel(production.status)}
+                  </Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                  <div className="rounded-md bg-slate-50 px-2 py-1.5">
+                    <span className="block text-[10px] uppercase tracking-wide text-slate-400">Production date</span>
+                    <span className="font-medium text-slate-800">{production.production_date || 'Not set'}</span>
+                  </div>
+                  <div className="rounded-md bg-slate-50 px-2 py-1.5">
+                    <span className="block text-[10px] uppercase tracking-wide text-slate-400">Store / Procurement</span>
+                    <span className="font-medium text-slate-800">
+                      {titleCase(materialRequest?.status || production.material_request_status || 'Not linked')}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                  <Button size="sm" className="bg-purple-700 hover:bg-purple-800" onClick={() => onReview(production)}>
+                    Review Approval
+                  </Button>
+                  {historyCount > 0 ? (
+                    <Button size="sm" variant="outline" onClick={() => onViewHistory(production)}>
+                      History ({historyCount})
+                    </Button>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function MasterRecipeSheet({ open, onOpenChange, dashboard, ingredients = [] }) {
   const ingredientMap = useMemo(
     () => new Map(ingredients.map((ingredient) => [String(ingredient.id), ingredient])),
@@ -483,7 +583,13 @@ export default function ProductionPlanningDashboard({
   onNewProduction,
   onExport,
   onPrint,
-  renderActions
+  renderActions,
+  showAreaApprovalQueue = false,
+  areaApprovalQueue = [],
+  isAreaApprovalQueueLoading = false,
+  areaApprovalQueueError = '',
+  onReviewAreaApproval,
+  onViewApprovalHistory
 }) {
   const [recipeSheetOpen, setRecipeSheetOpen] = useState(false);
   const dashboard = useMemo(() => buildProductionPlanningDashboard({
@@ -556,6 +662,17 @@ export default function ProductionPlanningDashboard({
             </div>
           </div>
         </header>
+
+        {showAreaApprovalQueue ? (
+          <AreaApprovalQueue
+            productions={areaApprovalQueue}
+            materialRequestMap={materialRequestMap}
+            isLoading={isAreaApprovalQueueLoading}
+            errorMessage={areaApprovalQueueError}
+            onReview={onReviewAreaApproval}
+            onViewHistory={onViewApprovalHistory}
+          />
+        ) : null}
 
         {errorMessage ? (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{errorMessage}</div>
