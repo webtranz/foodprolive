@@ -10,6 +10,7 @@ import InventoryAlerts from '@/components/inventory/InventoryAlerts';
 import InventoryTransactionDialog from '@/components/inventory/InventoryTransactionDialog';
 import InventoryEditDialog from '@/components/inventory/InventoryEditDialog';
 import InventoryHistory from '@/components/inventory/InventoryHistory';
+import { usePermissions } from '@/components/auth/usePermissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,6 +29,7 @@ import { downloadCSV } from '../components/utils/exportData';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
 import { getItemCode, getItemCodeFromRecords, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
+import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 
 const CATEGORIES = [
   { value: 'all', label: 'All Categories' },
@@ -72,6 +74,9 @@ const STATUS_COLORS = {
 };
 
 export default function Ingredients() {
+  const { can } = usePermissions();
+  const canManageIngredients = can('manage_ingredients');
+  const canManageInventory = can('manage_inventory');
   const [activeTab, setActiveTab] = useState('ingredients');
 
   // Ingredients state
@@ -90,7 +95,18 @@ export default function Ingredients() {
   const [transactionDialog, setTransactionDialog] = useState({ open: false, item: null, type: 'addition' });
   const [editDialog, setEditDialog] = useState({ open: false, item: null });
   const [historyDialog, setHistoryDialog] = useState({ open: false, item: null });
-  const [stockForm, setStockForm] = useState({ site_id: '', ingredient_id: '', quantity: '', min_stock_level: '', max_stock_level: '', expiry_date: '' });
+  const [stockForm, setStockForm] = useState({
+    site_id: '',
+    ingredient_id: '',
+    quantity: '',
+    unit_cost: '',
+    batch_number: '',
+    stock_date: format(new Date(), 'yyyy-MM-dd'),
+    expiry_date: '',
+    min_stock_level: '',
+    max_stock_level: '',
+    valuation_method: 'fifo'
+  });
   const [selectedStockIngredient, setSelectedStockIngredient] = useState(null);
 
   const queryClient = useQueryClient();
@@ -104,10 +120,14 @@ export default function Ingredients() {
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
+  const stockSites = sites.filter((site) => (
+    site.is_active !== false
+    && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
+  ));
 
   const { data: inventory = [], isLoading: invLoading } = useQuery({
-    queryKey: ['inventory'],
-    queryFn: () => base44.entities.Inventory.list()
+    queryKey: ['inventory', 'stock-on-hand'],
+    queryFn: () => base44.inventory.getStockOnHand()
   });
 
   useEffect(() => {
@@ -132,13 +152,24 @@ export default function Ingredients() {
   });
 
   // Inventory mutations
-  const createInvMutation = useMutation({
-    mutationFn: (data) => base44.entities.Inventory.create(data),
+  const receiveInvMutation = useMutation({
+    mutationFn: (data) => base44.inventory.receive(data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['inventory'] }); setStockFormOpen(false); resetStockForm(); }
   });
 
   const resetStockForm = () => {
-    setStockForm({ site_id: '', ingredient_id: '', quantity: '', min_stock_level: '', max_stock_level: '', expiry_date: '' });
+    setStockForm({
+      site_id: '',
+      ingredient_id: '',
+      quantity: '',
+      unit_cost: '',
+      batch_number: '',
+      stock_date: format(new Date(), 'yyyy-MM-dd'),
+      expiry_date: '',
+      min_stock_level: '',
+      max_stock_level: '',
+      valuation_method: 'fifo'
+    });
     setSelectedStockIngredient(null);
   };
 
@@ -182,25 +213,30 @@ export default function Ingredients() {
 
   const handleStockSubmit = (e) => {
     e.preventDefault();
-    const site = sites.find(s => s.id === stockForm.site_id);
+    const site = stockSites.find(s => s.id === stockForm.site_id);
     const ing = selectedStockIngredient || ingredients.find(i => i.id === stockForm.ingredient_id);
     const qty = parseFloat(stockForm.quantity) || 0;
     const min = parseFloat(stockForm.min_stock_level) || 0;
-    let status = 'in_stock';
-    if (qty <= 0) status = 'out_of_stock';
-    else if (qty <= min) status = 'low_stock';
-    createInvMutation.mutate({
+    if (!site || !ing || qty <= 0 || !stockForm.stock_date) return;
+    receiveInvMutation.mutate({
       site_id: stockForm.site_id,
       site_name: site?.name || '',
       ingredient_id: stockForm.ingredient_id,
       ingredient_name: ing?.name || '',
       quantity: qty,
       unit: ing?.unit || 'kg',
+      unit_cost: parseFloat(stockForm.unit_cost) || 0,
+      batch_number: stockForm.batch_number,
+      stock_date: stockForm.stock_date,
+      received_date: stockForm.stock_date,
+      transaction_date: stockForm.stock_date,
       min_stock_level: min,
       max_stock_level: parseFloat(stockForm.max_stock_level) || null,
+      valuation_method: stockForm.valuation_method,
       expiry_date: stockForm.expiry_date || null,
-      last_restocked: format(new Date(), 'yyyy-MM-dd'),
-      status
+      reference_type: 'manual',
+      reason_code: 'manual_receipt',
+      notes: 'Stock received from Ingredients & Inventory'
     });
   };
 
@@ -219,9 +255,11 @@ export default function Ingredients() {
               )}>
                 <Download className="w-4 h-4 mr-2" /> Export
               </Button>
-              <Button onClick={() => { setEditingIngredient(null); setFormOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700">
-                <Plus className="w-4 h-4 mr-2" /> Add Ingredient
-              </Button>
+              {canManageIngredients ? (
+                <Button onClick={() => { setEditingIngredient(null); setFormOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700">
+                  <Plus className="w-4 h-4 mr-2" /> Add Ingredient
+                </Button>
+              ) : null}
             </>
           ) : (
             <>
@@ -235,9 +273,11 @@ export default function Ingredients() {
               )}>
                 <Download className="w-4 h-4 mr-2" /> Export
               </Button>
-              <Button onClick={() => setStockFormOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
-                <Plus className="w-4 h-4 mr-2" /> Add Stock
-              </Button>
+              {canManageInventory ? (
+                <Button onClick={() => setStockFormOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
+                  <Plus className="w-4 h-4 mr-2" /> Add Stock
+                </Button>
+              ) : null}
             </>
           )}
         </PageHeader>
@@ -295,14 +335,17 @@ export default function Ingredients() {
               </div>
             ) : filteredIngredients.length === 0 ? (
               <EmptyState icon={Package} title="No ingredients found"
-                description="Add your first ingredient to get started"
-                actionLabel="Add Ingredient" onAction={() => setFormOpen(true)} />
+                description={canManageIngredients ? 'Add your first ingredient to get started' : 'No ingredient records match the current filters'}
+                {...(canManageIngredients ? {
+                  actionLabel: 'Add Ingredient',
+                  onAction: () => setFormOpen(true)
+                } : {})} />
             ) : viewMode === 'grid' ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filteredIngredients.map(ing => (
                   <IngredientCard key={ing.id} ingredient={ing}
-                    onEdit={(i) => { setEditingIngredient(i); setFormOpen(true); }}
-                    onDelete={(i) => { setIngredientToDelete(i); setDeleteDialogOpen(true); }} />
+                    onEdit={canManageIngredients ? (i) => { setEditingIngredient(i); setFormOpen(true); } : undefined}
+                    onDelete={canManageIngredients ? (i) => { setIngredientToDelete(i); setDeleteDialogOpen(true); } : undefined} />
                 ))}
               </div>
             ) : (
@@ -325,7 +368,7 @@ export default function Ingredients() {
                         <TableHead>Allergens</TableHead>
                         <TableHead>Cost/Unit</TableHead>
                         <TableHead>Yield %</TableHead>
-                        <TableHead className="w-[80px]">Actions</TableHead>
+                        {canManageIngredients ? <TableHead className="w-[80px]">Actions</TableHead> : null}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -385,9 +428,11 @@ export default function Ingredients() {
                           </TableCell>
                           <TableCell>{ing.cost_per_unit != null ? formatCurrency(ing.cost_per_unit) : '-'}</TableCell>
                           <TableCell>{ing.cooking_yield_percent ? `${ing.cooking_yield_percent}%` : '-'}</TableCell>
-                          <TableCell>
-                            <Button variant="ghost" size="sm" onClick={() => { setEditingIngredient(ing); setFormOpen(true); }}>Edit</Button>
-                          </TableCell>
+                          {canManageIngredients ? (
+                            <TableCell>
+                              <Button variant="ghost" size="sm" onClick={() => { setEditingIngredient(ing); setFormOpen(true); }}>Edit</Button>
+                            </TableCell>
+                          ) : null}
                         </TableRow>
                       ))}
                     </TableBody>
@@ -434,8 +479,11 @@ export default function Ingredients() {
               <div className="space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
             ) : enrichedInventory.length === 0 ? (
               <EmptyState icon={Package} title="No inventory records"
-                description="Start tracking your ingredient stock"
-                actionLabel="Add Stock" onAction={() => setStockFormOpen(true)} />
+                description={canManageInventory ? 'Start tracking your ingredient stock' : 'No inventory records match the current filters'}
+                {...(canManageInventory ? {
+                  actionLabel: 'Add Stock',
+                  onAction: () => setStockFormOpen(true)
+                } : {})} />
             ) : (
               <Card className="border-slate-100">
                 <CardContent className="p-0">
@@ -452,7 +500,7 @@ export default function Ingredients() {
                         <TableHead className="text-center">Fat</TableHead>
                         <TableHead>Stock Level</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Expiry</TableHead>
+                        <TableHead>Next Expiry</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -499,12 +547,19 @@ export default function Ingredients() {
                                 {item.status?.replace(/_/g, ' ')}
                               </Badge>
                             </TableCell>
-                            <TableCell>{item.expiry_date ? format(new Date(item.expiry_date), 'MMM d, yyyy') : '-'}</TableCell>
+                            <TableCell>
+                              <p>{(item.next_expiry_date || item.expiry_date) ? format(new Date(item.next_expiry_date || item.expiry_date), 'MMM d, yyyy') : '-'}</p>
+                              <p className="text-xs text-slate-500">{item.available_batch_count || 0} available batches</p>
+                            </TableCell>
                             <TableCell>
                               <div className="flex gap-1 justify-end">
-                                <Button variant="outline" size="sm" onClick={() => setTransactionDialog({ open: true, item, type: 'addition' })} title="Add Stock"><PlusCircle className="w-4 h-4" /></Button>
-                                <Button variant="outline" size="sm" onClick={() => setTransactionDialog({ open: true, item, type: 'issuance' })} title="Issue Stock"><MinusCircle className="w-4 h-4" /></Button>
-                                <Button variant="outline" size="sm" onClick={() => setEditDialog({ open: true, item })} title="Edit"><Edit className="w-4 h-4" /></Button>
+                                {canManageInventory ? (
+                                  <>
+                                    <Button variant="outline" size="sm" onClick={() => setTransactionDialog({ open: true, item, type: 'addition' })} title="Add Stock"><PlusCircle className="w-4 h-4" /></Button>
+                                    <Button variant="outline" size="sm" onClick={() => setTransactionDialog({ open: true, item, type: 'issuance' })} title="Issue Stock"><MinusCircle className="w-4 h-4" /></Button>
+                                    <Button variant="outline" size="sm" onClick={() => setEditDialog({ open: true, item })} title="Edit"><Edit className="w-4 h-4" /></Button>
+                                  </>
+                                ) : null}
                                 <Button variant="outline" size="sm" onClick={() => setHistoryDialog({ open: true, item })} title="History"><History className="w-4 h-4" /></Button>
                               </div>
                             </TableCell>
@@ -521,7 +576,7 @@ export default function Ingredients() {
 
         {/* Ingredient Form */}
         <IngredientForm
-          open={formOpen}
+          open={canManageIngredients && formOpen}
           onClose={() => { setFormOpen(false); setEditingIngredient(null); }}
           onSubmit={handleIngSubmit}
           ingredient={editingIngredient}
@@ -529,7 +584,7 @@ export default function Ingredients() {
         />
 
         {/* Delete Ingredient */}
-        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialog open={canManageIngredients && deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Ingredient</AlertDialogTitle>
@@ -545,15 +600,15 @@ export default function Ingredients() {
         </AlertDialog>
 
         {/* Stock Form */}
-        <Dialog open={stockFormOpen} onOpenChange={setStockFormOpen}>
-          <DialogContent>
+        <Dialog open={canManageInventory && stockFormOpen} onOpenChange={setStockFormOpen}>
+          <DialogContent className="max-w-2xl">
             <DialogHeader><DialogTitle>Add Inventory Stock</DialogTitle></DialogHeader>
             <form onSubmit={handleStockSubmit} className="space-y-4">
               <div>
                 <Label>Site *</Label>
                 <Select value={stockForm.site_id} onValueChange={(v) => setStockForm({ ...stockForm, site_id: v })}>
                   <SelectTrigger className="mt-1"><SelectValue placeholder="Select site" /></SelectTrigger>
-                  <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                  <SelectContent>{stockSites.map(s => <SelectItem key={s.id} value={s.id}>{s.hierarchy_path || s.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
                 <div>
@@ -565,32 +620,60 @@ export default function Ingredients() {
                     siteId={stockForm.site_id}
                     onValueChange={(value, ingredient) => {
                       setSelectedStockIngredient(ingredient);
-                      setStockForm((current) => ({ ...current, ingredient_id: value }));
+                      setStockForm((current) => ({
+                        ...current,
+                        ingredient_id: value,
+                        unit_cost: current.unit_cost || String(ingredient?.last_cost ?? ingredient?.cost_per_unit ?? '')
+                      }));
                     }}
                   />
                 </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <Label>Quantity *</Label>
-                  <Input type="number" step="0.1" value={stockForm.quantity} onChange={(e) => setStockForm({ ...stockForm, quantity: e.target.value })} className="mt-1" required />
+                  <Input type="number" min="0.001" step="0.001" value={stockForm.quantity} onChange={(e) => setStockForm({ ...stockForm, quantity: e.target.value })} className="mt-1" required />
                 </div>
                 <div>
+                  <Label>Unit Cost</Label>
+                  <Input type="number" min="0" step="0.01" value={stockForm.unit_cost} onChange={(e) => setStockForm({ ...stockForm, unit_cost: e.target.value })} className="mt-1" />
+                </div>
+                <div>
+                  <Label>Batch / Lot</Label>
+                  <Input value={stockForm.batch_number} onChange={(e) => setStockForm({ ...stockForm, batch_number: e.target.value })} className="mt-1" placeholder="Generated automatically when blank" />
+                </div>
+                <div>
+                  <Label>Stock Date *</Label>
+                  <Input type="date" required value={stockForm.stock_date} onChange={(e) => setStockForm({ ...stockForm, stock_date: e.target.value })} className="mt-1" />
+                </div>
+                <div>
+                  <Label>Expiry Date</Label>
+                  <Input type="date" min={stockForm.stock_date || undefined} value={stockForm.expiry_date} onChange={(e) => setStockForm({ ...stockForm, expiry_date: e.target.value })} className="mt-1" />
+                </div>
+                <div>
+                  <Label>Valuation Method</Label>
+                  <Select value={stockForm.valuation_method} onValueChange={(value) => setStockForm({ ...stockForm, valuation_method: value })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fifo">FIFO</SelectItem>
+                      <SelectItem value="weighted_average">Weighted Average</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
                   <Label>Min Level</Label>
-                  <Input type="number" step="0.1" value={stockForm.min_stock_level} onChange={(e) => setStockForm({ ...stockForm, min_stock_level: e.target.value })} className="mt-1" />
+                  <Input type="number" min="0" step="0.1" value={stockForm.min_stock_level} onChange={(e) => setStockForm({ ...stockForm, min_stock_level: e.target.value })} className="mt-1" />
                 </div>
                 <div>
                   <Label>Max Level</Label>
-                  <Input type="number" step="0.1" value={stockForm.max_stock_level} onChange={(e) => setStockForm({ ...stockForm, max_stock_level: e.target.value })} className="mt-1" />
+                  <Input type="number" min="0" step="0.1" value={stockForm.max_stock_level} onChange={(e) => setStockForm({ ...stockForm, max_stock_level: e.target.value })} className="mt-1" />
                 </div>
-              </div>
-              <div>
-                <Label>Expiry Date</Label>
-                <Input type="date" value={stockForm.expiry_date} onChange={(e) => setStockForm({ ...stockForm, expiry_date: e.target.value })} className="mt-1" />
               </div>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => { setStockFormOpen(false); resetStockForm(); }}>Cancel</Button>
-                <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={createInvMutation.isPending}>
-                  {createInvMutation.isPending ? 'Adding...' : 'Add Stock'}
+                <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={receiveInvMutation.isPending}>
+                  {receiveInvMutation.isPending ? 'Adding...' : 'Add Stock'}
                 </Button>
               </DialogFooter>
             </form>
@@ -599,13 +682,13 @@ export default function Ingredients() {
 
         {/* Inventory dialogs */}
         <InventoryTransactionDialog
-          open={transactionDialog.open}
+          open={canManageInventory && transactionDialog.open}
           onOpenChange={(open) => setTransactionDialog({ ...transactionDialog, open })}
           inventoryItem={transactionDialog.item}
           transactionType={transactionDialog.type}
         />
         <InventoryEditDialog
-          open={editDialog.open}
+          open={canManageInventory && editDialog.open}
           onOpenChange={(open) => setEditDialog({ ...editDialog, open })}
           inventoryItem={editDialog.item}
         />

@@ -529,6 +529,18 @@ export const base44 = {
         method: 'POST',
         body: JSON.stringify(data)
       });
+    },
+    adjustApprovedQuantity(id, data = {}) {
+      return apiRequest(`/api/productions/${id}/approved-quantity`, {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      });
+    },
+    cancel(id, data = {}) {
+      return apiRequest(`/api/productions/${id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
     }
   },
   menuPlanning: {
@@ -729,8 +741,11 @@ export const base44 = {
     getVelocity(filters = {}) {
       return apiRequest(`/api/inventory/reports/velocity${buildQueryString(filters)}`);
     },
-    getValuation() {
-      return apiRequest('/api/inventory/reports/valuation');
+    getValuation(filters = {}) {
+      return apiRequest(`/api/inventory/reports/valuation${buildQueryString(filters)}`);
+    },
+    getValueReport(filters = {}) {
+      return apiRequest(`/api/inventory/reports/value-history${buildQueryString(filters)}`);
     }
   },
   erp: {
@@ -742,6 +757,27 @@ export const base44 = {
     },
     listLogs() {
       return apiRequest('/api/erp/logs');
+    },
+    importInventory(data = {}) {
+      return apiRequest('/api/erp/import/inventory', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    previewInventoryImport(data = {}) {
+      return apiRequest('/api/erp/import/inventory/preview', {
+        method: 'POST',
+        body: JSON.stringify({ ...data, dry_run: true })
+      });
+    },
+    importIngredients(data = {}) {
+      return apiRequest('/api/erp/import/ingredients', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    getLogDetails(id, filters = {}) {
+      return apiRequest(`/api/erp/logs/${id}/rows${buildQueryString(filters)}`);
     },
     retryLog(id) {
       return apiRequest(`/api/erp/logs/${id}/retry`, {

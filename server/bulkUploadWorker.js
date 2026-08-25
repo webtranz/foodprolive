@@ -18,6 +18,9 @@ import {
   getUtilityModule,
   mapCsvRow,
   parseCsvLine,
+  resolveBulkInventoryIngredient,
+  resolveBulkInventoryStore,
+  resolveBulkInventoryUnit,
   validateCsvHeaders
 } from './utilities.js';
 import { auditAction } from './audit.js';
@@ -25,6 +28,7 @@ import { prepareEntityPayload } from './entityPreparation.js';
 import { resolveProductionFulfillmentStore } from '../shared/productionFulfillment.js';
 import { assertBulkUploadAdministrator } from '../shared/bulkUploadAccess.js';
 import { materializeStoredReference, removeStoredReference } from './objectStorage.js';
+import { receiveStock } from './inventory.js';
 
 const MAX_RECORDED_ERRORS = 100;
 let materializedUpload = null;
@@ -69,7 +73,12 @@ async function validateToJsonLines(job, definition, stagedPath) {
         totalRows += 1;
         try {
           const payload = mapCsvRow(job.module_key, headers, values);
-          if (job.site_id && definition.headers.includes('site_id') && !payload.site_id) {
+          if (
+            job.site_id
+            && definition.headers.includes('site_id')
+            && !payload.site_id
+            && !payload.site_name
+          ) {
             payload.site_id = job.site_id;
             payload.site_name = payload.site_name || job.site_name || undefined;
           }
@@ -107,6 +116,50 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
     for (const staged of batch) {
       await client.query('SAVEPOINT bulk_upload_row');
       try {
+        if (job.entity_name === 'Inventory') {
+          if (job.import_mode !== 'keep_existing') {
+            const error = new Error('Inventory uploads only support additive receipt mode.');
+            error.status = 409;
+            throw error;
+          }
+          const ingredient = resolveBulkInventoryIngredient({
+            ingredients: context.ingredientCatalog,
+            itemCode: staged.payload.item_code,
+            ingredientId: staged.payload.ingredient_id
+          });
+          const site = resolveBulkInventoryStore({
+            sites: context.scope.sites,
+            rowSiteId: staged.payload.site_id,
+            rowSiteName: staged.payload.site_name,
+            defaultSiteId: job.site_id,
+            defaultSiteName: job.site_name
+          });
+          const canonicalUnit = resolveBulkInventoryUnit(ingredient, staged.payload.unit);
+          const receiptPayload = {
+            ...staged.payload,
+            site_id: site.id,
+            site_name: site.name || null,
+            ingredient_id: ingredient.id,
+            ingredient_name: ingredient.name,
+            unit: canonicalUnit,
+            unit_cost: staged.payload.unit_cost ?? ingredient.cost_per_unit ?? 0,
+            stock_date: staged.payload.stock_date || null,
+            received_date: staged.payload.stock_date || null,
+            transaction_date: staged.payload.stock_date || null,
+            reference_id: staged.payload.reference_id || job.id,
+            reference_type: 'bulk_inventory_upload',
+            source_type: 'new_stock_upload',
+            reason_code: 'new_stock_upload',
+            performed_by: user?.email || 'bulk-upload',
+            notes: staged.payload.notes || `Inventory receipt from bulk upload ${job.file_name || job.id}`
+          };
+          assertPayloadLocationAccess(user, job.entity_name, receiptPayload, context.scope);
+          await receiveStock(receiptPayload, client);
+          counters.applied += 1;
+          await client.query('RELEASE SAVEPOINT bulk_upload_row');
+          counters.processed += 1;
+          continue;
+        }
         authorizeEntityAction(user, job.entity_name, 'create', staged.payload);
         let preparedPayload = await prepareEntityPayload(
           user,
@@ -211,12 +264,18 @@ async function run() {
   const scope = await getLocationScope(user);
   const context = {
     scope,
+    ingredientCatalog: job.entity_name === 'Inventory'
+      ? await listDocuments('Ingredient', { limit: 10000 })
+      : null,
     recipeCatalog: job.entity_name === 'Recipe'
       ? await listDocuments('Recipe', { limit: 5000 })
       : null
   };
   const scopedSiteIds = scope.unrestricted ? null : [...scope.accessibleSiteIds];
   const destructiveSiteIds = job.site_id ? [String(job.site_id)] : scopedSiteIds;
+  if (job.entity_name === 'Inventory' && job.import_mode !== 'keep_existing') {
+    throw new Error('Inventory uploads only support additive receipt mode so stock lots and history remain intact.');
+  }
   if (
     scopedSiteIds !== null
     && ['replace_existing', 'delete_existing'].includes(job.import_mode)

@@ -162,6 +162,39 @@ const cases = [
     }
   },
   {
+    name: 'keeps D365 and inventory audit controls visible in the UI and exports',
+    async run() {
+      const [d365Source, inventorySource, workerSource] = await Promise.all([
+        fs.readFile(new URL('../src/pages/D365Integration.jsx', import.meta.url), 'utf8'),
+        fs.readFile(new URL('../src/pages/Inventory.jsx', import.meta.url), 'utf8'),
+        fs.readFile(new URL('../server/bulkUploadWorker.js', import.meta.url), 'utf8')
+      ]);
+
+      assert.match(d365Source, /queryKey:\s*\['erpLogDetails', selectedLog\?\.id, logDetailPage\]/);
+      assert.match(d365Source, /page:\s*logDetailPage/);
+      assert.match(d365Source, /selectedLogDetails\?\.total_pages/);
+      assert.match(d365Source, /setLogDetailPage\(\(page\) => Math\.min\(selectedLogTotalPages, page \+ 1\)\)/);
+
+      assert.match(inventorySource, /stock_dates_by_batch:\s*describeMovementLayerDates\(movement, 'stock_date'\)/);
+      assert.match(inventorySource, /expiry_dates_by_batch:\s*describeMovementLayerDates\(movement, 'expiry_date'\)/);
+      assert.match(inventorySource, /<MovementLayerDates movement=\{movement\} field="stock_date" \/>/);
+      assert.match(inventorySource, /<MovementLayerDates movement=\{movement\} field="expiry_date" \/>/);
+      [
+        'opening_value',
+        'addition_value',
+        'consumption_value',
+        'return_value',
+        'correction_value',
+        'valuation_reallocation_value',
+        'closing_value'
+      ].forEach((field) => assert.match(inventorySource, new RegExp(field)));
+
+      assert.match(workerSource, /resolveBulkInventoryIngredient\(\{/);
+      assert.match(workerSource, /itemCode:\s*staged\.payload\.item_code/);
+      assert.match(workerSource, /ingredientId:\s*staged\.payload\.ingredient_id/);
+    }
+  },
+  {
     name: 'keeps database linkage constraints and indexes in the schema',
     async run() {
       const [sql, procurementSource] = await Promise.all([
@@ -185,13 +218,43 @@ const cases = [
       });
 
       [
+        'ambiguous_ingredient_mappings',
+        'ambiguous_site_mappings',
+        "'d365_mapping_status', 'needs_remap'",
+        "'resolution', 'explicit_remap_required'",
+        'conflicting_record_ids',
+        'ranked_transaction_keys',
+        'duplicate_transaction_keys',
+        'canonical_transaction_id',
+        "'status', 'legacy_duplicate_quarantined'",
+        "record.data - 'idempotency_key'"
+      ].forEach((preflightControl) => {
+        assert.match(sql, new RegExp(preflightControl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      });
+      assert.ok(
+        sql.indexOf('WITH ambiguous_ingredient_mappings')
+          < sql.indexOf('idx_entity_records_ingredient_d365_item_unique'),
+        'ambiguous ingredient mappings must be quarantined before the unique index is created'
+      );
+      assert.ok(
+        sql.indexOf('WITH ambiguous_site_mappings')
+          < sql.indexOf('idx_entity_records_site_d365_warehouse_unique'),
+        'ambiguous Store mappings must be quarantined before the unique index is created'
+      );
+      assert.ok(
+        sql.indexOf('WITH ranked_transaction_keys')
+          < sql.indexOf('idx_entity_records_inventory_transaction_idempotency'),
+        'duplicate idempotency keys must be quarantined before the unique index is created'
+      );
+
+      [
         'getPurchaseRequestById\\(id, client\\)',
         'getPurchaseRequestBySourceEventId',
         'source_event_id, notes, total_estimated_cost',
         'executor \\? createWithExecutor\\(executor\\) : withTransaction\\(createWithExecutor\\)',
         'getPurchaseOrderById\\(id, client\\)',
         'getGoodsReceiptById\\(receiptId, client\\)',
-        'applyReceiptToInventory\\(lockedOrder, item, actor, client\\)'
+        'applyReceiptToInventory\\([\\s\\S]*?lockedOrder,[\\s\\S]*?item,[\\s\\S]*?dateOnly\\(payload\\.receipt_date \\|\\| nowIso\\(\\)\\),[\\s\\S]*?actor,[\\s\\S]*?client[\\s\\S]*?\\)'
       ].forEach((transactionalCall) => {
         assert.match(procurementSource, new RegExp(transactionalCall));
       });

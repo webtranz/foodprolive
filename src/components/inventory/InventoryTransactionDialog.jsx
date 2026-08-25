@@ -20,6 +20,7 @@ export default function InventoryTransactionDialog({
     quantity: '',
     notes: '',
     transaction_date: format(new Date(), 'yyyy-MM-dd'),
+    stock_date: format(new Date(), 'yyyy-MM-dd'),
     reason_code: '',
     unit_cost: '',
     batch_number: '',
@@ -41,6 +42,9 @@ export default function InventoryTransactionDialog({
           unit_cost: data.unit_cost,
           batch_number: data.batch_number,
           expiry_date: data.expiry_date || null,
+          stock_date: data.stock_date || data.transaction_date,
+          received_date: data.stock_date || data.transaction_date,
+          transaction_date: data.transaction_date,
           reference_id: inventoryItem.id,
           reference_type: 'manual',
           notes: data.notes,
@@ -66,6 +70,7 @@ export default function InventoryTransactionDialog({
         quantity: '',
         notes: '',
         transaction_date: format(new Date(), 'yyyy-MM-dd'),
+        stock_date: format(new Date(), 'yyyy-MM-dd'),
         reason_code: '',
         unit_cost: '',
         batch_number: '',
@@ -83,6 +88,7 @@ export default function InventoryTransactionDialog({
       transaction_type: transactionType,
       quantity,
       transaction_date: formData.transaction_date,
+      stock_date: formData.stock_date,
       notes: formData.notes,
       reason_code: formData.reason_code,
       unit_cost: parseFloat(formData.unit_cost) || 0,
@@ -137,7 +143,7 @@ export default function InventoryTransactionDialog({
           </div>
 
           {isAddition ? (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <Label>Unit Cost</Label>
                 <Input
@@ -165,6 +171,17 @@ export default function InventoryTransactionDialog({
                   onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
                   className="mt-1"
                 />
+              </div>
+              <div>
+                <Label>Stock Date *</Label>
+                <Input
+                  type="date"
+                  value={formData.stock_date}
+                  onChange={(e) => setFormData({ ...formData, stock_date: e.target.value })}
+                  className="mt-1"
+                  required
+                />
+                <p className="mt-1 text-xs text-slate-500">Date this batch became available in stock.</p>
               </div>
             </div>
           ) : null}

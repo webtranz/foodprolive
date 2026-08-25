@@ -155,7 +155,7 @@ function DefaultDashboard() {
 
   const { data: inventory = [], isLoading: inventoryLoading } = useQuery({
     queryKey: ['inventory'],
-    queryFn: () => base44.entities.Inventory.list()
+    queryFn: () => base44.inventory.getStockOnHand()
   });
 
   const { data: ingredients = [], isLoading: ingredientsLoading } = useQuery({

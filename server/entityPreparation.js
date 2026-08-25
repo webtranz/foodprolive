@@ -31,6 +31,151 @@ import {
   normalizeUserLocationPayload
 } from './locationScope.js';
 
+const APPROVED_PRODUCTION_QUANTITY_FIELDS = Object.freeze([
+  'quantity',
+  'desired_quantity',
+  'net_quantity',
+  'planned_quantity',
+  'required_quantity',
+  'yield_adjusted_quantity',
+  'adjusted_quantity',
+  'raw_quantity',
+  'gross_quantity',
+  'cost_quantity'
+]);
+
+function roundApprovedProductionQuantity(value) {
+  return Number(Number(value).toFixed(6));
+}
+
+function roundApprovedProductionCost(value) {
+  return Number(Number(value).toFixed(2));
+}
+
+function cloneApprovedProductionIngredients(lines = []) {
+  return (Array.isArray(lines) ? lines : []).map((line) => ({
+    ...line,
+    ...(Array.isArray(line?.source_recipe_names)
+      ? { source_recipe_names: [...line.source_recipe_names] }
+      : {})
+  }));
+}
+
+function resolveApprovedProductionScaleSource(production = {}) {
+  const existingSnapshot = production?.inventory_approved_snapshot;
+  if (
+    existingSnapshot
+    && typeof existingSnapshot === 'object'
+    && Number.isFinite(Number(existingSnapshot.target_servings))
+    && Number(existingSnapshot.target_servings) > 0
+    && Array.isArray(existingSnapshot.ingredients_used)
+  ) {
+    return {
+      snapshot: existingSnapshot,
+      source: existingSnapshot
+    };
+  }
+
+  const snapshot = {
+    target_servings: production?.target_servings,
+    recipe_id: production?.recipe_id || null,
+    recipe_name: production?.recipe_name || '',
+    ingredients_used: cloneApprovedProductionIngredients(production?.ingredients_used),
+    estimated_batch_cost: production?.estimated_batch_cost ?? null,
+    estimated_cost_per_serving: production?.estimated_cost_per_serving ?? null,
+    yield_adjustment_applied: production?.yield_adjustment_applied === true,
+    yield_adjustment_version: production?.yield_adjustment_version ?? null,
+    yield_adjustment_updated_at: production?.yield_adjustment_updated_at || null,
+    yield_snapshot_source: production?.yield_snapshot_source || null,
+    production_warnings: Array.isArray(production?.production_warnings)
+      ? [...production.production_warnings]
+      : [],
+    captured_at: new Date().toISOString()
+  };
+  return { snapshot, source: snapshot };
+}
+
+export function scaleApprovedProductionSnapshot(production = {}, targetServings) {
+  const { snapshot: approvedSnapshot, source } = resolveApprovedProductionScaleSource(production);
+  const previousTargetServings = Number(source?.target_servings);
+  const nextTargetServings = Number(targetServings);
+  if (!Number.isFinite(previousTargetServings) || previousTargetServings <= 0) {
+    const error = new Error('The approved production snapshot has an invalid current serving quantity');
+    error.status = 409;
+    throw error;
+  }
+  if (!Number.isFinite(nextTargetServings) || nextTargetServings <= 0) {
+    const error = new Error('Revised production servings must be greater than zero');
+    error.status = 400;
+    throw error;
+  }
+
+  const scale = nextTargetServings / previousTargetServings;
+  const ingredientsUsed = (Array.isArray(source?.ingredients_used)
+    ? source.ingredients_used
+    : []).map((line, index) => {
+      const scaledLine = { ...line, actual_quantity: null };
+      for (const field of APPROVED_PRODUCTION_QUANTITY_FIELDS) {
+        if (
+          !Object.prototype.hasOwnProperty.call(line || {}, field)
+          || line[field] === null
+          || typeof line[field] === 'undefined'
+          || line[field] === ''
+        ) {
+          continue;
+        }
+        const numeric = Number(line[field]);
+        if (!Number.isFinite(numeric) || numeric < 0) {
+          const error = new Error(
+            `The approved quantity for ${line?.ingredient_name || `ingredient ${index + 1}`} is invalid`
+          );
+          error.status = 409;
+          throw error;
+        }
+        scaledLine[field] = roundApprovedProductionQuantity(numeric * scale);
+      }
+      if (line?.estimated_cost !== null && typeof line?.estimated_cost !== 'undefined' && line?.estimated_cost !== '') {
+        const estimatedCost = Number(line.estimated_cost);
+        if (!Number.isFinite(estimatedCost) || estimatedCost < 0) {
+          const error = new Error(
+            `The approved cost for ${line?.ingredient_name || `ingredient ${index + 1}`} is invalid`
+          );
+          error.status = 409;
+          throw error;
+        }
+        scaledLine.estimated_cost = roundApprovedProductionCost(estimatedCost * scale);
+      }
+      return scaledLine;
+    });
+
+  const hasPreviousBatchCost = source?.estimated_batch_cost !== null
+    && typeof source?.estimated_batch_cost !== 'undefined'
+    && source?.estimated_batch_cost !== '';
+  const previousBatchCost = Number(source?.estimated_batch_cost);
+  const estimatedBatchCost = hasPreviousBatchCost && Number.isFinite(previousBatchCost) && previousBatchCost >= 0
+    ? roundApprovedProductionCost(previousBatchCost * scale)
+    : roundApprovedProductionCost(ingredientsUsed.reduce(
+      (total, line) => total + (Number.isFinite(Number(line?.estimated_cost)) ? Number(line.estimated_cost) : 0),
+      0
+    ));
+
+  return {
+    target_servings: nextTargetServings,
+    recipe_name: source?.recipe_name || production?.recipe_name || '',
+    ingredients_used: ingredientsUsed,
+    estimated_batch_cost: estimatedBatchCost,
+    estimated_cost_per_serving: roundApprovedProductionCost(estimatedBatchCost / nextTargetServings),
+    yield_adjustment_applied: source?.yield_adjustment_applied === true,
+    yield_adjustment_version: source?.yield_adjustment_version ?? null,
+    yield_adjustment_updated_at: new Date().toISOString(),
+    yield_snapshot_source: source?.yield_snapshot_source || null,
+    production_warnings: Array.isArray(source?.production_warnings)
+      ? [...source.production_warnings]
+      : [],
+    inventory_approved_snapshot: approvedSnapshot
+  };
+}
+
 export async function prepareEntityPayload(user, entity, payload = {}, existing = null, context = {}) {
   const scope = context.scope || await getLocationScope(user);
   assertPayloadLocationAccess(user, entity, payload, scope);
@@ -361,7 +506,18 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
       'total_shortage_quantity', 'consumption_report_id', 'consumption_report_number',
       'consumption_report_name', 'consumption_report_generated_at',
       'yield_adjustment_applied', 'yield_adjustment_version', 'yield_adjustment_updated_at',
-      'yield_snapshot_source'
+      'yield_snapshot_source',
+      'inventory_commitment_status', 'inventory_commitment_revision',
+      'inventory_commitment', 'inventory_commitment_history',
+      'inventory_approved_snapshot',
+      'inventory_committed_servings', 'inventory_committed_at',
+      'inventory_committed_by', 'inventory_committed_by_name',
+      'inventory_committed_lines', 'inventory_commitment_operation_id',
+      'inventory_commitment_idempotency_key',
+      'inventory_commitment_updated_at', 'inventory_commitment_updated_by',
+      'inventory_reconciled_at', 'inventory_reconciled_by',
+      'inventory_released_at', 'inventory_released_by',
+      'cancellation_reason', 'cancelled_at', 'cancelled_by', 'cancelled_by_name'
     ];
     if (!context.trustedProductionSource) {
       workflowManagedFields.push(

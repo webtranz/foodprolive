@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { formatCurrency } from '@/lib/currency';
 import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import { getItemCode } from '../../shared/itemCode.js';
+import { normalizeSiteType, SITE_HIERARCHY_TYPES } from '../../shared/siteHierarchy.js';
 import {
   AlertTriangle,
   Building2,
@@ -90,9 +91,35 @@ function formatNumber(value, digits = 0) {
 function statusBadgeClass(status) {
   const normalized = String(status || '').toLowerCase();
   if (['approved', 'received', 'posted', 'active'].includes(normalized)) return 'bg-emerald-100 text-emerald-700';
-  if (['partially_received', 'pending'].includes(normalized)) return 'bg-amber-100 text-amber-700';
+  if (['partially_received', 'partially_accepted', 'pending'].includes(normalized)) return 'bg-amber-100 text-amber-700';
   if (['cancelled', 'rejected'].includes(normalized)) return 'bg-red-100 text-red-700';
   return 'bg-slate-100 text-slate-700';
+}
+
+function getActiveReceiptDestinationStores(order, sites = []) {
+  if (!order?.site_id) return [];
+  const sitesById = new Map(sites.map((site) => [String(site.id), site]));
+  const orderSiteId = String(order.site_id);
+  const isWithinOrderLocation = (site) => {
+    let cursor = site;
+    const visited = new Set();
+    while (cursor) {
+      const cursorId = String(cursor.id || '');
+      if (!cursorId || visited.has(cursorId)) return false;
+      if (cursorId === orderSiteId) return true;
+      visited.add(cursorId);
+      cursor = cursor.parent_site_id ? sitesById.get(String(cursor.parent_site_id)) : null;
+    }
+    return false;
+  };
+
+  return sites
+    .filter((site) => (
+      site.is_active !== false
+      && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
+      && isWithinOrderLocation(site)
+    ))
+    .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
 }
 
 function KPI({ title, value, subtitle, icon: Icon, tone }) {
@@ -116,9 +143,11 @@ function KPI({ title, value, subtitle, icon: Icon, tone }) {
 
 export default function ProcurementModule() {
   const queryClient = useQueryClient();
-  const { role, isManager, can } = usePermissions();
-  const isAdmin = can('manage_users');
-  const canApprove = isManager || isAdmin;
+  const { role, can } = usePermissions();
+  const canManageProcurement = can('manage_procurement');
+  const canApproveProcurement = can('approve_procurement');
+  const canManageSuppliers = can('manage_suppliers');
+  const canViewPerformance = canManageProcurement || canApproveProcurement;
 
   const [activeTab, setActiveTab] = useState('requests');
   const [supplierDialogOpen, setSupplierDialogOpen] = useState(false);
@@ -131,9 +160,13 @@ export default function ProcurementModule() {
   const [requestForm, setRequestForm] = useState(requestFormTemplate);
   const [orderForm, setOrderForm] = useState(orderFormTemplate);
   const [receiptOrderId, setReceiptOrderId] = useState('');
+  const [receiptDestinationStoreId, setReceiptDestinationStoreId] = useState('');
   const [receiptDate, setReceiptDate] = useState(new Date().toISOString().slice(0, 10));
   const [receiptNotes, setReceiptNotes] = useState('');
   const [receiptQuantities, setReceiptQuantities] = useState({});
+  const [receiptRejectedQuantities, setReceiptRejectedQuantities] = useState({});
+  const [receiptBatches, setReceiptBatches] = useState({});
+  const [receiptExpiries, setReceiptExpiries] = useState({});
   const [invoiceForm, setInvoiceForm] = useState(invoiceFormTemplate);
   const [priceIngredientId, setPriceIngredientId] = useState('');
   const [priceIngredient, setPriceIngredient] = useState(null);
@@ -178,13 +211,13 @@ export default function ProcurementModule() {
 
   const { data: inventory = [] } = useQuery({
     queryKey: ['inventory'],
-    queryFn: () => base44.entities.Inventory.list()
+    queryFn: () => base44.inventory.getStockOnHand()
   });
 
   const { data: performance = [] } = useQuery({
     queryKey: ['procurementPerformance'],
     queryFn: () => base44.procurement.getPerformance(),
-    enabled: canApprove
+    enabled: canViewPerformance
   });
 
   const { data: priceComparison = [] } = useQuery({
@@ -293,7 +326,11 @@ export default function ProcurementModule() {
     onSuccess: () => {
       setReceiptDialogOpen(false);
       setReceiptOrderId('');
+      setReceiptDestinationStoreId('');
       setReceiptQuantities({});
+      setReceiptRejectedQuantities({});
+      setReceiptBatches({});
+      setReceiptExpiries({});
       setReceiptNotes('');
       setReceiptDate(new Date().toISOString().slice(0, 10));
       refreshProcurement();
@@ -321,6 +358,24 @@ export default function ProcurementModule() {
     () => orders.find((order) => order.id === receiptOrderId),
     [orders, receiptOrderId]
   );
+
+  const receiptDestinationStores = useMemo(
+    () => getActiveReceiptDestinationStores(selectedOrderForReceipt, sites),
+    [selectedOrderForReceipt, sites]
+  );
+
+  const selectedOrderSite = useMemo(
+    () => sites.find((site) => String(site.id) === String(selectedOrderForReceipt?.site_id || '')) || null,
+    [selectedOrderForReceipt, sites]
+  );
+
+  const orderAlreadyTargetsStore = Boolean(
+    selectedOrderSite
+    && normalizeSiteType(selectedOrderSite.type) === SITE_HIERARCHY_TYPES.STORE
+  );
+  const effectiveReceiptDestinationStoreId = orderAlreadyTargetsStore
+    ? (receiptDestinationStores[0]?.id || '')
+    : receiptDestinationStoreId;
 
   const selectedRequestForOrder = useMemo(
     () => requests.find((request) => request.id === orderForm.request_id),
@@ -402,20 +457,24 @@ export default function ProcurementModule() {
     if (!selectedOrderForReceipt) return;
     const items = selectedOrderForReceipt.items.map((item) => {
       const remaining = Math.max(0, Number(item.ordered_quantity || 0) - Number(item.received_quantity || 0));
-      const received = Number(receiptQuantities[item.id] ?? remaining);
+      const accepted = Math.max(0, Number(receiptQuantities[item.id] ?? remaining));
+      const rejected = Math.max(0, Number(receiptRejectedQuantities[item.id] ?? 0));
       return {
         order_item_id: item.id,
         ingredient_id: item.ingredient_id,
         ingredient_name: item.ingredient_name,
-        received_quantity: received,
-        accepted_quantity: received,
-        rejected_quantity: 0,
-        unit: item.unit
+        received_quantity: accepted + rejected,
+        accepted_quantity: accepted,
+        rejected_quantity: rejected,
+        unit: item.unit,
+        batch_number: receiptBatches[item.id] || '',
+        expiry_date: receiptExpiries[item.id] || null
       };
     }).filter((item) => item.received_quantity > 0);
 
     createReceiptMutation.mutate({
       purchase_order_id: selectedOrderForReceipt.id,
+      destination_store_id: effectiveReceiptDestinationStoreId,
       receipt_date: receiptDate,
       notes: receiptNotes,
       items
@@ -538,14 +597,16 @@ export default function ProcurementModule() {
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Purchase Requests</CardTitle>
                 <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => setRequestDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
-                    <Plus className="mr-2 h-4 w-4" />
-                    New Request
-                  </Button>
-                  {canApprove ? (
-                    <Button variant="outline" onClick={() => autoGenerateRequestMutation.mutate()} disabled={autoGenerateRequestMutation.isPending}>
-                      Auto Generate From Low Stock
-                    </Button>
+                  {canManageProcurement ? (
+                    <>
+                      <Button onClick={() => setRequestDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
+                        <Plus className="mr-2 h-4 w-4" />
+                        New Request
+                      </Button>
+                      <Button variant="outline" onClick={() => autoGenerateRequestMutation.mutate()} disabled={autoGenerateRequestMutation.isPending}>
+                        Auto Generate From Low Stock
+                      </Button>
+                    </>
                   ) : null}
                 </div>
               </CardHeader>
@@ -576,7 +637,7 @@ export default function ProcurementModule() {
                           <Badge className={statusBadgeClass(request.status)}>{String(request.status || '').replace(/_/g, ' ')}</Badge>
                         </TableCell>
                         <TableCell>
-                          {canApprove && request.status === 'pending' ? (
+                          {canApproveProcurement && request.status === 'pending' ? (
                             <div className="flex gap-2">
                               <Button size="sm" variant="outline" onClick={() => approveRequestMutation.mutate({ id: request.id, status: 'approved' })}>Approve</Button>
                               <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700" onClick={() => approveRequestMutation.mutate({ id: request.id, status: 'rejected' })}>Reject</Button>
@@ -643,7 +704,7 @@ export default function ProcurementModule() {
             <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Purchase Orders</CardTitle>
-                {canApprove ? (
+                {canManageProcurement ? (
                   <Button onClick={() => setOrderDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
                     <Plus className="mr-2 h-4 w-4" />
                     Create PO
@@ -675,12 +736,10 @@ export default function ProcurementModule() {
                         <TableCell><Badge className={statusBadgeClass(order.status)}>{String(order.status || '').replace(/_/g, ' ')}</Badge></TableCell>
                         <TableCell>{formatNumber(order.received_percentage, 1)}%</TableCell>
                         <TableCell>
-                          {canApprove && order.status === 'pending' ? (
+                          {canApproveProcurement && order.status === 'pending' ? (
                             <div className="flex gap-2">
                               <Button size="sm" variant="outline" onClick={() => updateOrderStatusMutation.mutate({ id: order.id, type: 'approve' })}>Approve</Button>
-                              {isAdmin ? (
-                                <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700" onClick={() => updateOrderStatusMutation.mutate({ id: order.id, type: 'cancel' })}>Cancel</Button>
-                              ) : null}
+                              <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700" onClick={() => updateOrderStatusMutation.mutate({ id: order.id, type: 'cancel' })}>Cancel</Button>
                             </div>
                           ) : (
                             <span className="text-xs text-slate-400">Tracked</span>
@@ -705,7 +764,7 @@ export default function ProcurementModule() {
             <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Goods Receiving Notes</CardTitle>
-                {canApprove ? (
+                {canManageProcurement ? (
                   <Button onClick={() => setReceiptDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
                     <Plus className="mr-2 h-4 w-4" />
                     Record GRN
@@ -719,8 +778,11 @@ export default function ProcurementModule() {
                       <TableHead>GRN #</TableHead>
                       <TableHead>PO #</TableHead>
                       <TableHead>Supplier</TableHead>
+                      <TableHead>Destination Store</TableHead>
                       <TableHead>Receipt Date</TableHead>
                       <TableHead>Items</TableHead>
+                      <TableHead>Accepted</TableHead>
+                      <TableHead>Rejected</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -730,14 +792,17 @@ export default function ProcurementModule() {
                         <TableCell className="font-medium">{receipt.grn_number}</TableCell>
                         <TableCell>{orders.find((entry) => entry.id === receipt.purchase_order_id)?.po_number || '-'}</TableCell>
                         <TableCell>{receipt.supplier_name}</TableCell>
+                        <TableCell>{receipt.site_name || '-'}</TableCell>
                         <TableCell>{receipt.receipt_date}</TableCell>
                         <TableCell>{receipt.items?.length || 0}</TableCell>
+                        <TableCell>{formatNumber((receipt.items || []).reduce((sum, item) => sum + Number(item.accepted_quantity || 0), 0), 2)}</TableCell>
+                        <TableCell>{formatNumber((receipt.items || []).reduce((sum, item) => sum + Number(item.rejected_quantity || 0), 0), 2)}</TableCell>
                         <TableCell><Badge className={statusBadgeClass(receipt.status)}>{receipt.status}</Badge></TableCell>
                       </TableRow>
                     ))}
                     {receipts.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="py-10 text-center text-sm text-slate-500">
+                        <TableCell colSpan={9} className="py-10 text-center text-sm text-slate-500">
                           No goods receipts recorded yet.
                         </TableCell>
                       </TableRow>
@@ -752,7 +817,7 @@ export default function ProcurementModule() {
             <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Supplier Invoices</CardTitle>
-                {canApprove ? (
+                {canManageProcurement ? (
                   <Button onClick={() => setInvoiceDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
                     <Plus className="mr-2 h-4 w-4" />
                     Enter Invoice
@@ -799,7 +864,7 @@ export default function ProcurementModule() {
             <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Supplier Management</CardTitle>
-                {canApprove ? (
+                {canManageSuppliers ? (
                   <Button onClick={() => { setEditingSupplier(null); setSupplierForm(supplierFormTemplate); setSupplierDialogOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700">
                     <Plus className="mr-2 h-4 w-4" />
                     Add Supplier
@@ -834,7 +899,7 @@ export default function ProcurementModule() {
                         <TableCell>{formatNumber(supplier.rating, 1)}</TableCell>
                         <TableCell><Badge className={statusBadgeClass(supplier.status)}>{supplier.status}</Badge></TableCell>
                         <TableCell>
-                          {canApprove ? (
+                          {canManageSuppliers ? (
                             <Button size="sm" variant="outline" onClick={() => openEditSupplier(supplier)}>Edit</Button>
                           ) : (
                             <span className="text-xs text-slate-400">Read only</span>
@@ -911,10 +976,10 @@ export default function ProcurementModule() {
           </TabsContent>
 
           <TabsContent value="performance" className="space-y-4">
-            {!canApprove ? (
+            {!canViewPerformance ? (
               <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
                 <CardContent className="py-12 text-center text-sm text-slate-500">
-                  Supplier performance metrics are available to managers and administrators.
+                  Supplier performance metrics require procurement access.
                 </CardContent>
               </Card>
             ) : (
@@ -1152,15 +1217,42 @@ export default function ProcurementModule() {
           <DialogHeader>
             <DialogTitle>Record Goods Receipt</DialogTitle>
           </DialogHeader>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div>
               <Label>Purchase Order</Label>
-              <select className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" value={receiptOrderId || 'none'} onChange={(event) => setReceiptOrderId(event.target.value === 'none' ? '' : event.target.value)}>
+              <select className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" value={receiptOrderId || 'none'} onChange={(event) => {
+                setReceiptOrderId(event.target.value === 'none' ? '' : event.target.value);
+                setReceiptDestinationStoreId('');
+              }}>
                 <option value="none">Select approved order</option>
                 {orders.filter((order) => ['approved', 'partially_received'].includes(order.status)).map((order) => (
                   <option key={order.id} value={order.id}>{order.po_number} - {order.supplier_name}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <Label>Destination Store</Label>
+              <select
+                aria-label="Destination Store"
+                className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+                value={effectiveReceiptDestinationStoreId || 'none'}
+                disabled={!selectedOrderForReceipt || orderAlreadyTargetsStore}
+                onChange={(event) => setReceiptDestinationStoreId(event.target.value === 'none' ? '' : event.target.value)}
+              >
+                <option value="none">
+                  {selectedOrderForReceipt && receiptDestinationStores.length === 0
+                    ? 'No active Store under this PO location'
+                    : 'Select destination Store'}
+                </option>
+                {receiptDestinationStores.map((store) => (
+                  <option key={store.id} value={store.id}>{store.name}</option>
+                ))}
+              </select>
+              {selectedOrderSite ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  PO location: {selectedOrderSite.name}
+                </p>
+              ) : null}
             </div>
             <div><Label>Receipt Date</Label><Input type="date" value={receiptDate} onChange={(event) => setReceiptDate(event.target.value)} /></div>
           </div>
@@ -1172,8 +1264,11 @@ export default function ProcurementModule() {
                     <TableHead>Item Code</TableHead>
                     <TableHead>Item Name</TableHead>
                     <TableHead>Remaining</TableHead>
-                    <TableHead>Receive Qty</TableHead>
+                    <TableHead>Accepted Qty</TableHead>
+                    <TableHead>Rejected Qty</TableHead>
                     <TableHead>Unit</TableHead>
+                    <TableHead>Batch / Lot</TableHead>
+                    <TableHead>Expiry Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1186,15 +1281,43 @@ export default function ProcurementModule() {
                         <TableCell>{formatNumber(remaining, 2)} {item.unit}</TableCell>
                         <TableCell>
                           <Input
-                            aria-label={`Receive quantity for ${item.ingredient_name}`}
+                            aria-label={`Accepted quantity for ${item.ingredient_name}`}
                             type="number"
                             min="0"
+                            max={remaining}
                             step="0.01"
                             value={receiptQuantities[item.id] ?? remaining}
                             onChange={(event) => setReceiptQuantities((current) => ({ ...current, [item.id]: event.target.value }))}
                           />
                         </TableCell>
+                        <TableCell>
+                          <Input
+                            aria-label={`Rejected quantity for ${item.ingredient_name}`}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={receiptRejectedQuantities[item.id] ?? 0}
+                            onChange={(event) => setReceiptRejectedQuantities((current) => ({ ...current, [item.id]: event.target.value }))}
+                          />
+                        </TableCell>
                         <TableCell>{item.unit || '—'}</TableCell>
+                        <TableCell>
+                          <Input
+                            aria-label={`Batch number for ${item.ingredient_name}`}
+                            value={receiptBatches[item.id] || ''}
+                            placeholder="Generated if blank"
+                            onChange={(event) => setReceiptBatches((current) => ({ ...current, [item.id]: event.target.value }))}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            aria-label={`Expiry date for ${item.ingredient_name}`}
+                            type="date"
+                            min={receiptDate || undefined}
+                            value={receiptExpiries[item.id] || ''}
+                            onChange={(event) => setReceiptExpiries((current) => ({ ...current, [item.id]: event.target.value }))}
+                          />
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -1205,7 +1328,7 @@ export default function ProcurementModule() {
           <div><Label>Notes</Label><Textarea value={receiptNotes} onChange={(event) => setReceiptNotes(event.target.value)} rows={4} /></div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setReceiptDialogOpen(false)}>Cancel</Button>
-            <Button onClick={submitReceipt} disabled={!receiptOrderId || createReceiptMutation.isPending} className="bg-emerald-600 hover:bg-emerald-700">Post GRN</Button>
+            <Button onClick={submitReceipt} disabled={!receiptOrderId || !effectiveReceiptDestinationStoreId || createReceiptMutation.isPending} className="bg-emerald-600 hover:bg-emerald-700">Post GRN</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

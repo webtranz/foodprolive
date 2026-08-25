@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { TrendingUp } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatCurrency } from '@/lib/currency';
 
 export default function InventoryTrendChart({ transactions, inventory }) {
   const chartData = useMemo(() => {
@@ -11,13 +12,40 @@ export default function InventoryTrendChart({ transactions, inventory }) {
     transactions.forEach(t => {
       const date = format(new Date(t.transaction_date), 'MMM dd');
       if (!dataByDate[date]) {
-        dataByDate[date] = { date, additions: 0, issuances: 0, total: 0 };
+        dataByDate[date] = {
+          date,
+          additions: 0,
+          issuances: 0,
+          additionValue: 0,
+          issuanceValue: 0
+        };
       }
+      const quantity = Number(t.quantity || 0);
+      const explicitTotalCost = Number(t.total_cost);
+      const calculatedTotalCost = Math.abs(quantity) * Math.abs(Number(t.unit_cost || 0));
+      const movementValue = Math.abs(Number.isFinite(explicitTotalCost) ? explicitTotalCost : calculatedTotalCost);
       
-      if (t.transaction_type === 'addition') {
-        dataByDate[date].additions += Math.abs(t.quantity || 0);
-      } else if (t.transaction_type === 'issuance' || t.transaction_type === 'production_use') {
-        dataByDate[date].issuances += Math.abs(t.quantity || 0);
+      if ([
+        'addition',
+        'receipt',
+        'transfer_in',
+        'production_return',
+        'production_release',
+        'opening_balance'
+      ].includes(t.transaction_type) && Number(t.quantity || 0) > 0) {
+        dataByDate[date].additions += Math.abs(quantity);
+        dataByDate[date].additionValue += movementValue;
+      } else if ([
+        'issuance',
+        'production_use',
+        'production_commitment',
+        'pos_sale',
+        'transfer_out',
+        'waste',
+        'adjustment'
+      ].includes(t.transaction_type) && Number(t.quantity || 0) < 0) {
+        dataByDate[date].issuances += Math.abs(quantity);
+        dataByDate[date].issuanceValue += movementValue;
       }
     });
 
@@ -52,10 +80,15 @@ export default function InventoryTrendChart({ transactions, inventory }) {
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="date" />
             <YAxis />
-            <Tooltip />
+            <YAxis yAxisId="value" orientation="right" tickFormatter={(value) => formatCurrency(value, { maximumFractionDigits: 0 })} />
+            <Tooltip formatter={(value, name) => (
+              String(name).includes('Value') ? formatCurrency(value) : Number(value).toLocaleString()
+            )} />
             <Legend />
             <Line type="monotone" dataKey="additions" stroke="#10b981" strokeWidth={2} name="Stock Added" />
             <Line type="monotone" dataKey="issuances" stroke="#ef4444" strokeWidth={2} name="Stock Issued" />
+            <Line yAxisId="value" type="monotone" dataKey="additionValue" stroke="#047857" strokeDasharray="4 3" name="Added Value" />
+            <Line yAxisId="value" type="monotone" dataKey="issuanceValue" stroke="#be123c" strokeDasharray="4 3" name="Issued Value" />
           </LineChart>
         </ResponsiveContainer>
       </CardContent>

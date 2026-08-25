@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 
-import { prepareEntityPayload } from '../server/entityPreparation.js';
+import {
+  prepareEntityPayload,
+  scaleApprovedProductionSnapshot
+} from '../server/entityPreparation.js';
 
 const scope = {
   accessibleSiteIds: new Set(['site-1']),
@@ -63,6 +66,71 @@ assert.equal(prepared.ingredients_used[0].yield_percent, 80);
 assert.equal(prepared.ingredients_used[0].item_code, 'ITEM-PROTEIN-001');
 assert.equal(prepared.estimated_batch_cost, 12.5);
 assert.equal(prepared.estimated_cost_per_serving, 1.25);
+
+const scaledApprovedSnapshot = scaleApprovedProductionSnapshot({
+  ...prepared,
+  id: 'approved-production-1',
+  status: 'approved'
+}, 5);
+assert.equal(scaledApprovedSnapshot.target_servings, 5);
+assert.equal(scaledApprovedSnapshot.ingredients_used[0].net_quantity, 1);
+assert.equal(scaledApprovedSnapshot.ingredients_used[0].planned_quantity, 1.25);
+assert.equal(scaledApprovedSnapshot.ingredients_used[0].required_quantity, 1.25);
+assert.equal(scaledApprovedSnapshot.ingredients_used[0].yield_adjusted_quantity, 1.25);
+assert.equal(scaledApprovedSnapshot.ingredients_used[0].yield_percent, 80);
+assert.equal(scaledApprovedSnapshot.ingredients_used[0].actual_quantity, null);
+assert.equal(scaledApprovedSnapshot.estimated_batch_cost, 6.25);
+assert.equal(scaledApprovedSnapshot.estimated_cost_per_serving, 1.25);
+assert.equal(prepared.ingredients_used[0].planned_quantity, 2.5, 'the approved source snapshot remains immutable');
+
+const preciseScaledSnapshot = scaleApprovedProductionSnapshot({
+  target_servings: 10,
+  estimated_batch_cost: 0.13,
+  ingredients_used: [{
+    ingredient_id: 'spice',
+    ingredient_name: 'Spice',
+    unit: 'kg',
+    desired_quantity: 0.0013,
+    net_quantity: 0.001,
+    planned_quantity: 0.0013,
+    required_quantity: 0.0013,
+    yield_adjusted_quantity: 0.0013,
+    yield_percent: 80,
+    yield_multiplier: 1.25,
+    estimated_cost: 0.13
+  }],
+  yield_adjustment_applied: true,
+  yield_adjustment_version: 1,
+  yield_snapshot_source: 'server_recipe_expansion'
+}, 3);
+assert.equal(preciseScaledSnapshot.ingredients_used[0].desired_quantity, 0.00039);
+assert.equal(preciseScaledSnapshot.ingredients_used[0].planned_quantity, 0.00039);
+assert.equal(preciseScaledSnapshot.ingredients_used[0].yield_percent, 80);
+assert.equal(preciseScaledSnapshot.ingredients_used[0].yield_multiplier, 1.25);
+
+const reducedBelowInventoryPrecision = scaleApprovedProductionSnapshot({
+  target_servings: 10,
+  estimated_batch_cost: 0.13,
+  ingredients_used: [{
+    ingredient_id: 'spice',
+    ingredient_name: 'Spice',
+    unit: 'kg',
+    planned_quantity: 0.0013,
+    required_quantity: 0.0013,
+    yield_adjusted_quantity: 0.0013,
+    estimated_cost: 0.13
+  }],
+  yield_adjustment_applied: true,
+  yield_adjustment_version: 1,
+  yield_snapshot_source: 'server_recipe_expansion'
+}, 0.001);
+assert.equal(reducedBelowInventoryPrecision.ingredients_used[0].planned_quantity, 0);
+const restoredFromApprovedBaseline = scaleApprovedProductionSnapshot({
+  ...reducedBelowInventoryPrecision,
+  status: 'approved'
+}, 10);
+assert.equal(restoredFromApprovedBaseline.ingredients_used[0].planned_quantity, 0.0013);
+assert.equal(restoredFromApprovedBaseline.ingredients_used[0].yield_adjusted_quantity, 0.0013);
 
 const sharedRecipePrepared = await prepareEntityPayload(
   {},

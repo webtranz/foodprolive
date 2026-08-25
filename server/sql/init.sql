@@ -839,6 +839,161 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_lookup
   ON entity_records ((data->>'site_id'), (data->>'ingredient_id'), (data->>'batch_number'))
   WHERE entity_name = 'InventoryLot';
 
+CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_rotation
+  ON entity_records (
+    (data->>'site_id'),
+    (data->>'ingredient_id'),
+    (data->>'expiry_date'),
+    (COALESCE(data->>'stock_date', data->>'received_date')),
+    id
+  )
+  WHERE entity_name = 'InventoryLot';
+
+-- New D365 mapping and idempotency constraints must be safe on databases that
+-- predate those constraints. Ambiguous mappings are never resolved by picking
+-- an arbitrary winner: every conflicting active mapping is cleared and marked
+-- for an explicit remap, while its original value and conflict set remain in
+-- legacy_metadata. Duplicate transaction keys retain the oldest deterministic
+-- canonical row and quarantine only later conflicting active keys.
+WITH ambiguous_ingredient_mappings AS (
+  SELECT
+    LOWER(BTRIM(data->>'d365_item_id')) AS normalized_value,
+    jsonb_agg(id ORDER BY id) AS conflicting_record_ids
+  FROM entity_records
+  WHERE entity_name = 'Ingredient'
+    AND COALESCE(BTRIM(data->>'d365_item_id'), '') <> ''
+  GROUP BY LOWER(BTRIM(data->>'d365_item_id'))
+  HAVING COUNT(*) > 1
+)
+UPDATE entity_records AS record
+SET data = jsonb_set(
+      (record.data - 'd365_item_id') || jsonb_build_object(
+        'd365_mapping_status', 'needs_remap'
+      ),
+      '{legacy_metadata}',
+      (CASE
+        WHEN jsonb_typeof(record.data->'legacy_metadata') = 'object'
+          THEN record.data->'legacy_metadata'
+        WHEN record.data ? 'legacy_metadata'
+          THEN jsonb_build_object('prior_legacy_metadata', record.data->'legacy_metadata')
+        ELSE '{}'::jsonb
+      END) || jsonb_build_object(
+        'd365_item_id_conflict', jsonb_build_object(
+          'original_value', record.data->>'d365_item_id',
+          'normalized_value', ambiguous.normalized_value,
+          'conflicting_record_ids', ambiguous.conflicting_record_ids,
+          'resolution', 'explicit_remap_required'
+        )
+      ),
+      true
+    ),
+    updated_at = NOW()
+FROM ambiguous_ingredient_mappings AS ambiguous
+WHERE record.entity_name = 'Ingredient'
+  AND LOWER(BTRIM(record.data->>'d365_item_id')) = ambiguous.normalized_value;
+
+WITH ambiguous_site_mappings AS (
+  SELECT
+    LOWER(BTRIM(data->>'d365_warehouse_id')) AS normalized_value,
+    jsonb_agg(id ORDER BY id) AS conflicting_record_ids
+  FROM entity_records
+  WHERE entity_name = 'Site'
+    AND COALESCE(BTRIM(data->>'d365_warehouse_id'), '') <> ''
+  GROUP BY LOWER(BTRIM(data->>'d365_warehouse_id'))
+  HAVING COUNT(*) > 1
+)
+UPDATE entity_records AS record
+SET data = jsonb_set(
+      (record.data - 'd365_warehouse_id') || jsonb_build_object(
+        'd365_mapping_status', 'needs_remap'
+      ),
+      '{legacy_metadata}',
+      (CASE
+        WHEN jsonb_typeof(record.data->'legacy_metadata') = 'object'
+          THEN record.data->'legacy_metadata'
+        WHEN record.data ? 'legacy_metadata'
+          THEN jsonb_build_object('prior_legacy_metadata', record.data->'legacy_metadata')
+        ELSE '{}'::jsonb
+      END) || jsonb_build_object(
+        'd365_warehouse_id_conflict', jsonb_build_object(
+          'original_value', record.data->>'d365_warehouse_id',
+          'normalized_value', ambiguous.normalized_value,
+          'conflicting_record_ids', ambiguous.conflicting_record_ids,
+          'resolution', 'explicit_remap_required'
+        )
+      ),
+      true
+    ),
+    updated_at = NOW()
+FROM ambiguous_site_mappings AS ambiguous
+WHERE record.entity_name = 'Site'
+  AND LOWER(BTRIM(record.data->>'d365_warehouse_id')) = ambiguous.normalized_value;
+
+WITH ranked_transaction_keys AS (
+  SELECT
+    id,
+    data->>'idempotency_key' AS original_key,
+    FIRST_VALUE(id) OVER (
+      PARTITION BY BTRIM(data->>'idempotency_key')
+      ORDER BY created_at ASC, id ASC
+    ) AS canonical_transaction_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY BTRIM(data->>'idempotency_key')
+      ORDER BY created_at ASC, id ASC
+    ) AS duplicate_rank
+  FROM entity_records
+  WHERE entity_name = 'InventoryTransaction'
+    AND COALESCE(BTRIM(data->>'idempotency_key'), '') <> ''
+), duplicate_transaction_keys AS (
+  SELECT id, original_key, canonical_transaction_id
+  FROM ranked_transaction_keys
+  WHERE duplicate_rank > 1
+)
+UPDATE entity_records AS record
+SET data = jsonb_set(
+      record.data - 'idempotency_key',
+      '{legacy_metadata}',
+      (CASE
+        WHEN jsonb_typeof(record.data->'legacy_metadata') = 'object'
+          THEN record.data->'legacy_metadata'
+        WHEN record.data ? 'legacy_metadata'
+          THEN jsonb_build_object('prior_legacy_metadata', record.data->'legacy_metadata')
+        ELSE '{}'::jsonb
+      END) || jsonb_build_object(
+        'duplicate_idempotency_key', jsonb_build_object(
+          'original_value', duplicate.original_key,
+          'canonical_transaction_id', duplicate.canonical_transaction_id,
+          'status', 'legacy_duplicate_quarantined'
+        )
+      ),
+      true
+    ),
+    updated_at = NOW()
+FROM duplicate_transaction_keys AS duplicate
+WHERE record.id = duplicate.id
+  AND record.entity_name = 'InventoryTransaction';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_inventory_transaction_idempotency
+  ON entity_records ((data->>'idempotency_key'))
+  WHERE entity_name = 'InventoryTransaction'
+    AND COALESCE(data->>'idempotency_key', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_transaction_reference
+  ON entity_records ((data->>'reference_type'), (data->>'reference_id'), (data->>'reason_code'))
+  WHERE entity_name = 'InventoryTransaction';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_ingredient_d365_item_unique
+  ON entity_records ((LOWER(BTRIM(data->>'d365_item_id'))))
+  WHERE entity_name = 'Ingredient' AND COALESCE(BTRIM(data->>'d365_item_id'), '') <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_site_d365_warehouse_unique
+  ON entity_records ((LOWER(BTRIM(data->>'d365_warehouse_id'))))
+  WHERE entity_name = 'Site' AND COALESCE(BTRIM(data->>'d365_warehouse_id'), '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_erp_log_sync_lookup
+  ON entity_records ((data->>'direction'), (data->>'module_key'), (data->>'sync_id'), updated_at DESC)
+  WHERE entity_name = 'ERPIntegrationLog';
+
 CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_site_date_status_ci
   ON entity_records (
     (data->>'site_id'),

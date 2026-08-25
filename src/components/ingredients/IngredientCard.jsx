@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { MoreVertical, Pencil, Trash2, Flame, Scale, TrendingDown, Droplets, Candy, ShieldAlert } from 'lucide-react';
 import { getItemCode } from '../../../shared/itemCode.js';
+import { formatCurrency } from '@/lib/currency';
 
 const CATEGORY_COLORS = {
   proteins: 'bg-red-100 text-red-700',
@@ -37,26 +38,32 @@ export default function IngredientCard({ ingredient, onEdit, onDelete }) {
               {ingredient.category?.replace(/_/g, ' ')}
             </Badge>
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <MoreVertical className="w-4 h-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onEdit(ingredient)}>
-                <Pencil className="w-4 h-4 mr-2" />
-                Edit
-              </DropdownMenuItem>
-              <DropdownMenuItem 
-                onClick={() => onDelete(ingredient)}
-                className="text-red-600"
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {typeof onEdit === 'function' || typeof onDelete === 'function' ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <MoreVertical className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {typeof onEdit === 'function' ? (
+                  <DropdownMenuItem onClick={() => onEdit(ingredient)}>
+                    <Pencil className="w-4 h-4 mr-2" />
+                    Edit
+                  </DropdownMenuItem>
+                ) : null}
+                {typeof onDelete === 'function' ? (
+                  <DropdownMenuItem
+                    onClick={() => onDelete(ingredient)}
+                    className="text-red-600"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         </div>
 
         <div className="space-y-2">
@@ -77,7 +84,7 @@ export default function IngredientCard({ ingredient, onEdit, onDelete }) {
           {ingredient.cost_per_unit && (
             <div className="flex items-center gap-2 text-sm">
               <Scale className="w-4 h-4 text-emerald-500" />
-              <span className="text-slate-600">${ingredient.cost_per_unit}</span>
+              <span className="text-slate-600">{formatCurrency(ingredient.cost_per_unit)}</span>
               <span className="text-slate-400">per {ingredient.unit}</span>
             </div>
           )}

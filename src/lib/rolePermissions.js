@@ -75,6 +75,8 @@ export const ROLE_PERMISSION_SECTIONS = [
       { key: 'approve_production', label: 'Approve production plans' },
       { key: 'request_changes_area_production', label: 'Area review: request production changes' },
       { key: 'reject_area_production', label: 'Area review: reject production' },
+      { key: 'adjust_approved_production', label: 'Adjust approved production quantity' },
+      { key: 'cancel_production', label: 'Cancel production and return inventory' },
       { key: 'start_production', label: 'Start production' },
       { key: 'complete_production', label: 'Complete production' },
       { key: 'create_material_request', label: 'Create material requests' },

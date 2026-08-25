@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import {
   withTransaction,
   listDocuments,
+  listDocumentsPage,
   findDocument,
   createDocument,
   updateDocument
@@ -14,6 +15,8 @@ import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import { resolveProductionFulfillmentStore } from '../shared/productionFulfillment.js';
+import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../shared/siteHierarchy.js';
+import { toBusinessDateOnly } from '../shared/businessDate.js';
 import {
   deriveInventoryRecord,
   deriveInventoryStatus,
@@ -22,6 +25,18 @@ import {
 
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const nowIso = () => new Date().toISOString();
+// Quantities are persisted to six decimals. Use half of the smallest persisted
+// increment so an exact 0.000001 movement is never mistaken for zero.
+const QUANTITY_EPSILON = 0.0000005;
+const UNUSABLE_LOT_STATUSES = new Set([
+  'blocked',
+  'expired',
+  'hold',
+  'on_hold',
+  'quarantine',
+  'quarantined',
+  'recalled'
+]);
 
 async function runInTransaction(executor, handler) {
   if (executor) {
@@ -37,6 +52,26 @@ function normalizeText(value) {
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function roundQuantity(value) {
+  return Number(toNumber(value, 0).toFixed(6));
+}
+
+export function buildStockDeductionQuantitySummary({
+  remainingToDeduct = 0,
+  requestedQuantity = 0,
+  issuedQuantity = 0
+} = {}) {
+  return {
+    shortage_quantity: roundQuantity(remainingToDeduct),
+    requested_quantity: roundQuantity(requestedQuantity),
+    issued_quantity: roundQuantity(issuedQuantity)
+  };
+}
+
+function quantitiesEqual(left, right) {
+  return Math.abs(toNumber(left, 0) - toNumber(right, 0)) <= QUANTITY_EPSILON;
 }
 
 export function buildReportedProductionActuals(productionIngredients = [], reportedLines = []) {
@@ -101,10 +136,105 @@ export function buildReportedProductionActuals(productionIngredients = [], repor
 }
 
 function toDateOnly(value = new Date()) {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? new Date().toISOString().slice(0, 10)
-    : parsed.toISOString().slice(0, 10);
+  return toBusinessDateOnly(value) || toBusinessDateOnly(new Date());
+}
+
+function parseInventoryDate(value, fieldName, { required = false } = {}) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    if (!required) return null;
+    const error = new Error(`${fieldName} is required`);
+    error.status = 400;
+    throw error;
+  }
+  const raw = String(value).trim();
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+    const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    if (
+      parsed.getUTCFullYear() === Number(year)
+      && parsed.getUTCMonth() === Number(month) - 1
+      && parsed.getUTCDate() === Number(day)
+    ) {
+      return raw;
+    }
+  } else {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) return toDateOnly(parsed);
+  }
+  const error = new Error(`${fieldName} must be a valid date`);
+  error.status = 400;
+  throw error;
+}
+
+function validateInventorySettings({ min_stock_level, max_stock_level, valuation_method } = {}) {
+  const min = min_stock_level === null || typeof min_stock_level === 'undefined' || min_stock_level === ''
+    ? null
+    : Number(min_stock_level);
+  const max = max_stock_level === null || typeof max_stock_level === 'undefined' || max_stock_level === ''
+    ? null
+    : Number(max_stock_level);
+  if ((min !== null && (!Number.isFinite(min) || min < 0)) || (max !== null && (!Number.isFinite(max) || max < 0))) {
+    const error = new Error('Inventory minimum and maximum levels must be zero or greater');
+    error.status = 400;
+    throw error;
+  }
+  if (min !== null && max !== null && max > 0 && min > max) {
+    const error = new Error('Inventory minimum level cannot exceed the maximum level');
+    error.status = 400;
+    throw error;
+  }
+  const method = valuation_method === null || typeof valuation_method === 'undefined' || valuation_method === ''
+    ? null
+    : normalizeText(valuation_method).toLowerCase();
+  if (method && !['fifo', 'weighted_average'].includes(method)) {
+    const error = new Error('Inventory valuation method must be FIFO or weighted average');
+    error.status = 400;
+    throw error;
+  }
+  return { min, max, method };
+}
+
+async function validateInventoryIdentity({ site_id, ingredient_id, unit }, executor) {
+  const siteId = normalizeText(site_id);
+  const ingredientId = normalizeText(ingredient_id);
+  if (!siteId || !ingredientId) {
+    const error = new Error('Inventory movements require both a site/store ID and an ingredient ID');
+    error.status = 400;
+    throw error;
+  }
+  const [site, ingredient] = await Promise.all([
+    findDocument('Site', siteId, executor || undefined),
+    findDocument('Ingredient', ingredientId, executor || undefined)
+  ]);
+  if (!site || site.is_active === false) {
+    const error = new Error('The selected inventory site/store does not exist or is inactive');
+    error.status = 400;
+    throw error;
+  }
+  if (normalizeSiteType(site.type) !== SITE_HIERARCHY_TYPES.STORE) {
+    const error = new Error('Inventory movements must be posted to a Store in the Area → Project → Store hierarchy');
+    error.status = 409;
+    throw error;
+  }
+  if (!ingredient || ingredient.is_active === false) {
+    const error = new Error('The selected ingredient does not exist or is inactive');
+    error.status = 400;
+    throw error;
+  }
+  const canonicalUnit = normalizeText(ingredient.unit || unit);
+  const suppliedUnit = normalizeText(unit || canonicalUnit);
+  if (!canonicalUnit || !suppliedUnit) {
+    const error = new Error('A canonical inventory unit is required');
+    error.status = 400;
+    throw error;
+  }
+  if (canonicalUnit.toLowerCase() !== suppliedUnit.toLowerCase()) {
+    const error = new Error(`Inventory quantity must use the ingredient's canonical unit (${canonicalUnit})`);
+    error.status = 409;
+    throw error;
+  }
+  return { site, ingredient, unit: canonicalUnit };
 }
 
 function daysUntil(dateValue) {
@@ -115,16 +245,53 @@ function daysUntil(dateValue) {
   return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function getAvailableLotQuantity(lots = []) {
+export function isInventoryLotUsable(lot, { asOfDate = toDateOnly() } = {}) {
+  if (!lot || toNumber(lot.remaining_quantity, 0) <= 0) return false;
+  const status = normalizeText(lot.status || 'active').toLowerCase();
+  if (UNUSABLE_LOT_STATUSES.has(status) || status === 'consumed') return false;
+  const effectiveDate = toDateOnly(asOfDate);
+  const stockDateValue = lot.stock_date || lot.received_date || lot.created_date || null;
+  const stockDate = stockDateValue ? toDateOnly(stockDateValue) : null;
+  if (stockDate && stockDate > effectiveDate) return false;
+  const expiryDate = lot.expiry_date ? toDateOnly(lot.expiry_date) : null;
+  return !expiryDate || expiryDate >= effectiveDate;
+}
+
+export function sortInventoryLotsForIssue(lots = [], { asOfDate = toDateOnly() } = {}) {
+  return (Array.isArray(lots) ? lots : [])
+    .filter((lot) => isInventoryLotUsable(lot, { asOfDate }))
+    .sort((left, right) => {
+      const expiryComparison = String(left.expiry_date || '9999-12-31')
+        .localeCompare(String(right.expiry_date || '9999-12-31'));
+      if (expiryComparison !== 0) return expiryComparison;
+      const leftStockDate = left.stock_date || left.received_date || left.created_date || '';
+      const rightStockDate = right.stock_date || right.received_date || right.created_date || '';
+      const stockDateComparison = String(leftStockDate).localeCompare(String(rightStockDate));
+      if (stockDateComparison !== 0) return stockDateComparison;
+      return String(left.id || '').localeCompare(String(right.id || ''));
+    });
+}
+
+export function buildInventoryBatchNumber(prefix = 'LOT', stockDate = toDateOnly()) {
+  const safePrefix = normalizeText(prefix).replace(/[^a-z0-9-]+/gi, '-').replace(/^-+|-+$/g, '') || 'LOT';
+  const dateToken = toDateOnly(stockDate).replace(/-/g, '');
+  return `${safePrefix.toUpperCase()}-${dateToken}-${crypto.randomUUID()}`;
+}
+
+function getAvailableLotQuantity(lots = [], options = {}) {
   return lots.reduce(
-    (sum, lot) => sum + Math.max(0, toNumber(lot?.remaining_quantity, 0)),
+    (sum, lot) => sum + (
+      isInventoryLotUsable(lot, options)
+        ? Math.max(0, toNumber(lot?.remaining_quantity, 0))
+        : 0
+    ),
     0
   );
 }
 
-function assertSufficientStock(lots, quantity, allowShortage = true) {
+function assertSufficientStock(lots, quantity, allowShortage = true, options = {}) {
   const requiredQuantity = toNumber(quantity, 0);
-  const availableQuantity = getAvailableLotQuantity(lots);
+  const availableQuantity = getAvailableLotQuantity(lots, options);
   if (!allowShortage && availableQuantity < requiredQuantity) {
     const error = new Error('Insufficient stock available for this movement');
     error.status = 400;
@@ -134,17 +301,35 @@ function assertSufficientStock(lots, quantity, allowShortage = true) {
 }
 
 async function listInventoryLots(
-  { siteId, ingredientId, includeEmpty = false, lock = false } = {},
+  { siteId, ingredientId, includeEmpty = false, lock = false, location = null } = {},
   executor = null
 ) {
   const filters = {};
   if (siteId) filters.site_id = siteId;
   if (ingredientId) filters.ingredient_id = ingredientId;
-  const lots = await listDocuments(
-    'InventoryLot',
-    { filters, limit: 5000, sort: 'received_date', lock },
-    executor || undefined
-  );
+  let lots = [];
+  if (lock) {
+    // Transactional consumers must lock every matching lot; an arbitrary
+    // limit can otherwise omit stock and break FEFO/FIFO allocations.
+    lots = await listDocuments(
+      'InventoryLot',
+      { filters, sort: 'received_date', lock: true, location },
+      executor || undefined
+    );
+  } else {
+    const pageSize = 200;
+    let offset = 0;
+    while (true) {
+      const page = await listDocumentsPage(
+        'InventoryLot',
+        { filters, sort: 'received_date', limit: pageSize, offset, location },
+        executor || undefined
+      );
+      lots.push(...page.items);
+      offset += page.items.length;
+      if (page.items.length === 0 || offset >= page.total_count) break;
+    }
+  }
   return lots.filter((lot) => includeEmpty || toNumber(lot.remaining_quantity, 0) > 0);
 }
 
@@ -154,10 +339,16 @@ async function ensureInventoryRecord({
   ingredient_id,
   ingredient_name,
   unit,
-  min_stock_level = 0,
-  max_stock_level = null,
-  valuation_method = 'fifo'
+  min_stock_level,
+  max_stock_level,
+  valuation_method
 }, executor = null) {
+  const minLevelProvided = typeof min_stock_level !== 'undefined';
+  const maxLevelProvided = typeof max_stock_level !== 'undefined';
+  const valuationMethodProvided = typeof valuation_method !== 'undefined';
+  const identity = await validateInventoryIdentity({ site_id, ingredient_id, unit }, executor);
+  const settings = validateInventorySettings({ min_stock_level, max_stock_level, valuation_method });
+  const canonicalUnit = identity.unit;
   if (executor) {
     await executor.query(
       'SELECT pg_advisory_xact_lock(hashtext($1))',
@@ -172,22 +363,137 @@ async function ensureInventoryRecord({
   }, executor || undefined))[0];
 
   if (existing) {
-    return existing;
+    const existingUnit = normalizeText(existing.unit || canonicalUnit);
+    if (existingUnit.toLowerCase() !== canonicalUnit.toLowerCase()) {
+      const error = new Error(`Existing inventory unit (${existingUnit}) does not match ingredient unit (${canonicalUnit})`);
+      error.status = 409;
+      throw error;
+    }
+    const settingsPatch = {
+      site_name: identity.site.name || site_name || existing.site_name || null,
+      ingredient_name: identity.ingredient.name || ingredient_name || existing.ingredient_name || null,
+      unit: canonicalUnit,
+      ...(minLevelProvided ? { min_stock_level: settings.min ?? 0 } : {}),
+      ...(maxLevelProvided ? { max_stock_level: settings.max } : {}),
+      ...(valuationMethodProvided && settings.method ? { valuation_method: settings.method } : {})
+    };
+    const currentMin = settingsPatch.min_stock_level ?? toNumber(existing.min_stock_level, 0);
+    const currentMax = settingsPatch.max_stock_level ?? (
+      existing.max_stock_level === null || typeof existing.max_stock_level === 'undefined'
+        ? null
+        : toNumber(existing.max_stock_level, 0)
+    );
+    validateInventorySettings({
+      min_stock_level: currentMin,
+      max_stock_level: currentMax,
+      valuation_method: settingsPatch.valuation_method || existing.valuation_method || 'fifo'
+    });
+    const normalizedExisting = await updateDocument('Inventory', existing.id, settingsPatch, executor || undefined);
+    const legacyQuantity = Math.max(0, toNumber(
+      normalizedExisting.on_hand_quantity ?? normalizedExisting.quantity ?? normalizedExisting.available_quantity,
+      0
+    ));
+    if (legacyQuantity > 0) {
+      const existingLots = await listInventoryLots({
+        siteId: site_id,
+        ingredientId: ingredient_id,
+        includeEmpty: true,
+        lock: Boolean(executor)
+      }, executor);
+      const representedLotQuantity = existingLots.reduce(
+        (sum, lot) => sum + Math.max(0, toNumber(lot.remaining_quantity, 0)),
+        0
+      );
+      const openingDifference = Math.max(0, legacyQuantity - representedLotQuantity);
+      if (openingDifference > QUANTITY_EPSILON) {
+        const stockDate = toDateOnly(
+          normalizedExisting.stock_date || normalizedExisting.received_date || normalizedExisting.created_date || toDateOnly()
+        );
+        const openingLot = await createDocument('InventoryLot', {
+          id: randomId('lot'),
+          site_id,
+          site_name: identity.site.name || site_name || normalizedExisting.site_name || null,
+          ingredient_id,
+          ingredient_name: identity.ingredient.name || ingredient_name || normalizedExisting.ingredient_name || null,
+          quantity_received: openingDifference,
+          remaining_quantity: openingDifference,
+          unit: canonicalUnit,
+          unit_cost: Math.max(0, toNumber(normalizedExisting.average_unit_cost, 0)),
+          accounting_unit_cost: Math.max(0, toNumber(normalizedExisting.average_unit_cost, 0)),
+          total_cost: Number((openingDifference * Math.max(0, toNumber(normalizedExisting.average_unit_cost, 0))).toFixed(2)),
+          batch_number: buildInventoryBatchNumber('OPENING', stockDate),
+          lot_number: null,
+          stock_date: stockDate,
+          received_date: stockDate,
+          expiry_date: normalizedExisting.expiry_date ? toDateOnly(normalizedExisting.expiry_date) : null,
+          reference_id: normalizedExisting.id,
+          reference_type: 'legacy_inventory_opening',
+          status: normalizedExisting.expiry_date && daysUntil(normalizedExisting.expiry_date) < 0 ? 'expired' : 'active',
+          source: 'legacy_aggregate_migration',
+          source_type: 'legacy_aggregate_migration'
+        }, executor || undefined);
+        await postInventoryTransaction({
+          site_id,
+          site_name: identity.site.name || site_name || normalizedExisting.site_name || null,
+          ingredient_id,
+          ingredient_name: identity.ingredient.name || ingredient_name || normalizedExisting.ingredient_name || null,
+          transaction_type: 'opening_balance',
+          quantity: openingDifference,
+          unit: canonicalUnit,
+          transaction_date: stockDate,
+          reference_id: normalizedExisting.id,
+          reference_type: 'legacy_inventory_opening',
+          notes: 'Opening lot generated from legacy aggregate inventory quantity',
+          performed_by: 'system',
+          batch_number: openingLot.batch_number,
+          expiry_date: openingLot.expiry_date,
+          stock_date: stockDate,
+          received_date: stockDate,
+          total_cost: openingDifference * Math.max(0, toNumber(normalizedExisting.average_unit_cost, 0)),
+          unit_cost: Math.max(0, toNumber(normalizedExisting.average_unit_cost, 0)),
+          reason_code: 'legacy_opening_balance',
+          source: 'legacy_aggregate_migration',
+          source_type: 'legacy_aggregate_migration',
+          balance_before: representedLotQuantity,
+          balance_after: legacyQuantity,
+          opening_quantity: representedLotQuantity,
+          addition_quantity: 0,
+          consumption_quantity: 0,
+          remaining_quantity: legacyQuantity,
+          movement_layers: [{
+            inventory_lot_id: openingLot.id,
+            batch_number: openingLot.batch_number,
+            stock_date: stockDate,
+            received_date: stockDate,
+            expiry_date: openingLot.expiry_date,
+            quantity: openingDifference,
+            unit_cost: Math.max(0, toNumber(normalizedExisting.average_unit_cost, 0)),
+            accounting_unit_cost: Math.max(0, toNumber(normalizedExisting.average_unit_cost, 0)),
+            total_cost: Number((openingDifference * Math.max(0, toNumber(normalizedExisting.average_unit_cost, 0))).toFixed(2))
+          }]
+        }, executor);
+        return recalculateInventoryRecord(normalizedExisting, executor);
+      }
+    }
+    // The lot ledger is authoritative. Recalculate on every locked access so
+    // expired stock and any legacy aggregate/lot drift cannot leak into the
+    // next transaction's opening balance.
+    return recalculateInventoryRecord(normalizedExisting, executor);
   }
 
   return createDocument('Inventory', {
     site_id,
-    site_name,
+    site_name: identity.site.name || site_name,
     ingredient_id,
-    ingredient_name,
+    ingredient_name: identity.ingredient.name || ingredient_name,
     quantity: 0,
     available_quantity: 0,
-    unit,
-    min_stock_level,
-    max_stock_level,
+    unit: canonicalUnit,
+    min_stock_level: settings.min ?? 0,
+    max_stock_level: settings.max,
     total_value: 0,
     average_unit_cost: 0,
-    valuation_method,
+    valuation_method: settings.method || 'fifo',
     batch_count: 0,
     status: 'out_of_stock'
   }, executor || undefined);
@@ -200,19 +506,43 @@ async function recalculateInventoryRecord(record, executor = null) {
     includeEmpty: true
   }, executor);
 
-  const activeLots = lots.filter((lot) => toNumber(lot.remaining_quantity, 0) > 0);
-  const quantity = activeLots.reduce((sum, lot) => sum + toNumber(lot.remaining_quantity, 0), 0);
-  const totalValue = activeLots.reduce((sum, lot) => sum + (toNumber(lot.remaining_quantity, 0) * toNumber(lot.unit_cost, 0)), 0);
+  const onHandLots = lots.filter((lot) => toNumber(lot.remaining_quantity, 0) > 0);
+  const availableLots = sortInventoryLotsForIssue(onHandLots);
+  const onHandQuantity = onHandLots.reduce(
+    (sum, lot) => sum + toNumber(lot.remaining_quantity, 0),
+    0
+  );
+  const quantity = availableLots.reduce(
+    (sum, lot) => sum + toNumber(lot.remaining_quantity, 0),
+    0
+  );
+  const fifoValue = availableLots.reduce(
+    (sum, lot) => sum + (toNumber(lot.remaining_quantity, 0) * toNumber(lot.unit_cost, 0)),
+    0
+  );
+  const valuationMethod = normalizeText(record.valuation_method || 'fifo') || 'fifo';
+  const weightedValue = availableLots.reduce(
+    (sum, lot) => sum + (
+      toNumber(lot.remaining_quantity, 0)
+      * toNumber(lot.accounting_unit_cost ?? lot.unit_cost, 0)
+    ),
+    0
+  );
+  const totalValue = valuationMethod === 'weighted_average' ? weightedValue : fifoValue;
+  const totalOnHandValue = onHandLots.reduce(
+    (sum, lot) => sum + (toNumber(lot.remaining_quantity, 0) * toNumber(lot.unit_cost, 0)),
+    0
+  );
   const averageUnitCost = quantity > 0 ? totalValue / quantity : 0;
-  const earliestExpiry = activeLots
+  const earliestExpiry = availableLots
     .map((lot) => lot.expiry_date)
     .filter(Boolean)
     .sort()[0] || null;
-  const nearExpiryCount = activeLots.filter((lot) => {
+  const nearExpiryCount = onHandLots.filter((lot) => {
     const remainingDays = daysUntil(lot.expiry_date);
     return remainingDays !== null && remainingDays >= 0 && remainingDays <= 7;
   }).length;
-  const expiredCount = activeLots.filter((lot) => {
+  const expiredCount = onHandLots.filter((lot) => {
     const remainingDays = daysUntil(lot.expiry_date);
     return remainingDays !== null && remainingDays < 0;
   }).length;
@@ -220,14 +550,45 @@ async function recalculateInventoryRecord(record, executor = null) {
   return updateDocument('Inventory', record.id, {
     quantity,
     available_quantity: quantity,
+    on_hand_quantity: Number(onHandQuantity.toFixed(6)),
+    unavailable_quantity: Number(Math.max(0, onHandQuantity - quantity).toFixed(6)),
     total_value: Number(totalValue.toFixed(2)),
+    fifo_total_value: Number(fifoValue.toFixed(2)),
+    weighted_average_value: Number(weightedValue.toFixed(2)),
+    total_on_hand_value: Number(totalOnHandValue.toFixed(2)),
     average_unit_cost: Number(averageUnitCost.toFixed(4)),
-    batch_count: activeLots.length,
+    batch_count: onHandLots.length,
+    available_batch_count: availableLots.length,
     next_expiry_date: earliestExpiry,
     near_expiry_count: nearExpiryCount,
     expired_lot_count: expiredCount,
     status: deriveInventoryStatus(quantity, toNumber(record.min_stock_level, 0))
   }, executor || undefined);
+}
+
+async function revalueWeightedAverageLots(record, targetTotalValue, executor) {
+  if (normalizeText(record?.valuation_method || 'fifo') !== 'weighted_average') return;
+  const lots = await listInventoryLots({
+    siteId: record.site_id,
+    ingredientId: record.ingredient_id,
+    includeEmpty: true,
+    lock: Boolean(executor)
+  }, executor);
+  const availableLots = sortInventoryLotsForIssue(lots);
+  const availableQuantity = availableLots.reduce(
+    (sum, lot) => sum + toNumber(lot.remaining_quantity, 0),
+    0
+  );
+  const nextAverage = availableQuantity > QUANTITY_EPSILON
+    ? Math.max(0, toNumber(targetTotalValue, 0)) / availableQuantity
+    : 0;
+  for (const lot of availableLots) {
+    const remaining = toNumber(lot.remaining_quantity, 0);
+    await updateDocument('InventoryLot', lot.id, {
+      accounting_unit_cost: Number(nextAverage.toFixed(6)),
+      accounting_total_cost: Number((remaining * nextAverage).toFixed(2))
+    }, executor);
+  }
 }
 
 async function postInventoryTransaction({
@@ -245,6 +606,8 @@ async function postInventoryTransaction({
   performed_by,
   batch_number = null,
   expiry_date = null,
+  stock_date = null,
+  received_date = null,
   total_cost = 0,
   unit_cost = 0,
   from_site_id = null,
@@ -252,7 +615,20 @@ async function postInventoryTransaction({
   to_site_id = null,
   to_site_name = null,
   reason_code = null,
-  movement_layers = []
+  movement_layers = [],
+  source = null,
+  source_type = null,
+  balance_before = null,
+  balance_after = null,
+  opening_quantity = null,
+  addition_quantity = null,
+  consumption_quantity = null,
+  remaining_quantity = null,
+  operation = null,
+  operation_id = null,
+  idempotency_key = null,
+  commitment_revision = null,
+  metadata = null
 }, executor = null) {
   return createDocument('InventoryTransaction', {
     site_id,
@@ -269,6 +645,8 @@ async function postInventoryTransaction({
     performed_by: performed_by || 'system',
     batch_number: normalizeText(batch_number) || null,
     expiry_date: expiry_date || null,
+    stock_date: stock_date ? toDateOnly(stock_date) : null,
+    received_date: received_date ? toDateOnly(received_date) : null,
     total_cost: Number(toNumber(total_cost, 0).toFixed(2)),
     unit_cost: Number(toNumber(unit_cost, 0).toFixed(4)),
     from_site_id,
@@ -276,7 +654,22 @@ async function postInventoryTransaction({
     to_site_id,
     to_site_name,
     reason_code: normalizeText(reason_code) || null,
-    movement_layers
+    movement_layers,
+    source: normalizeText(source || source_type) || null,
+    source_type: normalizeText(source_type || source) || null,
+    balance_before: balance_before === null ? null : roundQuantity(balance_before),
+    balance_after: balance_after === null ? null : roundQuantity(balance_after),
+    opening_quantity: opening_quantity === null ? null : roundQuantity(opening_quantity),
+    addition_quantity: addition_quantity === null ? null : roundQuantity(addition_quantity),
+    consumption_quantity: consumption_quantity === null ? null : roundQuantity(consumption_quantity),
+    remaining_quantity: remaining_quantity === null ? null : roundQuantity(remaining_quantity),
+    operation: normalizeText(operation) || null,
+    operation_id: normalizeText(operation_id) || null,
+    idempotency_key: normalizeText(idempotency_key || operation_id) || null,
+    commitment_revision: commitment_revision === null
+      ? null
+      : Math.max(0, Math.trunc(toNumber(commitment_revision, 0))),
+    metadata: metadata && typeof metadata === 'object' ? metadata : null
   }, executor || undefined);
 }
 
@@ -291,18 +684,61 @@ async function receiveStockWithExecutor({
   batch_number = null,
   lot_number = null,
   expiry_date = null,
-  min_stock_level = 0,
-  max_stock_level = null,
-  valuation_method = 'fifo',
+  stock_date = null,
+  received_date = null,
+  transaction_date = null,
+  min_stock_level,
+  max_stock_level,
+  valuation_method,
   reference_id = null,
   reference_type = null,
   notes = '',
   performed_by = 'system',
-  reason_code = 'receipt'
+  reason_code = 'receipt',
+  source = null,
+  source_type = null,
+  operation = null,
+  operation_id = null,
+  idempotency_key = null,
+  commitment_revision = null,
+  metadata = null
 }, executor) {
   const qty = toNumber(quantity, 0);
   if (qty <= 0) {
     const error = new Error('Received quantity must be greater than zero');
+    error.status = 400;
+    throw error;
+  }
+  const cost = Number(unit_cost);
+  if (!Number.isFinite(cost) || cost < 0) {
+    const error = new Error('Inventory unit cost must be a non-negative number');
+    error.status = 400;
+    throw error;
+  }
+  const effectiveStockDate = parseInventoryDate(
+    stock_date || received_date || transaction_date || toDateOnly(),
+    'Stock date',
+    { required: true }
+  );
+  const effectiveReceivedDate = parseInventoryDate(
+    received_date || stock_date || transaction_date || effectiveStockDate,
+    'Received date',
+    { required: true }
+  );
+  const effectiveTransactionDate = parseInventoryDate(
+    transaction_date || toDateOnly(),
+    'Transaction date',
+    { required: true }
+  );
+  const effectiveExpiryDate = parseInventoryDate(expiry_date, 'Expiry date');
+  const currentDate = toDateOnly();
+  if (effectiveStockDate > currentDate || effectiveReceivedDate > currentDate || effectiveTransactionDate > currentDate) {
+    const error = new Error('Stock, received, and transaction dates cannot be in the future');
+    error.status = 400;
+    throw error;
+  }
+  if (effectiveExpiryDate && effectiveExpiryDate < effectiveStockDate) {
+    const error = new Error('Expiry date cannot be earlier than the stock date');
     error.status = 400;
     throw error;
   }
@@ -318,6 +754,9 @@ async function receiveStockWithExecutor({
     valuation_method
   }, executor);
 
+  const inventoryUnit = inventory.unit;
+  const balanceBefore = toNumber(inventory.available_quantity ?? inventory.quantity, 0);
+
   const lot = await createDocument('InventoryLot', {
     id: randomId('lot'),
     site_id,
@@ -326,40 +765,88 @@ async function receiveStockWithExecutor({
     ingredient_name,
     quantity_received: qty,
     remaining_quantity: qty,
-    unit,
-    unit_cost: toNumber(unit_cost, 0),
-    total_cost: Number((qty * toNumber(unit_cost, 0)).toFixed(2)),
-    batch_number: normalizeText(batch_number || lot_number) || `LOT-${Date.now()}`,
+    unit: inventoryUnit,
+    unit_cost: cost,
+    accounting_unit_cost: cost,
+    accounting_total_cost: Number((qty * cost).toFixed(2)),
+    total_cost: Number((qty * cost).toFixed(2)),
+    batch_number: normalizeText(batch_number || lot_number)
+      || buildInventoryBatchNumber('LOT', effectiveStockDate),
     lot_number: normalizeText(lot_number || batch_number) || null,
-    expiry_date: expiry_date ? toDateOnly(expiry_date) : null,
-    received_date: toDateOnly(),
+    expiry_date: effectiveExpiryDate,
+    stock_date: effectiveStockDate,
+    received_date: effectiveReceivedDate,
     reference_id,
     reference_type,
-    status: expiry_date && daysUntil(expiry_date) < 0 ? 'expired' : 'active'
+    status: effectiveExpiryDate && daysUntil(effectiveExpiryDate) < 0 ? 'expired' : 'active',
+    source: normalizeText(source || source_type) || null,
+    source_type: normalizeText(source_type || source) || null
   }, executor);
 
-  await postInventoryTransaction({
+  if (normalizeText(inventory.valuation_method || valuation_method) === 'weighted_average') {
+    const receiptAffectsAvailableValue = isInventoryLotUsable(lot);
+    await revalueWeightedAverageLots(
+      inventory,
+      toNumber(inventory.total_value, 0) + (
+        receiptAffectsAvailableValue ? qty * cost : 0
+      ),
+      executor
+    );
+  }
+
+  const refreshed = await recalculateInventoryRecord(inventory, executor);
+  const balanceAfter = toNumber(refreshed.available_quantity ?? refreshed.quantity, 0);
+
+  const transaction = await postInventoryTransaction({
     site_id,
     site_name,
     ingredient_id,
     ingredient_name,
     transaction_type: reason_code === 'transfer_in' ? 'transfer_in' : 'receipt',
     quantity: qty,
-    unit,
-    transaction_date: toDateOnly(),
+    unit: inventoryUnit,
+    transaction_date: effectiveTransactionDate,
     reference_id,
     reference_type,
     notes,
     performed_by,
     batch_number: lot.batch_number,
     expiry_date: lot.expiry_date,
-    total_cost: qty * toNumber(unit_cost, 0),
-    unit_cost: toNumber(unit_cost, 0),
-    reason_code
+    stock_date: lot.stock_date,
+    received_date: lot.received_date,
+    total_cost: qty * cost,
+    unit_cost: cost,
+    reason_code,
+    source,
+    source_type,
+    balance_before: balanceBefore,
+    balance_after: balanceAfter,
+    opening_quantity: balanceBefore,
+    addition_quantity: qty,
+    consumption_quantity: 0,
+    remaining_quantity: balanceAfter,
+    operation,
+    operation_id,
+    idempotency_key,
+    commitment_revision,
+    metadata,
+    movement_layers: [{
+      inventory_lot_id: lot.id,
+      batch_number: lot.batch_number,
+      stock_date: lot.stock_date,
+      received_date: lot.received_date,
+      expiry_date: lot.expiry_date,
+      quantity: qty,
+      quantity_before: 0,
+      quantity_after: qty,
+      unit_cost: cost,
+      accounting_unit_cost: cost,
+      accounting_total_cost: Number((qty * cost).toFixed(2)),
+      total_cost: Number((qty * cost).toFixed(2))
+    }]
   }, executor);
 
-  const refreshed = await recalculateInventoryRecord(inventory, executor);
-  return { inventory: refreshed, lot };
+  return { inventory: refreshed, lot, transaction };
 }
 
 async function receiveStock(payload, executor = null) {
@@ -382,9 +869,17 @@ async function deductStockWithExecutor({
   reference_type = null,
   notes = '',
   performed_by = 'system',
-  valuation_method = 'fifo',
+  valuation_method,
   reason_code = null,
-  allow_shortage = true
+  allow_shortage = true,
+  as_of_date = null,
+  source = null,
+  source_type = null,
+  operation = null,
+  operation_id = null,
+  idempotency_key = null,
+  commitment_revision = null,
+  metadata = null
 }, executor) {
   const qty = toNumber(quantity, 0);
   if (qty <= 0) {
@@ -401,27 +896,33 @@ async function deductStockWithExecutor({
     unit,
     valuation_method
   }, executor);
+  const inventoryUnit = inventory.unit;
+  const balanceBefore = toNumber(inventory.available_quantity ?? inventory.quantity, 0);
 
   const lots = await listInventoryLots({
     siteId: site_id,
     ingredientId: ingredient_id,
     lock: true
   }, executor);
+  const issueDate = parseInventoryDate(
+    as_of_date || transaction_date || toDateOnly(),
+    'Inventory issue date',
+    { required: true }
+  );
+  const effectiveTransactionDate = parseInventoryDate(
+    transaction_date || toDateOnly(),
+    'Transaction date',
+    { required: true }
+  );
+  const sortedLots = sortInventoryLotsForIssue(lots, { asOfDate: issueDate });
 
-  const sortedLots = [...lots].sort((left, right) => {
-    const leftExpiry = left.expiry_date || '9999-12-31';
-    const rightExpiry = right.expiry_date || '9999-12-31';
-    if (leftExpiry === rightExpiry) {
-      return String(left.received_date || '').localeCompare(String(right.received_date || ''));
-    }
-    return leftExpiry.localeCompare(rightExpiry);
-  });
-
-  assertSufficientStock(sortedLots, qty, allow_shortage);
+  assertSufficientStock(sortedLots, qty, allow_shortage, { asOfDate: issueDate });
 
   let remainingToDeduct = qty;
   let fifoCost = 0;
   const movementLayers = [];
+  const valuationMethod = normalizeText(inventory.valuation_method || valuation_method || 'fifo') || 'fifo';
+  const weightedAverageUnitCost = toNumber(inventory.average_unit_cost, 0);
 
   for (const lot of sortedLots) {
     if (remainingToDeduct <= 0) break;
@@ -436,23 +937,40 @@ async function deductStockWithExecutor({
     }, executor);
 
     const layerCost = layerQuantity * toNumber(lot.unit_cost, 0);
+    const accountingUnitCost = valuationMethod === 'weighted_average'
+      ? weightedAverageUnitCost
+      : toNumber(lot.unit_cost, 0);
     fifoCost += layerCost;
     movementLayers.push({
       inventory_lot_id: lot.id,
       batch_number: lot.batch_number || null,
+      stock_date: lot.stock_date || lot.received_date || null,
+      received_date: lot.received_date || lot.stock_date || null,
       expiry_date: lot.expiry_date || null,
       quantity: layerQuantity,
+      quantity_before: remaining,
+      quantity_after: nextRemaining,
       unit_cost: toNumber(lot.unit_cost, 0),
-      total_cost: Number(layerCost.toFixed(2))
+      total_cost: Number(layerCost.toFixed(2)),
+      accounting_unit_cost: accountingUnitCost,
+      accounting_total_cost: Number((layerQuantity * accountingUnitCost).toFixed(2))
     });
 
     remainingToDeduct -= layerQuantity;
   }
 
   const issuedQuantity = Math.max(0, qty - remainingToDeduct);
-  const valuationMethod = normalizeText(inventory.valuation_method || valuation_method || 'fifo') || 'fifo';
-  const weightedCost = issuedQuantity * toNumber(inventory.average_unit_cost, 0);
+  const weightedCost = issuedQuantity * weightedAverageUnitCost;
   const totalCost = valuationMethod === 'weighted_average' ? weightedCost : fifoCost;
+  if (valuationMethod === 'weighted_average') {
+    await revalueWeightedAverageLots(
+      inventory,
+      Math.max(0, toNumber(inventory.total_value, 0) - totalCost),
+      executor
+    );
+  }
+  const refreshed = await recalculateInventoryRecord(inventory, executor);
+  const balanceAfter = toNumber(refreshed.available_quantity ?? refreshed.quantity, 0);
 
   const transaction = issuedQuantity > 0 ? await postInventoryTransaction({
     site_id,
@@ -461,24 +979,38 @@ async function deductStockWithExecutor({
     ingredient_name,
     transaction_type,
     quantity: issuedQuantity * -1,
-    unit,
-    transaction_date: transaction_date || toDateOnly(),
+    unit: inventoryUnit,
+    transaction_date: effectiveTransactionDate,
     reference_id,
     reference_type,
-    notes: remainingToDeduct > 0 ? `${notes} (shortage ${remainingToDeduct.toFixed(2)} ${unit})` : notes,
+    notes: remainingToDeduct > 0 ? `${notes} (shortage ${remainingToDeduct.toFixed(2)} ${inventoryUnit})` : notes,
     performed_by,
     total_cost: totalCost,
     unit_cost: issuedQuantity > 0 ? totalCost / issuedQuantity : 0,
     reason_code,
-    movement_layers: movementLayers
+    movement_layers: movementLayers,
+    source,
+    source_type,
+    balance_before: balanceBefore,
+    balance_after: balanceAfter,
+    opening_quantity: balanceBefore,
+    addition_quantity: 0,
+    consumption_quantity: issuedQuantity,
+    remaining_quantity: balanceAfter,
+    operation,
+    operation_id,
+    idempotency_key,
+    commitment_revision,
+    metadata
   }, executor) : null;
 
-  const refreshed = await recalculateInventoryRecord(inventory, executor);
   return {
     inventory: refreshed,
-    shortage_quantity: Number(remainingToDeduct.toFixed(3)),
-    requested_quantity: Number(qty.toFixed(3)),
-    issued_quantity: Number(issuedQuantity.toFixed(3)),
+    ...buildStockDeductionQuantitySummary({
+      remainingToDeduct,
+      requestedQuantity: qty,
+      issuedQuantity
+    }),
     total_cost: Number(totalCost.toFixed(2)),
     transaction_id: transaction?.id || null,
     movement_layers: movementLayers
@@ -492,6 +1024,773 @@ async function deductStock(payload, executor = null) {
   );
 }
 
+export function splitCommittedAllocationLayers(allocationLayers = [], quantityToReturn = 0) {
+  let remainingToReturn = Math.max(0, toNumber(quantityToReturn, 0));
+  const retainedLayers = (Array.isArray(allocationLayers) ? allocationLayers : [])
+    .filter((layer) => toNumber(layer?.quantity, 0) > QUANTITY_EPSILON)
+    .map((layer) => ({
+      ...layer,
+      quantity: roundQuantity(layer.quantity),
+      total_cost: Number((toNumber(layer.quantity, 0) * toNumber(layer.unit_cost, 0)).toFixed(2)),
+      accounting_total_cost: Number((
+        toNumber(layer.quantity, 0)
+        * toNumber(layer.accounting_unit_cost ?? layer.unit_cost, 0)
+      ).toFixed(2))
+    }));
+  const returnedLayers = [];
+
+  for (let index = retainedLayers.length - 1; index >= 0 && remainingToReturn > QUANTITY_EPSILON; index -= 1) {
+    const layer = retainedLayers[index];
+    const available = toNumber(layer.quantity, 0);
+    const returnedQuantity = Math.min(available, remainingToReturn);
+    const retainedQuantity = Math.max(0, available - returnedQuantity);
+    returnedLayers.push({
+      ...layer,
+      quantity: roundQuantity(returnedQuantity),
+      total_cost: Number((returnedQuantity * toNumber(layer.unit_cost, 0)).toFixed(2)),
+      accounting_total_cost: Number((
+        returnedQuantity * toNumber(layer.accounting_unit_cost ?? layer.unit_cost, 0)
+      ).toFixed(2))
+    });
+    remainingToReturn -= returnedQuantity;
+    if (retainedQuantity <= QUANTITY_EPSILON) {
+      retainedLayers.splice(index, 1);
+    } else {
+      retainedLayers[index] = {
+        ...layer,
+        quantity: roundQuantity(retainedQuantity),
+        total_cost: Number((retainedQuantity * toNumber(layer.unit_cost, 0)).toFixed(2)),
+        accounting_total_cost: Number((
+          retainedQuantity * toNumber(layer.accounting_unit_cost ?? layer.unit_cost, 0)
+        ).toFixed(2))
+      };
+    }
+  }
+
+  if (remainingToReturn > QUANTITY_EPSILON) {
+    const error = new Error('Committed stock cannot be returned because its exact inventory-lot allocation is incomplete');
+    error.status = 409;
+    throw error;
+  }
+
+  return {
+    retained_layers: retainedLayers,
+    returned_layers: returnedLayers,
+    returned_quantity: roundQuantity(toNumber(quantityToReturn, 0) - remainingToReturn)
+  };
+}
+
+export function calculateProductionCommitmentAdjustment(
+  previousLine = null,
+  desiredQuantity = 0,
+  { retryShortage = false } = {}
+) {
+  const desired = Math.max(0, toNumber(desiredQuantity, 0));
+  const previousDesired = Math.max(0, toNumber(previousLine?.desired_quantity, 0));
+  const previousCommitted = Math.max(0, toNumber(previousLine?.committed_quantity, 0));
+  const previousShortage = Math.max(
+    0,
+    toNumber(previousLine?.shortage_quantity, previousDesired - previousCommitted)
+  );
+
+  let issueQuantity = 0;
+  let returnQuantity = 0;
+  if (!previousLine) {
+    issueQuantity = desired;
+  } else if (retryShortage) {
+    issueQuantity = Math.max(0, desired - previousCommitted);
+    returnQuantity = Math.max(0, previousCommitted - desired);
+  } else if (desired > previousDesired + QUANTITY_EPSILON) {
+    issueQuantity = desired - previousDesired;
+  } else if (desired < previousDesired - QUANTITY_EPSILON) {
+    returnQuantity = Math.max(0, previousCommitted - desired);
+  }
+
+  return {
+    previous_desired_quantity: roundQuantity(previousDesired),
+    previous_committed_quantity: roundQuantity(previousCommitted),
+    previous_shortage_quantity: roundQuantity(previousShortage),
+    desired_quantity: roundQuantity(desired),
+    issue_quantity: roundQuantity(issueQuantity),
+    return_quantity: roundQuantity(returnQuantity)
+  };
+}
+
+function getProductionCommitmentLineQuantity(line) {
+  return toNumber(
+    line?.desired_quantity
+      ?? line?.actual_quantity
+      ?? line?.planned_quantity
+      ?? line?.yield_adjusted_quantity
+      ?? line?.required_quantity
+      ?? line?.adjusted_quantity
+      ?? line?.cost_quantity
+      ?? line?.quantity,
+    0
+  );
+}
+
+export function normalizeProductionCommitmentDemand(
+  lines = [],
+  { ingredientCatalog = [], inventoryCatalog = [] } = {}
+) {
+  const ingredientMap = new Map(
+    (Array.isArray(ingredientCatalog) ? ingredientCatalog : [])
+      .map((ingredient) => [String(ingredient?.id || ''), ingredient])
+  );
+  const inventoryMap = new Map(
+    (Array.isArray(inventoryCatalog) ? inventoryCatalog : [])
+      .map((inventory) => [String(inventory?.ingredient_id || ''), inventory])
+  );
+  const demandMap = new Map();
+
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const ingredientId = normalizeText(line?.ingredient_id);
+    if (!ingredientId) {
+      const error = new Error('Every production commitment line must include an ingredient ID');
+      error.status = 400;
+      throw error;
+    }
+    const sourceQuantity = getProductionCommitmentLineQuantity(line);
+    if (!Number.isFinite(sourceQuantity) || sourceQuantity < 0) {
+      const error = new Error(`Production quantity for ${line?.ingredient_name || ingredientId} must be zero or greater`);
+      error.status = 400;
+      throw error;
+    }
+
+    const ingredient = ingredientMap.get(ingredientId) || {};
+    const inventory = inventoryMap.get(ingredientId) || {};
+    const sourceUnit = line?.unit || ingredient.unit || inventory.unit || 'unit';
+    const inventoryUnit = inventory.unit || ingredient.unit || sourceUnit;
+    const desiredQuantity = convertIngredientQuantity(
+      sourceQuantity,
+      sourceUnit,
+      inventoryUnit,
+      ingredient
+    );
+    if (!Number.isFinite(desiredQuantity) || desiredQuantity < 0) {
+      const error = new Error(`Production quantity for ${line?.ingredient_name || ingredientId} could not be converted to inventory units`);
+      error.status = 400;
+      throw error;
+    }
+
+    const existing = demandMap.get(ingredientId);
+    if (existing && existing.unit !== inventoryUnit) {
+      const error = new Error(`Production lines for ${line?.ingredient_name || ingredientId} resolve to conflicting inventory units`);
+      error.status = 409;
+      throw error;
+    }
+    if (existing) {
+      existing.desired_quantity = roundQuantity(existing.desired_quantity + desiredQuantity);
+      existing.source_recipe_names = [...new Set([
+        ...(existing.source_recipe_names || []),
+        ...(Array.isArray(line?.source_recipe_names) ? line.source_recipe_names : [])
+      ])];
+      continue;
+    }
+
+    demandMap.set(ingredientId, {
+      ingredient_id: ingredientId,
+      item_code: getItemCodeFromRecords([ingredient, line], null),
+      ingredient_name: line?.ingredient_name || ingredient.name || inventory.ingredient_name || ingredientId,
+      unit: inventoryUnit,
+      desired_quantity: roundQuantity(desiredQuantity),
+      source_recipe_names: Array.isArray(line?.source_recipe_names) ? line.source_recipe_names : [],
+      yield_percent: toNumber(line?.yield_percent, 100)
+    });
+  }
+
+  return [...demandMap.values()].sort((left, right) => (
+    String(left.ingredient_id).localeCompare(String(right.ingredient_id))
+  ));
+}
+
+export function getProductionInventoryCommitment(production = {}) {
+  const embedded = production?.inventory_commitment && typeof production.inventory_commitment === 'object'
+    ? production.inventory_commitment
+    : {};
+  const lines = Array.isArray(embedded.lines)
+    ? embedded.lines
+    : Array.isArray(production?.inventory_committed_lines)
+      ? production.inventory_committed_lines
+      : [];
+  return {
+    ...embedded,
+    revision: Math.max(0, Math.trunc(toNumber(
+      embedded.revision ?? production?.inventory_commitment_revision,
+      0
+    ))),
+    status: embedded.status || production?.inventory_commitment_status || null,
+    target_servings: embedded.target_servings ?? production?.inventory_committed_servings ?? null,
+    lines
+  };
+}
+
+export function hasProductionInventoryCommitment(production = {}) {
+  const commitment = getProductionInventoryCommitment(production);
+  return commitment.revision > 0
+    || Boolean(commitment.status)
+    || Boolean(production?.inventory_committed_at);
+}
+
+function buildCommitmentDemandFingerprint(lines = []) {
+  return JSON.stringify((Array.isArray(lines) ? lines : []).map((line) => ({
+    ingredient_id: line.ingredient_id,
+    unit: line.unit,
+    desired_quantity: roundQuantity(line.desired_quantity)
+  })));
+}
+
+function resolveCommitmentSite({ production, fulfillmentStore, siteCatalog }) {
+  if (fulfillmentStore?.id) return fulfillmentStore;
+  if (Array.isArray(siteCatalog) && siteCatalog.length > 0) {
+    return resolveProductionFulfillmentStore(production, siteCatalog);
+  }
+  const fallbackId = production?.fulfillment_store_id || production?.site_id;
+  if (!fallbackId) {
+    const error = new Error('A fulfillment Store is required before production inventory can be committed');
+    error.status = 409;
+    throw error;
+  }
+  return {
+    id: fallbackId,
+    name: production?.fulfillment_store_name || production?.site_name || null
+  };
+}
+
+async function returnStockToCommittedLotsWithExecutor({
+  site_id,
+  site_name,
+  ingredient_id,
+  ingredient_name,
+  unit,
+  returned_layers,
+  transaction_date,
+  reference_id,
+  reference_type = 'production',
+  notes,
+  performed_by,
+  reason_code,
+  source,
+  source_type,
+  operation,
+  operation_id,
+  idempotency_key,
+  commitment_revision,
+  metadata
+}, executor) {
+  const inventory = await ensureInventoryRecord({
+    site_id,
+    site_name,
+    ingredient_id,
+    ingredient_name,
+    unit
+  }, executor);
+  const balanceBefore = toNumber(inventory.available_quantity ?? inventory.quantity, 0);
+  const movementLayers = [];
+  let totalCost = 0;
+  let availableReturnedCost = 0;
+  let returnedQuantity = 0;
+  const effectiveTransactionDate = parseInventoryDate(
+    transaction_date || toDateOnly(),
+    'Transaction date',
+    { required: true }
+  );
+
+  for (const allocation of Array.isArray(returned_layers) ? returned_layers : []) {
+    const lotId = normalizeText(allocation?.inventory_lot_id);
+    if (!lotId) {
+      const error = new Error('Committed stock cannot be returned without its inventory-lot ID');
+      error.status = 409;
+      throw error;
+    }
+    const lot = await findDocument('InventoryLot', lotId, executor, true);
+    if (
+      !lot
+      || String(lot.site_id || '') !== String(site_id || '')
+      || String(lot.ingredient_id || '') !== String(ingredient_id || '')
+    ) {
+      const error = new Error('A committed inventory lot is missing or no longer belongs to this production location');
+      error.status = 409;
+      throw error;
+    }
+
+    const quantity = Math.max(0, toNumber(allocation.quantity, 0));
+    if (quantity <= QUANTITY_EPSILON) continue;
+    const quantityBefore = Math.max(0, toNumber(lot.remaining_quantity, 0));
+    const quantityAfter = quantityBefore + quantity;
+    const currentStatus = normalizeText(lot.status || 'active').toLowerCase();
+    const preservedUnavailableStatus = UNUSABLE_LOT_STATUSES.has(currentStatus)
+      && !['consumed', 'expired'].includes(currentStatus);
+    const restoredStatus = preservedUnavailableStatus
+      ? currentStatus
+      : lot.expiry_date && toDateOnly(lot.expiry_date) < toDateOnly()
+        ? 'expired'
+        : 'active';
+    await updateDocument('InventoryLot', lot.id, {
+      remaining_quantity: roundQuantity(quantityAfter),
+      status: restoredStatus
+    }, executor);
+
+    const unitCost = toNumber(allocation.unit_cost ?? lot.unit_cost, 0);
+    const accountingUnitCost = toNumber(allocation.accounting_unit_cost ?? unitCost, 0);
+    const layerCost = quantity * unitCost;
+    const accountingLayerCost = quantity * accountingUnitCost;
+    totalCost += accountingLayerCost;
+    const restoredLotIsAvailable = isInventoryLotUsable({
+      ...lot,
+      remaining_quantity: quantityAfter,
+      status: restoredStatus
+    }, { asOfDate: effectiveTransactionDate });
+    if (restoredLotIsAvailable) availableReturnedCost += accountingLayerCost;
+    returnedQuantity += quantity;
+    movementLayers.push({
+      inventory_lot_id: lot.id,
+      batch_number: lot.batch_number || allocation.batch_number || null,
+      stock_date: lot.stock_date || lot.received_date || allocation.stock_date || null,
+      received_date: lot.received_date || lot.stock_date || allocation.received_date || null,
+      expiry_date: lot.expiry_date || allocation.expiry_date || null,
+      quantity: roundQuantity(quantity),
+      quantity_before: roundQuantity(quantityBefore),
+      quantity_after: roundQuantity(quantityAfter),
+      unit_cost: unitCost,
+      total_cost: Number(layerCost.toFixed(2)),
+      accounting_unit_cost: accountingUnitCost,
+      accounting_total_cost: Number(accountingLayerCost.toFixed(2)),
+      available_after_return: restoredLotIsAvailable,
+      commitment_source_transaction_id: allocation.source_transaction_id
+        || allocation.inventory_transaction_id
+        || null
+    });
+  }
+
+  if (normalizeText(inventory.valuation_method || 'fifo') === 'weighted_average') {
+    await revalueWeightedAverageLots(
+      inventory,
+      toNumber(inventory.total_value, 0) + availableReturnedCost,
+      executor
+    );
+  }
+  const refreshed = await recalculateInventoryRecord(inventory, executor);
+  const balanceAfter = toNumber(refreshed.available_quantity ?? refreshed.quantity, 0);
+  const transaction = returnedQuantity > QUANTITY_EPSILON
+    ? await postInventoryTransaction({
+      site_id,
+      site_name,
+      ingredient_id,
+      ingredient_name,
+      transaction_type: operation === 'cancellation' ? 'production_release' : 'production_return',
+      quantity: returnedQuantity,
+      unit,
+      transaction_date: effectiveTransactionDate,
+      reference_id,
+      reference_type,
+      notes,
+      performed_by,
+      total_cost: totalCost,
+      unit_cost: returnedQuantity > 0 ? totalCost / returnedQuantity : 0,
+      reason_code,
+      movement_layers: movementLayers,
+      source,
+      source_type,
+      balance_before: balanceBefore,
+      balance_after: balanceAfter,
+      opening_quantity: balanceBefore,
+      addition_quantity: returnedQuantity,
+      consumption_quantity: 0,
+      remaining_quantity: balanceAfter,
+      operation,
+      operation_id,
+      idempotency_key,
+      commitment_revision,
+      metadata
+    }, executor)
+    : null;
+
+  return {
+    inventory: refreshed,
+    returned_quantity: roundQuantity(returnedQuantity),
+    total_cost: Number(totalCost.toFixed(2)),
+    available_return_cost: Number(availableReturnedCost.toFixed(2)),
+    transaction_id: transaction?.id || null,
+    movement_layers: movementLayers
+  };
+}
+
+export async function reconcileProductionInventoryCommitment({
+  production,
+  actor = {},
+  desiredIngredients = null,
+  operation = 'approval',
+  reason = '',
+  allowShortage = false,
+  retryShortages = false,
+  expectedRevision = null,
+  operationId = null,
+  idempotencyKey = null,
+  asOfDate = null,
+  siteCatalog = [],
+  ingredientCatalog = [],
+  inventoryCatalog = [],
+  fulfillmentStore = null,
+  targetServings = null
+}, executor) {
+  if (!production?.id) {
+    const error = new Error('A production record is required for inventory commitment');
+    error.status = 400;
+    throw error;
+  }
+  if (!executor) {
+    const error = new Error('Production inventory commitment must run inside the production transaction');
+    error.status = 500;
+    throw error;
+  }
+  if (typeof executor.query === 'function') {
+    await executor.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      [`production-inventory:${String(production.id)}`]
+    );
+  }
+
+  const current = getProductionInventoryCommitment(production);
+  if (
+    expectedRevision !== null
+    && Math.max(0, Math.trunc(toNumber(expectedRevision, -1))) !== current.revision
+  ) {
+    const error = new Error(
+      `Production inventory commitment changed from revision ${expectedRevision} to ${current.revision}; reload and retry`
+    );
+    error.status = 409;
+    throw error;
+  }
+
+  const stockSite = resolveCommitmentSite({ production, fulfillmentStore, siteCatalog });
+  const demand = normalizeProductionCommitmentDemand(
+    desiredIngredients ?? production.ingredients_used ?? [],
+    { ingredientCatalog, inventoryCatalog }
+  );
+  const demandFingerprint = buildCommitmentDemandFingerprint(demand);
+  const requestedOperationId = normalizeText(operationId || idempotencyKey);
+  if (requestedOperationId && requestedOperationId === normalizeText(current.last_operation_id)) {
+    if (current.demand_fingerprint && current.demand_fingerprint !== demandFingerprint) {
+      const error = new Error('The production inventory idempotency key was already used with different quantities');
+      error.status = 409;
+      throw error;
+    }
+    return {
+      mutated: false,
+      commitment: current,
+      production_patch: {},
+      movements: []
+    };
+  }
+
+  const previousLineMap = new Map(
+    (Array.isArray(current.lines) ? current.lines : [])
+      .map((line) => [String(line?.ingredient_id || ''), line])
+      .filter(([ingredientId]) => ingredientId)
+  );
+  const demandMap = new Map(demand.map((line) => [String(line.ingredient_id), line]));
+  const ingredientIds = [...new Set([...previousLineMap.keys(), ...demandMap.keys()])].sort();
+  const changes = ingredientIds.map((ingredientId) => {
+    const previousLine = previousLineMap.get(ingredientId) || null;
+    const desiredLine = demandMap.get(ingredientId) || {
+      ingredient_id: ingredientId,
+      item_code: previousLine?.item_code || null,
+      ingredient_name: previousLine?.ingredient_name || ingredientId,
+      unit: previousLine?.unit || 'unit',
+      desired_quantity: 0,
+      source_recipe_names: previousLine?.source_recipe_names || [],
+      yield_percent: previousLine?.yield_percent ?? 100
+    };
+    if (previousLine?.unit && desiredLine.unit && previousLine.unit !== desiredLine.unit) {
+      const error = new Error(
+        `Inventory unit for ${desiredLine.ingredient_name} changed from ${previousLine.unit} to ${desiredLine.unit}; reconcile the inventory master first`
+      );
+      error.status = 409;
+      throw error;
+    }
+    return {
+      ingredient_id: ingredientId,
+      previous_line: previousLine,
+      desired_line: desiredLine,
+      adjustment: calculateProductionCommitmentAdjustment(
+        previousLine,
+        desiredLine.desired_quantity,
+        { retryShortage: retryShortages }
+      )
+    };
+  });
+
+  const isCompletionFinalization = operation === 'completion_reconciliation'
+    && !['consumed', 'partially_consumed'].includes(String(current.status || '').toLowerCase());
+  const hasApprovedTargetChange = operation === 'approved_quantity_adjustment'
+    && targetServings !== null
+    && (
+      current.target_servings === null
+      || typeof current.target_servings === 'undefined'
+      || !quantitiesEqual(current.target_servings, targetServings)
+    );
+  const hasDemandChange = !hasProductionInventoryCommitment(production)
+    || isCompletionFinalization
+    || hasApprovedTargetChange
+    || changes.some(({ adjustment }) => (
+      !quantitiesEqual(adjustment.previous_desired_quantity, adjustment.desired_quantity)
+      || adjustment.issue_quantity > QUANTITY_EPSILON
+      || adjustment.return_quantity > QUANTITY_EPSILON
+    ));
+  if (!hasDemandChange) {
+    return {
+      mutated: false,
+      commitment: current,
+      production_patch: {},
+      movements: []
+    };
+  }
+
+  const revision = current.revision + 1;
+  const effectiveOperationId = requestedOperationId
+    || `production:${production.id}:inventory:${revision}:${normalizeText(operation) || 'reconcile'}`;
+  // Stock moves when the workflow action is posted, even when the production
+  // itself is planned for a future or historical service date.
+  const effectiveDate = toDateOnly(asOfDate || toDateOnly());
+  const performedBy = actor?.email || actor?.id || 'system';
+  const timestamp = nowIso();
+  const nextLines = [];
+  const movements = [];
+
+  for (const change of changes) {
+    const { previous_line: previousLine, desired_line: desiredLine, adjustment } = change;
+    let allocationLayers = Array.isArray(previousLine?.allocation_layers)
+      ? previousLine.allocation_layers.map((layer) => ({ ...layer }))
+      : [];
+    let committedQuantity = Math.max(0, toNumber(previousLine?.committed_quantity, 0));
+    const transactionIds = Array.isArray(previousLine?.inventory_transaction_ids)
+      ? [...previousLine.inventory_transaction_ids]
+      : [];
+
+    if (adjustment.return_quantity > QUANTITY_EPSILON) {
+      const allocationSplit = splitCommittedAllocationLayers(
+        allocationLayers,
+        adjustment.return_quantity
+      );
+      const returned = await returnStockToCommittedLotsWithExecutor({
+        site_id: stockSite.id,
+        site_name: stockSite.name || production.fulfillment_store_name || production.site_name,
+        ingredient_id: desiredLine.ingredient_id,
+        ingredient_name: desiredLine.ingredient_name,
+        unit: desiredLine.unit,
+        returned_layers: allocationSplit.returned_layers,
+        transaction_date: effectiveDate,
+        reference_id: production.id,
+        reference_type: 'production',
+        notes: reason || `Inventory commitment reconciled for ${production.recipe_name || production.id}`,
+        performed_by: performedBy,
+        reason_code: operation === 'cancellation'
+          ? 'production_cancellation_return'
+          : 'production_commitment_reconciliation_return',
+        source: 'production_inventory_commitment',
+        source_type: 'return_or_cancellation',
+        operation,
+        operation_id: effectiveOperationId,
+        idempotency_key: `${effectiveOperationId}:${desiredLine.ingredient_id}:return`,
+        commitment_revision: revision,
+        metadata: {
+          production_id: production.id,
+          production_date: production.production_date || null,
+          target_servings: targetServings ?? production.target_servings ?? null,
+          previous_desired_quantity: adjustment.previous_desired_quantity,
+          desired_quantity: adjustment.desired_quantity
+        }
+      }, executor);
+      allocationLayers = allocationSplit.retained_layers;
+      committedQuantity = Math.max(0, committedQuantity - returned.returned_quantity);
+      if (returned.transaction_id) transactionIds.push(returned.transaction_id);
+      movements.push({
+        direction: 'return',
+        ingredient_id: desiredLine.ingredient_id,
+        ingredient_name: desiredLine.ingredient_name,
+        quantity: returned.returned_quantity,
+        unit: desiredLine.unit,
+        transaction_id: returned.transaction_id,
+        inventory_lot_changes: returned.movement_layers
+      });
+    }
+
+    if (adjustment.issue_quantity > QUANTITY_EPSILON) {
+      const issued = await deductStockWithExecutor({
+        site_id: stockSite.id,
+        site_name: stockSite.name || production.fulfillment_store_name || production.site_name,
+        ingredient_id: desiredLine.ingredient_id,
+        ingredient_name: desiredLine.ingredient_name,
+        quantity: adjustment.issue_quantity,
+        unit: desiredLine.unit,
+        transaction_type: 'production_commitment',
+        transaction_date: effectiveDate,
+        reference_id: production.id,
+        reference_type: 'production',
+        notes: reason || `Committed for production: ${production.recipe_name || production.id}`,
+        performed_by: performedBy,
+        reason_code: operation === 'completion_reconciliation'
+          ? 'production_completion_reconciliation'
+          : 'production_approval_commitment',
+        allow_shortage: allowShortage,
+        as_of_date: effectiveDate,
+        source: 'production_inventory_commitment',
+        source_type: 'production_consumption',
+        operation,
+        operation_id: effectiveOperationId,
+        idempotency_key: `${effectiveOperationId}:${desiredLine.ingredient_id}:issue`,
+        commitment_revision: revision,
+        metadata: {
+          production_id: production.id,
+          production_date: production.production_date || null,
+          target_servings: targetServings ?? production.target_servings ?? null,
+          previous_desired_quantity: adjustment.previous_desired_quantity,
+          desired_quantity: adjustment.desired_quantity
+        }
+      }, executor);
+      const newLayers = issued.movement_layers.map((layer) => ({
+        ...layer,
+        source_transaction_id: issued.transaction_id || null,
+        commitment_revision: revision,
+        operation_id: effectiveOperationId
+      }));
+      allocationLayers.push(...newLayers);
+      committedQuantity += issued.issued_quantity;
+      if (issued.transaction_id) transactionIds.push(issued.transaction_id);
+      movements.push({
+        direction: 'deduction',
+        ingredient_id: desiredLine.ingredient_id,
+        ingredient_name: desiredLine.ingredient_name,
+        quantity: issued.issued_quantity,
+        shortage_quantity: issued.shortage_quantity,
+        unit: desiredLine.unit,
+        transaction_id: issued.transaction_id,
+        inventory_lot_changes: issued.movement_layers
+      });
+    }
+
+    committedQuantity = roundQuantity(committedQuantity);
+    const desiredQuantity = roundQuantity(desiredLine.desired_quantity);
+    const totalCost = allocationLayers.reduce(
+      (sum, layer) => sum + (
+        toNumber(layer.quantity, 0)
+        * toNumber(layer.accounting_unit_cost ?? layer.unit_cost, 0)
+      ),
+      0
+    );
+    nextLines.push({
+      ...desiredLine,
+      desired_quantity: desiredQuantity,
+      committed_quantity: committedQuantity,
+      shortage_quantity: roundQuantity(Math.max(0, desiredQuantity - committedQuantity)),
+      total_cost: Number(totalCost.toFixed(2)),
+      allocation_layers: allocationLayers,
+      inventory_transaction_ids: [...new Set(transactionIds.filter(Boolean))],
+      last_reconciled_at: timestamp,
+      last_reconciled_by: performedBy,
+      commitment_revision: revision
+    });
+  }
+
+  const totalDesired = nextLines.reduce((sum, line) => sum + toNumber(line.desired_quantity, 0), 0);
+  const totalCommitted = nextLines.reduce((sum, line) => sum + toNumber(line.committed_quantity, 0), 0);
+  const totalShortage = nextLines.reduce((sum, line) => sum + toNumber(line.shortage_quantity, 0), 0);
+  const status = operation === 'completion_reconciliation'
+    ? totalShortage > QUANTITY_EPSILON
+      ? 'partially_consumed'
+      : 'consumed'
+    : totalDesired <= QUANTITY_EPSILON && totalCommitted <= QUANTITY_EPSILON
+      ? 'released'
+      : totalShortage > QUANTITY_EPSILON
+        ? 'partially_committed'
+        : 'committed';
+  const commitment = {
+    revision,
+    status,
+    operation: normalizeText(operation) || 'reconcile',
+    last_operation_id: effectiveOperationId,
+    idempotency_key: effectiveOperationId,
+    demand_fingerprint: demandFingerprint,
+    site_id: stockSite.id,
+    site_name: stockSite.name || production.fulfillment_store_name || production.site_name || null,
+    target_servings: targetServings ?? production.target_servings ?? null,
+    committed_at: current.committed_at || timestamp,
+    committed_by: current.committed_by || performedBy,
+    updated_at: timestamp,
+    updated_by: performedBy,
+    released_at: status === 'released' ? timestamp : null,
+    released_by: status === 'released' ? performedBy : null,
+    total_desired_quantity: roundQuantity(totalDesired),
+    total_committed_quantity: roundQuantity(totalCommitted),
+    total_shortage_quantity: roundQuantity(totalShortage),
+    lines: nextLines
+  };
+  const historyEntry = {
+    revision,
+    operation: commitment.operation,
+    operation_id: effectiveOperationId,
+    status,
+    actor_id: actor?.id || null,
+    actor_email: actor?.email || null,
+    actor_name: actor?.full_name || actor?.email || null,
+    reason: normalizeText(reason) || null,
+    timestamp,
+    movements: movements.map((movement) => ({
+      direction: movement.direction,
+      ingredient_id: movement.ingredient_id,
+      quantity: movement.quantity,
+      unit: movement.unit,
+      transaction_id: movement.transaction_id
+    }))
+  };
+  const productionPatch = {
+    inventory_commitment: commitment,
+    inventory_commitment_revision: revision,
+    inventory_commitment_status: status,
+    inventory_commitment_operation_id: effectiveOperationId,
+    inventory_commitment_idempotency_key: effectiveOperationId,
+    inventory_commitment_updated_at: timestamp,
+    inventory_commitment_updated_by: performedBy,
+    inventory_committed_at: current.committed_at || timestamp,
+    inventory_committed_by: current.committed_by || performedBy,
+    inventory_committed_servings: targetServings ?? production.target_servings ?? null,
+    inventory_committed_lines: nextLines,
+    inventory_commitment_history: [
+      ...(Array.isArray(production.inventory_commitment_history)
+        ? production.inventory_commitment_history.slice(-99)
+        : []),
+      historyEntry
+    ]
+  };
+
+  return {
+    mutated: true,
+    commitment,
+    production_patch: productionPatch,
+    movements
+  };
+}
+
+export async function releaseProductionInventoryCommitment({
+  production,
+  actor = {},
+  reason = '',
+  operation = 'cancellation',
+  ...options
+}, executor) {
+  return reconcileProductionInventoryCommitment({
+    ...options,
+    production,
+    actor,
+    reason,
+    operation,
+    desiredIngredients: [],
+    allowShortage: false
+  }, executor);
+}
+
 async function adjustStockWithExecutor({
   inventory_id,
   quantity_change,
@@ -500,7 +1799,10 @@ async function adjustStockWithExecutor({
   transaction_date,
   performed_by
 }, executor) {
-  const inventory = await findDocument('Inventory', inventory_id, executor, true);
+  // Inventory identity fields are immutable. Read the identity first and let
+  // receive/deduct acquire locks in the single canonical order:
+  // advisory item lock -> Inventory row -> Inventory lots.
+  const inventory = await findDocument('Inventory', inventory_id, executor);
   if (!inventory) {
     const error = new Error('Inventory record not found');
     error.status = 404;
@@ -524,6 +1826,9 @@ async function adjustStockWithExecutor({
       unit: inventory.unit,
       unit_cost: toNumber(inventory.average_unit_cost, 0),
       batch_number: `ADJ-${Date.now()}`,
+      stock_date: transaction_date || toDateOnly(),
+      received_date: transaction_date || toDateOnly(),
+      transaction_date: transaction_date || toDateOnly(),
       min_stock_level: inventory.min_stock_level,
       max_stock_level: inventory.max_stock_level,
       valuation_method: inventory.valuation_method || 'fifo',
@@ -572,13 +1877,35 @@ async function transferStockWithExecutor({
   notes,
   performed_by
 }, executor) {
+  const sourceSiteId = normalizeText(from_site_id);
+  const destinationSiteId = normalizeText(to_site_id);
+  if (!sourceSiteId || !destinationSiteId) {
+    const error = new Error('Stock transfers require both source and destination stores');
+    error.status = 400;
+    throw error;
+  }
+  if (sourceSiteId === destinationSiteId) {
+    const error = new Error('Source and destination stores must be different');
+    error.status = 400;
+    throw error;
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    const error = new Error('A stock transfer requires at least one inventory item');
+    error.status = 400;
+    throw error;
+  }
+  const effectiveTransferDate = parseInventoryDate(
+    transfer_date || toDateOnly(),
+    'Transfer date',
+    { required: true }
+  );
   const results = [];
 
   for (const item of items) {
     const sourceInventory = (await listDocuments('Inventory', {
       filters: { site_id: from_site_id, ingredient_id: item.ingredient_id },
       limit: 10,
-      lock: true
+      lock: false
     }, executor))[0];
 
     if (!sourceInventory) {
@@ -586,6 +1913,11 @@ async function transferStockWithExecutor({
       error.status = 404;
       throw error;
     }
+    const destinationInventory = (await listDocuments('Inventory', {
+      filters: { site_id: to_site_id, ingredient_id: item.ingredient_id },
+      limit: 1,
+      lock: false
+    }, executor))[0] || null;
 
     const deduction = await deductStock({
       site_id: from_site_id,
@@ -595,7 +1927,7 @@ async function transferStockWithExecutor({
       quantity: item.quantity,
       unit: item.unit || sourceInventory.unit,
       transaction_type: 'transfer_out',
-      transaction_date: transfer_date,
+      transaction_date: effectiveTransferDate,
       reference_id,
       reference_type: 'transfer',
       notes: notes || `Transfer to ${to_site_name}`,
@@ -613,10 +1945,13 @@ async function transferStockWithExecutor({
         ingredient_name: item.ingredient_name,
         quantity: layer.quantity,
         unit: item.unit || sourceInventory.unit,
-        unit_cost: layer.unit_cost,
+        unit_cost: layer.accounting_unit_cost ?? layer.unit_cost,
         batch_number: layer.batch_number || `TR-${Date.now()}`,
         expiry_date: layer.expiry_date,
-        valuation_method: sourceInventory.valuation_method || 'fifo',
+        stock_date: layer.stock_date || layer.received_date || effectiveTransferDate,
+        received_date: effectiveTransferDate,
+        transaction_date: effectiveTransferDate,
+        valuation_method: destinationInventory?.valuation_method || sourceInventory.valuation_method || 'fifo',
         reference_id,
         reference_type: 'transfer',
         notes: notes || `Transfer from ${from_site_name}`,
@@ -752,8 +2087,7 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
   const shortageTotalsByUnit = {};
   const reportedActualLines = Array.isArray(options?.ingredient_quantities) ? options.ingredient_quantities : [];
   const reportedActuals = buildReportedProductionActuals(productionIngredients, reportedActualLines);
-
-  for (const ingredient of productionIngredients) {
+  const completionDemandLines = productionIngredients.map((ingredient) => {
     const ingredientData = ingredientMap.get(ingredient.ingredient_id);
     const reportedActual = reportedActuals.get(String(ingredient.ingredient_id));
     const reportedValue = reportedActual?.actual_quantity;
@@ -789,7 +2123,63 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
       inventoryUnit,
       ingredientData
     );
-    const movement = inventoryQuantity > 0 ? await deductStock({
+    return {
+      ...ingredient,
+      unit: inventoryUnit,
+      desired_quantity: Number(inventoryQuantity.toFixed(6)),
+      planned_inventory_quantity: Number(plannedInventoryQuantity.toFixed(6)),
+      has_reported_actual: hasReportedActual
+    };
+  });
+
+  let completionCommitmentPatch = {};
+  let completionCommitment = null;
+  if (hasProductionInventoryCommitment(production)) {
+    const reconciliation = await reconcileProductionInventoryCommitment({
+      production,
+      actor,
+      desiredIngredients: completionDemandLines,
+      operation: 'completion_reconciliation',
+      reason: `Actual production consumption reconciled for ${production.recipe_name || production.id}`,
+      allowShortage: true,
+      expectedRevision: production.inventory_commitment_revision
+        ?? production.inventory_commitment?.revision
+        ?? null,
+      asOfDate: production.production_date,
+      siteCatalog,
+      ingredientCatalog,
+      inventoryCatalog,
+      fulfillmentStore,
+      targetServings: production.target_servings
+    }, executor);
+    completionCommitmentPatch = reconciliation.production_patch;
+    completionCommitment = reconciliation.commitment;
+  }
+  const completionCommitmentLineMap = new Map(
+    (Array.isArray(completionCommitment?.lines) ? completionCommitment.lines : [])
+      .map((line) => [String(line?.ingredient_id || ''), line])
+  );
+
+  for (const ingredient of completionDemandLines) {
+    const ingredientData = ingredientMap.get(ingredient.ingredient_id);
+    const inventoryUnit = ingredient.unit;
+    const inventoryQuantity = toNumber(ingredient.desired_quantity, 0);
+    const plannedInventoryQuantity = toNumber(ingredient.planned_inventory_quantity, inventoryQuantity);
+    const committedLine = completionCommitmentLineMap.get(String(ingredient.ingredient_id));
+    const committedTransactionIds = Array.isArray(committedLine?.inventory_transaction_ids)
+      ? committedLine.inventory_transaction_ids
+      : [];
+    const movement = committedLine ? {
+      shortage_quantity: toNumber(committedLine.shortage_quantity, 0),
+      requested_quantity: inventoryQuantity,
+      issued_quantity: toNumber(committedLine.committed_quantity, 0),
+      total_cost: toNumber(committedLine.total_cost, 0),
+      transaction_id: committedTransactionIds[committedTransactionIds.length - 1] || null,
+      transaction_ids: committedTransactionIds,
+      movement_layers: Array.isArray(committedLine.allocation_layers)
+        ? committedLine.allocation_layers
+        : []
+    } : inventoryQuantity > 0 ? await deductStock({
       site_id: stockSiteId,
       site_name: stockSiteName,
       ingredient_id: ingredient.ingredient_id,
@@ -803,13 +2193,21 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
       notes: `Used in production: ${production.recipe_name}`,
       performed_by: actor.email,
       reason_code: 'production_consumption',
-      allow_shortage: true
+      allow_shortage: true,
+      as_of_date: production.production_date,
+      source: 'production_completion',
+      source_type: 'production_consumption',
+      operation: 'legacy_completion',
+      operation_id: `production:${production.id}:legacy-completion`,
+      idempotency_key: `production:${production.id}:${ingredient.ingredient_id}:legacy-completion`,
+      metadata: { production_id: production.id }
     }, executor) : {
       shortage_quantity: 0,
       requested_quantity: 0,
       issued_quantity: 0,
       total_cost: 0,
       transaction_id: null,
+      transaction_ids: [],
       movement_layers: []
     };
 
@@ -840,10 +2238,13 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
       shortage_quantity: toNumber(movement.shortage_quantity, 0),
       posted_cost: Number(movementCost.toFixed(2)),
       estimated_shortage_cost: Number(fallbackShortageCost.toFixed(2)),
-      quantity_basis: hasReportedActual ? 'operator_reported_actual' : 'yield_adjusted_plan',
+      quantity_basis: ingredient.has_reported_actual ? 'operator_reported_actual' : 'yield_adjusted_plan',
       source_recipe_names: Array.isArray(ingredient.source_recipe_names) ? ingredient.source_recipe_names : [],
       yield_percent: toNumber(ingredient.yield_percent, 100),
       inventory_transaction_id: movement.transaction_id || null,
+      inventory_transaction_ids: movement.transaction_ids || (
+        movement.transaction_id ? [movement.transaction_id] : []
+      ),
       movement_layers: movement.movement_layers || []
     });
   }
@@ -909,6 +2310,7 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
   }, executor);
 
   const completed = await updateDocument('Production', productionId, {
+    ...completionCommitmentPatch,
     status: 'completed',
     completed_date: completedAt,
     completed_by: actor.email,
@@ -960,10 +2362,102 @@ async function completeProduction(productionId, actor, options = {}, executor = 
   );
 }
 
-async function getStockOnHandReport() {
-  const inventory = await listDocuments('Inventory', { limit: 5000, sort: 'ingredient_name' });
+async function getStockOnHandReport({ location = null } = {}) {
+  const inventoryPromise = (async () => {
+    const records = [];
+    const pageSize = 200;
+    let offset = 0;
+    while (true) {
+      const page = await listDocumentsPage('Inventory', {
+        sort: 'ingredient_name',
+        limit: pageSize,
+        offset,
+        location
+      });
+      records.push(...page.items);
+      offset += page.items.length;
+      if (page.items.length === 0 || offset >= page.total_count) break;
+    }
+    return records;
+  })();
+  const [inventory, lots] = await Promise.all([
+    inventoryPromise,
+    listInventoryLots({ includeEmpty: true, location })
+  ]);
+  const lotsByInventoryKey = new Map();
+  for (const lot of lots) {
+    const key = `${lot.site_id || ''}::${lot.ingredient_id || ''}`;
+    if (!lotsByInventoryKey.has(key)) lotsByInventoryKey.set(key, []);
+    lotsByInventoryKey.get(key).push(lot);
+  }
+  const reportDate = toDateOnly();
   return inventory.map((item) => {
-    const derivedItem = deriveInventoryRecord(item);
+    const itemLots = lotsByInventoryKey.get(`${item.site_id || ''}::${item.ingredient_id || ''}`) || [];
+    const hasLotLedger = itemLots.length > 0;
+    const onHandLots = itemLots.filter((lot) => toNumber(lot.remaining_quantity, 0) > 0);
+    const availableLots = sortInventoryLotsForIssue(onHandLots);
+    // Untouched legacy aggregates do not yet have generated lots. Preserve
+    // their stored balance in reports until the next protected movement
+    // performs the auditable opening-lot migration.
+    const onHandQuantity = hasLotLedger
+      ? onHandLots.reduce((sum, lot) => sum + toNumber(lot.remaining_quantity, 0), 0)
+      : Math.max(0, toNumber(item.on_hand_quantity ?? item.quantity ?? item.available_quantity, 0));
+    const availableQuantity = hasLotLedger
+      ? availableLots.reduce((sum, lot) => sum + toNumber(lot.remaining_quantity, 0), 0)
+      : Math.max(0, toNumber(item.available_quantity ?? item.quantity, 0));
+    const fifoValue = hasLotLedger
+      ? availableLots.reduce(
+        (sum, lot) => sum + (toNumber(lot.remaining_quantity, 0) * toNumber(lot.unit_cost, 0)),
+        0
+      )
+      : Math.max(0, toNumber(item.fifo_total_value ?? item.total_value, 0));
+    const weightedValue = hasLotLedger
+      ? availableLots.reduce(
+        (sum, lot) => sum + (
+          toNumber(lot.remaining_quantity, 0)
+          * toNumber(lot.accounting_unit_cost ?? lot.unit_cost, 0)
+        ),
+        0
+      )
+      : Math.max(0, toNumber(item.weighted_average_value ?? item.total_value, 0));
+    const totalValue = hasLotLedger
+      ? (item.valuation_method === 'weighted_average' ? weightedValue : fifoValue)
+      : Math.max(0, toNumber(item.total_value, (
+        item.valuation_method === 'weighted_average' ? weightedValue : fifoValue
+      )));
+    const nearExpiryCount = hasLotLedger
+      ? onHandLots.filter((lot) => {
+        const remainingDays = daysUntil(lot.expiry_date);
+        return remainingDays !== null && remainingDays >= 0 && remainingDays <= 7;
+      }).length
+      : Math.max(0, toNumber(item.near_expiry_count, 0));
+    const derivedItem = deriveInventoryRecord({
+      ...item,
+      quantity: roundQuantity(availableQuantity),
+      available_quantity: roundQuantity(availableQuantity),
+      on_hand_quantity: roundQuantity(onHandQuantity),
+      unavailable_quantity: roundQuantity(Math.max(0, onHandQuantity - availableQuantity)),
+      total_value: Number(totalValue.toFixed(2)),
+      fifo_total_value: Number(fifoValue.toFixed(2)),
+      weighted_average_value: Number(weightedValue.toFixed(2)),
+      average_unit_cost: availableQuantity > 0
+        ? Number((totalValue / availableQuantity).toFixed(4))
+        : 0,
+      batch_count: hasLotLedger ? onHandLots.length : Math.max(0, toNumber(item.batch_count, 0)),
+      available_batch_count: hasLotLedger
+        ? availableLots.length
+        : Math.max(0, toNumber(item.available_batch_count ?? item.batch_count, 0)),
+      next_expiry_date: hasLotLedger
+        ? availableLots.map((lot) => lot.expiry_date).filter(Boolean).sort()[0] || null
+        : item.next_expiry_date || item.expiry_date || null,
+      near_expiry_count: nearExpiryCount,
+      expired_lot_count: hasLotLedger
+        ? onHandLots.filter((lot) => (
+          lot.expiry_date && toDateOnly(lot.expiry_date) < reportDate
+        )).length
+        : Math.max(0, toNumber(item.expired_lot_count, 0)),
+      lot_ledger_pending_migration: !hasLotLedger && onHandQuantity > QUANTITY_EPSILON
+    });
     return {
       ...derivedItem,
       low_stock_alert: hasLowStockAlert(derivedItem),
@@ -973,17 +2467,39 @@ async function getStockOnHandReport() {
   });
 }
 
-async function getStockMovementReport({ siteId = '', ingredientId = '', dateFrom = '', dateTo = '' } = {}) {
-  let transactions = await listDocuments('InventoryTransaction', { limit: 5000, sort: '-transaction_date' });
-  if (siteId) transactions = transactions.filter((entry) => entry.site_id === siteId);
-  if (ingredientId) transactions = transactions.filter((entry) => entry.ingredient_id === ingredientId);
-  if (dateFrom) transactions = transactions.filter((entry) => String(entry.transaction_date || '') >= dateFrom);
-  if (dateTo) transactions = transactions.filter((entry) => String(entry.transaction_date || '') <= dateTo);
-  return transactions;
+async function getStockMovementReport({
+  siteId = '',
+  ingredientId = '',
+  dateFrom = '',
+  dateTo = '',
+  location = null
+} = {}) {
+  const filters = {};
+  if (siteId) filters.site_id = siteId;
+  if (ingredientId) filters.ingredient_id = ingredientId;
+  const transactions = [];
+  const pageSize = 200;
+  let offset = 0;
+  while (true) {
+    const page = await listDocumentsPage('InventoryTransaction', {
+      filters,
+      sort: '-transaction_date',
+      limit: pageSize,
+      offset,
+      location
+    });
+    transactions.push(...page.items);
+    offset += page.items.length;
+    if (page.items.length === 0 || offset >= page.total_count) break;
+  }
+  let filtered = transactions;
+  if (dateFrom) filtered = filtered.filter((entry) => String(entry.transaction_date || '') >= dateFrom);
+  if (dateTo) filtered = filtered.filter((entry) => String(entry.transaction_date || '') <= dateTo);
+  return filtered;
 }
 
-async function getExpiryReport({ thresholdDays = 30 } = {}) {
-  const lots = await listInventoryLots({ includeEmpty: false });
+async function getExpiryReport({ thresholdDays = 30, location = null } = {}) {
+  const lots = await listInventoryLots({ includeEmpty: false, location });
   return lots.map((lot) => {
     const remainingDays = daysUntil(lot.expiry_date);
     return {
@@ -1001,16 +2517,27 @@ async function getExpiryReport({ thresholdDays = 30 } = {}) {
     .sort((left, right) => (left.days_until_expiry ?? 9999) - (right.days_until_expiry ?? 9999));
 }
 
-async function getVelocityReports({ days = 30 } = {}) {
+async function getVelocityReports({ days = 30, location = null } = {}) {
   const dateFrom = new Date();
   dateFrom.setDate(dateFrom.getDate() - Math.max(1, Number(days || 30)));
-  const movements = await getStockMovementReport({ dateFrom: toDateOnly(dateFrom) });
-  const consumptionTypes = new Set(['production_use', 'pos_sale', 'issuance', 'transfer_out', 'waste', 'adjustment']);
+  const movements = await getStockMovementReport({ dateFrom: toDateOnly(dateFrom), location });
+  const consumptionTypes = new Set([
+    'production_use',
+    'production_commitment',
+    'pos_sale',
+    'issuance',
+    'transfer_out',
+    'waste',
+    'adjustment'
+  ]);
+  const returnTypes = new Set(['production_return', 'production_release']);
   const map = new Map();
 
   movements.forEach((movement) => {
-    if (!consumptionTypes.has(movement.transaction_type)) return;
-    if (toNumber(movement.quantity, 0) >= 0) return;
+    const quantity = toNumber(movement.quantity, 0);
+    const isConsumption = consumptionTypes.has(movement.transaction_type) && quantity < 0;
+    const isReturn = returnTypes.has(movement.transaction_type) && quantity > 0;
+    if (!isConsumption && !isReturn) return;
     const key = `${movement.site_id || ''}::${movement.ingredient_id || ''}`;
     if (!map.has(key)) {
       map.set(key, {
@@ -1023,23 +2550,28 @@ async function getVelocityReports({ days = 30 } = {}) {
       });
     }
     const item = map.get(key);
-    item.total_moved += Math.abs(toNumber(movement.quantity, 0));
+    item.total_moved += isReturn ? -Math.abs(quantity) : Math.abs(quantity);
     item.movement_count += 1;
   });
 
-  const ranked = Array.from(map.values()).sort((left, right) => right.total_moved - left.total_moved);
+  const ranked = Array.from(map.values())
+    .map((item) => ({ ...item, total_moved: Math.max(0, roundQuantity(item.total_moved)) }))
+    .sort((left, right) => right.total_moved - left.total_moved);
   return {
     fast_moving: ranked.slice(0, 25),
     slow_moving: [...ranked].reverse().slice(0, 25)
   };
 }
 
-async function getInventoryValuationReport() {
-  const inventory = await listDocuments('Inventory', { limit: 5000, sort: 'ingredient_name' });
+async function getInventoryValuationReport({ siteId = '', ingredientId = '', location = null } = {}) {
+  const inventory = (await getStockOnHandReport({ location })).filter((item) => (
+    (!siteId || String(item.site_id || '') === String(siteId))
+    && (!ingredientId || String(item.ingredient_id || '') === String(ingredientId))
+  ));
   return inventory.map((item) => {
     const quantity = toNumber(item.quantity, 0);
     const weightedValue = quantity * toNumber(item.average_unit_cost, 0);
-    const fifoValue = toNumber(item.total_value, weightedValue);
+    const fifoValue = toNumber(item.fifo_total_value, item.total_value ?? weightedValue);
     return {
       ...item,
       fifo_value: Number(fifoValue.toFixed(2)),
@@ -1049,6 +2581,9 @@ async function getInventoryValuationReport() {
 }
 
 export {
+  toDateOnly,
+  parseInventoryDate,
+  validateInventorySettings,
   listInventoryLots,
   getAvailableLotQuantity,
   assertSufficientStock,

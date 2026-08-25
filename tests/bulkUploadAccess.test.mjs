@@ -125,7 +125,8 @@ assert.match(worker, /const user = job\.actor_snapshot \|\| null;\s*assertBulkUp
 assert.match(entityPreparation, /if \(entity === 'UserGroup'\) \{\s*assertStandardUserGroupMemberEdit\(user, payload, existing\);/);
 assert.match(apiClient, /userGroups:\s*\{\s*bulkImport\(data\)/);
 
-assert.match(inventory, /const \{ isAdmin, isManager \} = usePermissions\(\)/);
+assert.match(inventory, /const \{ isAdmin, can \} = usePermissions\(\)/);
+assert.match(inventory, /const canManageInventory = can\('manage_inventory'\)/);
 assert.match(inventory, /Only administrators can perform bulk uploads/);
 assert.match(inventory, /Download Template/);
 assert.match(inventory, />\s*Export\s*</);

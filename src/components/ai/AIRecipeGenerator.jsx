@@ -35,7 +35,7 @@ export default function AIRecipeGenerator() {
 
   const { data: inventory = [] } = useQuery({
     queryKey: ['inventory'],
-    queryFn: () => base44.entities.Inventory.list()
+    queryFn: () => base44.inventory.getStockOnHand()
   });
 
   const { data: ingredients = [] } = useQuery({

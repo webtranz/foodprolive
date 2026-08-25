@@ -40,6 +40,8 @@ const areaManagerPermissions = Object.freeze([
   'view_recipes',
   'view_material_request',
   'approve_production',
+  'adjust_approved_production',
+  'cancel_production',
   'request_changes_area_production',
   'reject_area_production'
 ]);
@@ -56,6 +58,7 @@ const projectManagerPermissions = Object.freeze([
   'reject_special_event', 'manage_production',
   'review_production_request', 'approve_production_request', 'reject_production_request',
   'request_changes_production', 'view_material_request',
+  'cancel_production',
   'manage_waste', 'approve_waste'
 ]);
 
@@ -144,7 +147,7 @@ const allCapabilityPermissions = Object.freeze([
   'create_production_request', 'edit_production_request', 'submit_production_request',
   'review_production_request', 'approve_production_request', 'reject_production_request',
   'request_changes_production', 'approve_production', 'request_changes_area_production',
-  'reject_area_production', 'start_production',
+  'reject_area_production', 'adjust_approved_production', 'cancel_production', 'start_production',
   'complete_production', 'create_material_request', 'view_material_request',
   'acknowledge_material_request', 'manage_procurement', 'approve_procurement',
   'manage_suppliers', 'manage_waste', 'approve_waste', 'manage_pos', 'manage_erp',
@@ -180,7 +183,7 @@ const managerPermissions = Object.freeze([
   'edit_special_event', 'submit_special_event', 'review_special_event',
   'approve_special_event', 'reject_special_event', 'manage_production',
   'create_production_request', 'edit_production_request', 'submit_production_request',
-  'start_production', 'complete_production', 'create_material_request', 'view_material_request',
+  'cancel_production', 'start_production', 'complete_production', 'create_material_request', 'view_material_request',
   'acknowledge_material_request', 'manage_procurement', 'approve_procurement',
   'manage_suppliers', 'manage_waste', 'approve_waste', 'manage_pos',
   'manage_forecasting', 'manage_attendance', 'approve_attendance', 'manage_quality'
@@ -199,7 +202,7 @@ const chefPermissions = Object.freeze([
   'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event',
   'edit_special_event', 'submit_special_event', 'manage_production',
   'create_production_request', 'edit_production_request', 'submit_production_request',
-  'start_production', 'complete_production', 'create_material_request',
+  'cancel_production', 'start_production', 'complete_production', 'create_material_request',
   'view_material_request', 'manage_waste', 'approve_waste', 'manage_quality'
 ]);
 

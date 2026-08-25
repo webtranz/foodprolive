@@ -27,13 +27,13 @@ export const PRODUCTION_STATUS_LABELS = Object.freeze({
 });
 
 const ALLOWED_TRANSITIONS = Object.freeze({
-  planned: Object.freeze(['pending_approval']),
-  draft: Object.freeze(['pending_approval']),
-  changes_requested: Object.freeze(['pending_approval']),
-  pending_approval: Object.freeze(['pending_procurement', 'changes_requested']),
-  pending_procurement: Object.freeze(['pending_production']),
-  pending_production: Object.freeze(['approved', 'pending_procurement', 'changes_requested']),
-  approved: Object.freeze(['pending_procurement', 'in_progress']),
+  planned: Object.freeze(['pending_approval', 'cancelled']),
+  draft: Object.freeze(['pending_approval', 'cancelled']),
+  changes_requested: Object.freeze(['pending_approval', 'cancelled']),
+  pending_approval: Object.freeze(['pending_procurement', 'changes_requested', 'cancelled']),
+  pending_procurement: Object.freeze(['pending_production', 'cancelled']),
+  pending_production: Object.freeze(['approved', 'pending_procurement', 'changes_requested', 'cancelled']),
+  approved: Object.freeze(['pending_procurement', 'in_progress', 'cancelled']),
   in_progress: Object.freeze(['completed'])
 });
 
@@ -53,7 +53,12 @@ const PRODUCTION_HISTORY_ACTION_LABELS = Object.freeze({
   production_started: 'Production Started',
   started: 'Production Started',
   production_completed: 'Production Completed',
-  completed: 'Production Completed'
+  completed: 'Production Completed',
+  inventory_committed: 'Inventory Committed at Area Approval',
+  inventory_reconciled: 'Inventory Commitment Reconciled',
+  inventory_released: 'Committed Inventory Returned',
+  production_cancelled: 'Production Cancelled',
+  cancelled: 'Production Cancelled'
 });
 
 function normalizeHistoryAction(value) {
@@ -152,6 +157,9 @@ export function getProductionTransitionPermission(currentStatus, nextStatus, opt
     typeof options === 'string' ? options : options?.reviewAction || options?.review_action
   );
   const key = `${current}->${next}`;
+  if (next === PRODUCTION_STATUS.CANCELLED && canCancelProduction(current)) {
+    return 'cancel_production';
+  }
   if (reviewAction === 'rejected') {
     if (current === 'pending_approval' && next === 'changes_requested') {
       return 'reject_production_request';
@@ -176,6 +184,22 @@ export function getProductionTransitionPermission(currentStatus, nextStatus, opt
     'approved->in_progress': 'start_production',
     'in_progress->completed': 'complete_production'
   }[key] || null;
+}
+
+export function canCancelProduction(value) {
+  const status = normalizeProductionStatus(
+    typeof value === 'object' ? value?.status : value,
+    'draft'
+  );
+  return [
+    'planned',
+    PRODUCTION_STATUS.DRAFT,
+    PRODUCTION_STATUS.CHANGES_REQUESTED,
+    PRODUCTION_STATUS.PENDING_PM_APPROVAL,
+    PRODUCTION_STATUS.PENDING_PROCUREMENT,
+    PRODUCTION_STATUS.PENDING_PRODUCTION,
+    PRODUCTION_STATUS.READY_TO_START
+  ].includes(status);
 }
 
 export function isProductionTerminalStatus(value) {

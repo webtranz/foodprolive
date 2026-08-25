@@ -52,13 +52,18 @@ import {
   invalidateRoleProfileCache
 } from './db.js';
 import {
+  canCancelProduction,
   canStartApprovedProduction,
   hasAuthoritativeNoMaterialRequirement,
   normalizeProductionStatus,
   requiresAreaProductionApproval
 } from '../shared/productionWorkflow.js';
 import { resolveProductionFulfillmentStore } from '../shared/productionFulfillment.js';
-import { authorizeEntityAction, ensureKnownEntity } from './entities.js';
+import {
+  authorizeEntityAction,
+  ensureKnownEntity,
+  sanitizeErpIntegrationConfig
+} from './entities.js';
 import { getUserEffectiveRole, hasPermission } from './entities.js';
 import {
   getPosSources,
@@ -87,10 +92,12 @@ import {
   approvePurchaseRequest,
   autoGeneratePurchaseRequestFromLowStock,
   listPurchaseOrders,
+  getPurchaseOrderById,
   createPurchaseOrder,
   approvePurchaseOrder,
   cancelPurchaseOrder,
   listGoodsReceipts,
+  getGoodsReceiptById,
   createGoodsReceipt,
   listSupplierInvoices,
   createSupplierInvoice,
@@ -102,6 +109,9 @@ import {
   adjustStock,
   transferStock,
   completeProduction,
+  reconcileProductionInventoryCommitment,
+  releaseProductionInventoryCommitment,
+  hasProductionInventoryCommitment,
   getStockOnHandReport,
   getStockMovementReport,
   getExpiryReport,
@@ -109,8 +119,19 @@ import {
   getInventoryValuationReport,
   listInventoryLots
 } from './inventory.js';
+import { getInventoryValueHistoryReport } from './inventoryValueReport.js';
+import {
+  extractD365WarehouseId,
+  stableD365Hash
+} from '../shared/d365Inventory.js';
+import { resolveAuthorizedD365PullStore } from './erpInventoryImport.js';
 import {
   exportToErp,
+  getD365ImportLogDetails,
+  importD365Ingredients,
+  importD365Inventory,
+  previewD365InventoryImport,
+  pullD365InventoryRecords,
   retryErpSync,
   listErpLogs
 } from './erpIntegration.js';
@@ -162,7 +183,10 @@ import {
   isLocationScopedEntity,
   hasUnrestrictedLocationAccess
 } from './locationScope.js';
-import { prepareEntityPayload } from './entityPreparation.js';
+import {
+  prepareEntityPayload,
+  scaleApprovedProductionSnapshot
+} from './entityPreparation.js';
 import { auditAction } from './audit.js';
 import {
   createTemplateCsv,
@@ -489,12 +513,15 @@ function invalidateEntityDataCaches(entity) {
   }
 }
 
-async function decorateEntityRecords(entity, records = []) {
+async function decorateEntityRecords(entity, records = [], user = null) {
   if (entity === 'Recipe') {
     return decorateRecipesWithServingWeights(records);
   }
   if (entity === 'Inventory') {
     return enrichIngredientItemCodes(records);
+  }
+  if (entity === 'ERPIntegrationConfig') {
+    return records.map((record) => sanitizeErpIntegrationConfig(record, user));
   }
   return records;
 }
@@ -559,6 +586,15 @@ function filterRowsByAccessibleSites(rows = [], scope, fields = ['site_id']) {
     return siteIds.length > 0
       && siteIds.every((siteId) => scope.accessibleSiteIds.has(String(siteId)));
   });
+}
+
+function assertProcurementRecordLocationAccess(record, scope, label) {
+  if (!filterRowsByAccessibleSites([record], scope).length) {
+    const error = new Error(`${label} is outside your assigned location scope`);
+    error.status = 403;
+    throw error;
+  }
+  return record;
 }
 
 function numericMatch(input, fallback = 0) {
@@ -858,19 +894,58 @@ async function assertProductionStartPrerequisites(production, executor = null, u
   return fulfillmentStore;
 }
 
+async function reconcileProductionInventoryForWorkflow({
+  production,
+  user,
+  executor,
+  fulfillmentStore = null,
+  siteCatalog = null,
+  desiredIngredients = null,
+  operation,
+  reason = '',
+  expectedRevision = null,
+  targetServings = null
+}) {
+  const sites = siteCatalog || await listDocuments('Site', { limit: 5000 }, executor);
+  const store = fulfillmentStore || resolveProductionFulfillmentStore(production, sites);
+  const [ingredients, inventory] = await Promise.all([
+    listDocuments('Ingredient', { limit: 10000 }, executor),
+    listDocuments('Inventory', {
+      filters: { site_id: store.id },
+      limit: 10000
+    }, executor)
+  ]);
+  return reconcileProductionInventoryCommitment({
+    production,
+    actor: user,
+    desiredIngredients: desiredIngredients ?? production.ingredients_used ?? [],
+    operation,
+    reason,
+    allowShortage: false,
+    expectedRevision,
+    siteCatalog: sites,
+    ingredientCatalog: ingredients,
+    inventoryCatalog: inventory,
+    fulfillmentStore: store,
+    targetServings: targetServings ?? production.target_servings ?? null
+  }, executor);
+}
+
 async function syncMaterialRequestForProduction(
   user,
   production,
   mode = 'draft',
   executor = null,
-  forceFreshAcknowledgement = false
+  forceFreshAcknowledgement = false,
+  preserveApprovedSnapshot = false
 ) {
   if (!production?.id) {
     return null;
   }
 
   if (
-    production.yield_snapshot_source !== 'server_recipe_expansion'
+    !preserveApprovedSnapshot
+    && production.yield_snapshot_source !== 'server_recipe_expansion'
     && production.recipe_id
     && String(production.status || '').toLowerCase() !== 'completed'
   ) {
@@ -3242,7 +3317,7 @@ app.get('/api/entities/:entity', requireAuth, async (request, response, next) =>
     const limitedRecords = shouldScopeUsersBeforeLimit && Number.isFinite(limit)
       ? scopedRecords.slice(0, Math.max(0, limit))
       : scopedRecords;
-    response.json(await decorateEntityRecords(entity, limitedRecords));
+    response.json(await decorateEntityRecords(entity, limitedRecords, request.user));
   } catch (error) {
     next(error);
   }
@@ -3266,7 +3341,7 @@ app.post('/api/entities/:entity/filter', requireAuth, async (request, response, 
     const limitedRecords = shouldScopeUsersBeforeLimit && Number.isFinite(requestedLimit)
       ? scopedRecords.slice(0, Math.max(0, requestedLimit))
       : scopedRecords;
-    response.json(await decorateEntityRecords(entity, limitedRecords));
+    response.json(await decorateEntityRecords(entity, limitedRecords, request.user));
   } catch (error) {
     next(error);
   }
@@ -3300,7 +3375,7 @@ app.post('/api/entities/:entity/page', requireAuth, async (request, response, ne
       pageResult.items = await scopeEntityRecords(request.user, entity, pageResult.items, scope);
     }
 
-    const items = await decorateEntityRecords(entity, pageResult.items);
+    const items = await decorateEntityRecords(entity, pageResult.items, request.user);
     const totalPages = Math.ceil(pageResult.total_count / limit);
     return response.json({
       items,
@@ -3328,7 +3403,7 @@ app.get('/api/entities/:entity/:id', requireAuth, async (request, response, next
     if (!scopedRecord) {
       return response.status(403).json({ message: 'You do not have access to this record' });
     }
-    response.json((await decorateEntityRecords(entity, [scopedRecord]))[0]);
+    response.json((await decorateEntityRecords(entity, [scopedRecord], request.user))[0]);
   } catch (error) {
     next(error);
   }
@@ -3370,7 +3445,7 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
       details: { input: request.body || {}, created_record: record }
     });
 
-    response.status(201).json((await decorateEntityRecords(entity, [record]))[0]);
+    response.status(201).json((await decorateEntityRecords(entity, [record], request.user))[0]);
   } catch (error) {
     next(error);
   }
@@ -3396,6 +3471,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       ? null
       : await prepareEntityPayload(request.user, entity, request.body || {}, existing);
     let updated;
+    let productionInventoryMutated = false;
     if (entity === 'Production') {
       updated = await withTransaction(async (client) => {
         const lockedExisting = await findDocument(entity, request.params.id, client, true);
@@ -3427,8 +3503,22 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
           && normalizeProductionStatus(lockedExisting.status) !== 'in_progress'
         ) {
           const fulfillmentStore = await assertProductionStartPrerequisites(lockedExisting, client, request.user);
+          const commitmentResult = await reconcileProductionInventoryForWorkflow({
+            production: lockedExisting,
+            user: request.user,
+            executor: client,
+            fulfillmentStore,
+            operation: hasProductionInventoryCommitment(lockedExisting)
+              ? 'start_validation'
+              : 'legacy_start_commitment',
+            reason: hasProductionInventoryCommitment(lockedExisting)
+              ? 'Validated Area Manager inventory posting before production start.'
+              : 'Legacy approved production inventory posted before production start.'
+          });
+          productionInventoryMutated = productionInventoryMutated || commitmentResult.mutated;
           transactionPayload = {
             ...transactionPayload,
+            ...commitmentResult.production_patch,
             fulfillment_store_id: fulfillmentStore.id,
             fulfillment_store_name: fulfillmentStore.name || null
           };
@@ -3455,6 +3545,11 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
     }
     invalidateEntityAccessCaches(entity);
     recordChanged(entity);
+    if (productionInventoryMutated) {
+      recordChanged('Inventory');
+      recordChanged('InventoryLot');
+      recordChanged('InventoryTransaction');
+    }
 
     await auditAction({
       user: request.user,
@@ -3466,7 +3561,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       details: { before: existing, input: request.body || {}, after: updated }
     });
 
-    return response.json((await decorateEntityRecords(entity, [updated]))[0]);
+    return response.json((await decorateEntityRecords(entity, [updated], request.user))[0]);
   } catch (error) {
     next(error);
   }
@@ -3580,6 +3675,12 @@ app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrat
       if (!['keep_existing', 'replace_existing', 'delete_existing'].includes(importMode)) {
         await cleanupUploadedFile();
         return response.status(400).json({ message: 'Invalid import mode.' });
+      }
+      if (definition.entity === 'Inventory' && importMode !== 'keep_existing') {
+        await cleanupUploadedFile();
+        return response.status(409).json({
+          message: 'Inventory uploads are additive receipts. Replace and delete modes are disabled to preserve batches and movement history.'
+        });
       }
       if (importMode !== 'delete_existing' && !request.file) {
         return response.status(400).json({ message: 'Select a CSV file to upload.' });
@@ -4400,17 +4501,38 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
         throw error;
       }
 
+      const approvalNote = String(request.body?.notes || '').trim() || null;
+      const commitmentResult = await reconcileProductionInventoryForWorkflow({
+        production: currentProduction,
+        user: request.user,
+        executor: client,
+        fulfillmentStore,
+        siteCatalog,
+        operation: areaApprovalWasAlreadyRecorded
+          ? 'approved_record_commitment_repair'
+          : 'area_manager_approval',
+        reason: approvalNote || 'Inventory posted when the Area Manager approved production.'
+      });
+
       if (areaApprovalWasAlreadyRecorded) {
+        const record = commitmentResult.mutated
+          ? await updateDocument('Production', currentProduction.id, commitmentResult.production_patch, client)
+          : currentProduction;
         return {
-          record: currentProduction,
-          mutated: repairedApprovedRecord,
-          action: repairedApprovedRecord ? 'approved_record_repaired' : 'already_approved'
+          record,
+          mutated: repairedApprovedRecord || commitmentResult.mutated,
+          inventoryMutated: commitmentResult.mutated,
+          action: commitmentResult.mutated
+            ? 'approved_inventory_reconciled'
+            : repairedApprovedRecord
+              ? 'approved_record_repaired'
+              : 'already_approved'
         };
       }
 
       const approvedAt = new Date().toISOString();
-      const approvalNote = String(request.body?.notes || '').trim() || null;
       const record = await updateDocument('Production', lockedProduction.id, {
+        ...commitmentResult.production_patch,
         status: 'approved',
         area_approval_status: 'approved',
         area_approved_by: request.user.email,
@@ -4437,16 +4559,28 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
           timestamp: approvedAt
         })
       }, client);
-      return { record, mutated: true, action: 'area_approved' };
+      return {
+        record,
+        mutated: true,
+        inventoryMutated: commitmentResult.mutated,
+        action: 'area_approved'
+      };
     });
 
     if (result.mutated) {
       recordChanged('Production');
       if (result.action === 'reconciled_to_procurement') recordChanged('MaterialRequest');
+      if (result.inventoryMutated) {
+        recordChanged('Inventory');
+        recordChanged('InventoryLot');
+        recordChanged('InventoryTransaction');
+      }
       await auditAction({
         user: request.user,
         action: result.action === 'area_approved'
           ? 'PRODUCTION_AREA_APPROVED'
+          : result.action === 'approved_inventory_reconciled'
+            ? 'PRODUCTION_APPROVED_INVENTORY_RECONCILED'
           : result.action === 'approved_record_repaired'
             ? 'PRODUCTION_APPROVED_WORKFLOW_REPAIRED'
             : 'PRODUCTION_LEGACY_WORKFLOW_RECONCILED',
@@ -4465,6 +4599,272 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
   }
 });
 
+app.patch('/api/productions/:id/approved-quantity', requireAuth, requireAnyPermission([
+  'adjust_approved_production',
+  'approve_production'
+]), async (request, response, next) => {
+  try {
+    const reason = String(request.body?.reason || '').trim();
+    const targetServings = Number(request.body?.target_servings);
+    const expectedRevision = Number(request.body?.expected_revision);
+    if (!reason) return response.status(400).json({ message: 'A reason is required for an approved quantity change.' });
+    if (!Number.isFinite(targetServings) || targetServings <= 0) {
+      return response.status(400).json({ message: 'Revised production servings must be greater than zero.' });
+    }
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+      return response.status(400).json({ message: 'The current inventory commitment revision is required. Reload the production request and retry.' });
+    }
+
+    const { production, scope } = await getScopedProduction(request, request.params.id);
+    if (!production) return response.status(404).json({ message: 'Production record not found' });
+
+    const result = await withTransaction(async (client) => {
+      const lockedProduction = await findDocument('Production', request.params.id, client, true);
+      if (!lockedProduction || !filterRowsByAccessibleSites(
+        [lockedProduction],
+        scope,
+        ['site_id', 'fulfillment_store_id']
+      ).length) {
+        const error = new Error('You do not have access to this production record');
+        error.status = 403;
+        throw error;
+      }
+      if (normalizeProductionStatus(lockedProduction.status) !== 'approved') {
+        const error = new Error('Only an approved production that has not started can be quantity-adjusted');
+        error.status = 409;
+        throw error;
+      }
+      if (Math.abs(Number(lockedProduction.target_servings || 0) - targetServings) < 0.000001) {
+        const error = new Error('The revised production quantity is unchanged');
+        error.status = 409;
+        throw error;
+      }
+
+      const approvedSnapshot = scaleApprovedProductionSnapshot(lockedProduction, targetServings);
+      const siteCatalog = await listDocuments('Site', { limit: 5000 }, client);
+      const fulfillmentStore = resolveProductionFulfillmentStore(lockedProduction, siteCatalog);
+      // Keep the acknowledged procurement snapshot aligned with the revised,
+      // yield-adjusted demand. A quantity adjustment does not silently reopen
+      // approval, but it must never leave an old Material Request behind.
+      await syncMaterialRequestForProduction(request.user, {
+        ...lockedProduction,
+        ...approvedSnapshot,
+        status: 'pending_procurement',
+        fulfillment_store_id: fulfillmentStore.id,
+        fulfillment_store_name: fulfillmentStore.name || null
+      }, 'activate', client, false, true);
+      const synchronizedProduction = await findDocument('Production', lockedProduction.id, client, true);
+      const commitmentResult = await reconcileProductionInventoryForWorkflow({
+        production: synchronizedProduction || lockedProduction,
+        user: request.user,
+        executor: client,
+        fulfillmentStore,
+        siteCatalog,
+        desiredIngredients: approvedSnapshot.ingredients_used,
+        operation: 'approved_quantity_adjustment',
+        reason,
+        expectedRevision,
+        targetServings
+      });
+      const adjustedAt = new Date().toISOString();
+      const direction = targetServings > Number(lockedProduction.target_servings || 0)
+        ? 'increased'
+        : 'reduced';
+      const record = await updateDocument('Production', lockedProduction.id, {
+        status: 'approved',
+        area_approval_status: 'approved',
+        target_servings: approvedSnapshot.target_servings,
+        recipe_name: approvedSnapshot.recipe_name,
+        ingredients_used: approvedSnapshot.ingredients_used,
+        estimated_batch_cost: approvedSnapshot.estimated_batch_cost,
+        estimated_cost_per_serving: approvedSnapshot.estimated_cost_per_serving,
+        yield_adjustment_applied: approvedSnapshot.yield_adjustment_applied,
+        yield_adjustment_version: approvedSnapshot.yield_adjustment_version,
+        yield_adjustment_updated_at: approvedSnapshot.yield_adjustment_updated_at,
+        yield_snapshot_source: approvedSnapshot.yield_snapshot_source,
+        production_warnings: approvedSnapshot.production_warnings,
+        inventory_approved_snapshot: approvedSnapshot.inventory_approved_snapshot,
+        ...commitmentResult.production_patch,
+        last_review_action: 'production_quantity_adjusted',
+        approval_history: appendProductionApprovalHistory(lockedProduction, {
+          action: `production_quantity_${direction}`,
+          stage: 'area_manager_inventory_reconciliation',
+          from_status: 'approved',
+          to_status: 'approved',
+          actor_id: request.user.id || null,
+          actor_email: request.user.email || null,
+          actor_name: request.user.full_name || request.user.email || null,
+          reason,
+          note: `${lockedProduction.target_servings || 0} → ${targetServings} servings`,
+          timestamp: adjustedAt
+        })
+      }, client);
+      return {
+        record,
+        inventoryMutated: commitmentResult.mutated,
+        materialRequestMutated: true,
+        direction
+      };
+    });
+
+    recordChanged('Production');
+    if (result.materialRequestMutated) recordChanged('MaterialRequest');
+    if (result.inventoryMutated) {
+      recordChanged('Inventory');
+      recordChanged('InventoryLot');
+      recordChanged('InventoryTransaction');
+    }
+    await auditAction({
+      user: request.user,
+      action: 'PRODUCTION_APPROVED_QUANTITY_RECONCILED',
+      entity: 'Production',
+      entityId: result.record.id,
+      details: {
+        direction: result.direction,
+        previous_target_servings: production.target_servings,
+        target_servings: result.record.target_servings,
+        commitment_revision: result.record.inventory_commitment_revision,
+        reason,
+        saved_record: result.record
+      }
+    });
+    response.json((await decorateEntityRecords('Production', [result.record]))[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/productions/:id/cancel', requireAuth, requirePermission('cancel_production'), async (request, response, next) => {
+  try {
+    const reason = String(request.body?.reason || '').trim();
+    if (!reason) return response.status(400).json({ message: 'A cancellation reason is required.' });
+    const { production, scope } = await getScopedProduction(request, request.params.id);
+    if (!production) return response.status(404).json({ message: 'Production record not found' });
+
+    const result = await withTransaction(async (client) => {
+      const lockedProduction = await findDocument('Production', request.params.id, client, true);
+      if (!lockedProduction || !filterRowsByAccessibleSites(
+        [lockedProduction],
+        scope,
+        ['site_id', 'fulfillment_store_id']
+      ).length) {
+        const error = new Error('You do not have access to this production record');
+        error.status = 403;
+        throw error;
+      }
+      const status = normalizeProductionStatus(lockedProduction.status);
+      if (status === 'cancelled') {
+        return { record: lockedProduction, mutated: false, inventoryMutated: false, materialRequestMutated: false };
+      }
+      if (!canCancelProduction(status)) {
+        const error = new Error('Production cannot be cancelled from its current workflow status');
+        error.status = 409;
+        throw error;
+      }
+
+      let commitmentResult = {
+        mutated: false,
+        production_patch: {}
+      };
+      if (hasProductionInventoryCommitment(lockedProduction)) {
+        const sites = await listDocuments('Site', { limit: 5000 }, client);
+        const fulfillmentStore = resolveProductionFulfillmentStore(lockedProduction, sites);
+        const [ingredients, inventory] = await Promise.all([
+          listDocuments('Ingredient', { limit: 10000 }, client),
+          listDocuments('Inventory', {
+            filters: { site_id: fulfillmentStore.id },
+            limit: 10000
+          }, client)
+        ]);
+        commitmentResult = await releaseProductionInventoryCommitment({
+          production: lockedProduction,
+          actor: request.user,
+          reason,
+          operation: 'cancellation',
+          siteCatalog: sites,
+          ingredientCatalog: ingredients,
+          inventoryCatalog: inventory,
+          fulfillmentStore,
+          targetServings: 0
+        }, client);
+      }
+
+      let materialRequestMutated = false;
+      if (lockedProduction.linked_material_request_id) {
+        const materialRequest = await findDocument(
+          'MaterialRequest',
+          lockedProduction.linked_material_request_id,
+          client,
+          true
+        );
+        if (materialRequest && String(materialRequest.status || '').toLowerCase() !== 'cancelled') {
+          await updateDocument('MaterialRequest', materialRequest.id, {
+            status: 'cancelled',
+            cancellation_reason: reason,
+            cancelled_by: request.user.email,
+            cancelled_by_name: request.user.full_name || request.user.email,
+            cancelled_at: new Date().toISOString()
+          }, client);
+          materialRequestMutated = true;
+        }
+      }
+
+      const cancelledAt = new Date().toISOString();
+      const record = await updateDocument('Production', lockedProduction.id, {
+        ...commitmentResult.production_patch,
+        status: 'cancelled',
+        cancellation_reason: reason,
+        cancelled_by: request.user.email,
+        cancelled_by_name: request.user.full_name || request.user.email,
+        cancelled_at: cancelledAt,
+        last_review_action: 'production_cancelled',
+        approval_history: appendProductionApprovalHistory(lockedProduction, {
+          action: 'production_cancelled',
+          stage: status === 'approved' ? 'area_manager_inventory_reconciliation' : 'production_request',
+          from_status: status,
+          to_status: 'cancelled',
+          actor_id: request.user.id || null,
+          actor_email: request.user.email || null,
+          actor_name: request.user.full_name || request.user.email || null,
+          reason,
+          note: commitmentResult.mutated ? 'Committed inventory returned to its original lots.' : null,
+          timestamp: cancelledAt
+        })
+      }, client);
+      return {
+        record,
+        mutated: true,
+        inventoryMutated: commitmentResult.mutated,
+        materialRequestMutated
+      };
+    });
+
+    if (result.mutated) {
+      recordChanged('Production');
+      if (result.materialRequestMutated) recordChanged('MaterialRequest');
+      if (result.inventoryMutated) {
+        recordChanged('Inventory');
+        recordChanged('InventoryLot');
+        recordChanged('InventoryTransaction');
+      }
+      await auditAction({
+        user: request.user,
+        action: 'PRODUCTION_CANCELLED_AND_INVENTORY_RETURNED',
+        entity: 'Production',
+        entityId: result.record.id,
+        details: {
+          reason,
+          inventory_returned: result.inventoryMutated,
+          saved_record: result.record
+        }
+      });
+    }
+    response.json((await decorateEntityRecords('Production', [result.record]))[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/procurement/suppliers', requireAuth, async (_request, response, next) => {
   try {
     response.json(await listSuppliers());
@@ -4473,7 +4873,7 @@ app.get('/api/procurement/suppliers', requireAuth, async (_request, response, ne
   }
 });
 
-app.post('/api/procurement/suppliers', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/procurement/suppliers', requireAuth, requirePermission('manage_suppliers'), async (request, response, next) => {
   try {
     response.status(201).json(await createSupplier(request.body || {}));
   } catch (error) {
@@ -4481,7 +4881,7 @@ app.post('/api/procurement/suppliers', requireAuth, requireRole(['admin', 'manag
   }
 });
 
-app.patch('/api/procurement/suppliers/:id', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.patch('/api/procurement/suppliers/:id', requireAuth, requirePermission('manage_suppliers'), async (request, response, next) => {
   try {
     const updated = await updateSupplier(request.params.id, request.body || {});
     if (!updated) {
@@ -4493,7 +4893,7 @@ app.patch('/api/procurement/suppliers/:id', requireAuth, requireRole(['admin', '
   }
 });
 
-app.delete('/api/procurement/suppliers/:id', requireAuth, requireRole(['admin']), async (request, response, next) => {
+app.delete('/api/procurement/suppliers/:id', requireAuth, requirePermission('manage_suppliers'), async (request, response, next) => {
   try {
     const removed = await deleteSupplier(request.params.id);
     if (!removed) {
@@ -4514,9 +4914,10 @@ app.get('/api/procurement/requests', requireAuth, async (_request, response, nex
   }
 });
 
-app.post('/api/procurement/requests', requireAuth, async (request, response, next) => {
+app.post('/api/procurement/requests', requireAuth, requirePermission('manage_procurement'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
+    assertProcurementRecordLocationAccess(request.body || {}, scope, 'Purchase request');
     assertPayloadLocationAccess(request.user, 'MaterialRequest', request.body || {}, scope);
     response.status(201).json(await createPurchaseRequest(request.body || {}, request.user));
   } catch (error) {
@@ -4524,9 +4925,10 @@ app.post('/api/procurement/requests', requireAuth, async (request, response, nex
   }
 });
 
-app.post('/api/procurement/requests/auto-generate', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/procurement/requests/auto-generate', requireAuth, requirePermission('manage_procurement'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
+    assertProcurementRecordLocationAccess(request.body || {}, scope, 'Purchase request');
     assertPayloadLocationAccess(request.user, 'MaterialRequest', request.body || {}, scope);
     response.status(201).json(await autoGeneratePurchaseRequestFromLowStock(request.body || {}, request.user));
   } catch (error) {
@@ -4534,8 +4936,14 @@ app.post('/api/procurement/requests/auto-generate', requireAuth, requireRole(['a
   }
 });
 
-app.post('/api/procurement/requests/:id/approve', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/procurement/requests/:id/approve', requireAuth, requirePermission('approve_procurement'), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    const existing = await getPurchaseRequestById(request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Purchase request not found' });
+    }
+    assertProcurementRecordLocationAccess(existing, scope, 'Purchase request');
     const updated = await approvePurchaseRequest(request.params.id, { ...(request.body || {}), status: 'approved' }, request.user);
     if (!updated) {
       return response.status(404).json({ message: 'Purchase request not found' });
@@ -4546,8 +4954,14 @@ app.post('/api/procurement/requests/:id/approve', requireAuth, requireRole(['adm
   }
 });
 
-app.post('/api/procurement/requests/:id/reject', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/procurement/requests/:id/reject', requireAuth, requirePermission('approve_procurement'), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    const existing = await getPurchaseRequestById(request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Purchase request not found' });
+    }
+    assertProcurementRecordLocationAccess(existing, scope, 'Purchase request');
     const updated = await approvePurchaseRequest(request.params.id, { ...(request.body || {}), status: 'rejected' }, request.user);
     if (!updated) {
       return response.status(404).json({ message: 'Purchase request not found' });
@@ -4567,19 +4981,41 @@ app.get('/api/procurement/orders', requireAuth, async (_request, response, next)
   }
 });
 
-app.post('/api/procurement/orders', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/procurement/orders', requireAuth, requirePermission('manage_procurement'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
-    assertPayloadLocationAccess(request.user, 'PurchaseOrder', request.body || {}, scope);
+    const linkedRequest = request.body?.request_id
+      ? await getPurchaseRequestById(request.body.request_id)
+      : null;
+    if (request.body?.request_id && !linkedRequest) {
+      return response.status(404).json({ message: 'Purchase request not found' });
+    }
+    assertProcurementRecordLocationAccess(linkedRequest || request.body || {}, scope, 'Purchase order');
+    assertPayloadLocationAccess(
+      request.user,
+      'PurchaseOrder',
+      linkedRequest || request.body || {},
+      scope
+    );
     response.status(201).json(await createPurchaseOrder(request.body || {}, request.user));
   } catch (error) {
     next(error);
   }
 });
 
-app.post('/api/procurement/orders/:id/approve', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/procurement/orders/:id/approve', requireAuth, requirePermission('approve_procurement'), async (request, response, next) => {
   try {
-    const updated = await approvePurchaseOrder(request.params.id, request.body || {}, request.user);
+    const scope = await getLocationScope(request.user);
+    const existing = await getPurchaseOrderById(request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Purchase order not found' });
+    }
+    assertProcurementRecordLocationAccess(existing, scope, 'Purchase order');
+    const updated = await approvePurchaseOrder(
+      request.params.id,
+      { ...(request.body || {}), status: 'approved' },
+      request.user
+    );
     if (!updated) {
       return response.status(404).json({ message: 'Purchase order not found' });
     }
@@ -4589,8 +5025,14 @@ app.post('/api/procurement/orders/:id/approve', requireAuth, requireRole(['admin
   }
 });
 
-app.post('/api/procurement/orders/:id/cancel', requireAuth, requireRole(['admin']), async (request, response, next) => {
+app.post('/api/procurement/orders/:id/cancel', requireAuth, requirePermission('approve_procurement'), async (request, response, next) => {
   try {
+    const scope = await getLocationScope(request.user);
+    const existing = await getPurchaseOrderById(request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Purchase order not found' });
+    }
+    assertProcurementRecordLocationAccess(existing, scope, 'Purchase order');
     const updated = await cancelPurchaseOrder(request.params.id, request.body || {}, request.user);
     if (!updated) {
       return response.status(404).json({ message: 'Purchase order not found' });
@@ -4610,11 +5052,18 @@ app.get('/api/procurement/receipts', requireAuth, async (_request, response, nex
   }
 });
 
-app.post('/api/procurement/receipts', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/procurement/receipts', requireAuth, requirePermission('manage_procurement'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
-    assertPayloadLocationAccess(request.user, 'PurchaseOrder', request.body || {}, scope);
-    response.status(201).json(await createGoodsReceipt(request.body || {}, request.user));
+    const purchaseOrder = request.body?.purchase_order_id
+      ? await getPurchaseOrderById(request.body.purchase_order_id)
+      : null;
+    if (!purchaseOrder) {
+      return response.status(404).json({ message: 'Purchase order not found' });
+    }
+    assertProcurementRecordLocationAccess(purchaseOrder, scope, 'Purchase order');
+    assertPayloadLocationAccess(request.user, 'PurchaseOrder', purchaseOrder, scope);
+    response.status(201).json(await createGoodsReceipt(request.body || {}, request.user, scope));
   } catch (error) {
     next(error);
   }
@@ -4629,10 +5078,33 @@ app.get('/api/procurement/invoices', requireAuth, async (_request, response, nex
   }
 });
 
-app.post('/api/procurement/invoices', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/procurement/invoices', requireAuth, requirePermission('manage_procurement'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
-    assertPayloadLocationAccess(request.user, 'PurchaseOrder', request.body || {}, scope);
+    const receipt = request.body?.goods_receipt_id
+      ? await getGoodsReceiptById(request.body.goods_receipt_id)
+      : null;
+    if (request.body?.goods_receipt_id && !receipt) {
+      return response.status(404).json({ message: 'Goods receipt not found' });
+    }
+    const purchaseOrderId = request.body?.purchase_order_id || receipt?.purchase_order_id;
+    const purchaseOrder = purchaseOrderId
+      ? await getPurchaseOrderById(purchaseOrderId)
+      : null;
+    if (purchaseOrderId && !purchaseOrder) {
+      return response.status(404).json({ message: 'Purchase order not found' });
+    }
+    if (receipt) {
+      assertProcurementRecordLocationAccess(receipt, scope, 'Goods receipt');
+    }
+    if (purchaseOrder) {
+      assertProcurementRecordLocationAccess(purchaseOrder, scope, 'Purchase order');
+    }
+    if (!receipt && !purchaseOrder && !scope.unrestricted) {
+      const error = new Error('A supplier invoice must reference a purchase order or goods receipt in your location scope');
+      error.status = 403;
+      throw error;
+    }
     response.status(201).json(await createSupplierInvoice(request.body || {}, request.user));
   } catch (error) {
     next(error);
@@ -4650,7 +5122,7 @@ app.get('/api/procurement/price-comparison', requireAuth, async (request, respon
   }
 });
 
-app.get('/api/procurement/performance', requireAuth, requireRole(['admin', 'manager']), async (_request, response, next) => {
+app.get('/api/procurement/performance', requireAuth, requireAnyPermission(['manage_procurement', 'approve_procurement']), async (_request, response, next) => {
   try {
     const scope = await getLocationScope(_request.user);
     response.json(filterRowsByAccessibleSites(await getSupplierPerformanceDashboard(), scope));
@@ -4659,7 +5131,7 @@ app.get('/api/procurement/performance', requireAuth, requireRole(['admin', 'mana
   }
 });
 
-app.post('/api/inventory/receive', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/inventory/receive', requireAuth, requirePermission('manage_inventory'), async (request, response, next) => {
   try {
     if (isBulkInventoryUpload(request.body || {})) {
       assertBulkUploadAdministrator(request.user);
@@ -4675,7 +5147,7 @@ app.post('/api/inventory/receive', requireAuth, requireRole(['admin', 'manager']
   }
 });
 
-app.post('/api/inventory/adjust', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/inventory/adjust', requireAuth, requirePermission('manage_inventory'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     const inventoryRecord = request.body?.inventory_id ? await findDocument('Inventory', request.body.inventory_id) : null;
@@ -4691,7 +5163,7 @@ app.post('/api/inventory/adjust', requireAuth, requireRole(['admin', 'manager'])
   }
 });
 
-app.post('/api/inventory/transfer', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.post('/api/inventory/transfer', requireAuth, requirePermission('transfer_inventory'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     assertPayloadLocationAccess(request.user, 'ProductionTransfer', request.body || {}, scope);
@@ -4731,6 +5203,7 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
       recordChanged('Production');
       recordChanged('ProductionConsumptionReport');
       recordChanged('Inventory');
+      recordChanged('InventoryLot');
       recordChanged('InventoryTransaction');
       await auditAction({
         user: request.user,
@@ -4750,81 +5223,142 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
   }
 });
 
-app.get('/api/inventory/lots', requireAuth, async (request, response, next) => {
+app.get('/api/inventory/lots', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
-    const scope = await getLocationScope(request.user);
+    const { scope, location } = await getEntityLocationContext(request.user, 'InventoryLot');
     const lots = await listInventoryLots({
       siteId: request.query.site_id,
       ingredientId: request.query.ingredient_id,
-      includeEmpty: request.query.include_empty === 'true'
+      includeEmpty: request.query.include_empty === 'true',
+      location
     });
-    response.json(filterRowsByAccessibleSites(lots, scope));
+    response.json(scope ? filterRowsByAccessibleSites(lots, scope) : lots);
   } catch (error) {
     next(error);
   }
 });
 
-app.get('/api/inventory/reports/stock-on-hand', requireAuth, async (request, response, next) => {
+app.get('/api/inventory/reports/stock-on-hand', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
-    const scope = await getLocationScope(request.user);
-    response.json(filterRowsByAccessibleSites(await getStockOnHandReport(), scope));
+    const { scope, location } = await getEntityLocationContext(request.user, 'Inventory');
+    const report = await getStockOnHandReport({ location });
+    response.json(scope ? filterRowsByAccessibleSites(report, scope) : report);
   } catch (error) {
     next(error);
   }
 });
 
-app.get('/api/inventory/reports/movements', requireAuth, async (request, response, next) => {
+app.get('/api/inventory/reports/movements', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
-    const scope = await getLocationScope(request.user);
+    const { scope, location } = await getEntityLocationContext(request.user, 'InventoryTransaction');
     const report = await getStockMovementReport({
       siteId: request.query.site_id,
       ingredientId: request.query.ingredient_id,
       dateFrom: request.query.date_from,
-      dateTo: request.query.date_to
+      dateTo: request.query.date_to,
+      location
     });
-    response.json(filterRowsByAccessibleSites(report, scope));
+    response.json(scope ? filterRowsByAccessibleSites(report, scope) : report);
   } catch (error) {
     next(error);
   }
 });
 
-app.get('/api/inventory/reports/expiry', requireAuth, async (request, response, next) => {
+app.get('/api/inventory/reports/expiry', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
-    const scope = await getLocationScope(request.user);
+    const { scope, location } = await getEntityLocationContext(request.user, 'InventoryLot');
     const report = await getExpiryReport({
-      thresholdDays: request.query.threshold_days ? Number(request.query.threshold_days) : 30
+      thresholdDays: request.query.threshold_days ? Number(request.query.threshold_days) : 30,
+      location
     });
-    response.json(filterRowsByAccessibleSites(report, scope));
+    response.json(scope ? filterRowsByAccessibleSites(report, scope) : report);
   } catch (error) {
     next(error);
   }
 });
 
-app.get('/api/inventory/reports/velocity', requireAuth, async (request, response, next) => {
+app.get('/api/inventory/reports/velocity', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
-    const scope = await getLocationScope(request.user);
+    const { scope, location } = await getEntityLocationContext(request.user, 'InventoryTransaction');
     const report = await getVelocityReports({
-      days: request.query.days ? Number(request.query.days) : 30
+      days: request.query.days ? Number(request.query.days) : 30,
+      location
     });
     response.json({
-      fast_moving: filterRowsByAccessibleSites(report.fast_moving || [], scope),
-      slow_moving: filterRowsByAccessibleSites(report.slow_moving || [], scope)
+      fast_moving: scope
+        ? filterRowsByAccessibleSites(report.fast_moving || [], scope)
+        : report.fast_moving || [],
+      slow_moving: scope
+        ? filterRowsByAccessibleSites(report.slow_moving || [], scope)
+        : report.slow_moving || []
     });
   } catch (error) {
     next(error);
   }
 });
 
-app.get('/api/inventory/reports/valuation', requireAuth, async (request, response, next) => {
+app.get('/api/inventory/reports/valuation', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
-    const scope = await getLocationScope(request.user);
-    response.json(filterRowsByAccessibleSites(await getInventoryValuationReport(), scope));
+    const { scope, location } = await getEntityLocationContext(request.user, 'Inventory');
+    const report = await getInventoryValuationReport({
+      siteId: request.query.site_id,
+      ingredientId: request.query.ingredient_id,
+      location
+    });
+    response.json(scope ? filterRowsByAccessibleSites(report, scope) : report);
   } catch (error) {
     next(error);
   }
 });
 
-app.post('/api/erp/export', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.get('/api/inventory/reports/value-history', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
+  try {
+    const { scope, location } = await getEntityLocationContext(request.user, 'Inventory');
+    const reportRows = await getInventoryValueHistoryReport({
+      siteId: request.query.site_id,
+      ingredientId: request.query.ingredient_id,
+      dateFrom: request.query.date_from,
+      dateTo: request.query.date_to,
+      location
+    });
+    const rows = scope ? filterRowsByAccessibleSites(reportRows, scope) : reportRows;
+    response.json({
+      rows,
+      date_from: request.query.date_from || null,
+      date_to: request.query.date_to || null,
+      summary: rows.reduce((summary, row) => ({
+        opening_value: summary.opening_value + Number(row.opening_value || 0),
+        closing_value: summary.closing_value + Number(row.closing_value || 0),
+        addition_quantity: summary.addition_quantity + Number(row.addition_quantity || 0),
+        addition_value: summary.addition_value + Number(row.addition_value || 0),
+        consumption_quantity: summary.consumption_quantity + Number(row.consumption_quantity || 0),
+        consumption_value: summary.consumption_value + Number(row.consumption_value || 0),
+        return_quantity: summary.return_quantity + Number(row.return_quantity || 0),
+        return_value: summary.return_value + Number(row.return_value || 0),
+        correction_quantity: summary.correction_quantity + Number(row.correction_quantity || 0),
+        correction_value: summary.correction_value + Number(row.correction_value || 0),
+        valuation_reallocation_value: summary.valuation_reallocation_value
+          + Number(row.valuation_reallocation_value || 0)
+      }), {
+        opening_value: 0,
+        closing_value: 0,
+        addition_quantity: 0,
+        addition_value: 0,
+        consumption_quantity: 0,
+        consumption_value: 0,
+        return_quantity: 0,
+        return_value: 0,
+        correction_quantity: 0,
+        correction_value: 0,
+        valuation_reallocation_value: 0
+      })
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/erp/export', requireAuth, requirePermission('manage_erp'), async (request, response, next) => {
   try {
     response.json(await exportToErp({
       user: request.user,
@@ -4841,7 +5375,213 @@ app.post('/api/erp/export', requireAuth, requireRole(['admin', 'manager']), asyn
   }
 });
 
-app.get('/api/erp/logs', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+async function buildD365InventoryImportRequest(request, { dryRun = false } = {}) {
+  const body = request.body || {};
+  const scope = await getLocationScope(request.user);
+  const directRecords = Array.isArray(body.records) ? body.records : [];
+  const isBoundPreview = Boolean(body.preview_fingerprint);
+  let pulled = null;
+  let requestedWarehouseId = String(body.warehouse_id || '').trim();
+
+  if (isBoundPreview && directRecords.length === 0) {
+    const error = new Error('Preview-bound inventory import records are required');
+    error.status = 409;
+    throw error;
+  }
+
+  if (directRecords.length === 0) {
+    const locationId = String(body.location_id || '').trim();
+    const sites = await listDocuments('Site', { limit: 10000 });
+    const authorizedStore = resolveAuthorizedD365PullStore(sites, {
+      location_id: locationId,
+      warehouse_id: requestedWarehouseId,
+      scope
+    });
+    requestedWarehouseId = authorizedStore.warehouse_id;
+    pulled = await pullD365InventoryRecords({
+      configId: body.config_id || null,
+      mode: body.quantity_semantics || body.sync_mode || 'snapshot',
+      warehouse_id: requestedWarehouseId,
+      start_date: body.start_date || body.stock_date || '',
+      end_date: body.end_date || '',
+      sync_id: body.sync_id || ''
+    });
+  }
+
+  const inputRecords = directRecords.length > 0 ? directRecords : pulled?.records || [];
+  if (requestedWarehouseId) {
+    inputRecords.forEach((record, index) => {
+      const rowWarehouseId = extractD365WarehouseId(record);
+      if (pulled && (!rowWarehouseId || rowWarehouseId.toLowerCase() !== requestedWarehouseId.toLowerCase())) {
+        const error = new Error(
+          `D365 inventory pull returned row ${index + 1} outside the selected Store; no rows were imported`
+        );
+        error.status = 409;
+        throw error;
+      }
+      if (!pulled && rowWarehouseId && rowWarehouseId.toLowerCase() !== requestedWarehouseId.toLowerCase()) {
+        const error = new Error(
+          `D365 row ${index + 1} warehouse ${rowWarehouseId} does not match selected warehouse ${requestedWarehouseId}`
+        );
+        error.status = 409;
+        throw error;
+      }
+    });
+  }
+  const records = isBoundPreview
+    ? inputRecords.map((record) => ({ ...(record || {}) }))
+    : inputRecords.map((record) => ({
+      ...(requestedWarehouseId ? { warehouse_id: requestedWarehouseId } : {}),
+      ...(body.batch_number ? { batch_number: body.batch_number } : {}),
+      ...(body.stock_date ? { stock_date: body.stock_date } : {}),
+      ...(body.expiry_date ? { expiry_date: body.expiry_date } : {}),
+      ...(body.unit_cost !== undefined && body.unit_cost !== '' && body.unit_cost !== null
+        ? { unit_cost: body.unit_cost }
+        : {}),
+      ...(record || {})
+    }));
+
+  const payload = {
+    ...(pulled || {}),
+    ...body,
+    records,
+    sync_id: body.sync_id || pulled?.sync_id || '',
+    source_system: body.source_system || pulled?.source_system || 'd365',
+    quantity_semantics: body.quantity_semantics
+      || body.sync_mode
+      || pulled?.quantity_semantics
+      || 'snapshot',
+    received_at: body.received_at || pulled?.received_at || new Date().toISOString(),
+    config_id: body.config_id || pulled?.config_id || null,
+    user: request.user,
+    scope,
+    dry_run: dryRun
+  };
+  if (isBoundPreview) {
+    const actualFingerprint = stableD365Hash({
+      records: payload.records,
+      sync_id: payload.sync_id,
+      source_system: payload.source_system,
+      quantity_semantics: payload.quantity_semantics,
+      received_at: payload.received_at,
+      config_id: payload.config_id,
+      warehouse_id: requestedWarehouseId,
+      notes: String(payload.notes || '').trim()
+    });
+    if (actualFingerprint !== body.preview_fingerprint) {
+      const error = new Error('The D365 inventory preview payload changed. Pull a new preview before applying.');
+      error.status = 409;
+      throw error;
+    }
+  }
+  return payload;
+}
+
+app.post(
+  '/api/erp/import/inventory/preview',
+  requireAuth,
+  requirePermission('manage_erp'),
+  requirePermission('manage_inventory'),
+  async (request, response, next) => {
+    try {
+      const payload = await buildD365InventoryImportRequest(request, { dryRun: true });
+      const result = await previewD365InventoryImport(payload);
+      const importPayload = {
+        records: payload.records,
+        sync_id: payload.sync_id,
+        source_system: payload.source_system,
+        quantity_semantics: payload.quantity_semantics,
+        received_at: payload.received_at,
+        config_id: payload.config_id,
+        warehouse_id: String(request.body?.warehouse_id || '').trim(),
+        notes: String(payload.notes || '').trim()
+      };
+      const previewFingerprint = stableD365Hash(importPayload);
+      response.json({
+        ...result,
+        import_payload: {
+          ...importPayload,
+          preview_fingerprint: previewFingerprint
+        },
+        preview_fingerprint: previewFingerprint
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.post(
+  '/api/erp/import/inventory',
+  requireAuth,
+  requirePermission('manage_erp'),
+  requirePermission('manage_inventory'),
+  async (request, response, next) => {
+    try {
+      const payload = await buildD365InventoryImportRequest(request);
+      const result = await importD365Inventory(payload);
+      recordChanged('ERPIntegrationLog');
+      if (Number(result.summary?.applied_rows || 0) > 0) {
+        recordChanged('Inventory');
+        recordChanged('InventoryLot');
+        recordChanged('InventoryTransaction');
+      }
+      await auditAction({
+        user: request.user,
+        action: 'D365_INVENTORY_IMPORTED',
+        entity: 'ERPIntegrationLog',
+        entityId: result.log?.id || null,
+        details: {
+          sync_id: payload.sync_id,
+          quantity_semantics: payload.quantity_semantics,
+          summary: result.summary
+        }
+      });
+      response.status(201).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.post(
+  '/api/erp/import/ingredients',
+  requireAuth,
+  requirePermission('manage_erp'),
+  requirePermission('manage_ingredients'),
+  async (request, response, next) => {
+    try {
+      const scope = await getLocationScope(request.user);
+      if (!scope.unrestricted) {
+        const error = new Error('D365 ingredient master imports require unrestricted location access');
+        error.status = 403;
+        throw error;
+      }
+      const result = await importD365Ingredients({
+        ...(request.body || {}),
+        user: request.user,
+        scope
+      });
+      recordChanged('ERPIntegrationLog');
+      if (Number(result.summary?.applied_rows || 0) > 0) recordChanged('Ingredient');
+      await auditAction({
+        user: request.user,
+        action: 'D365_INGREDIENTS_IMPORTED',
+        entity: 'ERPIntegrationLog',
+        entityId: result.log?.id || null,
+        details: {
+          sync_id: request.body?.sync_id || null,
+          summary: result.summary
+        }
+      });
+      response.status(201).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.get('/api/erp/logs', requireAuth, requirePermission('manage_erp'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     response.json(await listErpLogs(scope));
@@ -4850,7 +5590,21 @@ app.get('/api/erp/logs', requireAuth, requireRole(['admin', 'manager']), async (
   }
 });
 
-app.post('/api/erp/logs/:id/retry', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.get('/api/erp/logs/:id/rows', requireAuth, requirePermission('manage_erp'), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    response.json(await getD365ImportLogDetails(request.params.id, {
+      scope,
+      page: request.query.page,
+      limit: request.query.limit,
+      status: request.query.status || ''
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/erp/logs/:id/retry', requireAuth, requirePermission('manage_erp'), async (request, response, next) => {
   try {
     response.json(await retryErpSync(request.params.id, request.user));
   } catch (error) {

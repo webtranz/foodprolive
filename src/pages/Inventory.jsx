@@ -45,6 +45,7 @@ import StatCard from '@/components/ui/StatCard';
 import { downloadCSV } from '../components/utils/exportData';
 import { formatCurrency } from '@/lib/currency';
 import { getItemCode, getItemCodeFromRecords, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
+import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 
 const STATUS_COLORS = {
   in_stock: 'bg-emerald-100 text-emerald-700',
@@ -53,10 +54,42 @@ const STATUS_COLORS = {
   expired: 'bg-rose-100 text-rose-700'
 };
 
+const UNAVAILABLE_LOT_STATUSES = new Set([
+  'blocked', 'quarantined', 'quarantine', 'hold', 'on_hold', 'recalled', 'expired'
+]);
+
+function getLotDisplayStatus(lot) {
+  if (Number(lot?.remaining_quantity || 0) <= 0) return 'consumed';
+  const persisted = String(lot?.status || 'active').trim().toLowerCase();
+  if (lot?.expiry_date && lot.expiry_date < format(new Date(), 'yyyy-MM-dd')) return 'expired';
+  if (UNAVAILABLE_LOT_STATUSES.has(persisted)) return persisted;
+  return 'active';
+}
+
 function formatQuantity(value) {
   return Number(value || 0).toLocaleString(undefined, {
     maximumFractionDigits: 2
   });
+}
+
+function formatOptionalQuantity(value, unit = '') {
+  if (value === null || typeof value === 'undefined' || value === '') return '-';
+  const numeric = Number(value);
+  const displayValue = Number.isFinite(numeric) ? formatQuantity(numeric) : String(value);
+  return `${displayValue}${unit ? ` ${unit}` : ''}`;
+}
+
+function addUnitQuantity(summary, unit, quantity) {
+  const key = String(unit || 'unit').trim() || 'unit';
+  summary[key] = Number(summary[key] || 0) + Number(quantity || 0);
+  return summary;
+}
+
+function formatUnitQuantities(summary = {}) {
+  const entries = Object.entries(summary).filter(([, quantity]) => Math.abs(Number(quantity || 0)) > 0.000001);
+  if (entries.length === 0) return '0';
+  const visible = entries.slice(0, 4).map(([unit, quantity]) => `${formatQuantity(quantity)} ${unit}`);
+  return `${visible.join(' · ')}${entries.length > 4 ? ` · +${entries.length - 4} units` : ''}`;
 }
 
 function normalizeLookup(value) {
@@ -94,6 +127,104 @@ function excelDateToDateOnly(value) {
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
 }
 
+function getStockDate(record) {
+  return record?.stock_date || record?.received_date || record?.receipt_date || record?.transaction_date || '';
+}
+
+function getLotAgeDays(record) {
+  if (Number.isFinite(Number(record?.age_days))) return Number(record.age_days);
+  const stockDate = getStockDate(record);
+  if (!stockDate) return null;
+  const parsed = new Date(`${stockDate}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 86400000));
+}
+
+function getMovementSource(record) {
+  return record?.source_label || record?.source || record?.movement_source || record?.reference_type || record?.reason_code || record?.transaction_type || '-';
+}
+
+function getMovementLayers(record) {
+  return Array.isArray(record?.movement_layers)
+    ? record.movement_layers.filter((layer) => Number(layer?.quantity || 0) > 0)
+    : [];
+}
+
+function describeMovementLayers(record) {
+  return getMovementLayers(record).map((layer) => (
+    `${layer.batch_number || 'Unnumbered batch'}: ${formatQuantity(layer.quantity)} ${record.unit || ''}`
+    + ` (stock ${layer.stock_date || layer.received_date || '-'}, expiry ${layer.expiry_date || '-'})`
+  )).join(' | ');
+}
+
+function getMovementLayerDates(record, field) {
+  const layers = getMovementLayers(record);
+  if (layers.length > 0) {
+    return layers.map((layer, index) => ({
+      key: `${layer.inventory_lot_id || layer.batch_number || 'lot'}-${field}-${index}`,
+      batch: layer.batch_number || 'Unnumbered batch',
+      value: field === 'stock_date'
+        ? (layer.stock_date || layer.received_date || '-')
+        : (layer.expiry_date || '-')
+    }));
+  }
+  return [{
+    key: `${record?.id || record?.batch_number || 'movement'}-${field}`,
+    batch: record?.batch_number || '',
+    value: field === 'stock_date' ? (getStockDate(record) || '-') : (record?.expiry_date || '-')
+  }];
+}
+
+function describeMovementLayerDates(record, field) {
+  return getMovementLayerDates(record, field)
+    .map((entry) => `${entry.batch ? `${entry.batch}: ` : ''}${entry.value}`)
+    .join(' | ');
+}
+
+function MovementLayerDates({ movement, field }) {
+  return (
+    <div className="space-y-1 text-xs">
+      {getMovementLayerDates(movement, field).map((entry) => (
+        <p key={entry.key} className="whitespace-nowrap">
+          {entry.batch ? <span className="font-medium">{entry.batch} · </span> : null}
+          {entry.value}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function getReference(record) {
+  return record?.reference_name || record?.reference_number || record?.reference_id || record?.external_reference || '-';
+}
+
+function getOpeningQuantity(record) {
+  const value = record?.opening_quantity ?? record?.quantity_before ?? record?.opening_balance;
+  return typeof value === 'undefined' || value === null ? null : Number(value);
+}
+
+function getClosingQuantity(record) {
+  const value = record?.closing_quantity ?? record?.quantity_after ?? record?.running_balance ?? record?.closing_balance;
+  return typeof value === 'undefined' || value === null ? null : Number(value);
+}
+
+function getAdditionQuantity(record) {
+  if (record?.addition_quantity !== null && typeof record?.addition_quantity !== 'undefined') return Number(record.addition_quantity);
+  const quantity = Number(record?.quantity || 0);
+  return quantity > 0 ? quantity : 0;
+}
+
+function getConsumptionQuantity(record) {
+  if (record?.consumption_quantity !== null && typeof record?.consumption_quantity !== 'undefined') return Math.abs(Number(record.consumption_quantity));
+  const quantity = Number(record?.quantity || 0);
+  return quantity < 0 ? Math.abs(quantity) : 0;
+}
+
+function normalizeReportRows(result) {
+  if (Array.isArray(result)) return result;
+  return result?.rows || result?.items || result?.lots || result?.data || [];
+}
+
 const STARTER_STOCK_BLUEPRINT = [
   ['Chicken Breast', 32, 5.8, 'fifo', 4],
   ['Basmati Rice', 90, 2.2, 'fifo', 90],
@@ -117,7 +248,7 @@ function resolveSiteByValue(sites, value, defaultSiteId = '') {
     normalizeLookup(site.name) === normalizedValue ||
     normalizeLookup(site.project_code) === normalizedValue ||
     normalizeLookup(site.hierarchy_path) === normalizedValue
-  )) || defaultSite;
+  )) || null;
 }
 
 function resolveIngredientByValue(ingredients, value) {
@@ -162,6 +293,7 @@ function buildBulkInventoryRows(rows, sites, ingredients, defaultSiteId = '') {
     const maxStock = maxStockRaw === '' ? null : toSafeNumber(maxStockRaw, null);
     const valuationMethod = String(pickValue(row, ['valuation_method', 'cost_method']) || 'fifo').trim() || 'fifo';
     const batchNumber = String(pickValue(row, ['batch_number', 'batch', 'lot_number', 'lot']) || '').trim();
+    const stockDate = excelDateToDateOnly(pickValue(row, ['stock_date', 'received_date', 'receipt_date'])) || format(new Date(), 'yyyy-MM-dd');
     const expiryDate = excelDateToDateOnly(pickValue(row, ['expiry_date', 'expiry', 'expiry_dt']));
     const notes = String(pickValue(row, ['notes', 'remarks', 'comment']) || '').trim();
 
@@ -172,6 +304,7 @@ function buildBulkInventoryRows(rows, sites, ingredients, defaultSiteId = '') {
       ingredient: ingredient?.name || '',
       quantity,
       unit_cost: unitCost,
+      stock_date: stockDate,
       status: !site
         ? 'Project not found'
         : !ingredient
@@ -197,6 +330,7 @@ function buildBulkInventoryRows(rows, sites, ingredients, defaultSiteId = '') {
     }
 
     items.push({
+      item_code: getItemCode(ingredient),
       site_id: site.id,
       site_name: site.name,
       ingredient_id: ingredient.id,
@@ -205,6 +339,9 @@ function buildBulkInventoryRows(rows, sites, ingredients, defaultSiteId = '') {
       unit: ingredient.unit || 'kg',
       unit_cost: unitCost,
       batch_number: batchNumber || `BULK-${Date.now()}-${index + 1}`,
+      stock_date: stockDate,
+      received_date: stockDate,
+      transaction_date: stockDate,
       expiry_date: expiryDate || null,
       min_stock_level: minStock,
       max_stock_level: typeof maxStock === 'number' ? maxStock : null,
@@ -226,6 +363,7 @@ function buildStarterStockRows(site, ingredients) {
       if (!ingredient) return null;
       const expiryDate = new Date();
       expiryDate.setDate(expiryDate.getDate() + expiryDays);
+      const stockDate = format(new Date(), 'yyyy-MM-dd');
 
       return {
         site_id: site.id,
@@ -236,6 +374,9 @@ function buildStarterStockRows(site, ingredients) {
         unit: ingredient.unit || 'kg',
         unit_cost: unitCost,
         batch_number: `START-${String(site.project_code || site.name || 'SITE').replace(/[^A-Za-z0-9]/g, '').slice(0, 10).toUpperCase()}-${String(index + 1).padStart(2, '0')}`,
+        stock_date: stockDate,
+        received_date: stockDate,
+        transaction_date: stockDate,
         expiry_date: expiryDate.toISOString().slice(0, 10),
         min_stock_level: Math.max(1, Math.round(quantity * 0.25)),
         max_stock_level: Math.round(quantity * 1.8),
@@ -471,11 +612,15 @@ function InventoryTransferDialog({
 }
 
 export default function Inventory() {
-  const { isAdmin, isManager } = usePermissions();
+  const { isAdmin, can } = usePermissions();
+  const canManageInventory = can('manage_inventory');
+  const canTransferInventory = can('transfer_inventory');
   const [selectedSite, setSelectedSite] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [lotStatus, setLotStatus] = useState('all');
+  const [lotSort, setLotSort] = useState({ key: 'stock_date', direction: 'asc' });
   const [stockDialogOpen, setStockDialogOpen] = useState(false);
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
@@ -493,6 +638,7 @@ export default function Inventory() {
     quantity: '',
     unit_cost: '',
     batch_number: '',
+    stock_date: format(new Date(), 'yyyy-MM-dd'),
     expiry_date: '',
     min_stock_level: '',
     max_stock_level: '',
@@ -508,7 +654,13 @@ export default function Inventory() {
     queryFn: () => base44.entities.Site.list()
   });
 
-  const stockSites = sites;
+  const stockSites = useMemo(
+    () => sites.filter((site) => (
+      site.is_active !== false
+      && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
+    )),
+    [sites]
+  );
 
   const { data: ingredients = [] } = useQuery({
     queryKey: ['ingredients'],
@@ -544,6 +696,18 @@ export default function Inventory() {
     queryFn: () => base44.inventory.getValuation()
   });
 
+  const supportsLotValueReport = typeof base44.inventory.getValueReport === 'function';
+  const { data: lotValueReportResult = [], isError: lotValueReportError } = useQuery({
+    queryKey: ['inventory', 'value-report', selectedSite, dateFrom, dateTo],
+    queryFn: () => base44.inventory.getValueReport({
+      site_id: selectedSite === 'all' ? '' : selectedSite,
+      date_from: dateFrom,
+      date_to: dateTo,
+      level: 'lot'
+    }),
+    enabled: supportsLotValueReport
+  });
+
   const { data: velocityReport = { fast_moving: [], slow_moving: [] } } = useQuery({
     queryKey: ['inventory', 'velocity'],
     queryFn: () => base44.inventory.getVelocity({ days: 30 })
@@ -551,7 +715,7 @@ export default function Inventory() {
 
   const { data: lots = [] } = useQuery({
     queryKey: ['inventory', 'lots'],
-    queryFn: () => base44.inventory.listLots({ include_empty: false })
+    queryFn: () => base44.inventory.listLots({ include_empty: true })
   });
 
   const ingredientById = useMemo(
@@ -577,6 +741,10 @@ export default function Inventory() {
   const codedLots = useMemo(
     () => lots.map((record) => withResolvedItemCode(record, ingredientById)),
     [ingredientById, lots]
+  );
+  const codedLotValueReport = useMemo(
+    () => normalizeReportRows(lotValueReportResult).map((record) => withResolvedItemCode(record, ingredientById)),
+    [ingredientById, lotValueReportResult]
   );
 
   useEffect(() => {
@@ -604,22 +772,48 @@ export default function Inventory() {
     nextWeek.setDate(nextWeek.getDate() + 7);
     const nextWeekStr = nextWeek.toISOString().split('T')[0];
 
+    const preStartStatuses = new Set([
+      'draft', 'planned', 'pending_approval', 'pending_procurement', 'pending_production', 'approved'
+    ]);
     productions
-      .filter((production) => production.production_date >= today && production.production_date <= nextWeekStr && production.status === 'planned')
+      .filter((production) => (
+        production.production_date >= today
+        && production.production_date <= nextWeekStr
+        && preStartStatuses.has(String(production.status || '').toLowerCase())
+      ))
       .forEach((production) => {
         (production.ingredients_used || []).forEach((ingredient) => {
-          const existing = needs.find((item) => item.ingredient_id === ingredient.ingredient_id && item.site_id === production.site_id);
+          const stockSiteId = production.fulfillment_store_id || production.site_id;
+          if (!stockSiteId) return;
+          const commitmentLine = (
+            production.inventory_commitment?.lines
+            || production.inventory_committed_lines
+            || []
+          ).find((line) => String(line.ingredient_id) === String(ingredient.ingredient_id));
+          const plannedQuantity = Number(
+            ingredient.planned_quantity
+            ?? ingredient.adjusted_quantity
+            ?? ingredient.required_quantity
+            ?? ingredient.quantity
+            ?? 0
+          );
+          const requiredQuantity = Math.max(
+            0,
+            plannedQuantity - Number(commitmentLine?.committed_quantity || 0)
+          );
+          if (requiredQuantity <= 0) return;
+          const existing = needs.find((item) => item.ingredient_id === ingredient.ingredient_id && item.site_id === stockSiteId);
           if (existing) {
-            existing.required_quantity += ingredient.planned_quantity || 0;
+            existing.required_quantity += requiredQuantity;
             return;
           }
           needs.push({
             ingredient_id: ingredient.ingredient_id,
             ingredient_name: ingredient.ingredient_name,
             item_code: getItemCodeFromRecords([ingredientById.get(ingredient.ingredient_id), ingredient]),
-            site_id: production.site_id,
-            site_name: production.site_name,
-            required_quantity: ingredient.planned_quantity || 0,
+            site_id: stockSiteId,
+            site_name: production.fulfillment_store_name || production.site_name,
+            required_quantity: requiredQuantity,
             unit: ingredient.unit,
             production_date: production.production_date
           });
@@ -653,23 +847,105 @@ export default function Inventory() {
     });
   }, [codedValuationReport, searchQuery, selectedSite]);
 
+  const decoratedLots = useMemo(() => {
+    const activeByItem = new Map();
+    codedLots.forEach((lot) => {
+      if (Number(lot.remaining_quantity ?? lot.quantity ?? 0) <= 0) return;
+      const key = `${lot.site_id || ''}:${lot.ingredient_id || ''}`;
+      const current = activeByItem.get(key) || [];
+      current.push(lot);
+      activeByItem.set(key, current);
+    });
+
+    const rotationById = new Map();
+    activeByItem.forEach((itemLots) => {
+      const ordered = [...itemLots].sort((left, right) => {
+        const leftDate = getStockDate(left) || '9999-12-31';
+        const rightDate = getStockDate(right) || '9999-12-31';
+        return leftDate.localeCompare(rightDate);
+      });
+      if (ordered[0]) rotationById.set(ordered[0].id, 'oldest');
+      if (ordered.length > 1 && ordered[ordered.length - 1]) rotationById.set(ordered[ordered.length - 1].id, 'newest');
+      if (ordered.length === 1 && ordered[0]) rotationById.set(ordered[0].id, 'only');
+    });
+
+    return codedLots.map((lot) => ({
+      ...lot,
+      stock_date: getStockDate(lot),
+      age_days: getLotAgeDays(lot),
+      rotation_rank: lot.rotation_rank || rotationById.get(lot.id) || '',
+      source_label: getMovementSource(lot),
+      remaining_quantity: Number(lot.remaining_quantity ?? lot.quantity ?? 0)
+    }));
+  }, [codedLots]);
+
   const filteredLots = useMemo(() => {
-    return codedLots.filter((lot) => {
+    const filtered = decoratedLots.filter((lot) => {
       const matchesSite = selectedSite === 'all' || lot.site_id === selectedSite;
       const matchesSearch = !searchQuery || `${lot.item_code} ${lot.ingredient_name} ${lot.site_name} ${lot.batch_number || ''}`.toLowerCase().includes(searchQuery.toLowerCase());
+      const displayStatus = getLotDisplayStatus(lot);
+      const matchesStatus = lotStatus === 'all'
+        || (lotStatus === 'active' && displayStatus === 'active')
+        || (lotStatus === 'consumed' && displayStatus === 'consumed');
+      return matchesSite && matchesSearch && matchesStatus;
+    });
+
+    return filtered.sort((left, right) => {
+      const leftValue = left[lotSort.key] ?? '';
+      const rightValue = right[lotSort.key] ?? '';
+      const numeric = ['remaining_quantity', 'age_days', 'unit_cost'].includes(lotSort.key);
+      const comparison = numeric
+        ? Number(leftValue || 0) - Number(rightValue || 0)
+        : String(leftValue).localeCompare(String(rightValue));
+      return lotSort.direction === 'asc' ? comparison : comparison * -1;
+    });
+  }, [decoratedLots, lotSort, lotStatus, searchQuery, selectedSite]);
+
+  const filteredLotValueReport = useMemo(() => {
+    const sourceRows = codedLotValueReport.length > 0 ? codedLotValueReport : decoratedLots;
+    return sourceRows.filter((item) => {
+      const matchesSite = selectedSite === 'all' || item.site_id === selectedSite;
+      const matchesSearch = !searchQuery || `${item.item_code} ${item.ingredient_name} ${item.site_name} ${item.batch_number || ''}`.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesSite && matchesSearch;
     });
-  }, [codedLots, searchQuery, selectedSite]);
+  }, [codedLotValueReport, decoratedLots, searchQuery, selectedSite]);
+
+  const lotValueActivitySummary = useMemo(() => filteredLotValueReport.reduce((summary, item) => {
+    const closingQuantity = toSafeNumber(item.closing_quantity ?? item.remaining_quantity ?? item.quantity, 0);
+    const unitCost = toSafeNumber(item.unit_cost ?? item.average_unit_cost, 0);
+    summary.opening_value += toSafeNumber(item.opening_value, 0);
+    summary.addition_value += toSafeNumber(item.addition_value, 0);
+    summary.consumption_value += toSafeNumber(item.consumption_value, 0);
+    summary.return_value += toSafeNumber(item.return_value, 0);
+    summary.correction_value += toSafeNumber(item.correction_value, 0);
+    summary.valuation_reallocation_value += toSafeNumber(item.valuation_reallocation_value, 0);
+    summary.closing_value += toSafeNumber(
+      item.closing_value ?? item.remaining_value,
+      closingQuantity * unitCost
+    );
+    return summary;
+  }, {
+    opening_value: 0,
+    addition_value: 0,
+    consumption_value: 0,
+    return_value: 0,
+    correction_value: 0,
+    valuation_reallocation_value: 0,
+    closing_value: 0
+  }), [filteredLotValueReport]);
 
   const inventorySummary = useMemo(() => {
-    const totalQuantity = filteredInventory.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const quantitiesByUnit = filteredInventory.reduce(
+      (summary, item) => addUnitQuantity(summary, item.unit, item.quantity),
+      {}
+    );
     const totalValue = filteredInventory.reduce((sum, item) => sum + Number(item.total_value || 0), 0);
     const lowStockItems = filteredInventory.filter((item) => item.status === 'low_stock' || item.status === 'out_of_stock').length;
     const expiredLots = filteredInventory.reduce((sum, item) => sum + Number(item.expired_lot_count || 0), 0);
     const nearExpiryLots = filteredInventory.reduce((sum, item) => sum + Number(item.near_expiry_count || 0), 0);
-    const totalBatches = filteredInventory.reduce((sum, item) => sum + Number(item.batch_count || 0), 0);
+    const totalBatches = filteredInventory.reduce((sum, item) => sum + Number(item.available_batch_count || 0), 0);
     return {
-      totalQuantity,
+      quantitiesByUnit,
       totalValue,
       lowStockItems,
       expiredLots,
@@ -689,6 +965,7 @@ export default function Inventory() {
         quantity: '',
         unit_cost: '',
         batch_number: '',
+        stock_date: format(new Date(), 'yyyy-MM-dd'),
         expiry_date: '',
         min_stock_level: '',
         max_stock_level: '',
@@ -704,32 +981,28 @@ export default function Inventory() {
       if (!isAdmin) {
         throw new Error('Only administrators can perform bulk uploads');
       }
-      let imported = 0;
-      const failures = [];
-
-      for (const payload of payloads) {
-        try {
-          await base44.inventory.receive(payload);
-          imported += 1;
-        } catch (error) {
-          failures.push(`${payload.ingredient_name} @ ${payload.site_name}: ${error.message || 'Import failed'}`);
-        }
-      }
-
-      return {
-        imported,
-        failed: failures.length,
-        failures
-      };
+      const worksheet = XLSX.utils.json_to_sheet(payloads);
+      const csv = XLSX.utils.sheet_to_csv(worksheet);
+      const uploadFile = new File(
+        [csv],
+        `inventory-batch-${Date.now()}.csv`,
+        { type: 'text/csv' }
+      );
+      return base44.utilities.submitBulkUpload({
+        module: 'inventory',
+        import_mode: 'keep_existing',
+        file: uploadFile,
+        site_id: bulkSiteId || '',
+        site_name: stockSites.find((site) => site.id === bulkSiteId)?.name || ''
+      });
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      setBulkSummary(result);
-      setBulkError(result.failed ? result.failures.slice(0, 5).join(' | ') : '');
-      if (!result.failed) {
-        setBulkRows([]);
-        setBulkFileName('');
-      }
+      queryClient.invalidateQueries({ queryKey: ['bulk-upload-jobs'] });
+      setBulkSummary({ job_id: result.job?.id || null, queued: true });
+      setBulkError('');
+      setBulkRows([]);
+      setBulkFileName('');
     },
     onError: (error) => {
       setBulkError(error.message || 'Bulk upload failed');
@@ -754,7 +1027,7 @@ export default function Inventory() {
     event.preventDefault();
     const site = sites.find((entry) => entry.id === stockForm.site_id);
     const ingredient = selectedIngredient;
-    if (!site || !ingredient) return;
+    if (!site || !ingredient || Number(stockForm.quantity || 0) <= 0 || !stockForm.stock_date) return;
 
     receiveStockMutation.mutate({
       site_id: site.id,
@@ -765,6 +1038,9 @@ export default function Inventory() {
       unit: ingredient.unit || 'kg',
       unit_cost: Number(stockForm.unit_cost || 0),
       batch_number: stockForm.batch_number,
+      stock_date: stockForm.stock_date,
+      received_date: stockForm.stock_date,
+      transaction_date: stockForm.stock_date,
       expiry_date: stockForm.expiry_date || null,
       min_stock_level: Number(stockForm.min_stock_level || 0),
       max_stock_level: stockForm.max_stock_level ? Number(stockForm.max_stock_level) : null,
@@ -812,6 +1088,7 @@ export default function Inventory() {
         quantity: 25,
         unit_cost: 5.8,
         batch_number: 'BATCH-001',
+        stock_date: format(new Date(), 'yyyy-MM-dd'),
         expiry_date: format(new Date(), 'yyyy-MM-dd'),
         min_stock_level: 8,
         max_stock_level: 40,
@@ -865,12 +1142,12 @@ export default function Inventory() {
     return codedMovementReport.reduce((summary, movement) => {
       const quantity = Number(movement.quantity || 0);
       if (quantity >= 0) {
-        summary.inbound += quantity;
+        addUnitQuantity(summary.inboundByUnit, movement.unit, quantity);
       } else {
-        summary.outbound += Math.abs(quantity);
+        addUnitQuantity(summary.outboundByUnit, movement.unit, Math.abs(quantity));
       }
       return summary;
-    }, { inbound: 0, outbound: 0 });
+    }, { inboundByUnit: {}, outboundByUnit: {} });
   }, [codedMovementReport]);
 
   const filteredFastMoving = useMemo(() => {
@@ -902,35 +1179,33 @@ export default function Inventory() {
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
-          {isManager ? (
-            <Button type="button" variant="outline" onClick={handleDownloadInventoryTemplate}>
-              <FileSpreadsheet className="mr-2 h-4 w-4" />
-              Download Template
+          <Button type="button" variant="outline" onClick={handleDownloadInventoryTemplate}>
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
+            Download Template
+          </Button>
+          {isAdmin ? (
+            <Button variant="outline" onClick={() => setBulkDialogOpen(true)}>
+              <Upload className="mr-2 h-4 w-4" />
+              Bulk Upload
             </Button>
           ) : null}
-          {isManager ? (
-            <>
-              {isAdmin ? (
-                <Button variant="outline" onClick={() => setBulkDialogOpen(true)}>
-                  <Upload className="mr-2 h-4 w-4" />
-                  Bulk Upload
-                </Button>
-              ) : null}
+          {canTransferInventory ? (
               <Button variant="outline" onClick={() => setTransferDialogOpen(true)}>
                 <ArrowRightLeft className="mr-2 h-4 w-4" />
                 Transfer Stock
               </Button>
+          ) : null}
+          {canManageInventory ? (
               <Button onClick={() => setStockDialogOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
                 <Plus className="mr-2 h-4 w-4" />
                 Add Inventory
               </Button>
-            </>
           ) : null}
         </PageHeader>
 
         <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
           <StatCard title="Projects / Locations" value={stockSites.length} icon={Boxes} iconBg="bg-slate-100" iconColor="text-slate-700" />
-          <StatCard title="Stock On Hand" value={formatQuantity(inventorySummary.totalQuantity)} icon={Boxes} iconBg="bg-blue-50" iconColor="text-blue-600" />
+          <StatCard title="Stock On Hand" value={`${filteredInventory.length} items`} subtitle={formatUnitQuantities(inventorySummary.quantitiesByUnit)} icon={Boxes} iconBg="bg-blue-50" iconColor="text-blue-600" />
           <StatCard title="Inventory Value" value={formatCurrency(inventorySummary.totalValue)} icon={Wallet} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
           <StatCard title="Low Stock Items" value={inventorySummary.lowStockItems} icon={TrendingDown} iconBg="bg-amber-50" iconColor="text-amber-600" />
           <StatCard title="Expired Lots" value={inventorySummary.expiredLots} icon={AlertTriangle} iconBg="bg-rose-50" iconColor="text-rose-600" />
@@ -983,7 +1258,7 @@ export default function Inventory() {
             title="No inventory records found"
             description="Receive your first stock delivery or widen the selected filters."
             actionLabel="Receive Stock"
-            onAction={isManager ? () => setStockDialogOpen(true) : undefined}
+            onAction={canManageInventory ? () => setStockDialogOpen(true) : undefined}
           />
         ) : (
           <Tabs defaultValue="stock" className="space-y-4">
@@ -1027,7 +1302,7 @@ export default function Inventory() {
                             <TableCell>
                               <div>
                                 <p className="font-medium">{item.ingredient_name}</p>
-                                <p className="text-xs text-slate-500">{item.batch_count || 0} active batches</p>
+                                <p className="text-xs text-slate-500">{item.available_batch_count || 0} available batches</p>
                               </div>
                             </TableCell>
                             <TableCell>{item.site_name}</TableCell>
@@ -1058,18 +1333,22 @@ export default function Inventory() {
                             </TableCell>
                             <TableCell>
                               <div className="flex justify-end gap-1">
-                                <Button size="sm" variant="outline" onClick={() => setTransactionDialog({ open: true, item, type: 'addition' })}>
-                                  <PlusCircle className="h-4 w-4" />
-                                </Button>
-                                <Button size="sm" variant="outline" onClick={() => setTransactionDialog({ open: true, item, type: 'issuance' })}>
-                                  <TrendingDown className="h-4 w-4" />
-                                </Button>
-                                <Button size="sm" variant="outline" onClick={() => setTransactionDialog({ open: true, item, type: 'adjustment' })}>
-                                  <SlidersHorizontal className="h-4 w-4" />
-                                </Button>
-                                <Button size="sm" variant="outline" onClick={() => setEditDialog({ open: true, item })}>
-                                  <Edit className="h-4 w-4" />
-                                </Button>
+                                {canManageInventory ? (
+                                  <>
+                                    <Button size="sm" variant="outline" onClick={() => setTransactionDialog({ open: true, item, type: 'addition' })}>
+                                      <PlusCircle className="h-4 w-4" />
+                                    </Button>
+                                    <Button size="sm" variant="outline" onClick={() => setTransactionDialog({ open: true, item, type: 'issuance' })}>
+                                      <TrendingDown className="h-4 w-4" />
+                                    </Button>
+                                    <Button size="sm" variant="outline" onClick={() => setTransactionDialog({ open: true, item, type: 'adjustment' })}>
+                                      <SlidersHorizontal className="h-4 w-4" />
+                                    </Button>
+                                    <Button size="sm" variant="outline" onClick={() => setEditDialog({ open: true, item })}>
+                                      <Edit className="h-4 w-4" />
+                                    </Button>
+                                  </>
+                                ) : null}
                                 <Button size="sm" variant="outline" onClick={() => setHistoryDialog({ open: true, item })}>
                                   <History className="h-4 w-4" />
                                 </Button>
@@ -1082,6 +1361,7 @@ export default function Inventory() {
                   </Table>
                 </CardContent>
               </Card>
+
             </TabsContent>
 
             <TabsContent value="movements">
@@ -1089,40 +1369,79 @@ export default function Inventory() {
                 <Card className="border-slate-200">
                   <CardContent className="p-5">
                     <p className="text-sm text-slate-500">Inbound Quantity</p>
-                    <p className="mt-2 text-2xl font-semibold text-emerald-700">{formatQuantity(movementSummary.inbound)}</p>
+                    <p className="mt-2 text-xl font-semibold text-emerald-700">{formatUnitQuantities(movementSummary.inboundByUnit)}</p>
                   </CardContent>
                 </Card>
                 <Card className="border-slate-200">
                   <CardContent className="p-5">
                     <p className="text-sm text-slate-500">Outbound Quantity</p>
-                    <p className="mt-2 text-2xl font-semibold text-rose-700">{formatQuantity(movementSummary.outbound)}</p>
+                    <p className="mt-2 text-xl font-semibold text-rose-700">{formatUnitQuantities(movementSummary.outboundByUnit)}</p>
                   </CardContent>
                 </Card>
               </div>
 
               <Card className="border-slate-200 shadow-sm">
-                <CardHeader className="border-b border-slate-100">
-                  <CardTitle className="text-lg">Stock Movement Ledger</CardTitle>
+                <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-slate-100">
+                  <div>
+                    <CardTitle className="text-lg">Stock Movement Ledger</CardTitle>
+                    <p className="mt-1 text-xs text-slate-500">Trace every receipt, production consumption, return, correction, transfer, and upload.</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => downloadCSV(codedMovementReport.map((movement) => ({
+                      item_code: movement.item_code,
+                      ingredient_name: movement.ingredient_name,
+                      transaction_date: movement.transaction_date,
+                      location: movement.site_name,
+                      source: getMovementSource(movement),
+                      transaction_type: movement.transaction_type,
+                      batch_number: movement.batch_number,
+                      batch_allocations: describeMovementLayers(movement),
+                      stock_date: getStockDate(movement),
+                      expiry_date: movement.expiry_date,
+                      stock_dates_by_batch: describeMovementLayerDates(movement, 'stock_date'),
+                      expiry_dates_by_batch: describeMovementLayerDates(movement, 'expiry_date'),
+                      opening_quantity: getOpeningQuantity(movement),
+                      addition_quantity: getAdditionQuantity(movement),
+                      consumption_quantity: getConsumptionQuantity(movement),
+                      closing_quantity: getClosingQuantity(movement),
+                      unit: movement.unit,
+                      value: movement.total_cost,
+                      reference: getReference(movement),
+                      reason: movement.notes || movement.reason_code
+                    })), 'inventory-movement-ledger')}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Export Ledger
+                  </Button>
                 </CardHeader>
-                <CardContent className="p-0">
-                  <Table>
+                <CardContent className="overflow-x-auto p-0">
+                  <Table className="min-w-[1700px]">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Location</TableHead>
-                        <TableHead>Type</TableHead>
+                        <TableHead>Source</TableHead>
                         <TableHead>Batch</TableHead>
-                        <TableHead>Quantity</TableHead>
+                        <TableHead>Stock Date</TableHead>
+                        <TableHead>Expiry</TableHead>
+                        <TableHead>Opening</TableHead>
+                        <TableHead>Addition</TableHead>
+                        <TableHead>Consumption</TableHead>
+                        <TableHead>Closing</TableHead>
                         <TableHead>Value</TableHead>
-                        <TableHead>Reason</TableHead>
+                        <TableHead>Reference</TableHead>
+                        <TableHead>Details</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {movementReport.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={9} className="py-8 text-center text-slate-500">
+                          <TableCell colSpan={15} className="py-8 text-center text-slate-500">
                             No stock movements in the selected period.
                           </TableCell>
                         </TableRow>
@@ -1132,12 +1451,36 @@ export default function Inventory() {
                           <TableCell>{movement.ingredient_name}</TableCell>
                           <TableCell>{movement.transaction_date || '-'}</TableCell>
                           <TableCell>{movement.site_name}</TableCell>
-                          <TableCell className="capitalize">{String(movement.transaction_type || '').replace(/_/g, ' ')}</TableCell>
-                          <TableCell>{movement.batch_number || '-'}</TableCell>
-                          <TableCell className={Number(movement.quantity || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
-                            {Number(movement.quantity || 0) >= 0 ? '+' : ''}{formatQuantity(movement.quantity)} {movement.unit}
+                          <TableCell>
+                            <p className="capitalize">{String(getMovementSource(movement)).replace(/_/g, ' ')}</p>
+                            <p className="text-xs capitalize text-slate-500">{String(movement.transaction_type || '').replace(/_/g, ' ')}</p>
+                          </TableCell>
+                          <TableCell>
+                            {getMovementLayers(movement).length > 0 ? (
+                              <div className="space-y-1 text-xs">
+                                {getMovementLayers(movement).map((layer, index) => (
+                                  <p key={`${layer.inventory_lot_id || layer.batch_number || 'lot'}-${index}`} className="whitespace-nowrap">
+                                    <span className="font-medium">{layer.batch_number || 'Unnumbered batch'}</span>
+                                    {' · '}{formatQuantity(layer.quantity)} {movement.unit || ''}
+                                  </p>
+                                ))}
+                              </div>
+                            ) : movement.batch_number || '-'}
+                          </TableCell>
+                          <TableCell><MovementLayerDates movement={movement} field="stock_date" /></TableCell>
+                          <TableCell><MovementLayerDates movement={movement} field="expiry_date" /></TableCell>
+                          <TableCell>{getOpeningQuantity(movement) === null ? '-' : `${formatQuantity(getOpeningQuantity(movement))} ${movement.unit || ''}`}</TableCell>
+                          <TableCell className="text-emerald-700">
+                            {getAdditionQuantity(movement) > 0 ? `+${formatQuantity(getAdditionQuantity(movement))} ${movement.unit || ''}` : '-'}
+                          </TableCell>
+                          <TableCell className="text-rose-700">
+                            {getConsumptionQuantity(movement) > 0 ? `-${formatQuantity(getConsumptionQuantity(movement))} ${movement.unit || ''}` : '-'}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {getClosingQuantity(movement) === null ? '-' : `${formatQuantity(getClosingQuantity(movement))} ${movement.unit || ''}`}
                           </TableCell>
                           <TableCell>{formatCurrency(Number(movement.total_cost || 0))}</TableCell>
+                          <TableCell className="max-w-[180px] truncate">{getReference(movement)}</TableCell>
                           <TableCell className="max-w-xs truncate">{movement.notes || movement.reason_code || '-'}</TableCell>
                         </TableRow>
                       ))}
@@ -1148,7 +1491,7 @@ export default function Inventory() {
             </TabsContent>
 
             <TabsContent value="expiry">
-              <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+              <div className="grid gap-4">
                 <Card className="border-slate-200 shadow-sm">
                   <CardHeader className="border-b border-slate-100">
                     <CardTitle className="text-lg">Expiry Report</CardTitle>
@@ -1200,30 +1543,126 @@ export default function Inventory() {
                 </Card>
 
                 <Card className="border-slate-200 shadow-sm">
-                  <CardHeader className="border-b border-slate-100">
-                    <CardTitle className="text-lg">Batch / Lot Tracking</CardTitle>
+                  <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 border-b border-slate-100">
+                    <div>
+                      <CardTitle className="text-lg">Batch / Lot Tracking</CardTitle>
+                      <p className="mt-1 text-xs text-slate-500">All batches are retained, including fully consumed lots, for FIFO/FEFO and stock-age audit.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Select value={lotStatus} onValueChange={setLotStatus}>
+                        <SelectTrigger className="h-9 w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Lots</SelectItem>
+                          <SelectItem value="active">Active Lots</SelectItem>
+                          <SelectItem value="consumed">Consumed Lots</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => downloadCSV(filteredLots.map((lot) => ({
+                          item_code: lot.item_code,
+                          ingredient_name: lot.ingredient_name,
+                          location: lot.site_name,
+                          batch_number: lot.batch_number || lot.lot_number,
+                          stock_date: lot.stock_date,
+                          age_days: lot.age_days,
+                          rotation: lot.rotation_rank,
+                          received_quantity: lot.quantity_received ?? lot.received_quantity ?? lot.quantity,
+                          remaining_quantity: lot.remaining_quantity,
+                          unit: lot.unit,
+                          expiry_date: lot.expiry_date,
+                          unit_cost: lot.unit_cost,
+                          remaining_value: Number(lot.remaining_quantity || 0) * Number(lot.unit_cost || 0),
+                          source: lot.source_label,
+                          reference: getReference(lot)
+                        })), 'inventory-lot-register')}
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Export Lots
+                      </Button>
+                    </div>
                   </CardHeader>
-                  <CardContent className="space-y-3 p-4">
+                  <CardContent className="overflow-x-auto p-0">
                     {filteredLots.length === 0 ? (
-                      <p className="py-6 text-center text-sm text-slate-500">No active lots found.</p>
-                    ) : filteredLots.slice(0, 12).map((lot) => (
-                      <div key={lot.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{lot.item_code}</p>
-                            <p className="font-medium text-slate-900">{lot.ingredient_name}</p>
-                            <p className="text-sm text-slate-500">{lot.site_name}</p>
-                          </div>
-                          <Badge variant="outline">{lot.batch_number || lot.lot_number || 'Lot'}</Badge>
-                        </div>
-                        <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
-                          <p>Remaining: {formatQuantity(lot.remaining_quantity)} {lot.unit}</p>
-                          <p>Received: {lot.received_date || '-'}</p>
-                          <p>Expiry: {lot.expiry_date || '-'}</p>
-                          <p>Unit Cost: {formatCurrency(Number(lot.unit_cost || 0))}</p>
-                        </div>
-                      </div>
-                    ))}
+                      <p className="py-8 text-center text-sm text-slate-500">No lots found for the selected filters.</p>
+                    ) : (
+                      <Table className="min-w-[1650px]">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Item Code</TableHead>
+                            <TableHead>Item Name</TableHead>
+                            <TableHead>Location</TableHead>
+                            <TableHead>Batch / Lot</TableHead>
+                            <TableHead>
+                              <button type="button" className="font-medium hover:text-slate-900" onClick={() => setLotSort((current) => ({ key: 'stock_date', direction: current.key === 'stock_date' && current.direction === 'asc' ? 'desc' : 'asc' }))}>
+                                Stock Date ↕
+                              </button>
+                            </TableHead>
+                            <TableHead>
+                              <button type="button" className="font-medium hover:text-slate-900" onClick={() => setLotSort((current) => ({ key: 'age_days', direction: current.key === 'age_days' && current.direction === 'asc' ? 'desc' : 'asc' }))}>
+                                Age ↕
+                              </button>
+                            </TableHead>
+                            <TableHead>Rotation</TableHead>
+                            <TableHead>Received</TableHead>
+                            <TableHead>
+                              <button type="button" className="font-medium hover:text-slate-900" onClick={() => setLotSort((current) => ({ key: 'remaining_quantity', direction: current.key === 'remaining_quantity' && current.direction === 'asc' ? 'desc' : 'asc' }))}>
+                                Remaining ↕
+                              </button>
+                            </TableHead>
+                            <TableHead>Expiry</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Unit Cost</TableHead>
+                            <TableHead>Remaining Value</TableHead>
+                            <TableHead>Source</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredLots.map((lot) => {
+                            const displayStatus = getLotDisplayStatus(lot);
+                            const statusClass = displayStatus === 'active'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : displayStatus === 'consumed'
+                                ? 'bg-slate-100 text-slate-700'
+                                : displayStatus === 'expired'
+                                  ? 'bg-rose-100 text-rose-700'
+                                  : 'bg-amber-100 text-amber-800';
+                            return (
+                              <TableRow key={lot.id}>
+                                <TableCell className="text-sm font-medium text-slate-600">{lot.item_code}</TableCell>
+                                <TableCell>{lot.ingredient_name}</TableCell>
+                                <TableCell>{lot.site_name}</TableCell>
+                                <TableCell>{lot.batch_number || lot.lot_number || '-'}</TableCell>
+                                <TableCell>{lot.stock_date || '-'}</TableCell>
+                                <TableCell>{lot.age_days === null ? '-' : `${lot.age_days} days`}</TableCell>
+                                <TableCell>
+                                  {lot.rotation_rank ? (
+                                    <Badge className={lot.rotation_rank === 'oldest' ? 'bg-amber-100 text-amber-800' : lot.rotation_rank === 'newest' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}>
+                                      {lot.rotation_rank}
+                                    </Badge>
+                                  ) : '-'}
+                                </TableCell>
+                                <TableCell>{formatQuantity(lot.quantity_received ?? lot.received_quantity ?? lot.quantity)} {lot.unit}</TableCell>
+                                <TableCell className="font-medium">{formatQuantity(lot.remaining_quantity)} {lot.unit}</TableCell>
+                                <TableCell>{lot.expiry_date || '-'}</TableCell>
+                                <TableCell>
+                                  <Badge className={statusClass}>
+                                    {displayStatus.replace(/_/g, ' ')}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{formatCurrency(Number(lot.unit_cost || 0))}</TableCell>
+                                <TableCell>{formatCurrency(Number(lot.remaining_quantity || 0) * Number(lot.unit_cost || 0))}</TableCell>
+                                <TableCell className="capitalize">{String(lot.source_label || '-').replace(/_/g, ' ')}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -1261,6 +1700,132 @@ export default function Inventory() {
                           <TableCell>{formatCurrency(Number(item.weighted_average_value || 0))}</TableCell>
                         </TableRow>
                       ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              <Card className="mt-4 border-slate-200 shadow-sm">
+                <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 border-b border-slate-100">
+                  <div>
+                    <CardTitle className="text-lg">Lot-Level Inventory Value Report</CardTitle>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {supportsLotValueReport && !lotValueReportError
+                        ? 'Period activity and closing value by stock date and batch.'
+                        : 'Current lot snapshot. Period opening/addition/consumption fields will populate when the detailed value-report endpoint is available.'}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => downloadCSV(filteredLotValueReport.map((item) => ({
+                      item_code: item.item_code,
+                      ingredient_name: item.ingredient_name,
+                      location: item.site_name,
+                      batch_number: item.batch_number || item.lot_number,
+                      stock_date: getStockDate(item),
+                      expiry_date: item.expiry_date,
+                      opening_quantity: item.opening_quantity ?? item.quantity_before ?? '',
+                      opening_value: item.opening_value ?? '',
+                      additions: item.addition_quantity ?? item.additions ?? item.received_quantity ?? '',
+                      addition_value: item.addition_value ?? '',
+                      consumption: item.consumption_quantity ?? item.consumed_quantity ?? '',
+                      consumption_value: item.consumption_value ?? '',
+                      returns: item.return_quantity ?? item.returns_quantity ?? '',
+                      return_value: item.return_value ?? '',
+                      corrections: item.correction_quantity ?? item.adjustment_quantity ?? '',
+                      correction_value: item.correction_value ?? '',
+                      valuation_reallocation_value: item.valuation_reallocation_value ?? '',
+                      closing_quantity: item.closing_quantity ?? item.remaining_quantity ?? item.quantity ?? 0,
+                      unit: item.unit,
+                      unit_cost: item.unit_cost ?? item.average_unit_cost ?? 0,
+                      closing_value: item.closing_value ?? item.remaining_value ?? (Number(item.remaining_quantity ?? item.quantity ?? 0) * Number(item.unit_cost ?? item.average_unit_cost ?? 0)),
+                      source: getMovementSource(item),
+                      reference: getReference(item)
+                    })), 'inventory-value-by-lot')}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Export Lot Values
+                  </Button>
+                </CardHeader>
+                <div className="grid gap-3 border-b border-slate-100 bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+                  {[
+                    ['Opening Value', lotValueActivitySummary.opening_value, 'text-slate-900'],
+                    ['Additions', lotValueActivitySummary.addition_value, 'text-emerald-700'],
+                    ['Consumption', lotValueActivitySummary.consumption_value, 'text-rose-700'],
+                    ['Returns', lotValueActivitySummary.return_value, 'text-blue-700'],
+                    ['Corrections', lotValueActivitySummary.correction_value, 'text-amber-700'],
+                    ['Valuation Reallocation', lotValueActivitySummary.valuation_reallocation_value, 'text-violet-700'],
+                    ['Closing Value', lotValueActivitySummary.closing_value, 'text-slate-900']
+                  ].map(([label, value, tone]) => (
+                    <div key={label} className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="text-xs text-slate-500">{label}</p>
+                      <p className={`mt-1 text-sm font-semibold ${tone}`}>{formatCurrency(value)}</p>
+                    </div>
+                  ))}
+                </div>
+                <CardContent className="overflow-x-auto p-0">
+                  <Table className="min-w-[2500px]">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
+                        <TableHead>Location</TableHead>
+                        <TableHead>Batch</TableHead>
+                        <TableHead>Stock Date</TableHead>
+                        <TableHead>Expiry</TableHead>
+                        <TableHead>Opening Qty</TableHead>
+                        <TableHead>Opening Value</TableHead>
+                        <TableHead>Addition Qty</TableHead>
+                        <TableHead>Addition Value</TableHead>
+                        <TableHead>Consumption Qty</TableHead>
+                        <TableHead>Consumption Value</TableHead>
+                        <TableHead>Return Qty</TableHead>
+                        <TableHead>Return Value</TableHead>
+                        <TableHead>Correction Qty</TableHead>
+                        <TableHead>Correction Value</TableHead>
+                        <TableHead>Valuation Reallocation</TableHead>
+                        <TableHead>Closing Qty</TableHead>
+                        <TableHead>Unit Cost</TableHead>
+                        <TableHead>Closing Value</TableHead>
+                        <TableHead>Source</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredLotValueReport.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={21} className="py-8 text-center text-slate-500">No lot valuation records found.</TableCell>
+                        </TableRow>
+                      ) : filteredLotValueReport.map((item) => {
+                        const closingQuantity = Number(item.closing_quantity ?? item.remaining_quantity ?? item.quantity ?? 0);
+                        const unitCost = Number(item.unit_cost ?? item.average_unit_cost ?? 0);
+                        return (
+                          <TableRow key={item.id || `${item.site_id}-${item.ingredient_id}-${item.batch_number}`}>
+                            <TableCell className="text-sm font-medium text-slate-600">{item.item_code}</TableCell>
+                            <TableCell>{item.ingredient_name}</TableCell>
+                            <TableCell>{item.site_name}</TableCell>
+                            <TableCell>{item.batch_number || item.lot_number || '-'}</TableCell>
+                            <TableCell>{getStockDate(item) || '-'}</TableCell>
+                            <TableCell>{item.expiry_date || '-'}</TableCell>
+                            <TableCell>{formatOptionalQuantity(item.opening_quantity ?? item.quantity_before, item.unit)}</TableCell>
+                            <TableCell>{formatCurrency(Number(item.opening_value || 0))}</TableCell>
+                            <TableCell className="text-emerald-700">{formatOptionalQuantity(item.addition_quantity ?? item.additions ?? item.received_quantity, item.unit)}</TableCell>
+                            <TableCell className="text-emerald-700">{formatCurrency(Number(item.addition_value || 0))}</TableCell>
+                            <TableCell className="text-rose-700">{formatOptionalQuantity(item.consumption_quantity ?? item.consumed_quantity, item.unit)}</TableCell>
+                            <TableCell className="text-rose-700">{formatCurrency(Number(item.consumption_value || 0))}</TableCell>
+                            <TableCell>{formatOptionalQuantity(item.return_quantity ?? item.returns_quantity, item.unit)}</TableCell>
+                            <TableCell>{formatCurrency(Number(item.return_value || 0))}</TableCell>
+                            <TableCell>{formatOptionalQuantity(item.correction_quantity ?? item.adjustment_quantity, item.unit)}</TableCell>
+                            <TableCell>{formatCurrency(Number(item.correction_value || 0))}</TableCell>
+                            <TableCell>{formatCurrency(Number(item.valuation_reallocation_value || 0))}</TableCell>
+                            <TableCell className="font-medium">{formatQuantity(closingQuantity)} {item.unit}</TableCell>
+                            <TableCell>{formatCurrency(unitCost)}</TableCell>
+                            <TableCell>{formatCurrency(Number(item.closing_value ?? item.remaining_value ?? (closingQuantity * unitCost)))}</TableCell>
+                            <TableCell className="capitalize">{String(getMovementSource(item)).replace(/_/g, ' ')}</TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </CardContent>
@@ -1405,7 +1970,11 @@ export default function Inventory() {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-4">
+              <div className="grid gap-4 md:grid-cols-5">
+                <div>
+                  <Label>Stock Date *</Label>
+                  <Input type="date" required className="mt-1" value={stockForm.stock_date} onChange={(event) => setStockForm((current) => ({ ...current, stock_date: event.target.value }))} />
+                </div>
                 <div>
                   <Label>Expiry Date</Label>
                   <Input type="date" className="mt-1" value={stockForm.expiry_date} onChange={(event) => setStockForm((current) => ({ ...current, expiry_date: event.target.value }))} />
@@ -1495,7 +2064,7 @@ export default function Inventory() {
                       <Label>Upload file</Label>
                       <Input className="mt-1" type="file" accept=".csv,.xlsx,.xls" onChange={handleBulkFile} />
                       <p className="mt-2 text-xs text-slate-500">
-                        Supported columns: item_code or ingredient_name, project_code or site_name, quantity, unit_cost, batch_number, expiry_date, min_stock_level, max_stock_level, valuation_method, notes.
+                        Supported columns: item_code or ingredient_name, project_code or site_name, quantity, unit_cost, batch_number, stock_date, expiry_date, min_stock_level, max_stock_level, valuation_method, notes.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-3">
@@ -1533,8 +2102,7 @@ export default function Inventory() {
                       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                         <p className="font-medium text-emerald-900">Last import result</p>
                         <p className="mt-2 text-sm text-emerald-800">
-                          Imported {bulkSummary.imported} row{bulkSummary.imported === 1 ? '' : 's'}
-                          {bulkSummary.failed ? `, failed ${bulkSummary.failed}` : ''}.
+                          Background job {bulkSummary.job_id || ''} queued. You can continue working while rows are processed in batches.
                         </p>
                       </div>
                     ) : null}
@@ -1562,13 +2130,14 @@ export default function Inventory() {
                         <TableHead>Project / Location</TableHead>
                         <TableHead>Quantity</TableHead>
                         <TableHead>Unit Cost</TableHead>
+                        <TableHead>Stock Date</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {parsedBulkImport.previewRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="py-8 text-center text-slate-500">
+                          <TableCell colSpan={8} className="py-8 text-center text-slate-500">
                             Upload a file to preview bulk inventory rows.
                           </TableCell>
                         </TableRow>
@@ -1580,6 +2149,7 @@ export default function Inventory() {
                           <TableCell>{row.project || '-'}</TableCell>
                           <TableCell>{formatQuantity(row.quantity)}</TableCell>
                           <TableCell>{formatCurrency(Number(row.unit_cost || 0))}</TableCell>
+                          <TableCell>{row.stock_date || '-'}</TableCell>
                           <TableCell>
                             <Badge className={row.status === 'Ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
                               {row.status}

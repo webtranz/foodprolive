@@ -12,9 +12,9 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
   const [formData, setFormData] = useState({
     min_stock_level: '',
     max_stock_level: '',
-    expiry_date: '',
     valuation_method: 'fifo'
   });
+  const [formError, setFormError] = useState('');
 
   const queryClient = useQueryClient();
 
@@ -23,9 +23,9 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
       setFormData({
         min_stock_level: inventoryItem.min_stock_level || '',
         max_stock_level: inventoryItem.max_stock_level || '',
-        expiry_date: inventoryItem.expiry_date || '',
         valuation_method: inventoryItem.valuation_method || 'fifo'
       });
+      setFormError('');
     }
   }, [inventoryItem]);
 
@@ -34,15 +34,26 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       onOpenChange(false);
-    }
+    },
+    onError: (error) => setFormError(error?.message || 'Unable to update inventory settings')
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const min = formData.min_stock_level === '' ? null : Number(formData.min_stock_level);
+    const max = formData.max_stock_level === '' ? null : Number(formData.max_stock_level);
+    if ((min !== null && (!Number.isFinite(min) || min < 0)) || (max !== null && (!Number.isFinite(max) || max < 0))) {
+      setFormError('Minimum and maximum stock levels must be zero or greater.');
+      return;
+    }
+    if (min !== null && max !== null && max > 0 && min > max) {
+      setFormError('Minimum stock level cannot exceed the maximum stock level.');
+      return;
+    }
+    setFormError('');
     updateMutation.mutate({
-      min_stock_level: parseFloat(formData.min_stock_level) || null,
-      max_stock_level: parseFloat(formData.max_stock_level) || null,
-      expiry_date: formData.expiry_date || null,
+      min_stock_level: min,
+      max_stock_level: max,
       valuation_method: formData.valuation_method || 'fifo'
     });
   };
@@ -68,6 +79,7 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
               <Label>Min Stock Level</Label>
               <Input
                 type="number"
+                min="0"
                 step="0.1"
                 value={formData.min_stock_level}
                 onChange={(e) => setFormData({ ...formData, min_stock_level: e.target.value })}
@@ -79,6 +91,7 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
               <Label>Max Stock Level</Label>
               <Input
                 type="number"
+                min="0"
                 step="0.1"
                 value={formData.max_stock_level}
                 onChange={(e) => setFormData({ ...formData, max_stock_level: e.target.value })}
@@ -88,15 +101,13 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
             </div>
           </div>
 
-          <div>
-            <Label>Expiry Date</Label>
-            <Input
-              type="date"
-              value={formData.expiry_date}
-              onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
-              className="mt-1"
-            />
-          </div>
+          {formError ? (
+            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>
+          ) : null}
+
+          <p className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            Expiry is managed separately for each received batch so dated stock is never overwritten at item level.
+          </p>
 
           <div>
             <Label>Valuation Method</Label>

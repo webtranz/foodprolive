@@ -30,7 +30,7 @@ export default function ProcurementPlanning() {
   const { data: sites = [] } = useQuery({ queryKey: ['sites'], queryFn: () => base44.entities.Site.list() });
   const { data: productions = [] } = useQuery({ queryKey: ['productions'], queryFn: () => base44.entities.Production.list('-production_date', 200) });
   const { data: ingredients = [] } = useQuery({ queryKey: ['ingredients'], queryFn: () => base44.entities.Ingredient.list() });
-  const { data: inventory = [] } = useQuery({ queryKey: ['inventory'], queryFn: () => base44.entities.Inventory.list() });
+  const { data: inventory = [] } = useQuery({ queryKey: ['inventory'], queryFn: () => base44.inventory.getStockOnHand() });
   const { data: materialRequests = [] } = useQuery({ queryKey: ['materialRequests'], queryFn: () => base44.entities.MaterialRequest.list('-request_date', 50) });
 
   const createMRMutation = useMutation({

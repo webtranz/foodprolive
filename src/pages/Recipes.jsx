@@ -52,7 +52,7 @@ export default function Recipes() {
 
   const { data: recipeInventory = [], isSuccess: recipeInventoryLoaded } = useQuery({
     queryKey: ['recipe-ingredient-stock'],
-    queryFn: () => base44.entities.Inventory.list()
+    queryFn: () => base44.inventory.getStockOnHand()
   });
 
   const { data: sites = [] } = useQuery({

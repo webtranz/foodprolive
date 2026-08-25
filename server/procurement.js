@@ -11,6 +11,11 @@ import {
 import { receiveStock } from './inventory.js';
 import { deriveInventoryStatus } from '../shared/inventoryStatus.js';
 import { enrichIngredientItemCodes } from './itemCodes.js';
+import {
+  isSupportedSiteType,
+  normalizeSiteType,
+  SITE_HIERARCHY_TYPES
+} from '../shared/siteHierarchy.js';
 
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const nowIso = () => new Date().toISOString();
@@ -22,6 +27,138 @@ function normalizeText(value) {
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function receiptQuantity(value, fallback, label) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    const error = new Error(`${label} must be a valid number`);
+    error.status = 400;
+    throw error;
+  }
+  return numeric;
+}
+
+export function normalizeGoodsReceiptQuantities(item = {}) {
+  const receivedQuantity = receiptQuantity(item.received_quantity, 0, 'Received quantity');
+  const acceptedQuantity = receiptQuantity(item.accepted_quantity, receivedQuantity, 'Accepted quantity');
+  const rejectedQuantity = receiptQuantity(item.rejected_quantity, 0, 'Rejected quantity');
+  const classifiedQuantity = acceptedQuantity + rejectedQuantity;
+
+  if (
+    receivedQuantity <= 0
+    || acceptedQuantity < 0
+    || rejectedQuantity < 0
+    || Math.abs(classifiedQuantity - receivedQuantity) > 0.000001
+  ) {
+    const error = new Error('Received quantity must be greater than zero and equal accepted plus rejected quantities');
+    error.status = 400;
+    throw error;
+  }
+
+  return {
+    receivedQuantity,
+    acceptedQuantity,
+    rejectedQuantity,
+    status: acceptedQuantity <= 0
+      ? 'rejected'
+      : (rejectedQuantity > 0 ? 'partially_accepted' : 'accepted')
+  };
+}
+
+function procurementValidationError(message, status = 400) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function isDescendantSite(site, ancestorId, sitesById) {
+  const expectedAncestorId = normalizeText(ancestorId);
+  let cursor = site;
+  const visited = new Set();
+
+  while (cursor) {
+    const cursorId = normalizeText(cursor.id);
+    if (!cursorId || visited.has(cursorId)) return false;
+    if (cursorId === expectedAncestorId) return true;
+    visited.add(cursorId);
+    const parentId = normalizeText(cursor.parent_site_id);
+    cursor = parentId ? sitesById.get(parentId) : null;
+  }
+
+  return false;
+}
+
+export function resolveGoodsReceiptDestinationStore({
+  order = {},
+  destinationStoreId = null,
+  sites = []
+} = {}) {
+  const sitesById = new Map(
+    (Array.isArray(sites) ? sites : [])
+      .filter((site) => normalizeText(site?.id))
+      .map((site) => [normalizeText(site.id), site])
+  );
+  const orderSiteId = normalizeText(order.site_id);
+  const orderSite = sitesById.get(orderSiteId);
+  if (!orderSite) {
+    throw procurementValidationError(
+      'Purchase order location is missing or no longer exists',
+      409
+    );
+  }
+
+  const rawOrderSiteType = normalizeText(orderSite.type).toLowerCase();
+  if (!isSupportedSiteType(rawOrderSiteType)) {
+    throw procurementValidationError('Purchase order location has an unsupported hierarchy type', 409);
+  }
+  const orderSiteType = normalizeSiteType(rawOrderSiteType);
+  const requestedStoreId = normalizeText(destinationStoreId);
+  const destinationStore = orderSiteType === SITE_HIERARCHY_TYPES.STORE
+    ? orderSite
+    : sitesById.get(requestedStoreId);
+
+  if (
+    orderSiteType === SITE_HIERARCHY_TYPES.STORE
+    && requestedStoreId
+    && requestedStoreId !== orderSiteId
+  ) {
+    throw procurementValidationError(
+      'Destination Store must match the Store already assigned to the purchase order',
+      409
+    );
+  }
+  if (!destinationStore) {
+    throw procurementValidationError(
+      'Select a destination Store under the purchase order Project or Area'
+    );
+  }
+  if (normalizeSiteType(destinationStore.type) !== SITE_HIERARCHY_TYPES.STORE) {
+    throw procurementValidationError('Goods receipts can only be posted to a Store');
+  }
+  if (destinationStore.is_active === false) {
+    throw procurementValidationError('Goods receipts can only be posted to an active Store', 409);
+  }
+  if (!isDescendantSite(destinationStore, orderSiteId, sitesById)) {
+    throw procurementValidationError(
+      'Destination Store must belong to the purchase order Project or Area',
+      403
+    );
+  }
+
+  return destinationStore;
+}
+
+export function assertGoodsReceiptDestinationScope(destinationStore, scope = null) {
+  if (!scope || scope.unrestricted) return destinationStore;
+  if (!scope.accessibleSiteIds?.has(normalizeText(destinationStore?.id))) {
+    throw procurementValidationError(
+      'You do not have access to the selected destination Store',
+      403
+    );
+  }
+  return destinationStore;
 }
 
 function dateOnly(value = new Date()) {
@@ -518,6 +655,15 @@ async function createPurchaseOrder(payload, actor) {
     error.status = 404;
     throw error;
   }
+  const requestedSiteId = normalizeText(payload.site_id);
+  const linkedRequestSiteId = normalizeText(linkedRequest?.site_id);
+  if (linkedRequest && requestedSiteId && requestedSiteId !== linkedRequestSiteId) {
+    const error = new Error('Purchase order location must match its purchase request');
+    error.status = 409;
+    throw error;
+  }
+  const orderSiteId = linkedRequestSiteId || requestedSiteId || null;
+  const orderSiteName = normalizeText(linkedRequest?.site_name || payload.site_name) || null;
 
   const linkedRequestItems = new Map(
     (linkedRequest?.items || []).map((item) => [String(item.id), item])
@@ -566,7 +712,7 @@ async function createPurchaseOrder(payload, actor) {
 
   return withTransaction(async (client) => {
     await validateProcurementReferences({
-      siteId: payload.site_id || linkedRequest?.site_id,
+      siteId: orderSiteId,
       items
     }, client);
 
@@ -594,8 +740,8 @@ async function createPurchaseOrder(payload, actor) {
         linkedRequest?.id || null,
         supplier.id,
         supplier.name,
-        normalizeText(payload.site_id || linkedRequest?.site_id) || null,
-        normalizeText(payload.site_name || linkedRequest?.site_name) || null,
+        orderSiteId,
+        orderSiteName,
         order.order_date,
         order.expected_delivery_date,
         order.currency,
@@ -644,8 +790,8 @@ async function createPurchaseOrder(payload, actor) {
         supplier,
         item,
         order,
-        siteId: payload.site_id || linkedRequest?.site_id,
-        siteName: payload.site_name || linkedRequest?.site_name
+        siteId: orderSiteId,
+        siteName: orderSiteName
       });
     }
 
@@ -736,10 +882,18 @@ async function getGoodsReceiptById(id, executor = pool) {
   };
 }
 
-async function applyReceiptToInventory(order, receiptItem, actor, executor = null) {
+async function applyReceiptToInventory(
+  order,
+  destinationStore,
+  receiptItem,
+  receiptDate,
+  actor,
+  executor = null
+) {
+  if (toNumber(receiptItem.accepted_quantity, 0) <= 0) return null;
   await receiveStock({
-    site_id: order.site_id,
-    site_name: order.site_name,
+    site_id: destinationStore.id,
+    site_name: destinationStore.name,
     ingredient_id: receiptItem.ingredient_id,
     ingredient_name: receiptItem.ingredient_name,
     quantity: toNumber(receiptItem.accepted_quantity, 0),
@@ -747,6 +901,9 @@ async function applyReceiptToInventory(order, receiptItem, actor, executor = nul
     unit_cost: toNumber(receiptItem.unit_cost, 0),
     batch_number: receiptItem.batch_number || null,
     expiry_date: receiptItem.expiry_date || null,
+    stock_date: receiptDate,
+    received_date: receiptDate,
+    transaction_date: receiptDate,
     reference_id: order.id,
     reference_type: 'goods_receipt',
     notes: `Goods receipt for PO ${order.po_number}`,
@@ -755,7 +912,7 @@ async function applyReceiptToInventory(order, receiptItem, actor, executor = nul
   }, executor);
 }
 
-async function createGoodsReceipt(payload, actor) {
+async function createGoodsReceipt(payload, actor, scope = null) {
   const order = await getPurchaseOrderById(payload.purchase_order_id);
   if (!order) {
     const error = new Error('Purchase order not found');
@@ -787,19 +944,12 @@ async function createGoodsReceipt(payload, actor) {
       throw error;
     }
 
-    const receivedQuantity = toNumber(item.received_quantity, 0);
-    const acceptedQuantity = toNumber(item.accepted_quantity, receivedQuantity);
-    const rejectedQuantity = toNumber(item.rejected_quantity, 0);
-    if (
-      receivedQuantity <= 0 ||
-      acceptedQuantity < 0 ||
-      rejectedQuantity < 0 ||
-      acceptedQuantity + rejectedQuantity > receivedQuantity
-    ) {
-      const error = new Error('Received, accepted, and rejected quantities are inconsistent');
-      error.status = 400;
-      throw error;
-    }
+    const {
+      receivedQuantity,
+      acceptedQuantity,
+      rejectedQuantity,
+      status
+    } = normalizeGoodsReceiptQuantities(item);
 
     return {
       id: item.id || randomId('gri'),
@@ -813,7 +963,7 @@ async function createGoodsReceipt(payload, actor) {
       unit_cost: toNumber(item.unit_cost, linkedOrderItem.unit_price),
       batch_number: normalizeText(item.batch_number) || null,
       expiry_date: item.expiry_date ? dateOnly(item.expiry_date) : null,
-      status: normalizeText(item.status || 'accepted') || 'accepted'
+      status
     };
   }).filter((item) => item.ingredient_name && item.received_quantity > 0);
 
@@ -830,6 +980,40 @@ async function createGoodsReceipt(payload, actor) {
       error.status = 404;
       throw error;
     }
+    if (!['approved', 'partially_received'].includes(normalizeText(lockedOrder.status).toLowerCase())) {
+      throw procurementValidationError(
+        'Goods receipts can only be posted against an approved purchase order',
+        409
+      );
+    }
+    const siteCatalog = await listDocuments('Site', { limit: 5000 }, client);
+    const resolvedDestinationStore = resolveGoodsReceiptDestinationStore({
+      order: lockedOrder,
+      destinationStoreId: payload.destination_store_id,
+      sites: siteCatalog
+    });
+    const lockedDestinationStore = await findDocument(
+      'Site',
+      resolvedDestinationStore.id,
+      client,
+      true
+    );
+    if (!lockedDestinationStore) {
+      throw procurementValidationError('Selected destination Store no longer exists', 409);
+    }
+    const currentSiteCatalog = siteCatalog.map((site) => (
+      normalizeText(site.id) === normalizeText(lockedDestinationStore.id)
+        ? lockedDestinationStore
+        : site
+    ));
+    const destinationStore = assertGoodsReceiptDestinationScope(
+      resolveGoodsReceiptDestinationStore({
+        order: lockedOrder,
+        destinationStoreId: payload.destination_store_id,
+        sites: currentSiteCatalog
+      }),
+      scope
+    );
     const lockedItemsById = new Map(lockedOrder.items.map((item) => [String(item.id), item]));
     for (const item of items) {
       const lockedItem = lockedItemsById.get(item.order_item_id);
@@ -857,8 +1041,8 @@ async function createGoodsReceipt(payload, actor) {
         lockedOrder.id,
         lockedOrder.supplier_id,
         lockedOrder.supplier_name,
-        lockedOrder.site_id,
-        lockedOrder.site_name,
+        destinationStore.id,
+        destinationStore.name,
         dateOnly(payload.receipt_date || nowIso()),
         actor.email,
         actor.full_name || actor.email,
@@ -889,7 +1073,7 @@ async function createGoodsReceipt(payload, actor) {
         ]
       );
 
-      if (item.order_item_id) {
+      if (item.order_item_id && item.accepted_quantity > 0) {
         await clientQuery(
           client,
           `UPDATE purchase_order_items
@@ -908,7 +1092,9 @@ async function createGoodsReceipt(payload, actor) {
     const totalOrdered = refreshedOrder.items.reduce((sum, item) => sum + toNumber(item.ordered_quantity, 0), 0);
     const totalReceived = refreshedOrder.items.reduce((sum, item) => sum + toNumber(item.received_quantity, 0), 0);
     const receivedPercentage = totalOrdered > 0 ? (totalReceived / totalOrdered) * 100 : 0;
-    const nextStatus = receivedPercentage >= 100 ? 'received' : 'partially_received';
+    const nextStatus = receivedPercentage >= 100
+      ? 'received'
+      : (totalReceived > 0 ? 'partially_received' : normalizeText(lockedOrder.status || 'approved'));
 
     await clientQuery(
       client,
@@ -921,7 +1107,16 @@ async function createGoodsReceipt(payload, actor) {
     );
 
     for (const item of items) {
-      await applyReceiptToInventory(lockedOrder, item, actor, client);
+      if (item.accepted_quantity > 0) {
+        await applyReceiptToInventory(
+          lockedOrder,
+          destinationStore,
+          item,
+          dateOnly(payload.receipt_date || nowIso()),
+          actor,
+          client
+        );
+      }
     }
 
     return getGoodsReceiptById(receiptId, client);
@@ -929,7 +1124,15 @@ async function createGoodsReceipt(payload, actor) {
 }
 
 async function listSupplierInvoices() {
-  const result = await query('SELECT * FROM supplier_invoices ORDER BY created_at DESC');
+  const result = await query(
+    `SELECT invoice.*,
+            COALESCE(receipt.site_id, purchase_order.site_id) AS site_id,
+            COALESCE(receipt.site_name, purchase_order.site_name) AS site_name
+     FROM supplier_invoices invoice
+     LEFT JOIN goods_receipts receipt ON receipt.id = invoice.goods_receipt_id
+     LEFT JOIN purchase_orders purchase_order ON purchase_order.id = invoice.purchase_order_id
+     ORDER BY invoice.created_at DESC`
+  );
   return result.rows;
 }
 

@@ -29,7 +29,7 @@ export default function AutoSchedule() {
 
   const { data: inventory = [] } = useQuery({
     queryKey: ['inventory'],
-    queryFn: () => base44.entities.Inventory.list()
+    queryFn: () => base44.inventory.getStockOnHand()
   });
 
   const { data: recipes = [] } = useQuery({

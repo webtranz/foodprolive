@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { assertCanManageSiteStructure, getUserEffectiveRole } from './accessControl.js';
+import {
+  assertCanManageSiteStructure,
+  getUserEffectiveRole,
+  hasAdminAccess
+} from './accessControl.js';
 import {
   MANAGEMENT_ROLE_DEFINITIONS,
   normalizeManagementRoleProfile
@@ -116,6 +120,8 @@ export const permissionCatalog = [
   { key: 'approve_production', label: 'Approve Production' },
   { key: 'request_changes_area_production', label: 'Area Review: Request Production Changes' },
   { key: 'reject_area_production', label: 'Area Review: Reject Production' },
+  { key: 'adjust_approved_production', label: 'Adjust Approved Production Quantity' },
+  { key: 'cancel_production', label: 'Cancel Production & Return Inventory' },
   { key: 'start_production', label: 'Start Production' },
   { key: 'complete_production', label: 'Complete Production' },
   { key: 'create_material_request', label: 'Create Material Request' },
@@ -158,7 +164,7 @@ export const systemRoleDefinitions = {
       'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event', 'edit_special_event',
       'submit_special_event', 'review_special_event', 'approve_special_event', 'reject_special_event',
       'manage_production', 'create_production_request', 'edit_production_request',
-      'submit_production_request', 'start_production',
+      'submit_production_request', 'cancel_production', 'start_production',
       'complete_production', 'create_material_request', 'view_material_request',
       'acknowledge_material_request', 'manage_procurement', 'approve_procurement', 'manage_suppliers', 'manage_waste',
       'approve_waste', 'manage_pos', 'manage_forecasting', 'manage_attendance',
@@ -193,7 +199,7 @@ export const systemRoleDefinitions = {
       'view_dashboard', 'view_reports', 'view_inventory', 'manage_ingredients', 'manage_recipes',
       'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event', 'edit_special_event',
       'submit_special_event', 'manage_production', 'create_production_request',
-      'edit_production_request', 'submit_production_request', 'start_production',
+      'edit_production_request', 'submit_production_request', 'cancel_production', 'start_production',
       'complete_production', 'create_material_request', 'view_material_request',
       'manage_waste', 'approve_waste', 'manage_quality'
     ]
@@ -409,13 +415,15 @@ export const entityRegistry = {
       { fields: ['name'], label: 'ingredient name' },
       { fields: ['item_code'], label: 'item code', ignoreEmpty: true },
       { fields: ['ingredient_code'], label: 'ingredient code', ignoreEmpty: true },
-      { fields: ['sku'], label: 'ingredient SKU', ignoreEmpty: true }
+      { fields: ['sku'], label: 'ingredient SKU', ignoreEmpty: true },
+      { fields: ['d365_item_id'], label: 'D365 item ID', ignoreEmpty: true }
     ],
     schema: z.object({
       name: z.string().trim().min(1, 'Ingredient name is required'),
       sku: stringOptional,
       ingredient_code: stringOptional,
       item_code: stringOptional,
+      d365_item_id: stringOptional,
       unit: stringOptional,
       category: stringOptional,
       cuisine_type: stringOptional,
@@ -444,7 +452,23 @@ export const entityRegistry = {
     defaults: { quantity: 0, status: 'in_stock' },
     unique: [
       { fields: ['site_id', 'ingredient_id'], label: 'inventory item for this location' }
-    ]
+    ],
+    schema: z.object({
+      min_stock_level: z.coerce.number().min(0, 'Minimum stock level must be zero or greater').optional().nullable(),
+      max_stock_level: z.coerce.number().min(0, 'Maximum stock level must be zero or greater').optional().nullable(),
+      reorder_level: z.coerce.number().min(0, 'Reorder level must be zero or greater').optional().nullable(),
+      valuation_method: z.enum(['fifo', 'weighted_average']).optional().nullable()
+    }).passthrough().superRefine((record, context) => {
+      const min = record.min_stock_level == null ? 0 : Number(record.min_stock_level);
+      const max = record.max_stock_level == null ? null : Number(record.max_stock_level);
+      if (max !== null && max > 0 && min > max) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['min_stock_level'],
+          message: 'Minimum stock level cannot exceed the maximum stock level'
+        });
+      }
+    })
   },
   InventoryLot: {
     defaults: { remaining_quantity: 0, status: 'active' }
@@ -699,11 +723,13 @@ export const entityRegistry = {
     defaults: { is_active: true, type: 'area', hierarchy_level: 'area' },
     unique: [
       { fields: ['name'], label: 'project name' },
-      { fields: ['project_code'], label: 'project code', ignoreEmpty: true }
+      { fields: ['project_code'], label: 'project code', ignoreEmpty: true },
+      { fields: ['d365_warehouse_id'], label: 'D365 warehouse ID', ignoreEmpty: true }
     ],
     schema: z.object({
       name: z.string().trim().min(1, 'Site name is required'),
       project_code: stringOptional,
+      d365_warehouse_id: stringOptional,
       type: z.enum(SUPPORTED_SITE_TYPES).optional().nullable(),
       hierarchy_level: stringOptional,
       parent_site_id: stringOptional,
@@ -831,8 +857,8 @@ const entityPermissions = {
   FoodCategory: { read: 'manage_food_categories', write: 'manage_food_categories' },
   Budget: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
   Inventory: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
-  InventoryTransaction: { read: 'manage_inventory', write: 'manage_inventory' },
-  InventoryLot: { read: 'manage_inventory', write: 'manage_inventory' },
+  InventoryTransaction: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
+  InventoryLot: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
   Recipe: { read: ['view_recipes', 'manage_recipes'], write: 'manage_recipes' },
   MenuPlan: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
   MenuPlanPRSchedule: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
@@ -859,6 +885,7 @@ const entityPermissions = {
   AdvancedReportSchedule: { read: 'view_reports', write: 'view_reports' },
   ERPIntegrationConfig: { read: 'manage_erp', write: 'manage_erp' },
   ERPIntegrationLog: { read: 'manage_erp', write: 'manage_erp' },
+  D365Master: { read: 'manage_erp', write: 'manage_erp' },
   ForecastScenario: { read: 'manage_forecasting', write: 'manage_forecasting' },
   ForecastSnapshot: { read: 'manage_forecasting', write: 'manage_forecasting' }
 };
@@ -890,6 +917,20 @@ export function validateEntityPayload(entity, payload = {}) {
   return { ...(config.defaults || {}), ...result.data };
 }
 
+export function sanitizeErpIntegrationConfig(record = {}, user = null) {
+  if (hasAdminAccess(user)) return { ...record };
+  const {
+    api_endpoint: apiEndpoint,
+    api_key: apiKey,
+    ...operationalConfig
+  } = record || {};
+  return {
+    ...operationalConfig,
+    api_endpoint_configured: Boolean(String(apiEndpoint || '').trim()),
+    api_key_configured: Boolean(String(apiKey || '').trim())
+  };
+}
+
 export function authorizeEntityAction(user, entity, action, payload = null, resource = null) {
   ensureKnownEntity(entity);
   const role = user?.role || 'user';
@@ -905,6 +946,27 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
       : Boolean(requirement && hasPermission(user, requirement))
   );
 
+  if (
+    ['D365Master', 'ERPIntegrationLog'].includes(entity)
+    && ['list', 'filter', 'read'].includes(action)
+  ) {
+    const error = new Error(entity === 'ERPIntegrationLog'
+      ? 'Integration logs must be read through the protected scoped ERP log endpoints'
+      : 'D365 processing markers are internal and cannot be read through generic APIs');
+    error.status = 409;
+    throw error;
+  }
+
+  if (
+    entity === 'ERPIntegrationConfig'
+    && ['create', 'update', 'delete'].includes(action)
+    && !hasAdminAccess(user)
+  ) {
+    const error = new Error('Only administrators can change ERP integration configuration');
+    error.status = 403;
+    throw error;
+  }
+
   if (entity === 'Site' && ['create', 'update', 'delete'].includes(action)) {
     return assertCanManageSiteStructure(user);
   }
@@ -913,6 +975,37 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     const error = new Error('User accounts must be deactivated from User & Role Management so access and audit history are preserved');
     error.status = 409;
     throw error;
+  }
+
+  if (
+    ['InventoryLot', 'InventoryTransaction', 'D365Master', 'ERPIntegrationLog'].includes(entity)
+    && ['create', 'update', 'delete'].includes(action)
+  ) {
+    const error = new Error(`${entity} records are immutable through generic APIs and must be posted by their protected service`);
+    error.status = 409;
+    throw error;
+  }
+
+  if (entity === 'Inventory' && ['create', 'delete'].includes(action)) {
+    const error = new Error('Inventory balances must be created or removed through auditable stock movements');
+    error.status = 409;
+    throw error;
+  }
+
+  if (entity === 'Inventory' && action === 'update') {
+    const inventorySettings = new Set([
+      'min_stock_level',
+      'max_stock_level',
+      'reorder_level',
+      'valuation_method',
+      'notes'
+    ]);
+    const protectedFields = Object.keys(payload || {}).filter((field) => !inventorySettings.has(field));
+    if (protectedFields.length > 0) {
+      const error = new Error('Inventory quantities, costs, batches, and expiry dates must be changed through an auditable stock movement');
+      error.status = 409;
+      throw error;
+    }
   }
 
   if (
@@ -984,6 +1077,11 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
       }
 
       if (nextStatus && nextStatus !== currentStatus) {
+        if (nextStatus === 'cancelled') {
+          const error = new Error('Use the protected production cancellation action so committed inventory and the linked material request are returned together');
+          error.status = 409;
+          throw error;
+        }
         const reviewAction = String(payload?.review_action || '').trim().toLowerCase();
         const transitionFieldAllowlist = new Set([
           'status', 'review_action', 'review_notes', 'rejection_reason', 'reviewed_at',

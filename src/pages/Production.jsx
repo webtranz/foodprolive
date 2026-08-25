@@ -134,6 +134,10 @@ export default function Production() {
   const [selectedConsumptionReport, setSelectedConsumptionReport] = useState(null);
   const [reportLoadingId, setReportLoadingId] = useState('');
   const [historyProduction, setHistoryProduction] = useState(null);
+  const [inventoryAction, setInventoryAction] = useState(null);
+  const [inventoryActionMode, setInventoryActionMode] = useState('adjust');
+  const [inventoryActionServings, setInventoryActionServings] = useState(null);
+  const [inventoryActionReason, setInventoryActionReason] = useState('');
 
   const queryClient = useQueryClient();
 
@@ -219,7 +223,7 @@ export default function Production() {
 
   const { data: inventory = [], error: inventoryError } = useQuery({
     queryKey: ['inventory'],
-    queryFn: () => base44.entities.Inventory.list(),
+    queryFn: () => base44.inventory.getStockOnHand(),
     refetchInterval: 300000
   });
 
@@ -326,6 +330,35 @@ export default function Production() {
     },
     onError: (error) => {
       setActionError(error.message || 'Unable to update production status');
+    }
+  });
+
+  const inventoryCommitmentMutation = useMutation({
+    mutationFn: async ({ production, mode, targetServings, reason }) => {
+      if (mode === 'cancel') {
+        return base44.productionWorkflow.cancel(production.id, { reason });
+      }
+      return base44.productionWorkflow.adjustApprovedQuantity(production.id, {
+        target_servings: Number(targetServings),
+        expected_revision: Number(production.inventory_commitment_revision || 0),
+        reason
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
+      setInventoryAction(null);
+      setInventoryActionReason('');
+      setInventoryActionServings(null);
+      setActionError('');
+    },
+    onError: (error) => {
+      setActionError(error.message || 'Unable to reconcile the approved production inventory.');
     }
   });
 
@@ -717,6 +750,10 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
       setShowApprovalDialog(false);
       setSelectedProduction(null);
       setReviewNotes('');
@@ -802,6 +839,14 @@ export default function Production() {
     }
   };
 
+  const openInventoryAction = (production, mode) => {
+    setInventoryAction(production);
+    setInventoryActionMode(mode);
+    setInventoryActionServings(Number(production.target_servings) || null);
+    setInventoryActionReason('');
+    setActionError('');
+  };
+
   const isStatusActionPending = (production, status) => (
     updateStatusMutation.isPending
     && String(updateStatusMutation.variables?.id || '') === String(production.id)
@@ -862,6 +907,21 @@ export default function Production() {
           title={!canStartApprovedProduction(production) ? startBlockReason : undefined}
         >
           {isStatusActionPending(production, 'in_progress') ? 'Starting...' : 'Start Production'}
+        </Button>
+      ) : null}
+      {production.status === 'approved' && (can('adjust_approved_production') || can('approve_production')) ? (
+        <Button size="sm" variant="outline" onClick={() => openInventoryAction(production, 'adjust')}>
+          Adjust Approved Quantity
+        </Button>
+      ) : null}
+      {production.status === 'approved' && can('cancel_production') ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="border-red-200 text-red-700 hover:bg-red-50"
+          onClick={() => openInventoryAction(production, 'cancel')}
+        >
+          Cancel & Return Stock
         </Button>
       ) : null}
       {production.status === 'in_progress' && can('complete_production') ? (
@@ -1361,7 +1421,7 @@ export default function Production() {
                       </p>
                       <p className="text-sm text-amber-700 mt-1">
                         {isAreaApprovalReview(selectedProduction)
-                          ? 'Procurement has completed its workflow step. Confirm the remaining shortages and operational readiness before allowing production to start.'
+                          ? 'Final approval is blocked until the Store receives or corrects the remaining shortage. Inventory is posted atomically only when every required ingredient is available.'
                           : 'After PM approval, the linked material request moves to the Store Keeper / Procurement Officer. Production then waits for Area Manager approval before it can start.'}
                       </p>
                     </div>
@@ -1408,13 +1468,17 @@ export default function Production() {
                   <Button
                     onClick={() => handleReview('approve')}
                     className="bg-green-600 hover:bg-green-700"
-                    disabled={Boolean(reviewAction) || !reviewFulfillmentStoreId}
+                    disabled={
+                      Boolean(reviewAction)
+                      || !reviewFulfillmentStoreId
+                      || (selectedIsAreaReview && inventoryCheck.some((ingredient) => !ingredient.sufficient))
+                    }
                   >
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                     {reviewAction === 'approve'
                       ? 'Approving...'
                       : selectedIsAreaReview
-                        ? 'Approve & Mark Ready'
+                        ? 'Approve, Post Inventory & Mark Ready'
                         : 'Approve & Send to Store / Procurement'}
                   </Button>
                 ) : null}
@@ -1449,6 +1513,99 @@ export default function Production() {
         </Dialog>
 
         <Dialog
+          open={Boolean(inventoryAction)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setInventoryAction(null);
+              setInventoryActionReason('');
+              setInventoryActionServings(null);
+              setActionError('');
+            }
+          }}
+        >
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>
+                {inventoryActionMode === 'cancel'
+                  ? 'Cancel Production & Return Inventory'
+                  : 'Adjust Approved Production Quantity'}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              Inventory was posted when the Area Manager approved this request. This action changes only the quantity difference and preserves the original batch, stock-date, expiry, and cost trail.
+            </div>
+            {inventoryAction ? (
+              <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <p className="font-semibold text-slate-900">{inventoryAction.recipe_name || 'Production request'}</p>
+                <p className="text-slate-600">
+                  Current approved quantity: {formatRecipeQuantity(inventoryAction.target_servings || 0, 'serving')} servings
+                </p>
+                <p className="text-xs text-slate-500">
+                  Inventory revision {Number(inventoryAction.inventory_commitment_revision || 0)}
+                </p>
+              </div>
+            ) : null}
+            {actionError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
+            ) : null}
+            {inventoryActionMode === 'adjust' ? (
+              <div>
+                <Label htmlFor="approved_target_servings">Revised production servings *</Label>
+                <StandardDecimalInput
+                  id="approved_target_servings"
+                  value={inventoryActionServings}
+                  min={0.001}
+                  allowZero={false}
+                  allowEmpty={false}
+                  label="Revised production servings"
+                  onValueChange={setInventoryActionServings}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  An increase consumes only the additional yield-adjusted ingredients; a reduction returns the difference to its original lots.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                This cancels the request and returns all inventory committed by this approval. The action remains in the approval and inventory histories.
+              </div>
+            )}
+            <div>
+              <Label htmlFor="inventory_action_reason">Reason *</Label>
+              <Textarea
+                id="inventory_action_reason"
+                value={inventoryActionReason}
+                onChange={(event) => setInventoryActionReason(event.target.value)}
+                placeholder="Record why the approved quantity is changing"
+                className="mt-1"
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setInventoryAction(null)}>Close</Button>
+              <Button
+                className={inventoryActionMode === 'cancel' ? 'bg-red-700 hover:bg-red-800' : 'bg-indigo-700 hover:bg-indigo-800'}
+                disabled={
+                  inventoryCommitmentMutation.isPending
+                  || !inventoryActionReason.trim()
+                  || (inventoryActionMode === 'adjust' && (!Number.isFinite(Number(inventoryActionServings)) || Number(inventoryActionServings) <= 0))
+                }
+                onClick={() => inventoryCommitmentMutation.mutate({
+                  production: inventoryAction,
+                  mode: inventoryActionMode,
+                  targetServings: inventoryActionServings,
+                  reason: inventoryActionReason.trim()
+                })}
+              >
+                {inventoryCommitmentMutation.isPending
+                  ? 'Reconciling...'
+                  : inventoryActionMode === 'cancel'
+                    ? 'Cancel & Return Inventory'
+                    : 'Apply Quantity Change'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
           open={completionOpen}
           onOpenChange={(open) => {
             setCompletionOpen(open);
@@ -1465,7 +1622,7 @@ export default function Production() {
               <DialogTitle>Complete Production & Reconcile Consumption</DialogTitle>
             </DialogHeader>
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-              Confirm the actual raw quantity consumed for each ingredient. Posting completion deducts inventory and creates one immutable Production Consumption Report.
+              Confirm the actual raw quantity consumed for each ingredient. Completion reconciles any difference from the Area Manager approval posting and creates one immutable Production Consumption Report; it does not deduct the approved plan twice.
             </div>
             {actionError ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
