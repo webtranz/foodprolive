@@ -41,7 +41,10 @@ const cases = [
     name: 'utilities and activity pages require their matching capabilities',
     run() {
       assert.equal(canAccessPage('BulkUploadCenter', fakeCan([])), false);
-      assert.equal(canAccessPage('BulkUploadCenter', fakeCan(['manage_bulk_uploads'])), true);
+      assert.equal(canAccessPage('BulkUploadCenter', fakeCan(['manage_bulk_uploads'])), false);
+      assert.equal(canAccessPage('BulkUploadCenter', fakeCan(['manage_bulk_uploads']), { isAdmin: true }), true);
+      assert.equal(canAccessPage('BulkUploadTemplates', fakeCan(['manage_bulk_uploads'])), true);
+      assert.equal(canAccessPage('BulkUploadTemplates', fakeCan(['export_data'])), true);
       assert.equal(canAccessPage('AuditLogs', fakeCan(['view_audit_logs'])), true);
       assert.equal(canAccessPage('BulkUploadProgress', fakeCan(['view_bulk_upload_progress'])), true);
       assert.equal(canAccessPage('DataExports', fakeCan(['view_reports'])), false);

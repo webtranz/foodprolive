@@ -338,6 +338,17 @@ export const base44 = {
       });
     }
   },
+  userGroups: {
+    bulkImport(data) {
+      return apiRequest('/api/user-groups/bulk-members', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('UserGroup', { action: 'bulk-members', result, id: result?.id });
+        return result;
+      });
+    }
+  },
   pos: {
     listSources() {
       return apiRequest('/api/pos/sources');

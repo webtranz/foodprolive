@@ -10,6 +10,10 @@ import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { roundStandardDecimal } from '../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import {
+  assertBulkUploadAdministrator,
+  isBulkInventoryUpload
+} from '../shared/bulkUploadAccess.js';
+import {
   enrichIngredientItemCodes,
   enrichRecordsWithIngredientItemCodes
 } from './itemCodes.js';
@@ -358,6 +362,15 @@ function requireAnyPermission(permissions) {
     }
     return next();
   };
+}
+
+function requireBulkUploadAdministrator(request, response, next) {
+  try {
+    assertBulkUploadAdministrator(request.user);
+    return next();
+  } catch (error) {
+    return response.status(error.status || 403).json({ message: error.message });
+  }
 }
 
 async function getEntityLocationContext(user, entity) {
@@ -1886,6 +1899,91 @@ app.post('/api/users/:id/deactivate', requireAuth, requireRole(['admin']), async
       message: 'User account deactivated. Existing sessions have been revoked.',
       ...result
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/user-groups/bulk-members', requireAuth, requireBulkUploadAdministrator, async (request, response, next) => {
+  try {
+    const groupId = String(request.body?.group_id || '').trim();
+    const name = String(request.body?.name || '').trim();
+    const description = String(request.body?.description || '').trim();
+    const submittedMembers = request.body?.members;
+
+    if (!name) {
+      return response.status(400).json({ message: 'Group name is required before importing members.' });
+    }
+    if (!Array.isArray(submittedMembers) || submittedMembers.length === 0) {
+      return response.status(400).json({ message: 'Select at least one valid member to import.' });
+    }
+    if (submittedMembers.length > 5000) {
+      return response.status(413).json({ message: 'A single user-group upload cannot exceed 5,000 members.' });
+    }
+
+    const invalidMemberIndex = submittedMembers.findIndex((member) => !String(member?.name || '').trim());
+    if (invalidMemberIndex >= 0) {
+      return response.status(400).json({ message: `Member ${invalidMemberIndex + 1} requires a name.` });
+    }
+
+    const members = submittedMembers.map((member, index) => ({
+      user_id: String(member.user_id || `usr_bulk_${Date.now()}_${index}`).trim(),
+      name: String(member.name || '').trim(),
+      email: String(member.email || '').trim(),
+      phone: String(member.phone || '').trim(),
+      category: ['labor', 'junior', 'senior'].includes(String(member.category || '').trim().toLowerCase())
+        ? String(member.category).trim().toLowerCase()
+        : 'labor'
+    }));
+    if (new Set(members.map((member) => member.user_id)).size !== members.length) {
+      return response.status(400).json({ message: 'Every imported group member must have a unique user ID.' });
+    }
+
+    const counts = members.reduce((summary, member) => {
+      summary[member.category] = (summary[member.category] || 0) + 1;
+      return summary;
+    }, {});
+    const payload = {
+      name,
+      description,
+      members,
+      total_members: members.length,
+      labor_count: counts.labor || 0,
+      junior_count: counts.junior || 0,
+      senior_count: counts.senior || 0
+    };
+
+    const existing = groupId ? await findDocument('UserGroup', groupId) : null;
+    if (groupId && !existing) {
+      return response.status(404).json({ message: 'User group not found.' });
+    }
+    const action = existing ? 'update' : 'create';
+    authorizeEntityAction(request.user, 'UserGroup', action, payload, existing);
+    const preparedPayload = await prepareEntityPayload(request.user, 'UserGroup', payload, existing);
+    const saved = existing
+      ? await updateDocument('UserGroup', existing.id, preparedPayload)
+      : await createDocument('UserGroup', preparedPayload);
+
+    invalidateEntityAccessCaches('UserGroup');
+    recordChanged('UserGroup');
+    await auditAction({
+      user: request.user,
+      action: 'USERGROUP_BULK_MEMBERS_IMPORT',
+      entity: 'UserGroup',
+      entityId: saved.id,
+      details: {
+        group_name: saved.name,
+        imported_members: Math.min(
+          Math.max(Number(request.body?.imported_member_count) || submittedMembers.length, 0),
+          submittedMembers.length
+        ),
+        total_members: saved.total_members,
+        operation: action
+      }
+    });
+
+    const decorated = (await decorateEntityRecords('UserGroup', [saved]))[0];
+    return response.status(existing ? 200 : 201).json(decorated);
   } catch (error) {
     return next(error);
   }
@@ -3460,7 +3558,7 @@ app.get('/api/utilities/templates/:module', requireAuth, requireAnyPermission([
   return response.send(csv);
 });
 
-app.post('/api/utilities/bulk-upload', requireAuth, requirePermission('manage_bulk_uploads'), (request, response, next) => {
+app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrator, (request, response, next) => {
   bulkUpload.single('file')(request, response, async (uploadError) => {
     let cleanupReference = request.file?.path || null;
     const cleanupUploadedFile = () => cleanupReference
@@ -3698,7 +3796,7 @@ app.post('/api/integrations/invoke-llm', requireAuth, async (request, response, 
   }
 });
 
-app.post('/api/integrations/extract-file', requireAuth, async (request, response, next) => {
+app.post('/api/integrations/extract-file', requireAuth, requireBulkUploadAdministrator, async (request, response, next) => {
   try {
     const { file_url: fileUrl, json_schema: jsonSchema } = request.body || {};
     let content = null;
@@ -3826,7 +3924,7 @@ app.get('/api/pos/sync-logs', requireAuth, requireRole(['admin', 'manager']), as
   }
 });
 
-app.post('/api/pos/import/manual', requireAuth, requireRole(['admin']), async (request, response, next) => {
+app.post('/api/pos/import/manual', requireAuth, requireBulkUploadAdministrator, async (request, response, next) => {
   try {
     const result = await importPosOrders({
       sourceId: request.body?.source_id || null,
@@ -4563,6 +4661,9 @@ app.get('/api/procurement/performance', requireAuth, requireRole(['admin', 'mana
 
 app.post('/api/inventory/receive', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
   try {
+    if (isBulkInventoryUpload(request.body || {})) {
+      assertBulkUploadAdministrator(request.user);
+    }
     const scope = await getLocationScope(request.user);
     assertPayloadLocationAccess(request.user, 'Inventory', request.body || {}, scope);
     response.status(201).json(await receiveStock({

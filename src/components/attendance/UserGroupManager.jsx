@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { base44 } from '@/api/base44Client';
+import { usePermissions } from '@/components/auth/usePermissions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,6 +21,7 @@ const CAT_COLORS = {
 };
 
 export default function UserGroupManager() {
+  const { isAdmin } = usePermissions();
   const [showCreate, setShowCreate] = useState(false);
   const [editGroup, setEditGroup] = useState(null);
   const [form, setForm] = useState({ name: '', description: '', members: [] });
@@ -79,6 +81,28 @@ export default function UserGroupManager() {
     }
   });
 
+  const bulkImportMutation = useMutation({
+    mutationFn: ({ groupId, data, importedMemberCount }) => base44.userGroups.bulkImport({
+      group_id: groupId || null,
+      name: data.name,
+      description: data.description,
+      members: data.members,
+      imported_member_count: importedMemberCount
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['userGroups'] });
+      setShowBulkPreview(false);
+      setShowCreate(false);
+      setEditGroup(null);
+      setForm({ name: '', description: '', members: [] });
+      setBulkPreview([]);
+      setBulkError('');
+    },
+    onError: (error) => {
+      setBulkError(error.message || 'User group members could not be imported');
+    }
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id) => base44.entities.UserGroup.delete(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['userGroups'] })
@@ -109,6 +133,16 @@ export default function UserGroupManager() {
 
   // Parse uploaded CSV/Excel
   const handleFileUpload = (e) => {
+    if (!isAdmin) {
+      setBulkError('Only administrators can upload user groups');
+      e.target.value = '';
+      return;
+    }
+    if (!form.name.trim()) {
+      setBulkError('Enter a group name before selecting a bulk-upload file');
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files[0];
     if (!file) return;
     setBulkError('');
@@ -147,9 +181,21 @@ export default function UserGroupManager() {
   };
 
   const confirmBulkImport = () => {
-    setForm(f => ({ ...f, members: [...f.members, ...bulkPreview] }));
-    setBulkPreview([]);
-    setShowBulkPreview(false);
+    if (!isAdmin) {
+      setBulkError('Only administrators can upload user groups');
+      setShowBulkPreview(false);
+      return;
+    }
+    if (!form.name.trim()) {
+      setBulkError('Enter a group name before importing members');
+      return;
+    }
+    const importedMemberCount = bulkPreview.length;
+    bulkImportMutation.mutate({
+      groupId: editGroup?.id,
+      data: { ...form, members: [...form.members, ...bulkPreview] },
+      importedMemberCount
+    });
   };
 
   const downloadTemplate = () => {
@@ -264,16 +310,19 @@ export default function UserGroupManager() {
                     <Button variant="outline" size="sm" onClick={downloadTemplate}>
                       <Download className="w-3 h-3 mr-1" /> Download Template
                     </Button>
-                    <Button size="sm" onClick={() => fileRef.current?.click()} className="bg-blue-600 hover:bg-blue-700">
-                      <Upload className="w-3 h-3 mr-1" /> Upload CSV
-                    </Button>
+                    {isAdmin ? (
+                      <Button size="sm" onClick={() => fileRef.current?.click()} className="bg-blue-600 hover:bg-blue-700">
+                        <Upload className="w-3 h-3 mr-1" /> Upload CSV
+                      </Button>
+                    ) : null}
                   </div>
+                  {!isAdmin ? <p className="text-xs font-medium text-amber-700">Only administrators can upload. Template downloads remain available.</p> : null}
                   {bulkError && (
                     <div className="flex items-center gap-2 text-red-600 text-xs">
                       <AlertCircle className="w-3 h-3" /> {bulkError}
                     </div>
                   )}
-                  <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} />
+                  {isAdmin ? <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} /> : null}
                 </div>
               </TabsContent>
             </Tabs>
@@ -332,9 +381,14 @@ export default function UserGroupManager() {
       </Dialog>
 
       {/* Bulk Preview Dialog */}
-      <Dialog open={showBulkPreview} onOpenChange={setShowBulkPreview}>
+      <Dialog open={isAdmin && showBulkPreview} onOpenChange={setShowBulkPreview}>
         <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Preview Bulk Upload ({bulkPreview.length} members)</DialogTitle></DialogHeader>
+          {bulkError ? (
+            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <AlertCircle className="h-3 w-3" /> {bulkError}
+            </div>
+          ) : null}
           <div className="max-h-80 overflow-y-auto border rounded-lg">
             <Table>
               <TableHeader>
@@ -358,9 +412,11 @@ export default function UserGroupManager() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowBulkPreview(false)}>Cancel</Button>
-            <Button onClick={confirmBulkImport} className="bg-green-600 hover:bg-green-700">
-              Import {bulkPreview.length} Members
-            </Button>
+            {isAdmin ? (
+              <Button onClick={confirmBulkImport} disabled={bulkImportMutation.isPending} className="bg-green-600 hover:bg-green-700">
+                {bulkImportMutation.isPending ? 'Importing...' : `Import and Save ${bulkPreview.length} Members`}
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

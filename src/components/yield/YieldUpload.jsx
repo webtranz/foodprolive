@@ -5,11 +5,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Upload, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
-export default function YieldUpload({ onSuccess }) {
+export default function YieldUpload({ isAdmin = false, onSuccess }) {
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
 
   const handleFileUpload = async (e) => {
+    if (!isAdmin) {
+      setResult({ success: false, message: 'Only administrators can upload yield data' });
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files[0];
     if (!file) return;
 
@@ -114,13 +119,13 @@ export default function YieldUpload({ onSuccess }) {
             type="file"
             accept=".csv,.xlsx,.xls"
             onChange={handleFileUpload}
-            disabled={uploading}
+            disabled={uploading || !isAdmin}
             className="hidden"
             id="yield-upload"
           />
           <label htmlFor="yield-upload" className="flex-1">
             <Button 
-              disabled={uploading}
+              disabled={uploading || !isAdmin}
               className="w-full"
               asChild
             >

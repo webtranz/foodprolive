@@ -33,6 +33,10 @@ import {
   isRolePrimarySiteType
 } from '../../shared/roleLocationPolicy.js';
 import {
+  ADMIN_ONLY_BULK_UPLOAD_PERMISSION_KEYS,
+  filterBulkUploadPermissionsForAccessLevel
+} from '../../shared/bulkUploadAccess.js';
+import {
   Briefcase,
   Building2,
   KeyRound,
@@ -81,6 +85,8 @@ const emptyRoleForm = {
   permissions: [],
   is_active: true
 };
+
+const ADMIN_ONLY_BULK_UPLOAD_PERMISSION_SET = new Set(ADMIN_ONLY_BULK_UPLOAD_PERMISSION_KEYS);
 
 function buildChildMap(sites) {
   const map = new Map();
@@ -246,13 +252,19 @@ function RoleLocationFields({
   );
 }
 
-function PermissionChecklist({ selected = [], required = [], onToggleMany }) {
+function PermissionChecklist({ selected = [], required = [], accessLevel = 'user', onToggleMany }) {
   const requiredPermissions = new Set(required);
-  const selectedPermissions = Array.from(new Set([...required, ...selected]));
+  const hasAdminAccess = String(accessLevel || '').trim().toLowerCase() === 'admin';
+  const selectedPermissions = filterBulkUploadPermissionsForAccessLevel(
+    Array.from(new Set([...required, ...selected])),
+    accessLevel
+  );
+  const isPermissionLocked = (permission) => (
+    requiredPermissions.has(permission)
+    || (!hasAdminAccess && ADMIN_ONLY_BULK_UPLOAD_PERMISSION_SET.has(permission))
+  );
   const toggleEditablePermissions = (permissions, checked) => {
-    const editablePermissions = checked
-      ? permissions
-      : permissions.filter((permission) => !requiredPermissions.has(permission));
+    const editablePermissions = permissions.filter((permission) => !isPermissionLocked(permission));
     if (editablePermissions.length > 0) {
       onToggleMany(editablePermissions, checked);
     }
@@ -276,7 +288,7 @@ function PermissionChecklist({ selected = [], required = [], onToggleMany }) {
           ...section.capabilities.map((capability) => capability.key)
         ];
         const selectedCount = sectionPermissions.filter((permission) => selectedPermissions.includes(permission)).length;
-        const editablePermissions = sectionPermissions.filter((permission) => !requiredPermissions.has(permission));
+        const editablePermissions = sectionPermissions.filter((permission) => !isPermissionLocked(permission));
         const editableCount = editablePermissions.length;
         const editableSelectedCount = editablePermissions.filter((permission) => selectedPermissions.includes(permission)).length;
         const sectionChecked = editableCount > 0 && editableSelectedCount === editableCount;
@@ -308,19 +320,22 @@ function PermissionChecklist({ selected = [], required = [], onToggleMany }) {
                 <div className="grid gap-2 md:grid-cols-2">
                   {section.subsections.map((subsection) => {
                     const isRequired = requiredPermissions.has(subsection.key);
+                    const isAdminOnly = ADMIN_ONLY_BULK_UPLOAD_PERMISSION_SET.has(subsection.key);
+                    const isLocked = isRequired || (!hasAdminAccess && isAdminOnly);
                     return (
-                      <label key={subsection.key} className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${isRequired ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-500' : 'cursor-pointer border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40'}`}>
+                      <label key={subsection.key} className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${isLocked ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-500' : 'cursor-pointer border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40'}`}>
                         <Checkbox
                           checked={selectedPermissions.includes(subsection.key)}
-                          disabled={isRequired}
+                          disabled={isLocked}
                           onCheckedChange={(checked) => toggleEditablePermissions([subsection.key], Boolean(checked))}
                           className="mt-0.5"
                         />
                         <span className="min-w-0 flex-1">
-                          <span className={`block text-sm font-medium ${isRequired ? 'text-slate-500' : 'text-slate-800'}`}>{subsection.label}</span>
+                          <span className={`block text-sm font-medium ${isLocked ? 'text-slate-500' : 'text-slate-800'}`}>{subsection.label}</span>
                           <span className="mt-0.5 block text-xs leading-4 text-slate-500">{subsection.description}</span>
                         </span>
                         {isRequired ? <Badge variant="secondary" className="shrink-0 text-[10px]">Built-in</Badge> : null}
+                        {!isRequired && isAdminOnly ? <Badge variant="secondary" className="shrink-0 text-[10px]">Admin only</Badge> : null}
                       </label>
                     );
                   })}
@@ -332,15 +347,18 @@ function PermissionChecklist({ selected = [], required = [], onToggleMany }) {
                 <div className="grid gap-2 md:grid-cols-2">
                   {section.capabilities.map((capability) => {
                     const isRequired = requiredPermissions.has(capability.key);
+                    const isAdminOnly = ADMIN_ONLY_BULK_UPLOAD_PERMISSION_SET.has(capability.key);
+                    const isLocked = isRequired || (!hasAdminAccess && isAdminOnly);
                     return (
-                      <label key={capability.key} className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${isRequired ? 'cursor-not-allowed bg-slate-100 text-slate-500' : 'cursor-pointer bg-slate-50 text-slate-700'}`}>
+                      <label key={capability.key} className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${isLocked ? 'cursor-not-allowed bg-slate-100 text-slate-500' : 'cursor-pointer bg-slate-50 text-slate-700'}`}>
                         <Checkbox
                           checked={selectedPermissions.includes(capability.key)}
-                          disabled={isRequired}
+                          disabled={isLocked}
                           onCheckedChange={(checked) => toggleEditablePermissions([capability.key], Boolean(checked))}
                         />
                         <span className="min-w-0 flex-1">{capability.label}</span>
                         {isRequired ? <Badge variant="secondary" className="shrink-0 text-[10px]">Built-in</Badge> : null}
+                        {!isRequired && isAdminOnly ? <Badge variant="secondary" className="shrink-0 text-[10px]">Admin only</Badge> : null}
                       </label>
                     );
                   })}
@@ -586,13 +604,17 @@ export default function UserRoleManagement() {
 
   const openEditRole = (role) => {
     const requiredPermissions = getRequiredSystemRolePermissions(role.role_key);
+    const roleAccessLevel = role.access_level || 'user';
     setEditingRole(role);
     setEditRoleForm({
       role_key: role.role_key || '',
       name: role.name || '',
       description: role.description || '',
-      access_level: role.access_level || 'user',
-      permissions: preparePermissionsForEditing(role.permissions, requiredPermissions),
+      access_level: roleAccessLevel,
+      permissions: filterBulkUploadPermissionsForAccessLevel(
+        preparePermissionsForEditing(role.permissions, requiredPermissions),
+        roleAccessLevel
+      ),
       is_active: role.is_active !== false
     });
     setRoleError('');
@@ -690,7 +712,10 @@ export default function UserRoleManagement() {
       ...roleForm,
       role_key: roleForm.role_key.trim().toLowerCase().replace(/\s+/g, '_'),
       name: roleForm.name.trim(),
-      permissions: normalizeGranularPermissions(roleForm.permissions)
+      permissions: normalizeGranularPermissions(filterBulkUploadPermissionsForAccessLevel(
+        roleForm.permissions,
+        roleForm.access_level
+      ))
     });
   };
 
@@ -699,10 +724,11 @@ export default function UserRoleManagement() {
     if (!editingRole) return;
     setRoleError('');
     const builtIn = getSystemRoleDefinition(editingRole.role_key);
-    const permissions = normalizeGranularPermissions([
+    const targetAccessLevel = builtIn?.access_level || editRoleForm.access_level;
+    const permissions = normalizeGranularPermissions(filterBulkUploadPermissionsForAccessLevel([
       ...(builtIn?.permissions || []),
       ...editRoleForm.permissions
-    ]);
+    ], targetAccessLevel));
     updateRoleMutation.mutate({
       id: editingRole.id,
       materializeFallback: editingRole.is_fallback === true,
@@ -711,7 +737,7 @@ export default function UserRoleManagement() {
         role_key: builtIn?.role_key || editRoleForm.role_key,
         name: editRoleForm.name.trim(),
         description: editRoleForm.description.trim(),
-        access_level: builtIn?.access_level || editRoleForm.access_level,
+        access_level: targetAccessLevel,
         permissions,
         ...(builtIn ? { is_system: true } : {})
       }
@@ -1228,7 +1254,11 @@ export default function UserRoleManagement() {
             </div>
             <div>
               <Label className="mb-1.5 block">Access Level</Label>
-              <Select value={roleForm.access_level} onValueChange={(value) => setRoleForm((current) => ({ ...current, access_level: value }))}>
+              <Select value={roleForm.access_level} onValueChange={(value) => setRoleForm((current) => ({
+                ...current,
+                access_level: value,
+                permissions: filterBulkUploadPermissionsForAccessLevel(current.permissions, value)
+              }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="user">User</SelectItem>
@@ -1240,6 +1270,7 @@ export default function UserRoleManagement() {
 
             <PermissionChecklist
               selected={roleForm.permissions}
+              accessLevel={roleForm.access_level}
               onToggleMany={(permissions, checked) => togglePermissions(setRoleForm, permissions, checked)}
             />
 
@@ -1279,7 +1310,11 @@ export default function UserRoleManagement() {
             </div>
             <div>
               <Label className="mb-1.5 block">Access Level</Label>
-              <Select value={editRoleForm.access_level} onValueChange={(value) => setEditRoleForm((current) => ({ ...current, access_level: value }))} disabled={editingRole?.is_system}>
+              <Select value={editRoleForm.access_level} onValueChange={(value) => setEditRoleForm((current) => ({
+                ...current,
+                access_level: value,
+                permissions: filterBulkUploadPermissionsForAccessLevel(current.permissions, value)
+              }))} disabled={editingRole?.is_system}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="user">User</SelectItem>
@@ -1292,6 +1327,7 @@ export default function UserRoleManagement() {
             <PermissionChecklist
               selected={editRoleForm.permissions}
               required={getRequiredSystemRolePermissions(editingRole?.role_key)}
+              accessLevel={editRoleForm.access_level}
               onToggleMany={(permissions, checked) => togglePermissions(setEditRoleForm, permissions, checked)}
             />
 

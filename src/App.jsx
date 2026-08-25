@@ -33,7 +33,7 @@ const AccessDenied = () => (
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isAuthenticated, authError } = useAuth();
-  const { can, loading: permissionsLoading } = usePermissions();
+  const { can, isAdmin, loading: permissionsLoading } = usePermissions();
 
   if (isLoadingAuth || permissionsLoading) {
     return (
@@ -51,7 +51,7 @@ const AuthenticatedApp = () => {
     <Routes>
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="/" element={
-        canAccessPage(mainPageKey, can)
+        canAccessPage(mainPageKey, can, { isAdmin })
           ? (
             <LayoutWrapper currentPageName={mainPageKey}>
               <MainPage />
@@ -64,7 +64,7 @@ const AuthenticatedApp = () => {
           key={path}
           path={`/${path}`}
           element={
-            canAccessPage(path, can)
+            canAccessPage(path, can, { isAdmin })
               ? (
                 <LayoutWrapper currentPageName={path}>
                   <Page />

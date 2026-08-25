@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
+import { usePermissions } from '@/components/auth/usePermissions';
 import PageHeader from '@/components/ui/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -33,6 +34,7 @@ function averageBy(items, selector) {
 }
 
 export default function YieldCost() {
+  const { isAdmin } = usePermissions();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCuisine, setSelectedCuisine] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -147,7 +149,13 @@ export default function YieldCost() {
           </CardHeader>
           <CardContent className="space-y-6">
             <YieldTemplateDownload />
-            <YieldUpload onSuccess={handleUploadSuccess} />
+            {isAdmin ? (
+              <YieldUpload isAdmin onSuccess={handleUploadSuccess} />
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                Yield templates remain available for download. Uploading yield data is restricted to administrators.
+              </div>
+            )}
           </CardContent>
         </Card>
 

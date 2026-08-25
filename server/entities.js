@@ -152,7 +152,7 @@ export const systemRoleDefinitions = {
     access_level: 'manager',
     description: 'Cross-functional operational management for assigned projects and kitchens.',
     permissions: [
-      'view_dashboard', 'view_reports', 'export_data', 'manage_bulk_uploads',
+      'view_dashboard', 'view_reports', 'export_data',
       'view_audit_logs', 'view_bulk_upload_progress', 'manage_projects',
       'manage_ingredients', 'manage_food_categories', 'view_inventory', 'manage_inventory', 'transfer_inventory', 'manage_recipes',
       'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event', 'edit_special_event',

@@ -48,10 +48,14 @@ import {
 } from '@/lib/rolePermissions';
 import tamimiGlobalLogo from '@/assets/tamimi-global-logo.png';
 
-function filterNavigationItems(items = [], can = () => true) {
+function filterNavigationItems(items = [], can = () => true, { isAdmin = false } = {}) {
   const usesGranularPageAccess = can(GRANULAR_PAGE_ACCESS_PERMISSION);
 
   return items.reduce((visibleItems, item) => {
+    if (item.adminOnly && !isAdmin) {
+      return visibleItems;
+    }
+
     if (usesGranularPageAccess) {
       if (item.href) {
         const pagePermission = PAGE_ACCESS_PERMISSION_MAP[item.href];
@@ -70,7 +74,7 @@ function filterNavigationItems(items = [], can = () => true) {
     }
 
     if (item.children) {
-      const visibleChildren = filterNavigationItems(item.children, can);
+      const visibleChildren = filterNavigationItems(item.children, can, { isAdmin });
       if (!visibleChildren.length) {
         return visibleItems;
       }
@@ -86,7 +90,7 @@ function filterNavigationItems(items = [], can = () => true) {
   }, []);
 }
 
-function buildNavigation(t, can = () => true) {
+function buildNavigation(t, can = () => true, isAdmin = false) {
   const n = t.nav;
   return filterNavigationItems([
     { name: n.dashboard, href: 'Dashboard', icon: LayoutDashboard },
@@ -166,8 +170,8 @@ function buildNavigation(t, can = () => true) {
       name: n.utilities || 'Utilities',
       icon: Upload,
       children: [
-        { name: n.bulkUploadCenter || 'Bulk Upload Center', href: 'BulkUploadCenter', icon: Upload, permission: 'manage_bulk_uploads' },
-        { name: n.bulkUploadTemplates || 'Bulk Upload Templates', href: 'BulkUploadTemplates', icon: FileText, permission: 'manage_bulk_uploads' },
+        { name: n.bulkUploadCenter || 'Bulk Upload Center', href: 'BulkUploadCenter', icon: Upload, permission: 'manage_bulk_uploads', adminOnly: true },
+        { name: n.bulkUploadTemplates || 'Bulk Upload Templates', href: 'BulkUploadTemplates', icon: FileText, permissions: ['manage_bulk_uploads', 'export_data'] },
         { name: n.dataExports || 'CSV / Excel / PDF Reports', href: 'DataExports', icon: BarChart3, permission: 'export_data' }
       ]
     },
@@ -180,7 +184,7 @@ function buildNavigation(t, can = () => true) {
         { name: n.reportsPreview || 'Reports Preview', href: 'ReportsPreview', icon: BarChart3, permission: 'view_reports' }
       ]
     }
-  ], can);
+  ], can, { isAdmin });
 }
 
 function LanguageSwitcher() {
@@ -278,8 +282,8 @@ function Sidebar({ onNavigate }) {
   const currentPath = location.pathname.split('/').pop() || 'Dashboard';
   const { t } = useLanguage();
   const { user, logout } = useAuth();
-  const { can } = usePermissions();
-  const navigation = buildNavigation(t, can);
+  const { can, isAdmin } = usePermissions();
+  const navigation = buildNavigation(t, can, isAdmin);
 
   return (
     <div className="flex flex-col h-full">

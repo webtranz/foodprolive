@@ -188,7 +188,7 @@ function KPI({ title, value, subtitle, icon: Icon, accent }) {
 }
 
 export default function POSIntegration() {
-  const { can, isManager, loading: permLoading } = usePermissions();
+  const { can, isAdmin, isManager, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('sources');
   const [filters, setFilters] = useState(defaultFilterState);
@@ -330,7 +330,10 @@ export default function POSIntegration() {
   });
 
   const manualImportMutation = useMutation({
-    mutationFn: (payload) => base44.pos.importManual(payload),
+    mutationFn: (payload) => {
+      if (!isAdmin) throw new Error('Only administrators can import POS sales files');
+      return base44.pos.importManual(payload);
+    },
     onSuccess: (result) => {
       setUploadSummary(result);
       setUploadError('');
@@ -475,6 +478,11 @@ export default function POSIntegration() {
   };
 
   const handleManualFile = async (event) => {
+    if (!isAdmin) {
+      setUploadError('Only administrators can import POS sales files');
+      event.target.value = '';
+      return;
+    }
     const file = event.target.files?.[0];
     if (!file) {
       return;
@@ -509,6 +517,10 @@ export default function POSIntegration() {
   };
 
   const submitManualImport = () => {
+    if (!isAdmin) {
+      setUploadError('Only administrators can import POS sales files');
+      return;
+    }
     if (!parsedOrders.length) {
       setUploadError('Upload a CSV or Excel file before importing');
       return;
@@ -605,7 +617,7 @@ export default function POSIntegration() {
           <TabsList className="h-auto w-full flex-wrap justify-start gap-2 bg-transparent p-0">
             <TabsTrigger value="sources">POS Sources</TabsTrigger>
             <TabsTrigger value="mapping">Recipe Mapping</TabsTrigger>
-            <TabsTrigger value="upload">Manual Upload</TabsTrigger>
+            {isAdmin ? <TabsTrigger value="upload">Manual Upload</TabsTrigger> : null}
             <TabsTrigger value="analytics">Sales Analytics</TabsTrigger>
             <TabsTrigger value="logs">Sync Logs</TabsTrigger>
             <TabsTrigger value="api">API Endpoints</TabsTrigger>
@@ -780,7 +792,7 @@ export default function POSIntegration() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="upload" className="space-y-4">
+          {isAdmin ? <TabsContent value="upload" className="space-y-4">
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_1fr]">
               <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
                 <CardHeader>
@@ -827,7 +839,7 @@ export default function POSIntegration() {
                   ) : null}
 
                   <div className="flex flex-wrap gap-3">
-                    <Button onClick={submitManualImport} disabled={!can('manage_users') || !parsedOrders.length || manualImportMutation.isPending} className="bg-emerald-600 hover:bg-emerald-700">
+                    <Button onClick={submitManualImport} disabled={!parsedOrders.length || manualImportMutation.isPending} className="bg-emerald-600 hover:bg-emerald-700">
                       {manualImportMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
                       Import Orders
                     </Button>
@@ -894,7 +906,7 @@ export default function POSIntegration() {
                 </CardContent>
               </Card>
             </div>
-          </TabsContent>
+          </TabsContent> : null}
 
           <TabsContent value="analytics" className="space-y-4">
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_1fr]">

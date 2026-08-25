@@ -2,6 +2,7 @@ import {
   GRANULAR_PAGE_ACCESS_PERMISSION,
   PAGE_ACCESS_PERMISSION_MAP
 } from './rolePermissions.js';
+import { isAdminOnlyBulkUploadPage } from '../../shared/bulkUploadAccess.js';
 
 export const pagePermissionMap = {
   Menu: 'manage_menu_planning',
@@ -22,7 +23,7 @@ export const pagePermissionMap = {
   FoodWaste: 'manage_waste',
   FoodWasteQR: 'manage_waste',
   BulkUploadCenter: 'manage_bulk_uploads',
-  BulkUploadTemplates: 'manage_bulk_uploads',
+  BulkUploadTemplates: ['manage_bulk_uploads', 'export_data'],
   DataExports: 'export_data',
   AuditLogs: 'view_audit_logs',
   BulkUploadProgress: 'view_bulk_upload_progress',
@@ -33,8 +34,12 @@ export function getRequiredPagePermission(pageName) {
   return pagePermissionMap[pageName] || null;
 }
 
-export function canAccessPage(pageName, can) {
+export function canAccessPage(pageName, can, { isAdmin = false } = {}) {
   if (typeof can !== 'function') {
+    return false;
+  }
+
+  if (isAdminOnlyBulkUploadPage(pageName) && !isAdmin) {
     return false;
   }
 

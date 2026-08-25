@@ -167,12 +167,12 @@ export const ROLE_PERMISSION_SECTIONS = [
     title: 'Utilities',
     description: 'Background data imports, reusable templates, and portable report exports.',
     subsections: [
-      { page: 'BulkUploadCenter', key: 'access_bulk_upload_center', label: 'Bulk Upload Center', description: 'Upload large CSV files through responsive background batches.' },
+      { page: 'BulkUploadCenter', key: 'access_bulk_upload_center', label: 'Bulk Upload Center', description: 'Administrator-only large CSV uploads through responsive background batches.' },
       { page: 'BulkUploadTemplates', key: 'access_bulk_upload_templates', label: 'Bulk Upload Templates', description: 'Download supported CSV templates for each application module.' },
       { page: 'DataExports', key: 'access_data_exports', label: 'CSV / Excel / PDF Reports', description: 'Preview and export authorized operational data.' }
     ],
     capabilities: [
-      { key: 'manage_bulk_uploads', label: 'Manage background bulk uploads' },
+      { key: 'manage_bulk_uploads', label: 'Manage background bulk uploads (Administrator only)' },
       { key: 'export_data', label: 'Export authorized data' }
     ]
   },

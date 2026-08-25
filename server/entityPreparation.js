@@ -7,6 +7,10 @@ import { calculateIngredientCost, convertIngredientQuantity } from '../shared/in
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import { normalizeProductionStatus } from '../shared/productionWorkflow.js';
 import {
+  assertStandardUserGroupMemberEdit,
+  getDisallowedBulkUploadPermissions
+} from '../shared/bulkUploadAccess.js';
+import {
   applyLinkedProductionLocation,
   applyRequiredOperationalLocation
 } from '../shared/productionQualityLocation.js';
@@ -31,6 +35,23 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
   const scope = context.scope || await getLocationScope(user);
   assertPayloadLocationAccess(user, entity, payload, scope);
   const merged = existing ? { ...existing, ...payload } : payload;
+
+  if (entity === 'UserGroup') {
+    assertStandardUserGroupMemberEdit(user, payload, existing);
+  }
+
+  if (entity === 'RoleProfile') {
+    const disallowedPermissions = getDisallowedBulkUploadPermissions(merged);
+    if (disallowedPermissions.length > 0) {
+      const error = new Error('Bulk-upload permissions can only be assigned to Administrator access-level roles.');
+      error.status = 400;
+      throw error;
+    }
+    return {
+      ...merged,
+      permissions: Array.from(new Set((merged.permissions || []).filter(Boolean)))
+    };
+  }
 
   if (entity === 'Site') {
     const requestedType = String(merged.type || 'area').trim().toLowerCase();

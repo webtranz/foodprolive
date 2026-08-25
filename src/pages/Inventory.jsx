@@ -241,7 +241,7 @@ function buildStarterStockRows(site, ingredients) {
         max_stock_level: Math.round(quantity * 1.8),
         valuation_method: valuationMethod,
         notes: 'Starter stock populated from Inventory module',
-        reason_code: 'manual_receipt'
+        reason_code: 'bulk_upload'
       };
     })
     .filter(Boolean);
@@ -471,7 +471,7 @@ function InventoryTransferDialog({
 }
 
 export default function Inventory() {
-  const { isManager } = usePermissions();
+  const { isAdmin, isManager } = usePermissions();
   const [selectedSite, setSelectedSite] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -701,6 +701,9 @@ export default function Inventory() {
 
   const bulkReceiveMutation = useMutation({
     mutationFn: async (payloads) => {
+      if (!isAdmin) {
+        throw new Error('Only administrators can perform bulk uploads');
+      }
       let imported = 0;
       const failures = [];
 
@@ -772,6 +775,11 @@ export default function Inventory() {
   };
 
   const handleBulkFile = async (event) => {
+    if (!isAdmin) {
+      setBulkError('Only administrators can perform bulk uploads');
+      event.target.value = '';
+      return;
+    }
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -817,6 +825,10 @@ export default function Inventory() {
   };
 
   const handleSubmitBulkImport = () => {
+    if (!isAdmin) {
+      setBulkError('Only administrators can perform bulk uploads');
+      return;
+    }
     if (!parsedBulkImport.items.length) {
       setBulkError('Upload a valid CSV/Excel file before importing');
       return;
@@ -825,6 +837,10 @@ export default function Inventory() {
   };
 
   const handlePopulateStarterStock = () => {
+    if (!isAdmin) {
+      setBulkError('Only administrators can populate starter stock in bulk');
+      return;
+    }
     const targetSite = stockSites.find((site) => site.id === bulkSiteId)
       || stockSites.find((site) => site.id === stockForm.site_id)
       || stockSites.find((site) => site.id === selectedSite)
@@ -887,11 +903,19 @@ export default function Inventory() {
             Export
           </Button>
           {isManager ? (
+            <Button type="button" variant="outline" onClick={handleDownloadInventoryTemplate}>
+              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              Download Template
+            </Button>
+          ) : null}
+          {isManager ? (
             <>
-              <Button variant="outline" onClick={() => setBulkDialogOpen(true)}>
-                <Upload className="mr-2 h-4 w-4" />
-                Bulk Upload
-              </Button>
+              {isAdmin ? (
+                <Button variant="outline" onClick={() => setBulkDialogOpen(true)}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Bulk Upload
+                </Button>
+              ) : null}
               <Button variant="outline" onClick={() => setTransferDialogOpen(true)}>
                 <ArrowRightLeft className="mr-2 h-4 w-4" />
                 Transfer Stock
@@ -1432,8 +1456,9 @@ export default function Inventory() {
         </Dialog>
 
         <Dialog
-          open={bulkDialogOpen}
+          open={isAdmin && bulkDialogOpen}
           onOpenChange={(open) => {
+            if (open && !isAdmin) return;
             setBulkDialogOpen(open);
             if (!open) {
               setBulkError('');

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Upload } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { usePermissions } from '@/components/auth/usePermissions';
 import BulkJobsTable from '@/components/utilities/BulkJobsTable';
 import PageHeader from '@/components/ui/PageHeader';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -18,6 +19,7 @@ const IMPORT_MODES = [
 ];
 
 export default function BulkUploadCenter() {
+  const { isAdmin, loading: permissionLoading } = usePermissions();
   const queryClient = useQueryClient();
   const [moduleKey, setModuleKey] = useState('');
   const [importMode, setImportMode] = useState('keep_existing');
@@ -25,8 +27,8 @@ export default function BulkUploadCenter() {
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
-  const modulesQuery = useQuery({ queryKey: ['utility-modules'], queryFn: () => base44.utilities.listModules() });
-  const sitesQuery = useQuery({ queryKey: ['bulk-upload-sites'], queryFn: () => base44.entities.Site.list('name', 2000) });
+  const modulesQuery = useQuery({ queryKey: ['utility-modules'], queryFn: () => base44.utilities.listModules(), enabled: isAdmin });
+  const sitesQuery = useQuery({ queryKey: ['bulk-upload-sites'], queryFn: () => base44.entities.Site.list('name', 2000), enabled: isAdmin });
   const modules = modulesQuery.data?.modules || [];
   const sites = Array.isArray(sitesQuery.data) ? sitesQuery.data : [];
 
@@ -44,6 +46,7 @@ export default function BulkUploadCenter() {
 
   const submitMutation = useMutation({
     mutationFn: () => {
+      if (!isAdmin) throw new Error('Only administrators can perform bulk uploads.');
       const selectedSite = sites.find((site) => site.id === siteId);
       return base44.utilities.submitBulkUpload({
         module: moduleKey,
@@ -69,10 +72,28 @@ export default function BulkUploadCenter() {
     event.preventDefault();
     setMessage('');
     setErrorMessage('');
+    if (!isAdmin) return setErrorMessage('Only administrators can perform bulk uploads.');
     if (!moduleKey) return setErrorMessage('Select a module.');
     if (importMode !== 'delete_existing' && !file) return setErrorMessage('Select a CSV file.');
     submitMutation.mutate();
   };
+
+  if (permissionLoading) {
+    return <div className="p-8 text-sm text-slate-500">Checking administrator access…</div>;
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="p-4 md:p-8">
+        <PageHeader title="Bulk Upload Center" description="Bulk uploads are restricted to administrators." />
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Administrator access required</AlertTitle>
+          <AlertDescription>You can continue to use the existing download, template, and export features.</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-8">

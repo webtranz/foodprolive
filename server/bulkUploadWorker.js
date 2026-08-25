@@ -23,6 +23,7 @@ import {
 import { auditAction } from './audit.js';
 import { prepareEntityPayload } from './entityPreparation.js';
 import { resolveProductionFulfillmentStore } from '../shared/productionFulfillment.js';
+import { assertBulkUploadAdministrator } from '../shared/bulkUploadAccess.js';
 import { materializeStoredReference, removeStoredReference } from './objectStorage.js';
 
 const MAX_RECORDED_ERRORS = 100;
@@ -206,6 +207,7 @@ async function run() {
   const definition = getUtilityModule(job.module_key);
   if (!definition) throw new Error('Bulk upload module is not supported.');
   const user = job.actor_snapshot || null;
+  assertBulkUploadAdministrator(user);
   const scope = await getLocationScope(user);
   const context = {
     scope,
