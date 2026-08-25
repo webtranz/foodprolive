@@ -4,6 +4,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import { TrendingUp } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
+import { getInventoryQuantities } from '@/lib/inventoryAvailability';
 
 export default function InventoryTrendChart({ transactions, inventory }) {
   const chartData = useMemo(() => {
@@ -52,7 +53,13 @@ export default function InventoryTrendChart({ transactions, inventory }) {
     return Object.values(dataByDate).slice(-14);
   }, [transactions]);
 
-  const currentStock = inventory.reduce((sum, i) => sum + (i.quantity || 0), 0);
+  const stockSummary = inventory.reduce((summary, item) => {
+    const quantities = getInventoryQuantities(item);
+    summary.onHand += quantities.on_hand_quantity;
+    summary.reserved += quantities.reserved_quantity;
+    summary.available += quantities.available_quantity;
+    return summary;
+  }, { onHand: 0, reserved: 0, available: 0 });
   const lowStockCount = inventory.filter(i => i.status === 'low_stock' || i.status === 'out_of_stock').length;
 
   return (
@@ -64,10 +71,18 @@ export default function InventoryTrendChart({ transactions, inventory }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
           <div className="bg-blue-50 rounded-lg p-4">
-            <p className="text-sm text-slate-600">Current Total Stock</p>
-            <p className="text-2xl font-bold text-blue-700">{currentStock.toFixed(0)} units</p>
+            <p className="text-sm text-slate-600">On-Hand Stock</p>
+            <p className="text-2xl font-bold text-blue-700">{stockSummary.onHand.toFixed(0)} units</p>
+          </div>
+          <div className="rounded-lg bg-violet-50 p-4">
+            <p className="text-sm text-slate-600">Reserved</p>
+            <p className="text-2xl font-bold text-violet-700">{stockSummary.reserved.toFixed(0)} units</p>
+          </div>
+          <div className="rounded-lg bg-cyan-50 p-4">
+            <p className="text-sm text-slate-600">Available</p>
+            <p className="text-2xl font-bold text-cyan-700">{stockSummary.available.toFixed(0)} units</p>
           </div>
           <div className="bg-amber-50 rounded-lg p-4">
             <p className="text-sm text-slate-600">Low Stock Items</p>

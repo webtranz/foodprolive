@@ -15,6 +15,8 @@ import { format, addDays } from 'date-fns';
 import { downloadCSV } from '../components/utils/exportData';
 import StatCard from '@/components/ui/StatCard';
 import { formatCurrency } from '@/lib/currency';
+import { getInventoryQuantities, getProductionInventoryState } from '@/lib/inventoryAvailability';
+import { convertIngredientQuantity } from '../../shared/ingredientUnits.js';
 import { getItemCode } from '../../shared/itemCode.js';
 
 const PROTEIN_CATEGORIES = ['proteins_meat', 'proteins_poultry', 'proteins_seafood', 'proteins_plant'];
@@ -44,37 +46,96 @@ export default function ProcurementPlanning() {
     const relevantProds = productions.filter(p => {
       const matchesSite = selectedSite === 'all' || p.site_id === selectedSite;
       const inRange = p.production_date >= planningDate && p.production_date <= format(nextWeek, 'yyyy-MM-dd');
-      const validStatus = ['planned', 'approved', 'pending_approval'].includes(p.status);
+      const validStatus = [
+        'planned',
+        'pending_approval',
+        'pending_procurement',
+        'pending_production',
+        'approved'
+      ].includes(p.status);
       return matchesSite && inRange && validStatus;
     });
 
     const needsMap = {};
     relevantProds.forEach(prod => {
-      (prod.ingredients_used || []).forEach(ing => {
+      const reservationState = getProductionInventoryState(prod);
+      if (reservationState.is_consumed) return;
+
+      const demandLines = reservationState.is_reserved && reservationState.lines.length > 0
+        ? reservationState.lines
+        : (prod.ingredients_used || []);
+      demandLines.forEach(ing => {
         const ingData = ingredients.find(i => i.id === ing.ingredient_id);
+        const demandUnit = ingData?.unit || ing.inventory_unit || ing.unit || 'unit';
+        const sourceUnit = ing.inventory_unit || ing.unit || demandUnit;
+        const plannedQuantity = convertIngredientQuantity(
+          ing.desired_quantity
+            ?? ing.required_quantity
+            ?? ing.yield_adjusted_quantity
+            ?? ing.planned_quantity
+            ?? ing.adjusted_quantity
+            ?? ing.actual_quantity
+            ?? 0,
+          sourceUnit,
+          demandUnit,
+          ingData
+        );
+        const productionReservedQuantity = reservationState.is_reserved
+          ? convertIngredientQuantity(
+            ing.reserved_quantity ?? ing.committed_quantity ?? 0,
+            sourceUnit,
+            demandUnit,
+            ingData
+          )
+          : 0;
         if (!needsMap[ing.ingredient_id]) {
           needsMap[ing.ingredient_id] = {
             item_code: getItemCode(ingData, getItemCode(ing)),
             ingredient_id: ing.ingredient_id,
             ingredient_name: ing.ingredient_name,
-            unit: ing.unit,
+            unit: demandUnit,
             category: ingData?.category || 'other',
             required_quantity: 0,
+            production_reserved_quantity: 0,
             cost_per_unit: ingData?.cost_per_unit || 0
           };
         }
-        needsMap[ing.ingredient_id].required_quantity += ing.planned_quantity || 0;
+        needsMap[ing.ingredient_id].required_quantity += Math.max(0, plannedQuantity);
+        needsMap[ing.ingredient_id].production_reserved_quantity += Math.max(
+          0,
+          Math.min(plannedQuantity, productionReservedQuantity)
+        );
       });
     });
 
     return Object.values(needsMap).map(need => {
       const siteInventory = inventory.filter(i => selectedSite === 'all' || i.site_id === selectedSite);
-      const invItem = siteInventory.find(i => i.ingredient_id === need.ingredient_id);
-      const currentStock = invItem?.quantity || 0;
-      const withBuffer = need.required_quantity * (1 + bufferPercent / 100);
-      const toPurchase = Math.max(0, withBuffer - currentStock);
+      const stock = siteInventory
+        .filter(i => i.ingredient_id === need.ingredient_id)
+        .reduce((total, item) => {
+          const quantities = getInventoryQuantities(item);
+          return {
+            on_hand_quantity: total.on_hand_quantity + quantities.on_hand_quantity,
+            reserved_quantity: total.reserved_quantity + quantities.reserved_quantity,
+            available_quantity: total.available_quantity + quantities.available_quantity
+          };
+        }, { on_hand_quantity: 0, reserved_quantity: 0, available_quantity: 0 });
+      const grossWithBuffer = need.required_quantity * (1 + bufferPercent / 100);
+      const withBuffer = Math.max(0, grossWithBuffer - need.production_reserved_quantity);
+      const toPurchase = Math.max(0, withBuffer - stock.available_quantity);
       const estimatedCost = toPurchase * need.cost_per_unit;
-      return { ...need, currentStock, withBuffer, toPurchase, estimatedCost, sufficient: currentStock >= withBuffer };
+      return {
+        ...need,
+        currentStock: stock.available_quantity,
+        onHandStock: stock.on_hand_quantity,
+        reservedStock: stock.reserved_quantity,
+        availableStock: stock.available_quantity,
+        grossWithBuffer,
+        withBuffer,
+        toPurchase,
+        estimatedCost,
+        sufficient: stock.available_quantity >= withBuffer
+      };
     }).sort((a, b) => a.ingredient_name.localeCompare(b.ingredient_name));
   }, [productions, ingredients, inventory, selectedSite, planningDate, bufferPercent]);
 
@@ -105,6 +166,9 @@ export default function ProcurementPlanning() {
         ingredient_name: n.ingredient_name,
         required_quantity: n.withBuffer,
         current_stock: n.currentStock,
+        on_hand_stock: n.onHandStock,
+        reserved_stock: n.reservedStock,
+        available_stock: n.availableStock,
         request_quantity: n.toPurchase,
         unit: n.unit,
         estimated_cost: n.estimatedCost,
@@ -120,8 +184,11 @@ export default function ProcurementPlanning() {
       item_code: need.item_code,
       item_name: need.ingredient_name,
       category: need.category,
-      current_stock: need.currentStock,
-      required_quantity: need.withBuffer,
+      on_hand_stock: need.onHandStock,
+      reserved_stock: need.reservedStock,
+      available_stock: need.availableStock,
+      production_reserved_for_plan: need.production_reserved_quantity,
+      unreserved_required_with_buffer: need.withBuffer,
       to_purchase: need.toPurchase,
       unit: need.unit,
       estimated_cost: need.estimatedCost,
@@ -140,11 +207,13 @@ export default function ProcurementPlanning() {
             <div className="flex min-w-0 items-center gap-3">
               <span className="min-w-24 font-mono text-xs text-slate-500">{n.item_code}</span>
               <span className="text-sm font-medium text-slate-800">{n.ingredient_name}</span>
-              {!n.sufficient && <span className="ml-2 text-xs text-red-600 font-medium">⚠ Short by {(n.toPurchase - n.currentStock < 0 ? 0 : n.withBuffer - n.currentStock).toFixed(1)} {n.unit}</span>}
+              {!n.sufficient && <span className="ml-2 text-xs text-red-600 font-medium">⚠ Short by {n.toPurchase.toFixed(1)} {n.unit}</span>}
             </div>
             <div className="flex items-center gap-4 text-sm">
-              <span className="text-slate-500">Stock: {n.currentStock.toFixed(1)} {n.unit}</span>
-              <span className="font-semibold text-slate-800">Need: {n.withBuffer.toFixed(1)} {n.unit}</span>
+              <span className="text-slate-500">On hand: {n.onHandStock.toFixed(1)} {n.unit}</span>
+              <span className="text-violet-700">Reserved: {n.reservedStock.toFixed(1)} {n.unit}</span>
+              <span className="text-cyan-700">Available: {n.availableStock.toFixed(1)} {n.unit}</span>
+              <span className="font-semibold text-slate-800">Unreserved need: {n.withBuffer.toFixed(1)} {n.unit}</span>
               {n.toPurchase > 0 && <Badge className="bg-orange-100 text-orange-700">Buy: {n.toPurchase.toFixed(1)} {n.unit}</Badge>}
               {n.toPurchase === 0 && <Badge className="bg-emerald-100 text-emerald-700">✓ In Stock</Badge>}
             </div>
@@ -249,8 +318,10 @@ export default function ProcurementPlanning() {
                       <TableHead>Item Code</TableHead>
                       <TableHead>Item Name</TableHead>
                       <TableHead>Category</TableHead>
-                      <TableHead>Current Stock</TableHead>
-                      <TableHead>Required (+{bufferPercent}% buffer)</TableHead>
+                      <TableHead>On Hand</TableHead>
+                      <TableHead>Reserved</TableHead>
+                      <TableHead>Available</TableHead>
+                      <TableHead>Unreserved Required (+{bufferPercent}% buffer)</TableHead>
                       <TableHead>To Purchase</TableHead>
                       <TableHead>Unit</TableHead>
                       <TableHead>Est. Cost</TableHead>
@@ -263,7 +334,9 @@ export default function ProcurementPlanning() {
                         <TableCell className="font-mono text-xs text-slate-600">{n.item_code}</TableCell>
                         <TableCell className="font-medium">{n.ingredient_name}</TableCell>
                         <TableCell className="text-xs text-slate-500 capitalize">{n.category?.replace(/_/g, ' ')}</TableCell>
-                        <TableCell>{n.currentStock.toFixed(1)}</TableCell>
+                        <TableCell>{n.onHandStock.toFixed(1)}</TableCell>
+                        <TableCell className="text-violet-700">{n.reservedStock.toFixed(1)}</TableCell>
+                        <TableCell className="text-cyan-700">{n.availableStock.toFixed(1)}</TableCell>
                         <TableCell className="font-semibold">{n.withBuffer.toFixed(1)}</TableCell>
                         <TableCell className={n.toPurchase > 0 ? 'font-bold text-orange-600' : 'text-slate-400'}>{n.toPurchase.toFixed(1)}</TableCell>
                         <TableCell>{n.unit}</TableCell>
@@ -277,7 +350,7 @@ export default function ProcurementPlanning() {
                       </TableRow>
                     ))}
                     {aggregatedNeeds.length === 0 && (
-                      <TableRow><TableCell colSpan={9} className="text-center text-slate-500 py-8">No data available</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={11} className="text-center text-slate-500 py-8">No data available</TableCell></TableRow>
                     )}
                   </TableBody>
                 </Table>

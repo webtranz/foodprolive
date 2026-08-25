@@ -11,7 +11,9 @@ import {
   Edit,
   FileSpreadsheet,
   History,
+  LockKeyhole,
   Package,
+  PackageCheck,
   Plus,
   PlusCircle,
   Search,
@@ -45,7 +47,13 @@ import StatCard from '@/components/ui/StatCard';
 import { downloadCSV } from '../components/utils/exportData';
 import { formatCurrency } from '@/lib/currency';
 import { getItemCode, getItemCodeFromRecords, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
+import { convertIngredientQuantity } from '../../shared/ingredientUnits.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
+import {
+  getAvailableInventoryQuantity,
+  getInventoryQuantities,
+  getProductionInventoryState
+} from '@/lib/inventoryAvailability';
 
 const STATUS_COLORS = {
   in_stock: 'bg-emerald-100 text-emerald-700',
@@ -142,6 +150,14 @@ function getLotAgeDays(record) {
 
 function getMovementSource(record) {
   return record?.source_label || record?.source || record?.movement_source || record?.reference_type || record?.reason_code || record?.transaction_type || '-';
+}
+
+function getMovementTypeLabel(record) {
+  const type = String(record?.transaction_type || '').trim().toLowerCase();
+  if (type === 'production_use') return 'Production start consumption';
+  if (type === 'production_commitment') return 'Legacy approval consumption';
+  if (['production_release', 'production_return'].includes(type)) return 'Production stock return';
+  return type.replace(/_/g, ' ');
 }
 
 function getMovementLayers(record) {
@@ -418,7 +434,10 @@ function InventoryTransferDialog({
 
   const warehouseSites = sites.filter((site) => ['warehouse', 'store'].includes(String(site.type || '').toLowerCase()));
   const stockSites = warehouseSites.length > 0 ? warehouseSites : sites;
-  const availableInventory = inventory.filter((item) => item.site_id === formData.from_site_id && Number(item.quantity || 0) > 0);
+  const availableInventory = inventory.filter((item) => (
+    item.site_id === formData.from_site_id
+    && getAvailableInventoryQuantity(item) > 0
+  ));
 
   const updateItem = (index, field, value) => {
     setItems((current) => current.map((item, itemIndex) => {
@@ -536,7 +555,7 @@ function InventoryTransferDialog({
                   <TableRow>
                     <TableHead>Item Code</TableHead>
                     <TableHead>Item Name</TableHead>
-                    <TableHead>Available</TableHead>
+                    <TableHead>Available to Transfer</TableHead>
                     <TableHead>Quantity</TableHead>
                     <TableHead>Unit</TableHead>
                     <TableHead className="text-right">Remove</TableHead>
@@ -558,7 +577,7 @@ function InventoryTransferDialog({
                               name: selectedInventory.ingredient_name,
                               item_code: selectedInventory.item_code,
                               unit: selectedInventory.unit,
-                              current_stock: selectedInventory.quantity
+                              current_stock: getAvailableInventoryQuantity(selectedInventory)
                             } : null}
                             siteId={formData.from_site_id}
                             stockOnly
@@ -566,7 +585,7 @@ function InventoryTransferDialog({
                           />
                         </TableCell>
                         <TableCell className="text-sm text-slate-600">
-                          {selectedInventory ? `${formatQuantity(selectedInventory.quantity)} ${selectedInventory.unit}` : '-'}
+                          {selectedInventory ? `${formatQuantity(getAvailableInventoryQuantity(selectedInventory))} ${selectedInventory.unit}` : '-'}
                         </TableCell>
                         <TableCell>
                           <Input
@@ -723,7 +742,10 @@ export default function Inventory() {
     [ingredients]
   );
   const codedStockOnHand = useMemo(
-    () => stockOnHand.map((record) => withResolvedItemCode(record, ingredientById)),
+    () => stockOnHand.map((record) => ({
+      ...withResolvedItemCode(record, ingredientById),
+      ...getInventoryQuantities(record)
+    })),
     [ingredientById, stockOnHand]
   );
   const codedMovementReport = useMemo(
@@ -739,7 +761,10 @@ export default function Inventory() {
     [ingredientById, valuationReport]
   );
   const codedLots = useMemo(
-    () => lots.map((record) => withResolvedItemCode(record, ingredientById)),
+    () => lots.map((record) => ({
+      ...withResolvedItemCode(record, ingredientById),
+      ...getInventoryQuantities(record)
+    })),
     [ingredientById, lots]
   );
   const codedLotValueReport = useMemo(
@@ -782,24 +807,40 @@ export default function Inventory() {
         && preStartStatuses.has(String(production.status || '').toLowerCase())
       ))
       .forEach((production) => {
-        (production.ingredients_used || []).forEach((ingredient) => {
+        const inventoryState = getProductionInventoryState(production);
+        if (inventoryState.is_consumed) return;
+        const demandLines = inventoryState.is_reserved && inventoryState.lines.length > 0
+          ? inventoryState.lines
+          : (production.ingredients_used || []);
+        demandLines.forEach((ingredient) => {
           const stockSiteId = production.fulfillment_store_id || production.site_id;
           if (!stockSiteId) return;
-          const commitmentLine = (
-            production.inventory_commitment?.lines
-            || production.inventory_committed_lines
-            || []
-          ).find((line) => String(line.ingredient_id) === String(ingredient.ingredient_id));
-          const plannedQuantity = Number(
-            ingredient.planned_quantity
-            ?? ingredient.adjusted_quantity
+          const ingredientData = ingredientById.get(ingredient.ingredient_id);
+          const demandUnit = ingredientData?.unit || ingredient.inventory_unit || ingredient.unit || 'unit';
+          const sourceUnit = ingredient.inventory_unit || ingredient.unit || demandUnit;
+          const plannedQuantity = convertIngredientQuantity(
+            ingredient.desired_quantity
             ?? ingredient.required_quantity
+            ?? ingredient.yield_adjusted_quantity
+            ?? ingredient.planned_quantity
+            ?? ingredient.adjusted_quantity
             ?? ingredient.quantity
-            ?? 0
+            ?? 0,
+            sourceUnit,
+            demandUnit,
+            ingredientData
           );
+          const activelyReservedQuantity = inventoryState.is_reserved
+            ? convertIngredientQuantity(
+              ingredient.reserved_quantity ?? ingredient.committed_quantity ?? 0,
+              sourceUnit,
+              demandUnit,
+              ingredientData
+            )
+            : 0;
           const requiredQuantity = Math.max(
             0,
-            plannedQuantity - Number(commitmentLine?.committed_quantity || 0)
+            plannedQuantity - activelyReservedQuantity
           );
           if (requiredQuantity <= 0) return;
           const existing = needs.find((item) => item.ingredient_id === ingredient.ingredient_id && item.site_id === stockSiteId);
@@ -814,7 +855,7 @@ export default function Inventory() {
             site_id: stockSiteId,
             site_name: production.fulfillment_store_name || production.site_name,
             required_quantity: requiredQuantity,
-            unit: ingredient.unit,
+            unit: demandUnit,
             production_date: production.production_date
           });
         });
@@ -875,7 +916,9 @@ export default function Inventory() {
       age_days: getLotAgeDays(lot),
       rotation_rank: lot.rotation_rank || rotationById.get(lot.id) || '',
       source_label: getMovementSource(lot),
-      remaining_quantity: Number(lot.remaining_quantity ?? lot.quantity ?? 0)
+      remaining_quantity: Number(lot.on_hand_quantity ?? lot.remaining_quantity ?? lot.quantity ?? 0),
+      reserved_quantity: Number(lot.reserved_quantity || 0),
+      available_quantity: Number(lot.available_quantity || 0)
     }));
   }, [codedLots]);
 
@@ -935,17 +978,32 @@ export default function Inventory() {
   }), [filteredLotValueReport]);
 
   const inventorySummary = useMemo(() => {
-    const quantitiesByUnit = filteredInventory.reduce(
-      (summary, item) => addUnitQuantity(summary, item.unit, item.quantity),
+    const onHandByUnit = filteredInventory.reduce(
+      (summary, item) => addUnitQuantity(summary, item.unit, item.on_hand_quantity),
+      {}
+    );
+    const reservedByUnit = filteredInventory.reduce(
+      (summary, item) => addUnitQuantity(summary, item.unit, item.reserved_quantity),
+      {}
+    );
+    const availableByUnit = filteredInventory.reduce(
+      (summary, item) => addUnitQuantity(summary, item.unit, item.available_quantity),
       {}
     );
     const totalValue = filteredInventory.reduce((sum, item) => sum + Number(item.total_value || 0), 0);
     const lowStockItems = filteredInventory.filter((item) => item.status === 'low_stock' || item.status === 'out_of_stock').length;
     const expiredLots = filteredInventory.reduce((sum, item) => sum + Number(item.expired_lot_count || 0), 0);
     const nearExpiryLots = filteredInventory.reduce((sum, item) => sum + Number(item.near_expiry_count || 0), 0);
-    const totalBatches = filteredInventory.reduce((sum, item) => sum + Number(item.available_batch_count || 0), 0);
+    const totalBatches = filteredInventory.reduce((sum, item) => sum + Number(
+      item.batch_count
+        ?? item.total_batch_count
+        ?? item.available_batch_count
+        ?? 0
+    ), 0);
     return {
-      quantitiesByUnit,
+      onHandByUnit,
+      reservedByUnit,
+      availableByUnit,
       totalValue,
       lowStockItems,
       expiredLots,
@@ -1167,10 +1225,15 @@ export default function Inventory() {
       <div className="mx-auto max-w-[1600px]">
         <PageHeader
           title="Inventory Control"
-          description="Manage project, kitchen, warehouse, and store inventory with manual entry, bulk upload, lots, expiry, valuation, and movement tracking."
+          description="Track physical on-hand, production-reserved, and available stock across Stores, with receipts, batches, expiry, valuation, and movement history."
         >
           <Button variant="outline" onClick={() => downloadCSV(
-            filteredInventory.map((item) => putItemCodeAndNameFirst(item, {
+            filteredInventory.map((item) => putItemCodeAndNameFirst({
+              ...item,
+              on_hand_quantity: item.on_hand_quantity,
+              reserved_quantity: item.reserved_quantity,
+              available_quantity: item.available_quantity
+            }, {
               nameKey: 'ingredient_name',
               outputNameKey: 'ingredient_name'
             })),
@@ -1203,9 +1266,11 @@ export default function Inventory() {
           ) : null}
         </PageHeader>
 
-        <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-9">
           <StatCard title="Projects / Locations" value={stockSites.length} icon={Boxes} iconBg="bg-slate-100" iconColor="text-slate-700" />
-          <StatCard title="Stock On Hand" value={`${filteredInventory.length} items`} subtitle={formatUnitQuantities(inventorySummary.quantitiesByUnit)} icon={Boxes} iconBg="bg-blue-50" iconColor="text-blue-600" />
+          <StatCard title="Stock On Hand" value={`${filteredInventory.length} items`} subtitle={formatUnitQuantities(inventorySummary.onHandByUnit)} icon={Boxes} iconBg="bg-blue-50" iconColor="text-blue-600" />
+          <StatCard title="Reserved for Production" value={formatUnitQuantities(inventorySummary.reservedByUnit)} subtitle="Held until production starts" icon={LockKeyhole} iconBg="bg-violet-50" iconColor="text-violet-600" />
+          <StatCard title="Available Stock" value={formatUnitQuantities(inventorySummary.availableByUnit)} subtitle="Free for new demand" icon={PackageCheck} iconBg="bg-cyan-50" iconColor="text-cyan-700" />
           <StatCard title="Inventory Value" value={formatCurrency(inventorySummary.totalValue)} icon={Wallet} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
           <StatCard title="Low Stock Items" value={inventorySummary.lowStockItems} icon={TrendingDown} iconBg="bg-amber-50" iconColor="text-amber-600" />
           <StatCard title="Expired Lots" value={inventorySummary.expiredLots} icon={AlertTriangle} iconBg="bg-rose-50" iconColor="text-rose-600" />
@@ -1276,12 +1341,14 @@ export default function Inventory() {
                   <CardTitle className="text-lg">Stock On Hand Report</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
-                  <Table>
+                  <Table className="min-w-[1350px]">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
                         <TableHead>Location</TableHead>
+                        <TableHead>On Hand</TableHead>
+                        <TableHead>Reserved</TableHead>
                         <TableHead>Available</TableHead>
                         <TableHead>Min / Max</TableHead>
                         <TableHead>Valuation</TableHead>
@@ -1293,8 +1360,8 @@ export default function Inventory() {
                     <TableBody>
                       {filteredInventory.map((item) => {
                         const stockPercent = item.max_stock_level
-                          ? Math.min(100, (Number(item.quantity || 0) / Number(item.max_stock_level || 1)) * 100)
-                          : Math.min(100, ((Number(item.quantity || 0) / Math.max(Number(item.min_stock_level || 1), 1)) * 100));
+                          ? Math.min(100, (Number(item.available_quantity || 0) / Number(item.max_stock_level || 1)) * 100)
+                          : Math.min(100, ((Number(item.available_quantity || 0) / Math.max(Number(item.min_stock_level || 1), 1)) * 100));
 
                         return (
                           <TableRow key={item.id}>
@@ -1302,12 +1369,22 @@ export default function Inventory() {
                             <TableCell>
                               <div>
                                 <p className="font-medium">{item.ingredient_name}</p>
-                                <p className="text-xs text-slate-500">{item.available_batch_count || 0} available batches</p>
+                                <p className="text-xs text-slate-500">
+                                  {item.batch_count ?? item.total_batch_count ?? item.available_batch_count ?? 0} physical batches
+                                  {' · '}{item.available_batch_count || 0} available
+                                </p>
                               </div>
                             </TableCell>
                             <TableCell>{item.site_name}</TableCell>
                             <TableCell>
-                              <p className="font-semibold">{formatQuantity(item.quantity)} {item.unit}</p>
+                              <p className="font-semibold">{formatQuantity(item.on_hand_quantity)} {item.unit}</p>
+                            </TableCell>
+                            <TableCell>
+                              <p className="font-semibold text-violet-700">{formatQuantity(item.reserved_quantity)} {item.unit}</p>
+                              <p className="text-xs text-slate-500">Approved production</p>
+                            </TableCell>
+                            <TableCell>
+                              <p className="font-semibold text-cyan-800">{formatQuantity(item.available_quantity)} {item.unit}</p>
                               <Progress value={stockPercent} className="mt-2 h-2 max-w-28" />
                             </TableCell>
                             <TableCell className="text-sm text-slate-600">
@@ -1453,7 +1530,7 @@ export default function Inventory() {
                           <TableCell>{movement.site_name}</TableCell>
                           <TableCell>
                             <p className="capitalize">{String(getMovementSource(movement)).replace(/_/g, ' ')}</p>
-                            <p className="text-xs capitalize text-slate-500">{String(movement.transaction_type || '').replace(/_/g, ' ')}</p>
+                            <p className="text-xs capitalize text-slate-500">{getMovementTypeLabel(movement)}</p>
                           </TableCell>
                           <TableCell>
                             {getMovementLayers(movement).length > 0 ? (
@@ -1546,7 +1623,7 @@ export default function Inventory() {
                   <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 border-b border-slate-100">
                     <div>
                       <CardTitle className="text-lg">Batch / Lot Tracking</CardTitle>
-                      <p className="mt-1 text-xs text-slate-500">All batches are retained, including fully consumed lots, for FIFO/FEFO and stock-age audit.</p>
+                      <p className="mt-1 text-xs text-slate-500">Physical, reserved, and available quantities remain visible by batch, including fully consumed lots, for FIFO/FEFO and stock-age audit.</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Select value={lotStatus} onValueChange={setLotStatus}>
@@ -1572,7 +1649,9 @@ export default function Inventory() {
                           age_days: lot.age_days,
                           rotation: lot.rotation_rank,
                           received_quantity: lot.quantity_received ?? lot.received_quantity ?? lot.quantity,
-                          remaining_quantity: lot.remaining_quantity,
+                          on_hand_quantity: lot.remaining_quantity,
+                          reserved_quantity: lot.reserved_quantity,
+                          available_quantity: lot.available_quantity,
                           unit: lot.unit,
                           expiry_date: lot.expiry_date,
                           unit_cost: lot.unit_cost,
@@ -1590,7 +1669,7 @@ export default function Inventory() {
                     {filteredLots.length === 0 ? (
                       <p className="py-8 text-center text-sm text-slate-500">No lots found for the selected filters.</p>
                     ) : (
-                      <Table className="min-w-[1650px]">
+                      <Table className="min-w-[1850px]">
                         <TableHeader>
                           <TableRow>
                             <TableHead>Item Code</TableHead>
@@ -1611,9 +1690,11 @@ export default function Inventory() {
                             <TableHead>Received</TableHead>
                             <TableHead>
                               <button type="button" className="font-medium hover:text-slate-900" onClick={() => setLotSort((current) => ({ key: 'remaining_quantity', direction: current.key === 'remaining_quantity' && current.direction === 'asc' ? 'desc' : 'asc' }))}>
-                                Remaining ↕
+                                On Hand ↕
                               </button>
                             </TableHead>
+                            <TableHead>Reserved</TableHead>
+                            <TableHead>Available</TableHead>
                             <TableHead>Expiry</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Unit Cost</TableHead>
@@ -1648,6 +1729,8 @@ export default function Inventory() {
                                 </TableCell>
                                 <TableCell>{formatQuantity(lot.quantity_received ?? lot.received_quantity ?? lot.quantity)} {lot.unit}</TableCell>
                                 <TableCell className="font-medium">{formatQuantity(lot.remaining_quantity)} {lot.unit}</TableCell>
+                                <TableCell className="font-medium text-violet-700">{formatQuantity(lot.reserved_quantity)} {lot.unit}</TableCell>
+                                <TableCell className="font-medium text-cyan-800">{formatQuantity(lot.available_quantity)} {lot.unit}</TableCell>
                                 <TableCell>{lot.expiry_date || '-'}</TableCell>
                                 <TableCell>
                                   <Badge className={statusClass}>

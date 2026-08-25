@@ -257,6 +257,21 @@ export function isInventoryLotUsable(lot, { asOfDate = toDateOnly() } = {}) {
   return !expiryDate || expiryDate >= effectiveDate;
 }
 
+export function getInventoryLotReservedQuantity(lot = {}) {
+  return roundQuantity(Math.min(
+    Math.max(0, toNumber(lot?.remaining_quantity, 0)),
+    Math.max(0, toNumber(lot?.reserved_quantity, 0))
+  ));
+}
+
+export function getInventoryLotAvailableQuantity(lot = {}, options = {}) {
+  if (!isInventoryLotUsable(lot, options)) return 0;
+  return roundQuantity(Math.max(
+    0,
+    toNumber(lot?.remaining_quantity, 0) - getInventoryLotReservedQuantity(lot)
+  ));
+}
+
 export function sortInventoryLotsForIssue(lots = [], { asOfDate = toDateOnly() } = {}) {
   return (Array.isArray(lots) ? lots : [])
     .filter((lot) => isInventoryLotUsable(lot, { asOfDate }))
@@ -280,11 +295,7 @@ export function buildInventoryBatchNumber(prefix = 'LOT', stockDate = toDateOnly
 
 function getAvailableLotQuantity(lots = [], options = {}) {
   return lots.reduce(
-    (sum, lot) => sum + (
-      isInventoryLotUsable(lot, options)
-        ? Math.max(0, toNumber(lot?.remaining_quantity, 0))
-        : 0
-    ),
+    (sum, lot) => sum + getInventoryLotAvailableQuantity(lot, options),
     0
   );
 }
@@ -330,7 +341,13 @@ async function listInventoryLots(
       if (page.items.length === 0 || offset >= page.total_count) break;
     }
   }
-  return lots.filter((lot) => includeEmpty || toNumber(lot.remaining_quantity, 0) > 0);
+  return lots
+    .filter((lot) => includeEmpty || toNumber(lot.remaining_quantity, 0) > 0)
+    .map((lot) => ({
+      ...lot,
+      reserved_quantity: getInventoryLotReservedQuantity(lot),
+      available_quantity: getInventoryLotAvailableQuantity(lot)
+    }));
 }
 
 async function ensureInventoryRecord({
@@ -488,6 +505,8 @@ async function ensureInventoryRecord({
     ingredient_name: identity.ingredient.name || ingredient_name,
     quantity: 0,
     available_quantity: 0,
+    reserved_quantity: 0,
+    on_hand_quantity: 0,
     unit: canonicalUnit,
     min_stock_level: settings.min ?? 0,
     max_stock_level: settings.max,
@@ -507,21 +526,36 @@ async function recalculateInventoryRecord(record, executor = null) {
   }, executor);
 
   const onHandLots = lots.filter((lot) => toNumber(lot.remaining_quantity, 0) > 0);
-  const availableLots = sortInventoryLotsForIssue(onHandLots);
+  const usableLots = sortInventoryLotsForIssue(onHandLots);
+  const availableLots = usableLots.filter((lot) => getInventoryLotAvailableQuantity(lot) > QUANTITY_EPSILON);
   const onHandQuantity = onHandLots.reduce(
     (sum, lot) => sum + toNumber(lot.remaining_quantity, 0),
     0
   );
-  const quantity = availableLots.reduce(
+  const usableQuantity = usableLots.reduce(
     (sum, lot) => sum + toNumber(lot.remaining_quantity, 0),
     0
   );
-  const fifoValue = availableLots.reduce(
+  const reservedQuantity = onHandLots.reduce(
+    (sum, lot) => sum + getInventoryLotReservedQuantity(lot),
+    0
+  );
+  const unavailableQuantity = onHandLots
+    .filter((lot) => !isInventoryLotUsable(lot))
+    .reduce((sum, lot) => sum + Math.max(
+      0,
+      toNumber(lot.remaining_quantity, 0) - getInventoryLotReservedQuantity(lot)
+    ), 0);
+  const availableQuantity = availableLots.reduce(
+    (sum, lot) => sum + getInventoryLotAvailableQuantity(lot),
+    0
+  );
+  const fifoValue = usableLots.reduce(
     (sum, lot) => sum + (toNumber(lot.remaining_quantity, 0) * toNumber(lot.unit_cost, 0)),
     0
   );
   const valuationMethod = normalizeText(record.valuation_method || 'fifo') || 'fifo';
-  const weightedValue = availableLots.reduce(
+  const weightedValue = usableLots.reduce(
     (sum, lot) => sum + (
       toNumber(lot.remaining_quantity, 0)
       * toNumber(lot.accounting_unit_cost ?? lot.unit_cost, 0)
@@ -533,7 +567,7 @@ async function recalculateInventoryRecord(record, executor = null) {
     (sum, lot) => sum + (toNumber(lot.remaining_quantity, 0) * toNumber(lot.unit_cost, 0)),
     0
   );
-  const averageUnitCost = quantity > 0 ? totalValue / quantity : 0;
+  const averageUnitCost = usableQuantity > 0 ? totalValue / usableQuantity : 0;
   const earliestExpiry = availableLots
     .map((lot) => lot.expiry_date)
     .filter(Boolean)
@@ -548,10 +582,12 @@ async function recalculateInventoryRecord(record, executor = null) {
   }).length;
 
   return updateDocument('Inventory', record.id, {
-    quantity,
-    available_quantity: quantity,
+    quantity: roundQuantity(availableQuantity),
+    available_quantity: roundQuantity(availableQuantity),
+    reserved_quantity: roundQuantity(reservedQuantity),
+    usable_on_hand_quantity: roundQuantity(usableQuantity),
     on_hand_quantity: Number(onHandQuantity.toFixed(6)),
-    unavailable_quantity: Number(Math.max(0, onHandQuantity - quantity).toFixed(6)),
+    unavailable_quantity: roundQuantity(unavailableQuantity),
     total_value: Number(totalValue.toFixed(2)),
     fifo_total_value: Number(fifoValue.toFixed(2)),
     weighted_average_value: Number(weightedValue.toFixed(2)),
@@ -562,7 +598,7 @@ async function recalculateInventoryRecord(record, executor = null) {
     next_expiry_date: earliestExpiry,
     near_expiry_count: nearExpiryCount,
     expired_lot_count: expiredCount,
-    status: deriveInventoryStatus(quantity, toNumber(record.min_stock_level, 0))
+    status: deriveInventoryStatus(availableQuantity, toNumber(record.min_stock_level, 0))
   }, executor || undefined);
 }
 
@@ -927,9 +963,11 @@ async function deductStockWithExecutor({
   for (const lot of sortedLots) {
     if (remainingToDeduct <= 0) break;
     const remaining = toNumber(lot.remaining_quantity, 0);
-    if (remaining <= 0) continue;
+    const reserved = getInventoryLotReservedQuantity(lot);
+    const available = Math.max(0, remaining - reserved);
+    if (available <= QUANTITY_EPSILON) continue;
 
-    const layerQuantity = Math.min(remaining, remainingToDeduct);
+    const layerQuantity = Math.min(available, remainingToDeduct);
     const nextRemaining = remaining - layerQuantity;
     await updateDocument('InventoryLot', lot.id, {
       remaining_quantity: nextRemaining,
@@ -950,6 +988,10 @@ async function deductStockWithExecutor({
       quantity: layerQuantity,
       quantity_before: remaining,
       quantity_after: nextRemaining,
+      reserved_quantity_before: reserved,
+      reserved_quantity_after: reserved,
+      available_quantity_before: available,
+      available_quantity_after: Math.max(0, nextRemaining - reserved),
       unit_cost: toNumber(lot.unit_cost, 0),
       total_cost: Number(layerCost.toFixed(2)),
       accounting_unit_cost: accountingUnitCost,
@@ -1417,6 +1459,559 @@ async function returnStockToCommittedLotsWithExecutor({
   };
 }
 
+const PRODUCTION_RESERVATION_MODEL = 'reserve_then_consume_v1';
+
+function isCurrentProductionReservation(commitment = {}) {
+  return commitment?.stock_model === PRODUCTION_RESERVATION_MODEL
+    || commitment?.model_version === PRODUCTION_RESERVATION_MODEL;
+}
+
+export function hasLegacyPhysicalProductionCommitment(commitment = {}) {
+  if (isCurrentProductionReservation(commitment)) return false;
+  const status = normalizeText(commitment?.status).toLowerCase();
+  if (!['committed', 'partially_committed'].includes(status)) return false;
+  const positiveLines = (Array.isArray(commitment?.lines) ? commitment.lines : [])
+    .filter((line) => toNumber(line?.committed_quantity, 0) > QUANTITY_EPSILON);
+  if (positiveLines.length === 0) return false;
+  return positiveLines.every((line) => {
+    const committedQuantity = toNumber(line?.committed_quantity, 0);
+    const allocations = Array.isArray(line?.allocation_layers) ? line.allocation_layers : [];
+    const allocatedQuantity = allocations.reduce((sum, layer) => sum + toNumber(layer?.quantity, 0), 0);
+    const transactionIds = Array.isArray(line?.inventory_transaction_ids)
+      ? line.inventory_transaction_ids.filter(Boolean)
+      : [];
+    const hasTransactionEvidence = transactionIds.length > 0
+      || allocations.some((layer) => layer?.source_transaction_id || layer?.inventory_transaction_id);
+    return hasTransactionEvidence && quantitiesEqual(committedQuantity, allocatedQuantity);
+  });
+}
+
+async function reserveStockWithExecutor({
+  site_id,
+  site_name,
+  ingredient_id,
+  ingredient_name,
+  quantity,
+  unit,
+  as_of_date = null,
+  allow_shortage = false,
+  production_id,
+  commitment_revision,
+  operation_id
+}, executor) {
+  const requestedQuantity = Math.max(0, toNumber(quantity, 0));
+  if (requestedQuantity <= QUANTITY_EPSILON) {
+    return {
+      requested_quantity: 0,
+      reserved_quantity: 0,
+      shortage_quantity: 0,
+      total_cost: 0,
+      movement_layers: []
+    };
+  }
+
+  const inventory = await ensureInventoryRecord({
+    site_id,
+    site_name,
+    ingredient_id,
+    ingredient_name,
+    unit
+  }, executor);
+  const lots = await listInventoryLots({
+    siteId: site_id,
+    ingredientId: ingredient_id,
+    includeEmpty: true,
+    lock: true
+  }, executor);
+  const reservationDate = parseInventoryDate(
+    as_of_date || toDateOnly(),
+    'Production reservation date',
+    { required: true }
+  );
+  const sortedLots = sortInventoryLotsForIssue(
+    lots.filter((lot) => isInventoryLotUsable(lot, { asOfDate: toDateOnly() })),
+    { asOfDate: reservationDate }
+  );
+  assertSufficientStock(sortedLots, requestedQuantity, allow_shortage, { asOfDate: reservationDate });
+
+  let remainingToReserve = requestedQuantity;
+  const movementLayers = [];
+  const valuationMethod = normalizeText(inventory.valuation_method || 'fifo') || 'fifo';
+  const weightedAverageUnitCost = toNumber(inventory.average_unit_cost, 0);
+
+  for (const lot of sortedLots) {
+    if (remainingToReserve <= QUANTITY_EPSILON) break;
+    const remaining = Math.max(0, toNumber(lot.remaining_quantity, 0));
+    const reservedBefore = getInventoryLotReservedQuantity(lot);
+    const availableBefore = Math.max(0, remaining - reservedBefore);
+    if (availableBefore <= QUANTITY_EPSILON) continue;
+
+    const layerQuantity = Math.min(availableBefore, remainingToReserve);
+    const reservedAfter = roundQuantity(reservedBefore + layerQuantity);
+    await updateDocument('InventoryLot', lot.id, {
+      reserved_quantity: reservedAfter
+    }, executor);
+    const unitCost = toNumber(lot.unit_cost, 0);
+    const accountingUnitCost = valuationMethod === 'weighted_average'
+      ? weightedAverageUnitCost
+      : unitCost;
+    movementLayers.push({
+      inventory_lot_id: lot.id,
+      batch_number: lot.batch_number || null,
+      stock_date: lot.stock_date || lot.received_date || null,
+      received_date: lot.received_date || lot.stock_date || null,
+      expiry_date: lot.expiry_date || null,
+      quantity: roundQuantity(layerQuantity),
+      quantity_before: remaining,
+      quantity_after: remaining,
+      reserved_quantity_before: reservedBefore,
+      reserved_quantity_after: reservedAfter,
+      available_quantity_before: roundQuantity(availableBefore),
+      available_quantity_after: roundQuantity(availableBefore - layerQuantity),
+      unit_cost: unitCost,
+      total_cost: Number((layerQuantity * unitCost).toFixed(2)),
+      accounting_unit_cost: accountingUnitCost,
+      accounting_total_cost: Number((layerQuantity * accountingUnitCost).toFixed(2)),
+      production_id,
+      commitment_revision,
+      operation_id
+    });
+    remainingToReserve -= layerQuantity;
+  }
+
+  const reservedQuantity = Math.max(0, requestedQuantity - remainingToReserve);
+  await recalculateInventoryRecord(inventory, executor);
+  return {
+    requested_quantity: roundQuantity(requestedQuantity),
+    reserved_quantity: roundQuantity(reservedQuantity),
+    shortage_quantity: roundQuantity(remainingToReserve),
+    total_cost: Number(movementLayers.reduce(
+      (sum, layer) => sum + toNumber(layer.accounting_total_cost, 0),
+      0
+    ).toFixed(2)),
+    movement_layers: movementLayers
+  };
+}
+
+async function releaseReservedStockLayersWithExecutor({
+  site_id,
+  site_name,
+  ingredient_id,
+  ingredient_name,
+  unit,
+  released_layers
+}, executor) {
+  const inventory = await ensureInventoryRecord({
+    site_id,
+    site_name,
+    ingredient_id,
+    ingredient_name,
+    unit
+  }, executor);
+  const movementLayers = [];
+  let releasedQuantity = 0;
+
+  for (const allocation of Array.isArray(released_layers) ? released_layers : []) {
+    const lotId = normalizeText(allocation?.inventory_lot_id);
+    const quantity = Math.max(0, toNumber(allocation?.quantity, 0));
+    if (!lotId || quantity <= QUANTITY_EPSILON) continue;
+    const lot = await findDocument('InventoryLot', lotId, executor, true);
+    if (
+      !lot
+      || String(lot.site_id || '') !== String(site_id || '')
+      || String(lot.ingredient_id || '') !== String(ingredient_id || '')
+    ) {
+      const error = new Error('A reserved inventory lot is missing or no longer belongs to this production location');
+      error.status = 409;
+      throw error;
+    }
+    const reservedBefore = getInventoryLotReservedQuantity(lot);
+    if (reservedBefore + QUANTITY_EPSILON < quantity) {
+      const error = new Error('Reserved inventory cannot be released because its exact lot reservation is incomplete');
+      error.status = 409;
+      throw error;
+    }
+    const remaining = Math.max(0, toNumber(lot.remaining_quantity, 0));
+    const reservedAfter = roundQuantity(Math.max(0, reservedBefore - quantity));
+    await updateDocument('InventoryLot', lot.id, {
+      reserved_quantity: reservedAfter
+    }, executor);
+    releasedQuantity += quantity;
+    movementLayers.push({
+      ...allocation,
+      quantity: roundQuantity(quantity),
+      quantity_before: remaining,
+      quantity_after: remaining,
+      reserved_quantity_before: reservedBefore,
+      reserved_quantity_after: reservedAfter,
+      available_quantity_before: roundQuantity(Math.max(0, remaining - reservedBefore)),
+      available_quantity_after: roundQuantity(Math.max(0, remaining - reservedAfter))
+    });
+  }
+
+  await recalculateInventoryRecord(inventory, executor);
+  return {
+    released_quantity: roundQuantity(releasedQuantity),
+    movement_layers: movementLayers
+  };
+}
+
+export async function consumeProductionInventoryReservation({
+  production,
+  actor = {},
+  operationId = null,
+  reason = ''
+}, executor) {
+  if (!production?.id || !executor) {
+    const error = new Error('Production reservation consumption must run inside the production transaction');
+    error.status = production?.id ? 500 : 400;
+    throw error;
+  }
+  if (typeof executor.query === 'function') {
+    await executor.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      [`production-inventory:${String(production.id)}`]
+    );
+  }
+
+  const current = getProductionInventoryCommitment(production);
+  const currentStatus = normalizeText(current.status).toLowerCase();
+  const expectedStoreId = normalizeText(production.fulfillment_store_id);
+  if (
+    isCurrentProductionReservation(current)
+    && expectedStoreId
+    && normalizeText(current.site_id) !== expectedStoreId
+  ) {
+    const error = new Error('Production inventory reservation belongs to a different fulfillment Store');
+    error.status = 409;
+    throw error;
+  }
+  if (['consumed', 'partially_consumed'].includes(currentStatus)) {
+    return { mutated: false, inventory_mutated: false, commitment: current, production_patch: {}, movements: [] };
+  }
+
+  const timestamp = nowIso();
+  const performedBy = actor?.email || actor?.id || 'system';
+  const effectiveOperationId = normalizeText(operationId)
+    || `production:${production.id}:inventory:start:${current.revision}`;
+
+  // Before this reservation model, "committed" meant stock was physically
+  // deducted at Area Manager approval. Mark those records consumed at start,
+  // but never issue their exact lot allocations a second time.
+  if (!isCurrentProductionReservation(current)) {
+    if (!hasLegacyPhysicalProductionCommitment(current)) {
+      const error = new Error('Production inventory has not been reserved');
+      error.status = 409;
+      throw error;
+    }
+    const legacyStatus = currentStatus === 'partially_committed' ? 'partially_consumed' : 'consumed';
+    const legacyCommitment = {
+      ...current,
+      status: legacyStatus,
+      stock_model: 'legacy_approval_deduction_v0',
+      model_version: 'legacy_approval_deduction_v0',
+      operation: 'legacy_start_recognition',
+      last_operation_id: effectiveOperationId,
+      updated_at: timestamp,
+      updated_by: performedBy,
+      consumed_at: timestamp,
+      consumed_by: performedBy,
+      lines: (Array.isArray(current.lines) ? current.lines : []).map((line) => ({
+        ...line,
+        reserved_quantity: 0,
+        consumed_quantity: roundQuantity(line?.committed_quantity),
+        last_consumed_at: timestamp,
+        last_consumed_by: performedBy
+      }))
+    };
+    return {
+      mutated: true,
+      inventory_mutated: false,
+      commitment: legacyCommitment,
+      production_patch: {
+        inventory_commitment: legacyCommitment,
+        inventory_commitment_status: legacyStatus,
+        inventory_commitment_operation_id: effectiveOperationId,
+        inventory_commitment_idempotency_key: effectiveOperationId,
+        inventory_commitment_updated_at: timestamp,
+        inventory_commitment_updated_by: performedBy,
+        inventory_committed_lines: legacyCommitment.lines,
+        inventory_consumed_at: timestamp,
+        inventory_consumed_by: performedBy,
+        inventory_consumed_by_name: actor?.full_name || actor?.email || null,
+        inventory_commitment_history: [
+          ...(Array.isArray(production.inventory_commitment_history)
+            ? production.inventory_commitment_history.slice(-99)
+            : []),
+          {
+            revision: current.revision,
+            operation: 'legacy_start_recognition',
+            operation_id: effectiveOperationId,
+            status: legacyStatus,
+            actor_id: actor?.id || null,
+            actor_email: actor?.email || null,
+            actor_name: actor?.full_name || actor?.email || null,
+            reason: normalizeText(reason) || 'Legacy Area Manager deduction recognized at production start.',
+            timestamp,
+            movements: []
+          }
+        ]
+      },
+      movements: []
+    };
+  }
+
+  const emptyReleasedReservation = currentStatus === 'released'
+    && toNumber(current.total_desired_quantity, 0) <= QUANTITY_EPSILON;
+  if (!['reserved', 'partially_reserved'].includes(currentStatus) && !emptyReleasedReservation) {
+    const error = new Error('Production inventory reservation is not ready to be consumed');
+    error.status = 409;
+    throw error;
+  }
+  if (currentStatus === 'partially_reserved' || toNumber(current.total_shortage_quantity, 0) > QUANTITY_EPSILON) {
+    const error = new Error('Production cannot start while its inventory reservation has shortages');
+    error.status = 409;
+    throw error;
+  }
+  if (
+    toNumber(current.total_desired_quantity, 0) > QUANTITY_EPSILON
+    && (!Array.isArray(current.lines) || current.lines.length === 0)
+  ) {
+    const error = new Error('Production inventory reservation is missing its ingredient allocations');
+    error.status = 409;
+    throw error;
+  }
+
+  const movements = [];
+  const nextLines = [];
+  const plannedEligibilityDate = parseInventoryDate(
+    production.production_date || toDateOnly(),
+    'Production date',
+    { required: true }
+  );
+  for (const line of Array.isArray(current.lines) ? current.lines : []) {
+    const allocationLayers = Array.isArray(line?.allocation_layers) ? line.allocation_layers : [];
+    const expectedQuantity = Math.max(0, toNumber(line?.reserved_quantity ?? line?.committed_quantity, 0));
+    const allocatedQuantity = allocationLayers.reduce((sum, layer) => sum + toNumber(layer?.quantity, 0), 0);
+    if (!quantitiesEqual(expectedQuantity, allocatedQuantity)) {
+      const error = new Error(`Reservation for ${line?.ingredient_name || line?.ingredient_id} has incomplete lot allocations`);
+      error.status = 409;
+      throw error;
+    }
+
+    const inventory = await ensureInventoryRecord({
+      site_id: current.site_id,
+      site_name: current.site_name,
+      ingredient_id: line.ingredient_id,
+      ingredient_name: line.ingredient_name,
+      unit: line.unit
+    }, executor);
+    const balanceBefore = toNumber(inventory.on_hand_quantity, 0);
+    const availableBefore = toNumber(inventory.available_quantity ?? inventory.quantity, 0);
+    const valuationMethod = normalizeText(inventory.valuation_method || 'fifo') || 'fifo';
+    const weightedAverageUnitCost = toNumber(inventory.average_unit_cost, 0);
+    const consumedLayers = [];
+    let fifoCost = 0;
+
+    for (const allocation of allocationLayers) {
+      const lot = await findDocument('InventoryLot', allocation.inventory_lot_id, executor, true);
+      const quantity = Math.max(0, toNumber(allocation.quantity, 0));
+      if (
+        !lot
+        || String(lot.site_id || '') !== String(current.site_id || '')
+        || String(lot.ingredient_id || '') !== String(line.ingredient_id || '')
+      ) {
+        const error = new Error('A reserved inventory lot is missing or belongs to another production location');
+        error.status = 409;
+        throw error;
+      }
+      if (
+        !isInventoryLotUsable(lot, { asOfDate: toDateOnly() })
+        || !isInventoryLotUsable(lot, { asOfDate: plannedEligibilityDate })
+      ) {
+        const error = new Error(`Reserved batch ${lot.batch_number || lot.id} is no longer eligible for production consumption`);
+        error.status = 409;
+        throw error;
+      }
+      const remainingBefore = Math.max(0, toNumber(lot.remaining_quantity, 0));
+      const reservedBefore = getInventoryLotReservedQuantity(lot);
+      if (remainingBefore + QUANTITY_EPSILON < quantity || reservedBefore + QUANTITY_EPSILON < quantity) {
+        const error = new Error(`Reserved batch ${lot.batch_number || lot.id} no longer has the allocated quantity`);
+        error.status = 409;
+        throw error;
+      }
+      const remainingAfter = roundQuantity(Math.max(0, remainingBefore - quantity));
+      const reservedAfter = roundQuantity(Math.max(0, reservedBefore - quantity));
+      await updateDocument('InventoryLot', lot.id, {
+        remaining_quantity: remainingAfter,
+        reserved_quantity: reservedAfter,
+        status: remainingAfter <= QUANTITY_EPSILON ? 'consumed' : lot.status
+      }, executor);
+      const unitCost = toNumber(lot.unit_cost, 0);
+      const accountingUnitCost = valuationMethod === 'weighted_average'
+        ? weightedAverageUnitCost
+        : unitCost;
+      fifoCost += quantity * unitCost;
+      consumedLayers.push({
+        inventory_lot_id: lot.id,
+        batch_number: lot.batch_number || allocation.batch_number || null,
+        stock_date: lot.stock_date || lot.received_date || allocation.stock_date || null,
+        received_date: lot.received_date || lot.stock_date || allocation.received_date || null,
+        expiry_date: lot.expiry_date || allocation.expiry_date || null,
+        quantity: roundQuantity(quantity),
+        quantity_before: remainingBefore,
+        quantity_after: remainingAfter,
+        reserved_quantity_before: reservedBefore,
+        reserved_quantity_after: reservedAfter,
+        available_quantity_before: roundQuantity(Math.max(0, remainingBefore - reservedBefore)),
+        available_quantity_after: roundQuantity(Math.max(0, remainingAfter - reservedAfter)),
+        unit_cost: unitCost,
+        total_cost: Number((quantity * unitCost).toFixed(2)),
+        accounting_unit_cost: accountingUnitCost,
+        accounting_total_cost: Number((quantity * accountingUnitCost).toFixed(2)),
+        reservation_revision: current.revision,
+        reservation_operation_id: allocation.operation_id || null
+      });
+    }
+
+    const consumedQuantity = consumedLayers.reduce((sum, layer) => sum + toNumber(layer.quantity, 0), 0);
+    const totalCost = valuationMethod === 'weighted_average'
+      ? consumedQuantity * weightedAverageUnitCost
+      : fifoCost;
+    if (valuationMethod === 'weighted_average') {
+      await revalueWeightedAverageLots(
+        inventory,
+        Math.max(0, toNumber(inventory.total_value, 0) - totalCost),
+        executor
+      );
+    }
+    const refreshed = await recalculateInventoryRecord(inventory, executor);
+    const balanceAfter = toNumber(refreshed.on_hand_quantity, 0);
+    const transaction = consumedQuantity > QUANTITY_EPSILON
+      ? await postInventoryTransaction({
+        site_id: current.site_id,
+        site_name: current.site_name,
+        ingredient_id: line.ingredient_id,
+        ingredient_name: line.ingredient_name,
+        transaction_type: 'production_use',
+        quantity: consumedQuantity * -1,
+        unit: line.unit,
+        transaction_date: toDateOnly(),
+        reference_id: production.id,
+        reference_type: 'production',
+        notes: normalizeText(reason) || `Consumed reserved inventory when production started: ${production.recipe_name || production.id}`,
+        performed_by: performedBy,
+        total_cost: totalCost,
+        unit_cost: consumedQuantity > 0 ? totalCost / consumedQuantity : 0,
+        reason_code: 'production_start_consumption',
+        movement_layers: consumedLayers,
+        source: 'production_start',
+        source_type: 'production_consumption',
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        opening_quantity: balanceBefore,
+        addition_quantity: 0,
+        consumption_quantity: consumedQuantity,
+        remaining_quantity: balanceAfter,
+        operation: 'production_start_consumption',
+        operation_id: effectiveOperationId,
+        idempotency_key: `${effectiveOperationId}:${line.ingredient_id}:consume`,
+        commitment_revision: current.revision,
+        metadata: {
+          production_id: production.id,
+          production_date: production.production_date || null,
+          reservation_revision: current.revision,
+          available_quantity_before: availableBefore,
+          available_quantity_after: toNumber(refreshed.available_quantity ?? refreshed.quantity, 0)
+        }
+      }, executor)
+      : null;
+    const transactionIds = [
+      ...(Array.isArray(line.inventory_transaction_ids) ? line.inventory_transaction_ids : []),
+      transaction?.id
+    ].filter(Boolean);
+    nextLines.push({
+      ...line,
+      committed_quantity: roundQuantity(consumedQuantity),
+      reserved_quantity: 0,
+      consumed_quantity: roundQuantity(consumedQuantity),
+      total_cost: Number(totalCost.toFixed(2)),
+      allocation_layers: consumedLayers,
+      inventory_transaction_ids: [...new Set(transactionIds)],
+      last_consumed_at: timestamp,
+      last_consumed_by: performedBy
+    });
+    movements.push({
+      direction: 'deduction',
+      ingredient_id: line.ingredient_id,
+      ingredient_name: line.ingredient_name,
+      quantity: roundQuantity(consumedQuantity),
+      unit: line.unit,
+      transaction_id: transaction?.id || null,
+      inventory_lot_changes: consumedLayers
+    });
+  }
+
+  const totalConsumed = nextLines.reduce((sum, line) => sum + toNumber(line.consumed_quantity, 0), 0);
+  const commitment = {
+    ...current,
+    status: 'consumed',
+    stock_model: PRODUCTION_RESERVATION_MODEL,
+    model_version: PRODUCTION_RESERVATION_MODEL,
+    operation: 'production_start_consumption',
+    last_operation_id: effectiveOperationId,
+    updated_at: timestamp,
+    updated_by: performedBy,
+    consumed_at: timestamp,
+    consumed_by: performedBy,
+    total_reserved_quantity: 0,
+    total_committed_quantity: roundQuantity(totalConsumed),
+    total_consumed_quantity: roundQuantity(totalConsumed),
+    lines: nextLines
+  };
+  return {
+    mutated: true,
+    inventory_mutated: movements.some((movement) => movement.quantity > QUANTITY_EPSILON),
+    commitment,
+    production_patch: {
+      inventory_commitment: commitment,
+      inventory_commitment_status: 'consumed',
+      inventory_commitment_operation_id: effectiveOperationId,
+      inventory_commitment_idempotency_key: effectiveOperationId,
+      inventory_commitment_updated_at: timestamp,
+      inventory_commitment_updated_by: performedBy,
+      inventory_committed_lines: nextLines,
+      inventory_consumed_at: timestamp,
+      inventory_consumed_by: performedBy,
+      inventory_consumed_by_name: actor?.full_name || actor?.email || null,
+      inventory_commitment_history: [
+        ...(Array.isArray(production.inventory_commitment_history)
+          ? production.inventory_commitment_history.slice(-99)
+          : []),
+        {
+          revision: current.revision,
+          operation: 'production_start_consumption',
+          operation_id: effectiveOperationId,
+          status: 'consumed',
+          actor_id: actor?.id || null,
+          actor_email: actor?.email || null,
+          actor_name: actor?.full_name || actor?.email || null,
+          reason: normalizeText(reason) || null,
+          timestamp,
+          movements: movements.map((movement) => ({
+            direction: movement.direction,
+            ingredient_id: movement.ingredient_id,
+            quantity: movement.quantity,
+            unit: movement.unit,
+            transaction_id: movement.transaction_id
+          }))
+        }
+      ]
+    },
+    movements
+  };
+}
+
 export async function reconcileProductionInventoryCommitment({
   production,
   actor = {},
@@ -1453,6 +2048,15 @@ export async function reconcileProductionInventoryCommitment({
   }
 
   const current = getProductionInventoryCommitment(production);
+  const reservationAccounting = operation !== 'completion_reconciliation'
+    && (
+      isCurrentProductionReservation(current)
+      || !hasProductionInventoryCommitment(production)
+      || !hasLegacyPhysicalProductionCommitment(current)
+    );
+  const repairingUnprovenLegacyCommitment = reservationAccounting
+    && hasProductionInventoryCommitment(production)
+    && !isCurrentProductionReservation(current);
   if (
     expectedRevision !== null
     && Math.max(0, Math.trunc(toNumber(expectedRevision, -1))) !== current.revision
@@ -1465,6 +2069,15 @@ export async function reconcileProductionInventoryCommitment({
   }
 
   const stockSite = resolveCommitmentSite({ production, fulfillmentStore, siteCatalog });
+  if (
+    isCurrentProductionReservation(current)
+    && current.site_id
+    && String(current.site_id) !== String(stockSite.id)
+  ) {
+    const error = new Error('Production inventory reservation belongs to a different fulfillment Store');
+    error.status = 409;
+    throw error;
+  }
   const demand = normalizeProductionCommitmentDemand(
     desiredIngredients ?? production.ingredients_used ?? [],
     { ingredientCatalog, inventoryCatalog }
@@ -1486,7 +2099,7 @@ export async function reconcileProductionInventoryCommitment({
   }
 
   const previousLineMap = new Map(
-    (Array.isArray(current.lines) ? current.lines : [])
+    (repairingUnprovenLegacyCommitment ? [] : Array.isArray(current.lines) ? current.lines : [])
       .map((line) => [String(line?.ingredient_id || ''), line])
       .filter(([ingredientId]) => ingredientId)
   );
@@ -1532,6 +2145,7 @@ export async function reconcileProductionInventoryCommitment({
       || !quantitiesEqual(current.target_servings, targetServings)
     );
   const hasDemandChange = !hasProductionInventoryCommitment(production)
+    || repairingUnprovenLegacyCommitment
     || isCompletionFinalization
     || hasApprovedTargetChange
     || changes.some(({ adjustment }) => (
@@ -1551,8 +2165,9 @@ export async function reconcileProductionInventoryCommitment({
   const revision = current.revision + 1;
   const effectiveOperationId = requestedOperationId
     || `production:${production.id}:inventory:${revision}:${normalizeText(operation) || 'reconcile'}`;
-  // Stock moves when the workflow action is posted, even when the production
-  // itself is planned for a future or historical service date.
+  // Reservations are evaluated against the intended production date so a lot
+  // that expires beforehand is never allocated. Physical movement timestamps
+  // still reflect the action date when consumption/reconciliation is posted.
   const effectiveDate = toDateOnly(asOfDate || toDateOnly());
   const performedBy = actor?.email || actor?.id || 'system';
   const timestamp = nowIso();
@@ -1564,7 +2179,12 @@ export async function reconcileProductionInventoryCommitment({
     let allocationLayers = Array.isArray(previousLine?.allocation_layers)
       ? previousLine.allocation_layers.map((layer) => ({ ...layer }))
       : [];
-    let committedQuantity = Math.max(0, toNumber(previousLine?.committed_quantity, 0));
+    let committedQuantity = Math.max(0, toNumber(
+      reservationAccounting
+        ? previousLine?.reserved_quantity ?? previousLine?.committed_quantity
+        : previousLine?.consumed_quantity ?? previousLine?.committed_quantity,
+      0
+    ));
     const transactionIds = Array.isArray(previousLine?.inventory_transaction_ids)
       ? [...previousLine.inventory_transaction_ids]
       : [];
@@ -1574,7 +2194,16 @@ export async function reconcileProductionInventoryCommitment({
         allocationLayers,
         adjustment.return_quantity
       );
-      const returned = await returnStockToCommittedLotsWithExecutor({
+      const returned = reservationAccounting
+        ? await releaseReservedStockLayersWithExecutor({
+          site_id: stockSite.id,
+          site_name: stockSite.name || production.fulfillment_store_name || production.site_name,
+          ingredient_id: desiredLine.ingredient_id,
+          ingredient_name: desiredLine.ingredient_name,
+          unit: desiredLine.unit,
+          released_layers: allocationSplit.returned_layers
+        }, executor)
+        : await returnStockToCommittedLotsWithExecutor({
         site_id: stockSite.id,
         site_name: stockSite.name || production.fulfillment_store_name || production.site_name,
         ingredient_id: desiredLine.ingredient_id,
@@ -1588,8 +2217,12 @@ export async function reconcileProductionInventoryCommitment({
         performed_by: performedBy,
         reason_code: operation === 'cancellation'
           ? 'production_cancellation_return'
-          : 'production_commitment_reconciliation_return',
-        source: 'production_inventory_commitment',
+          : operation === 'completion_reconciliation'
+            ? 'production_completion_reconciliation_return'
+            : 'production_commitment_reconciliation_return',
+        source: operation === 'completion_reconciliation'
+          ? 'production_completion'
+          : 'production_inventory_commitment',
         source_type: 'return_or_cancellation',
         operation,
         operation_id: effectiveOperationId,
@@ -1604,13 +2237,16 @@ export async function reconcileProductionInventoryCommitment({
         }
       }, executor);
       allocationLayers = allocationSplit.retained_layers;
-      committedQuantity = Math.max(0, committedQuantity - returned.returned_quantity);
+      const returnedQuantity = reservationAccounting
+        ? returned.released_quantity
+        : returned.returned_quantity;
+      committedQuantity = Math.max(0, committedQuantity - returnedQuantity);
       if (returned.transaction_id) transactionIds.push(returned.transaction_id);
       movements.push({
-        direction: 'return',
+        direction: reservationAccounting ? 'release' : 'return',
         ingredient_id: desiredLine.ingredient_id,
         ingredient_name: desiredLine.ingredient_name,
-        quantity: returned.returned_quantity,
+        quantity: returnedQuantity,
         unit: desiredLine.unit,
         transaction_id: returned.transaction_id,
         inventory_lot_changes: returned.movement_layers
@@ -1618,14 +2254,30 @@ export async function reconcileProductionInventoryCommitment({
     }
 
     if (adjustment.issue_quantity > QUANTITY_EPSILON) {
-      const issued = await deductStockWithExecutor({
+      const issued = reservationAccounting
+        ? await reserveStockWithExecutor({
+          site_id: stockSite.id,
+          site_name: stockSite.name || production.fulfillment_store_name || production.site_name,
+          ingredient_id: desiredLine.ingredient_id,
+          ingredient_name: desiredLine.ingredient_name,
+          quantity: adjustment.issue_quantity,
+          unit: desiredLine.unit,
+          as_of_date: effectiveDate,
+          allow_shortage: allowShortage,
+          production_id: production.id,
+          commitment_revision: revision,
+          operation_id: effectiveOperationId
+        }, executor)
+        : await deductStockWithExecutor({
         site_id: stockSite.id,
         site_name: stockSite.name || production.fulfillment_store_name || production.site_name,
         ingredient_id: desiredLine.ingredient_id,
         ingredient_name: desiredLine.ingredient_name,
         quantity: adjustment.issue_quantity,
         unit: desiredLine.unit,
-        transaction_type: 'production_commitment',
+        transaction_type: operation === 'completion_reconciliation'
+          ? 'production_use'
+          : 'production_commitment',
         transaction_date: effectiveDate,
         reference_id: production.id,
         reference_type: 'production',
@@ -1636,7 +2288,9 @@ export async function reconcileProductionInventoryCommitment({
           : 'production_approval_commitment',
         allow_shortage: allowShortage,
         as_of_date: effectiveDate,
-        source: 'production_inventory_commitment',
+        source: operation === 'completion_reconciliation'
+          ? 'production_completion'
+          : 'production_inventory_commitment',
         source_type: 'production_consumption',
         operation,
         operation_id: effectiveOperationId,
@@ -1650,6 +2304,9 @@ export async function reconcileProductionInventoryCommitment({
           desired_quantity: adjustment.desired_quantity
         }
       }, executor);
+      const issuedQuantity = reservationAccounting
+        ? issued.reserved_quantity
+        : issued.issued_quantity;
       const newLayers = issued.movement_layers.map((layer) => ({
         ...layer,
         source_transaction_id: issued.transaction_id || null,
@@ -1657,13 +2314,13 @@ export async function reconcileProductionInventoryCommitment({
         operation_id: effectiveOperationId
       }));
       allocationLayers.push(...newLayers);
-      committedQuantity += issued.issued_quantity;
+      committedQuantity += issuedQuantity;
       if (issued.transaction_id) transactionIds.push(issued.transaction_id);
       movements.push({
-        direction: 'deduction',
+        direction: reservationAccounting ? 'reserve' : 'deduction',
         ingredient_id: desiredLine.ingredient_id,
         ingredient_name: desiredLine.ingredient_name,
-        quantity: issued.issued_quantity,
+        quantity: issuedQuantity,
         shortage_quantity: issued.shortage_quantity,
         unit: desiredLine.unit,
         transaction_id: issued.transaction_id,
@@ -1684,6 +2341,10 @@ export async function reconcileProductionInventoryCommitment({
       ...desiredLine,
       desired_quantity: desiredQuantity,
       committed_quantity: committedQuantity,
+      reserved_quantity: reservationAccounting ? committedQuantity : 0,
+      consumed_quantity: reservationAccounting
+        ? Math.max(0, toNumber(previousLine?.consumed_quantity, 0))
+        : committedQuantity,
       shortage_quantity: roundQuantity(Math.max(0, desiredQuantity - committedQuantity)),
       total_cost: Number(totalCost.toFixed(2)),
       allocation_layers: allocationLayers,
@@ -1704,11 +2365,13 @@ export async function reconcileProductionInventoryCommitment({
     : totalDesired <= QUANTITY_EPSILON && totalCommitted <= QUANTITY_EPSILON
       ? 'released'
       : totalShortage > QUANTITY_EPSILON
-        ? 'partially_committed'
-        : 'committed';
+        ? reservationAccounting ? 'partially_reserved' : 'partially_committed'
+        : reservationAccounting ? 'reserved' : 'committed';
   const commitment = {
     revision,
     status,
+    stock_model: reservationAccounting ? PRODUCTION_RESERVATION_MODEL : current.stock_model || current.model_version || null,
+    model_version: reservationAccounting ? PRODUCTION_RESERVATION_MODEL : current.model_version || current.stock_model || null,
     operation: normalizeText(operation) || 'reconcile',
     last_operation_id: effectiveOperationId,
     idempotency_key: effectiveOperationId,
@@ -1718,12 +2381,18 @@ export async function reconcileProductionInventoryCommitment({
     target_servings: targetServings ?? production.target_servings ?? null,
     committed_at: current.committed_at || timestamp,
     committed_by: current.committed_by || performedBy,
+    reserved_at: reservationAccounting ? current.reserved_at || timestamp : current.reserved_at || null,
+    reserved_by: reservationAccounting ? current.reserved_by || performedBy : current.reserved_by || null,
     updated_at: timestamp,
     updated_by: performedBy,
     released_at: status === 'released' ? timestamp : null,
     released_by: status === 'released' ? performedBy : null,
     total_desired_quantity: roundQuantity(totalDesired),
     total_committed_quantity: roundQuantity(totalCommitted),
+    total_reserved_quantity: reservationAccounting ? roundQuantity(totalCommitted) : 0,
+    total_consumed_quantity: reservationAccounting
+      ? roundQuantity(toNumber(current.total_consumed_quantity, 0))
+      : roundQuantity(totalCommitted),
     total_shortage_quantity: roundQuantity(totalShortage),
     lines: nextLines
   };
@@ -1757,6 +2426,21 @@ export async function reconcileProductionInventoryCommitment({
     inventory_committed_by: current.committed_by || performedBy,
     inventory_committed_servings: targetServings ?? production.target_servings ?? null,
     inventory_committed_lines: nextLines,
+    inventory_reserved_at: reservationAccounting
+      ? production.inventory_reserved_at || current.reserved_at || timestamp
+      : production.inventory_reserved_at || current.reserved_at || null,
+    inventory_reserved_by: reservationAccounting
+      ? production.inventory_reserved_by || current.reserved_by || performedBy
+      : production.inventory_reserved_by || current.reserved_by || null,
+    inventory_reserved_by_name: reservationAccounting
+      ? production.inventory_reserved_by_name || actor?.full_name || actor?.email || null
+      : production.inventory_reserved_by_name || null,
+    inventory_released_at: status === 'released'
+      ? timestamp
+      : production.inventory_released_at || null,
+    inventory_released_by: status === 'released'
+      ? performedBy
+      : production.inventory_released_by || null,
     inventory_commitment_history: [
       ...(Array.isArray(production.inventory_commitment_history)
         ? production.inventory_commitment_history.slice(-99)
@@ -2145,7 +2829,7 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
       expectedRevision: production.inventory_commitment_revision
         ?? production.inventory_commitment?.revision
         ?? null,
-      asOfDate: production.production_date,
+      asOfDate: toDateOnly(),
       siteCatalog,
       ingredientCatalog,
       inventoryCatalog,
@@ -2395,24 +3079,41 @@ async function getStockOnHandReport({ location = null } = {}) {
     const itemLots = lotsByInventoryKey.get(`${item.site_id || ''}::${item.ingredient_id || ''}`) || [];
     const hasLotLedger = itemLots.length > 0;
     const onHandLots = itemLots.filter((lot) => toNumber(lot.remaining_quantity, 0) > 0);
-    const availableLots = sortInventoryLotsForIssue(onHandLots);
+    const usableLots = sortInventoryLotsForIssue(onHandLots);
+    const availableLots = usableLots.filter(
+      (lot) => getInventoryLotAvailableQuantity(lot) > QUANTITY_EPSILON
+    );
     // Untouched legacy aggregates do not yet have generated lots. Preserve
     // their stored balance in reports until the next protected movement
     // performs the auditable opening-lot migration.
     const onHandQuantity = hasLotLedger
       ? onHandLots.reduce((sum, lot) => sum + toNumber(lot.remaining_quantity, 0), 0)
       : Math.max(0, toNumber(item.on_hand_quantity ?? item.quantity ?? item.available_quantity, 0));
+    const usableQuantity = hasLotLedger
+      ? usableLots.reduce((sum, lot) => sum + toNumber(lot.remaining_quantity, 0), 0)
+      : Math.max(0, toNumber(item.usable_on_hand_quantity ?? item.on_hand_quantity ?? item.quantity, 0));
+    const reservedQuantity = hasLotLedger
+      ? onHandLots.reduce((sum, lot) => sum + getInventoryLotReservedQuantity(lot), 0)
+      : Math.max(0, toNumber(item.reserved_quantity, 0));
+    const unavailableQuantity = hasLotLedger
+      ? onHandLots
+        .filter((lot) => !isInventoryLotUsable(lot))
+        .reduce((sum, lot) => sum + Math.max(
+          0,
+          toNumber(lot.remaining_quantity, 0) - getInventoryLotReservedQuantity(lot)
+        ), 0)
+      : Math.max(0, toNumber(item.unavailable_quantity, 0));
     const availableQuantity = hasLotLedger
-      ? availableLots.reduce((sum, lot) => sum + toNumber(lot.remaining_quantity, 0), 0)
+      ? availableLots.reduce((sum, lot) => sum + getInventoryLotAvailableQuantity(lot), 0)
       : Math.max(0, toNumber(item.available_quantity ?? item.quantity, 0));
     const fifoValue = hasLotLedger
-      ? availableLots.reduce(
+      ? usableLots.reduce(
         (sum, lot) => sum + (toNumber(lot.remaining_quantity, 0) * toNumber(lot.unit_cost, 0)),
         0
       )
       : Math.max(0, toNumber(item.fifo_total_value ?? item.total_value, 0));
     const weightedValue = hasLotLedger
-      ? availableLots.reduce(
+      ? usableLots.reduce(
         (sum, lot) => sum + (
           toNumber(lot.remaining_quantity, 0)
           * toNumber(lot.accounting_unit_cost ?? lot.unit_cost, 0)
@@ -2435,13 +3136,15 @@ async function getStockOnHandReport({ location = null } = {}) {
       ...item,
       quantity: roundQuantity(availableQuantity),
       available_quantity: roundQuantity(availableQuantity),
+      reserved_quantity: roundQuantity(reservedQuantity),
+      usable_on_hand_quantity: roundQuantity(usableQuantity),
       on_hand_quantity: roundQuantity(onHandQuantity),
-      unavailable_quantity: roundQuantity(Math.max(0, onHandQuantity - availableQuantity)),
+      unavailable_quantity: roundQuantity(unavailableQuantity),
       total_value: Number(totalValue.toFixed(2)),
       fifo_total_value: Number(fifoValue.toFixed(2)),
       weighted_average_value: Number(weightedValue.toFixed(2)),
-      average_unit_cost: availableQuantity > 0
-        ? Number((totalValue / availableQuantity).toFixed(4))
+      average_unit_cost: usableQuantity > 0
+        ? Number((totalValue / usableQuantity).toFixed(4))
         : 0,
       batch_count: hasLotLedger ? onHandLots.length : Math.max(0, toNumber(item.batch_count, 0)),
       available_batch_count: hasLotLedger
@@ -2569,11 +3272,18 @@ async function getInventoryValuationReport({ siteId = '', ingredientId = '', loc
     && (!ingredientId || String(item.ingredient_id || '') === String(ingredientId))
   ));
   return inventory.map((item) => {
-    const quantity = toNumber(item.quantity, 0);
-    const weightedValue = quantity * toNumber(item.average_unit_cost, 0);
+    const valuationQuantity = toNumber(
+      item.usable_on_hand_quantity ?? item.on_hand_quantity ?? item.quantity,
+      0
+    );
+    const weightedValue = toNumber(
+      item.weighted_average_value,
+      valuationQuantity * toNumber(item.average_unit_cost, 0)
+    );
     const fifoValue = toNumber(item.fifo_total_value, item.total_value ?? weightedValue);
     return {
       ...item,
+      valuation_quantity: roundQuantity(valuationQuantity),
       fifo_value: Number(fifoValue.toFixed(2)),
       weighted_average_value: Number(weightedValue.toFixed(2))
     };

@@ -64,6 +64,14 @@ function sourceOf(transaction) {
   return transaction.source_label || transaction.source || transaction.movement_source || transaction.reference_type || transaction.reason_code || transaction.transaction_type || '-';
 }
 
+function movementTypeLabel(value) {
+  const type = String(value || '').trim().toLowerCase();
+  if (type === 'production_use') return 'Production start consumption';
+  if (type === 'production_commitment') return 'Legacy approval consumption';
+  if (['production_release', 'production_return'].includes(type)) return 'Production stock return';
+  return type.replace(/_/g, ' ');
+}
+
 function referenceOf(transaction) {
   return transaction.reference_name || transaction.reference_number || transaction.reference_id || transaction.external_reference || '-';
 }
@@ -149,7 +157,7 @@ export default function InventoryHistory({ ingredientId, siteId }) {
                         <Icon className={`w-3 h-3 mr-1 ${config.color}`} />
                         {String(sourceOf(transaction)).replace(/_/g, ' ')}
                       </Badge>
-                      <p className="mt-1 text-xs capitalize text-slate-500">{String(transaction.transaction_type || '').replace(/_/g, ' ')}</p>
+                      <p className="mt-1 text-xs capitalize text-slate-500">{movementTypeLabel(transaction.transaction_type)}</p>
                     </TableCell>
                     <TableCell className="text-sm text-slate-600">
                       {movementLayersOf(transaction).length > 0 ? (

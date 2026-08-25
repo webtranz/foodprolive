@@ -36,6 +36,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatCurrency } from '@/lib/currency';
 import { buildProductionPlanningDashboard } from '@/lib/productionPlanning';
+import { getProductionInventoryState } from '@/lib/inventoryAvailability';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../../../shared/itemCode.js';
 import {
@@ -131,6 +132,38 @@ function PrepStatusBadge({ status }) {
   );
 }
 
+const INVENTORY_STATE_STYLES = {
+  reserved: 'border-violet-200 bg-violet-50 text-violet-800',
+  warning: 'border-amber-200 bg-amber-50 text-amber-800',
+  consumed: 'border-sky-200 bg-sky-50 text-sky-800',
+  released: 'border-slate-200 bg-slate-50 text-slate-700',
+  none: 'border-slate-200 bg-white text-slate-600'
+};
+
+function ProductionInventoryState({ production }) {
+  const state = getProductionInventoryState(production);
+  if (state.status === 'none') return null;
+  const timestamp = state.is_consumed ? state.consumed_at : state.reserved_at;
+  const formattedTimestamp = timestamp && !Number.isNaN(new Date(timestamp).getTime())
+    ? format(new Date(timestamp), 'dd MMM yyyy, hh:mm a')
+    : '';
+
+  return (
+    <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50/70 px-2.5 py-2 text-xs">
+      <Badge
+        variant="outline"
+        className={INVENTORY_STATE_STYLES[state.tone] || INVENTORY_STATE_STYLES.none}
+        title={state.description}
+      >
+        {state.label}
+      </Badge>
+      <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+        {state.description}{formattedTimestamp ? ` ${formattedTimestamp}` : ''}
+      </p>
+    </div>
+  );
+}
+
 function Metric({ icon: Icon, label, value, title }) {
   return (
     <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2" title={title}>
@@ -217,6 +250,8 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
             </p>
           </div>
         ) : null}
+
+        <ProductionInventoryState production={item.production} />
 
         {requiresAcknowledgement ? (
           <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
@@ -356,7 +391,9 @@ function PlanSummary({ dashboard }) {
                     </div>
                     <span className="whitespace-nowrap font-semibold text-red-600">-{formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} {shortage.unit}</span>
                   </div>
-                  <p className="mt-1 text-[10px] text-slate-400">Required {formatRecipeQuantity(shortage.required_quantity, shortage.unit)} · Available {formatRecipeQuantity(shortage.available_quantity, shortage.unit)} {shortage.unit}</p>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Required {formatRecipeQuantity(shortage.required_quantity, shortage.unit)} · On hand {formatRecipeQuantity(shortage.on_hand_quantity, shortage.unit)} · Reserved {formatRecipeQuantity(shortage.reserved_quantity, shortage.unit)} · Available {formatRecipeQuantity(shortage.available_quantity, shortage.unit)} {shortage.unit}
+                  </p>
                 </div>
               ))}
             </div>
@@ -612,7 +649,7 @@ export default function ProductionPlanningDashboard({
           <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-end 2xl:justify-between">
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-slate-950">Production Planning</h1>
-              <p className="mt-1 text-sm text-slate-500">Daily kitchen execution by meal period, batch, station, stock readiness, and preparation status.</p>
+              <p className="mt-1 text-sm text-slate-500">Daily kitchen execution by meal period, batch, station, inventory reservation, start-time consumption, and preparation status.</p>
             </div>
             <div className="production-plan-no-print flex flex-wrap gap-2">
               <Button variant="outline" onClick={() => setRecipeSheetOpen(true)} disabled={!hasItems}>

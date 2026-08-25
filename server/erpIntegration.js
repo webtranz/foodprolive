@@ -584,8 +584,15 @@ async function buildD365InventoryRows({ locationId, category, scope }) {
     item_name: item.ingredient_name || item.name || '',
     available_quantity: Number(safeNumber(item.available_quantity ?? item.quantity).toFixed(3)),
     unit: item.unit || '',
-    ordered_in_total: Number(safeNumber(item.ordered_quantity || item.ordered_in_total).toFixed(3)),
-    on_order_reserved: Number(safeNumber(item.reserved_quantity || item.on_order_reserved).toFixed(3))
+    ordered_in_total: Number(safeNumber(
+      item.d365_ordered_in_total ?? item.ordered_quantity ?? item.ordered_in_total
+    ).toFixed(3)),
+    // D365 on-order reservations describe inbound purchasing commitments.
+    // Production reservations are a separate local availability concept and
+    // must never be exported as incoming stock.
+    on_order_reserved: Number(safeNumber(
+      item.d365_on_order_reserved ?? item.on_order_reserved
+    ).toFixed(3))
   }));
 }
 

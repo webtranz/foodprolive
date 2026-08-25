@@ -6,6 +6,10 @@ import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
 import { formatRecipeQuantity } from '../../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../../shared/itemCode.js';
 import { resolveProductionFulfillmentStore } from '../../shared/productionFulfillment.js';
+import {
+  getInventoryQuantities,
+  getProductionInventoryState
+} from './inventoryAvailability.js';
 
 export const PRODUCTION_MEAL_PERIODS = Object.freeze([
   { key: 'breakfast', label: 'Breakfast', time_range: '7:00 AM – 10:00 AM' },
@@ -117,11 +121,26 @@ function buildInventoryMap(inventory, ingredientMap) {
       ingredient_id: ingredientId,
       item_code: getItemCodeFromRecords([ingredient, stock]),
       ingredient_name: stock.ingredient_name || ingredient.name || ingredientId,
+      on_hand_quantity: 0,
+      reserved_quantity: 0,
       available_quantity: 0,
       unit: targetUnit
     };
+    const stockQuantities = getInventoryQuantities(stock);
+    current.on_hand_quantity += convertIngredientQuantity(
+      stockQuantities.on_hand_quantity,
+      stock.unit || targetUnit,
+      targetUnit,
+      ingredient
+    );
+    current.reserved_quantity += convertIngredientQuantity(
+      stockQuantities.reserved_quantity,
+      stock.unit || targetUnit,
+      targetUnit,
+      ingredient
+    );
     current.available_quantity += convertIngredientQuantity(
-      stock.quantity,
+      stockQuantities.available_quantity,
       stock.unit || targetUnit,
       targetUnit,
       ingredient
@@ -157,10 +176,12 @@ function buildShortages(productions, ingredientMap, inventoryMap, sites) {
 
   productions.forEach((production) => {
     const workflowStatus = textValue(production?.status).toLowerCase();
-    if (workflowStatus === 'completed' || NON_DEMAND_STATUSES.has(workflowStatus)) return;
+    if (['completed', 'in_progress'].includes(workflowStatus) || NON_DEMAND_STATUSES.has(workflowStatus)) return;
 
     const inventorySite = resolvePlanningInventorySite(production, sites);
     const siteId = inventorySite.id;
+    const inventoryState = getProductionInventoryState(production);
+    if (inventoryState.is_consumed) return;
     (Array.isArray(production?.ingredients_used) ? production.ingredients_used : []).forEach((line) => {
       const ingredientId = textValue(line?.ingredient_id);
       if (!siteId || !ingredientId) return;
@@ -177,6 +198,21 @@ function buildShortages(productions, ingredientMap, inventoryMap, sites) {
         targetUnit,
         ingredient
       );
+      const reservationLine = inventoryState.lines.find(
+        (reservedLine) => textValue(reservedLine?.ingredient_id) === ingredientId
+      );
+      const reservedQuantity = inventoryState.is_reserved
+        ? convertIngredientQuantity(
+          reservationLine?.reserved_quantity
+            ?? reservationLine?.committed_quantity
+            ?? 0,
+          reservationLine?.unit || targetUnit,
+          targetUnit,
+          ingredient
+        )
+        : 0;
+      const unreservedRequiredQuantity = Math.max(0, requiredQuantity - reservedQuantity);
+      if (unreservedRequiredQuantity <= 0) return;
       const key = `${siteId}::${ingredientId}`;
       const demand = demandMap.get(key) || {
         site_id: siteId,
@@ -185,12 +221,14 @@ function buildShortages(productions, ingredientMap, inventoryMap, sites) {
         item_code: getItemCodeFromRecords([ingredient, line, inventoryRow]),
         ingredient_name: line.ingredient_name || inventoryRow?.ingredient_name || ingredient.name || ingredientId,
         required_quantity: 0,
+        on_hand_quantity: numberValue(inventoryRow?.on_hand_quantity, 0),
+        reserved_quantity: numberValue(inventoryRow?.reserved_quantity, 0),
         available_quantity: numberValue(inventoryRow?.available_quantity, 0),
         unit: targetUnit,
         production_ids: new Set(),
         recipe_names: new Set()
       };
-      demand.required_quantity += requiredQuantity;
+      demand.required_quantity += unreservedRequiredQuantity;
       demand.production_ids.add(production.id);
       if (production.recipe_name) demand.recipe_names.add(production.recipe_name);
       demandMap.set(key, demand);
@@ -201,6 +239,8 @@ function buildShortages(productions, ingredientMap, inventoryMap, sites) {
     .map((demand) => ({
       ...demand,
       required_quantity: round(demand.required_quantity),
+      on_hand_quantity: round(demand.on_hand_quantity),
+      reserved_quantity: round(demand.reserved_quantity),
       available_quantity: round(demand.available_quantity),
       shortage_quantity: round(Math.max(0, demand.required_quantity - demand.available_quantity)),
       production_ids: [...demand.production_ids],

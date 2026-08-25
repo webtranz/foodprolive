@@ -163,12 +163,12 @@ assert.equal(breakfast.batch_yield, 10);
 assert.equal(breakfast.batches_required, 6);
 assert.equal(breakfast.estimated_batch_cost, 60);
 assert.equal(breakfast.station, 'Hot Line');
-assert.equal(breakfast.prep_status.key, 'at_risk');
+assert.equal(breakfast.prep_status.key, 'pending');
 
 const lunch = dashboard.items.find((item) => item.id === 'lunch-1');
 assert.equal(lunch.batches_required, 2);
 assert.equal(lunch.station, 'Grill');
-assert.equal(lunch.prep_status.key, 'at_risk');
+assert.equal(lunch.prep_status.key, 'in_progress');
 
 const dinner = dashboard.items.find((item) => item.id === 'dinner-1');
 assert.equal(dinner.portion_size.label, '1 slice');
@@ -180,12 +180,7 @@ assert.equal(cancelled.batches_required, 0);
 assert.equal(cancelled.counts_toward_plan, false);
 assert.equal(dashboard.items.some((item) => item.id === 'cancelled-1'), false);
 
-assert.equal(dashboard.shortages.length, 1);
-assert.equal(dashboard.shortages[0].ingredient_name, 'Basmati Rice');
-assert.equal(dashboard.shortages[0].required_quantity, 11);
-assert.equal(dashboard.shortages[0].available_quantity, 8);
-assert.equal(dashboard.shortages[0].shortage_quantity, 3);
-assert.deepEqual(dashboard.shortages[0].production_ids.sort(), ['breakfast-1', 'lunch-1']);
+assert.equal(dashboard.shortages.length, 0, 'stock already consumed by an in-progress production is not counted as future demand');
 
 assert.equal(dashboard.labor_loads.breakfast.minutes, 180);
 assert.equal(dashboard.labor_loads.lunch.minutes, 120);
@@ -199,8 +194,8 @@ assert.equal(exportRows[0].production_date, '2026-08-16');
 assert.equal(exportRows[0].site, 'Main Kitchen');
 assert.equal(exportRows[0].portion_size, '1,000 g');
 assert.equal(exportRows[0].kitchen_station, 'Hot Line');
-assert.equal(exportRows[0].prep_status, 'At Risk');
-assert.match(exportRows[0].shortages, /Basmati Rice: 3 kg/);
+assert.equal(exportRows[0].prep_status, 'Pending');
+assert.equal(exportRows[0].shortages, '');
 assert.equal(exportRows[0].net_recipe_quantities, 'Basmati Rice: 5 kg');
 assert.equal(exportRows[0].ingredient_quantities, 'Basmati Rice: 6 kg');
 assert.equal(exportRows[0].yield_details, 'Basmati Rice: 83.33%');
@@ -256,6 +251,47 @@ assert.equal(storeRoutedDashboard.shortages[0].site_id, 'store-a');
 assert.equal(storeRoutedDashboard.shortages[0].site_name, 'Project A Main Store');
 assert.equal(storeRoutedDashboard.shortages[0].available_quantity, 1);
 assert.equal(storeRoutedDashboard.shortages[0].shortage_quantity, 3);
+
+const reservationAwareDashboard = buildProductionPlanningDashboard({
+  productions: [
+    {
+      id: 'fully-reserved',
+      site_id: 'store-a',
+      meal_type: 'breakfast',
+      target_servings: 10,
+      status: 'approved',
+      inventory_commitment_status: 'reserved',
+      inventory_committed_lines: [{ ingredient_id: 'rice', reserved_quantity: 4, unit: 'kg' }],
+      ingredients_used: [{ ingredient_id: 'rice', ingredient_name: 'Basmati Rice', planned_quantity: 4, unit: 'kg' }]
+    },
+    {
+      id: 'unreserved-demand',
+      site_id: 'store-a',
+      meal_type: 'lunch',
+      target_servings: 10,
+      status: 'pending_production',
+      ingredients_used: [{ ingredient_id: 'rice', ingredient_name: 'Basmati Rice', planned_quantity: 3, unit: 'kg' }]
+    }
+  ],
+  ingredients,
+  inventory: [{
+    site_id: 'store-a',
+    ingredient_id: 'rice',
+    on_hand_quantity: 6,
+    reserved_quantity: 4,
+    available_quantity: 2,
+    quantity: 2,
+    unit: 'kg'
+  }]
+});
+assert.equal(reservationAwareDashboard.shortages.length, 1);
+assert.equal(reservationAwareDashboard.shortages[0].required_quantity, 3);
+assert.equal(reservationAwareDashboard.shortages[0].on_hand_quantity, 6);
+assert.equal(reservationAwareDashboard.shortages[0].reserved_quantity, 4);
+assert.equal(reservationAwareDashboard.shortages[0].available_quantity, 2);
+assert.equal(reservationAwareDashboard.shortages[0].shortage_quantity, 1);
+assert.deepEqual(reservationAwareDashboard.shortages[0].production_ids, ['unreserved-demand']);
+assert.equal(reservationAwareDashboard.items.find((item) => item.id === 'fully-reserved').shortages.length, 0);
 
 const legacySingleStoreDashboard = buildProductionPlanningDashboard({
   productions: [{

@@ -6,6 +6,7 @@ import { AlertTriangle, Package, TrendingDown, ExternalLink, Clock3 } from 'luci
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { getItemCode } from '../../../shared/itemCode.js';
+import { getAvailableInventoryQuantity, getInventoryQuantities } from '@/lib/inventoryAvailability';
 
 export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) {
   const lowStockAlerts = inventory.filter(item => 
@@ -13,14 +14,14 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
   ).sort((a, b) => {
     if (a.status === 'out_of_stock' && b.status !== 'out_of_stock') return -1;
     if (a.status !== 'out_of_stock' && b.status === 'out_of_stock') return 1;
-    return (a.quantity || 0) - (b.quantity || 0);
+    return getAvailableInventoryQuantity(a) - getAvailableInventoryQuantity(b);
   });
 
   const shortageAlerts = upcomingNeeds.filter(need => {
     const inventoryItem = inventory.find(
       i => i.ingredient_id === need.ingredient_id && i.site_id === need.site_id
     );
-    const available = inventoryItem?.quantity || 0;
+    const available = getAvailableInventoryQuantity(inventoryItem);
     return available < need.required_quantity;
   });
 
@@ -63,30 +64,33 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Low Stock Alerts */}
-        {lowStockAlerts.slice(0, 5).map(item => (
-          <div 
-            key={item.id}
-            className="flex items-start justify-between p-3 bg-amber-50 rounded-lg border border-amber-100"
-          >
-            <div className="flex-1">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{getItemCode(item)}</p>
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-sm">{item.ingredient_name}</span>
-                <Badge 
-                  className={item.status === 'out_of_stock' 
-                    ? 'bg-red-100 text-red-700' 
-                    : 'bg-amber-100 text-amber-700'}
-                >
-                  {item.status === 'out_of_stock' ? 'Out of Stock' : 'Low Stock'}
-                </Badge>
+        {lowStockAlerts.slice(0, 5).map(item => {
+          const quantities = getInventoryQuantities(item);
+          return (
+            <div
+              key={item.id}
+              className="flex items-start justify-between p-3 bg-amber-50 rounded-lg border border-amber-100"
+            >
+              <div className="flex-1">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{getItemCode(item)}</p>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-sm">{item.ingredient_name}</span>
+                  <Badge
+                    className={item.status === 'out_of_stock'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-amber-100 text-amber-700'}
+                  >
+                    {item.status === 'out_of_stock' ? 'Out of Stock' : 'Low Stock'}
+                  </Badge>
+                </div>
+                <p className="text-xs text-slate-600 mt-1">
+                  {item.site_name} • On hand: {quantities.on_hand_quantity} {item.unit} • Reserved: {quantities.reserved_quantity} {item.unit} • Available: {quantities.available_quantity} {item.unit} • Min: {item.min_stock_level || 0} {item.unit}
+                </p>
               </div>
-              <p className="text-xs text-slate-600 mt-1">
-                {item.site_name} • Current: {item.quantity} {item.unit} • Min: {item.min_stock_level || 0} {item.unit}
-              </p>
+              <TrendingDown className="w-4 h-4 text-amber-600 flex-shrink-0" />
             </div>
-            <TrendingDown className="w-4 h-4 text-amber-600 flex-shrink-0" />
-          </div>
-        ))}
+          );
+        })}
 
         {expiryAlerts.slice(0, 4).map((item) => (
           <div
@@ -119,7 +123,7 @@ export default function InventoryAlerts({ inventory = [], upcomingNeeds = [] }) 
           const inventoryItem = inventory.find(
             i => i.ingredient_id === need.ingredient_id && i.site_id === need.site_id
           );
-          const available = inventoryItem?.quantity || 0;
+          const available = getAvailableInventoryQuantity(inventoryItem);
           const shortage = need.required_quantity - available;
 
           return (

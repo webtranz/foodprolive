@@ -53,7 +53,9 @@ import {
 } from './db.js';
 import {
   canCancelProduction,
-  canStartApprovedProduction,
+  hasAcknowledgedMaterialRequest,
+  hasAreaProductionApproval,
+  hasStartableProductionInventory,
   hasAuthoritativeNoMaterialRequirement,
   normalizeProductionStatus,
   requiresAreaProductionApproval
@@ -109,6 +111,7 @@ import {
   adjustStock,
   transferStock,
   completeProduction,
+  consumeProductionInventoryReservation,
   reconcileProductionInventoryCommitment,
   releaseProductionInventoryCommitment,
   hasProductionInventoryCommitment,
@@ -184,6 +187,7 @@ import {
   hasUnrestrictedLocationAccess
 } from './locationScope.js';
 import {
+  assertInventoryLedgerDeleteAllowed,
   prepareEntityPayload,
   scaleApprovedProductionSnapshot
 } from './entityPreparation.js';
@@ -851,7 +855,10 @@ function applyProductionWorkflowMetadata(user, payload, existing = null, workflo
 }
 
 async function assertProductionStartPrerequisites(production, executor = null, user = null) {
-  if (!canStartApprovedProduction(production)) {
+  // Existing approved records may predate reservation support. The atomic
+  // start transaction repairs/reserves those records immediately before it
+  // consumes stock, while current records must already pass the shared gate.
+  if (!hasAreaProductionApproval(production) || !hasAcknowledgedMaterialRequest(production)) {
     const error = new Error('Production cannot start until procurement is acknowledged and the Area Manager has approved it.');
     error.status = 409;
     throw error;
@@ -927,6 +934,7 @@ async function reconcileProductionInventoryForWorkflow({
     ingredientCatalog: ingredients,
     inventoryCatalog: inventory,
     fulfillmentStore: store,
+    asOfDate: production.production_date || null,
     targetServings: targetServings ?? production.target_servings ?? null
   }, executor);
 }
@@ -3498,6 +3506,34 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
           && normalizeProductionStatus(request.body?.status) === 'pending_procurement'
           && normalizeProductionReviewAction(request.body?.review_action) === 'rejected'
         );
+        if (isAreaRejectionRollback && hasProductionInventoryCommitment(lockedExisting)) {
+          const sites = await listDocuments('Site', { limit: 5000 }, client);
+          const fulfillmentStore = resolveProductionFulfillmentStore(lockedExisting, sites);
+          const [ingredients, inventory] = await Promise.all([
+            listDocuments('Ingredient', { limit: 10000 }, client),
+            listDocuments('Inventory', {
+              filters: { site_id: fulfillmentStore.id },
+              limit: 10000
+            }, client)
+          ]);
+          const releaseResult = await releaseProductionInventoryCommitment({
+            production: lockedExisting,
+            actor: request.user,
+            reason: String(request.body?.rejection_reason || request.body?.review_notes || '').trim()
+              || 'Area Manager rejection released the production inventory reservation.',
+            operation: 'area_manager_rejection',
+            siteCatalog: sites,
+            ingredientCatalog: ingredients,
+            inventoryCatalog: inventory,
+            fulfillmentStore,
+            targetServings: 0
+          }, client);
+          productionInventoryMutated = productionInventoryMutated || releaseResult.mutated;
+          transactionPayload = {
+            ...transactionPayload,
+            ...releaseResult.production_patch
+          };
+        }
         if (
           normalizeProductionStatus(request.body?.status) === 'in_progress'
           && normalizeProductionStatus(lockedExisting.status) !== 'in_progress'
@@ -3510,15 +3546,36 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
             fulfillmentStore,
             operation: hasProductionInventoryCommitment(lockedExisting)
               ? 'start_validation'
-              : 'legacy_start_commitment',
+              : 'legacy_start_reservation',
             reason: hasProductionInventoryCommitment(lockedExisting)
-              ? 'Validated Area Manager inventory posting before production start.'
-              : 'Legacy approved production inventory posted before production start.'
+              ? 'Validated Area Manager inventory reservation before production start.'
+              : 'Reserved inventory for a legacy approved production before start.'
           });
-          productionInventoryMutated = productionInventoryMutated || commitmentResult.mutated;
+          const reservationReadyProduction = {
+            ...lockedExisting,
+            ...commitmentResult.production_patch,
+            fulfillment_store_id: fulfillmentStore.id,
+            fulfillment_store_name: fulfillmentStore.name || null
+          };
+          if (!hasStartableProductionInventory(reservationReadyProduction)) {
+            const error = new Error(
+              'Production cannot start until its yield-adjusted inventory requirement is fully reserved.'
+            );
+            error.status = 409;
+            throw error;
+          }
+          const consumptionResult = await consumeProductionInventoryReservation({
+            production: reservationReadyProduction,
+            actor: request.user,
+            reason: `Reserved inventory consumed when production started: ${lockedExisting.recipe_name || lockedExisting.id}`
+          }, client);
+          productionInventoryMutated = productionInventoryMutated
+            || commitmentResult.mutated
+            || consumptionResult.inventory_mutated;
           transactionPayload = {
             ...transactionPayload,
             ...commitmentResult.production_patch,
+            ...consumptionResult.production_patch,
             fulfillment_store_id: fulfillmentStore.id,
             fulfillment_store_name: fulfillmentStore.name || null
           };
@@ -3582,6 +3639,30 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
     if (entity === 'MenuPlan' && isSpecialEventPlan(existing)) {
       return response.status(400).json({ message: 'Special events must be deleted from the event planning module.' });
     }
+    let relatedInventoryLots = [];
+    let relatedInventoryTransactions = [];
+    if (entity === 'Inventory') {
+      const inventoryIdentityFilters = {
+        site_id: existing.site_id,
+        ingredient_id: existing.ingredient_id
+      };
+      [relatedInventoryLots, relatedInventoryTransactions] = await Promise.all([
+        listDocuments('InventoryLot', {
+          filters: inventoryIdentityFilters,
+          limit: 1
+        }),
+        listDocuments('InventoryTransaction', {
+          filters: inventoryIdentityFilters,
+          limit: 1
+        })
+      ]);
+    }
+    assertInventoryLedgerDeleteAllowed(
+      entity,
+      existing,
+      relatedInventoryLots,
+      relatedInventoryTransactions
+    );
     if (entity === 'Recipe') {
       const recipes = await listDocuments('Recipe', { limit: 5000 });
       const referencingRecipe = recipes.find((recipe) => (
@@ -4509,9 +4590,9 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
         fulfillmentStore,
         siteCatalog,
         operation: areaApprovalWasAlreadyRecorded
-          ? 'approved_record_commitment_repair'
+          ? 'approved_record_reservation_repair'
           : 'area_manager_approval',
-        reason: approvalNote || 'Inventory posted when the Area Manager approved production.'
+        reason: approvalNote || 'Yield-adjusted inventory reserved when the Area Manager approved production.'
       });
 
       if (areaApprovalWasAlreadyRecorded) {
@@ -4827,7 +4908,9 @@ app.post('/api/productions/:id/cancel', requireAuth, requirePermission('cancel_p
           actor_email: request.user.email || null,
           actor_name: request.user.full_name || request.user.email || null,
           reason,
-          note: commitmentResult.mutated ? 'Committed inventory returned to its original lots.' : null,
+          note: commitmentResult.mutated
+            ? 'Reserved inventory released back to its exact original lots.'
+            : null,
           timestamp: cancelledAt
         })
       }, client);
@@ -4849,12 +4932,12 @@ app.post('/api/productions/:id/cancel', requireAuth, requirePermission('cancel_p
       }
       await auditAction({
         user: request.user,
-        action: 'PRODUCTION_CANCELLED_AND_INVENTORY_RETURNED',
+        action: 'PRODUCTION_CANCELLED_AND_INVENTORY_RELEASED',
         entity: 'Production',
         entityId: result.record.id,
         details: {
           reason,
-          inventory_returned: result.inventoryMutated,
+          inventory_reservation_released: result.inventoryMutated,
           saved_record: result.record
         }
       });

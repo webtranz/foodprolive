@@ -5,7 +5,10 @@ import test from 'node:test';
 import {
   buildStockDeductionQuantitySummary,
   calculateProductionCommitmentAdjustment,
+  getInventoryLotAvailableQuantity,
+  getInventoryLotReservedQuantity,
   getProductionInventoryCommitment,
+  hasLegacyPhysicalProductionCommitment,
   hasProductionInventoryCommitment,
   isInventoryLotUsable,
   parseInventoryDate,
@@ -15,9 +18,23 @@ import {
 } from '../server/inventory.js';
 import {
   canCancelProduction,
+  canStartApprovedProduction,
   getProductionTransitionPermission,
+  hasStartableProductionInventory,
   isAllowedProductionTransition
 } from '../shared/productionWorkflow.js';
+
+function source(relativePath) {
+  return fs.readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
+}
+
+function sourceBlock(contents, startNeedle, endNeedle) {
+  const start = contents.indexOf(startNeedle);
+  const end = contents.indexOf(endNeedle, start + startNeedle.length);
+  assert.ok(start >= 0, `Expected source block start: ${startNeedle}`);
+  assert.ok(end > start, `Expected source block end after ${startNeedle}: ${endNeedle}`);
+  return contents.slice(start, end);
+}
 
 test('strict lot eligibility excludes expired, blocked, and quarantined stock', () => {
   const asOfDate = '2026-08-25';
@@ -53,6 +70,35 @@ test('issue ordering is deterministic FEFO followed by FIFO and stable ID order'
   assert.deepEqual(
     sortInventoryLotsForIssue(lots, { asOfDate: '2026-08-25' }).map((lot) => lot.id),
     ['earlier-a', 'earlier-b', 'later', 'no-expiry']
+  );
+});
+
+test('lot availability subtracts reservations without changing physical on-hand quantity', () => {
+  const lot = {
+    id: 'lot-reserved',
+    remaining_quantity: 10,
+    reserved_quantity: 4,
+    status: 'active',
+    stock_date: '2026-08-01',
+    expiry_date: '2026-09-01'
+  };
+
+  assert.equal(getInventoryLotReservedQuantity(lot), 4);
+  assert.equal(
+    getInventoryLotAvailableQuantity(lot, { asOfDate: '2026-08-25' }),
+    6
+  );
+  assert.equal(lot.remaining_quantity, 10, 'reserving stock must not change physical on-hand');
+  assert.equal(getInventoryLotReservedQuantity({ ...lot, reserved_quantity: 12 }), 10);
+  assert.equal(
+    getInventoryLotAvailableQuantity({ ...lot, reserved_quantity: 12 }, { asOfDate: '2026-08-25' }),
+    0,
+    'free stock can never become negative'
+  );
+  assert.equal(
+    getInventoryLotAvailableQuantity({ ...lot, status: 'blocked' }, { asOfDate: '2026-08-25' }),
+    0,
+    'unusable stock is not allocatable even when it has physical balance'
   );
 });
 
@@ -175,6 +221,231 @@ test('commitment state exposes an explicit revision, status, and preserved lines
   assert.equal(getProductionInventoryCommitment(production).status, 'committed');
   assert.equal(getProductionInventoryCommitment(production).target_servings, 25);
   assert.equal(getProductionInventoryCommitment(production).lines[0].ingredient_id, 'rice');
+});
+
+test('legacy commitments require exact physical transaction evidence before start recognition', () => {
+  const evidencedLegacy = {
+    status: 'committed',
+    lines: [{
+      ingredient_id: 'rice',
+      committed_quantity: 5,
+      inventory_transaction_ids: ['transaction-1'],
+      allocation_layers: [{
+        inventory_lot_id: 'lot-1',
+        quantity: 5,
+        source_transaction_id: 'transaction-1'
+      }]
+    }]
+  };
+
+  assert.equal(hasLegacyPhysicalProductionCommitment(evidencedLegacy), true);
+  assert.equal(hasLegacyPhysicalProductionCommitment({
+    ...evidencedLegacy,
+    lines: evidencedLegacy.lines.map((line) => ({
+      ...line,
+      inventory_transaction_ids: [],
+      allocation_layers: line.allocation_layers.map(({ source_transaction_id: _ignored, ...layer }) => layer)
+    }))
+  }), false, 'metadata-only commitments must not be mistaken for already deducted stock');
+  assert.equal(hasLegacyPhysicalProductionCommitment({
+    ...evidencedLegacy,
+    lines: [{ ...evidencedLegacy.lines[0], committed_quantity: 6 }]
+  }), false, 'transaction evidence must reconcile to the committed quantity');
+  assert.equal(hasLegacyPhysicalProductionCommitment({
+    ...evidencedLegacy,
+    stock_model: 'reserve_then_consume_v1'
+  }), false, 'current reservations always use the physical start-consumption path');
+  assert.equal(hasLegacyPhysicalProductionCommitment({
+    status: 'committed',
+    committed_at: '2026-08-25T08:00:00.000Z',
+    lines: []
+  }), false, 'a timestamp alone is not proof that inventory was deducted');
+
+  const inventorySource = source('server/inventory.js');
+  assert.match(
+    inventorySource,
+    /const repairingUnprovenLegacyCommitment = reservationAccounting[\s\S]*!isCurrentProductionReservation\(current\)/
+  );
+  assert.match(
+    inventorySource,
+    /repairingUnprovenLegacyCommitment \? \[\] : Array\.isArray\(current\.lines\)/,
+    'unproven legacy lines must be rebuilt as reservations rather than trusted as physical deductions'
+  );
+});
+
+test('start gate requires a complete current reservation and rejects shortages or consumed state', () => {
+  const reservation = {
+    revision: 2,
+    status: 'reserved',
+    stock_model: 'reserve_then_consume_v1',
+    site_id: 'store-one',
+    total_desired_quantity: 5,
+    total_shortage_quantity: 0,
+    lines: [{
+      ingredient_id: 'rice',
+      desired_quantity: 5,
+      reserved_quantity: 5,
+      committed_quantity: 5,
+      allocation_layers: [{ inventory_lot_id: 'lot-one', quantity: 5 }]
+    }]
+  };
+  const production = {
+    status: 'approved',
+    area_approval_status: 'approved',
+    area_approved_at: '2026-08-25T08:00:00.000Z',
+    material_request_status: 'acknowledged',
+    fulfillment_store_id: 'store-one',
+    ingredients_used: [{ ingredient_id: 'rice', required_quantity: 5, unit: 'kg' }],
+    inventory_commitment: reservation
+  };
+
+  assert.equal(hasStartableProductionInventory(production), true);
+  assert.equal(canStartApprovedProduction(production), true);
+  assert.equal(canStartApprovedProduction({
+    ...production,
+    inventory_commitment: { ...reservation, status: 'partially_reserved' }
+  }), false);
+  assert.equal(canStartApprovedProduction({
+    ...production,
+    inventory_commitment: { ...reservation, total_shortage_quantity: 0.25 }
+  }), false);
+  assert.equal(canStartApprovedProduction({
+    ...production,
+    inventory_commitment: {
+      ...reservation,
+      lines: [{ ...reservation.lines[0], reserved_quantity: 4.5, committed_quantity: 4.5 }]
+    }
+  }), false);
+  assert.equal(canStartApprovedProduction({
+    ...production,
+    inventory_commitment: { ...reservation, status: 'consumed' }
+  }), false, 'an already consumed reservation cannot authorize another start');
+  assert.equal(canStartApprovedProduction({
+    ...production,
+    inventory_commitment: { ...reservation, lines: [] }
+  }), false, 'a reservation with material demand must include ingredient allocations');
+});
+
+test('approval reserves without a physical transaction and start consumes exactly once', () => {
+  const inventorySource = source('server/inventory.js');
+  const reserveBlock = sourceBlock(
+    inventorySource,
+    'async function reserveStockWithExecutor({',
+    'async function releaseReservedStockLayersWithExecutor({'
+  );
+  const releaseBlock = sourceBlock(
+    inventorySource,
+    'async function releaseReservedStockLayersWithExecutor({',
+    'export async function consumeProductionInventoryReservation({'
+  );
+  const consumeBlock = sourceBlock(
+    inventorySource,
+    'export async function consumeProductionInventoryReservation({',
+    'export async function reconcileProductionInventoryCommitment({'
+  );
+
+  assert.match(reserveBlock, /reserved_quantity: reservedAfter/);
+  assert.match(reserveBlock, /quantity_before: remaining,[\s\S]*quantity_after: remaining/);
+  assert.doesNotMatch(reserveBlock, /postInventoryTransaction|deductStockWithExecutor/);
+  assert.doesNotMatch(releaseBlock, /postInventoryTransaction|returnStockToCommittedLotsWithExecutor/);
+
+  assert.match(consumeBlock, /if \(\['consumed', 'partially_consumed'\]\.includes\(currentStatus\)\)[\s\S]*mutated: false/);
+  assert.match(consumeBlock, /remaining_quantity: remainingAfter,[\s\S]*reserved_quantity: reservedAfter/);
+  assert.match(consumeBlock, /transaction_type: 'production_use'/);
+  assert.match(consumeBlock, /source: 'production_start'/);
+  assert.match(consumeBlock, /idempotency_key: `\$\{effectiveOperationId\}:\$\{line\.ingredient_id\}:consume`/);
+  assert.doesNotMatch(consumeBlock, /transaction_type: 'production_commitment'/);
+});
+
+test('server start transition reserves or validates first, then consumes in the same transaction', () => {
+  const serverSource = source('server/index.js');
+  assert.match(serverSource, /consumeProductionInventoryReservation,/);
+  const startBlock = sourceBlock(
+    serverSource,
+    "normalizeProductionStatus(request.body?.status) === 'in_progress'",
+    'let saved = await updateDocument(entity, request.params.id, transactionPayload, client);'
+  );
+  const reconcileIndex = startBlock.indexOf('reconcileProductionInventoryForWorkflow({');
+  const consumeIndex = startBlock.indexOf('consumeProductionInventoryReservation({');
+  assert.ok(reconcileIndex >= 0, 'start must establish or validate a reservation');
+  assert.ok(consumeIndex > reconcileIndex, 'physical consumption must follow reservation validation');
+  assert.match(startBlock, /production: reservationReadyProduction/);
+  assert.match(startBlock, /consumptionResult\.inventory_mutated/);
+  assert.match(startBlock, /\.\.\.commitmentResult\.production_patch,[\s\S]*\.\.\.consumptionResult\.production_patch/);
+
+  const inventorySource = source('server/inventory.js');
+  assert.match(
+    inventorySource,
+    /isCurrentProductionReservation\(current\)[\s\S]*String\(current\.site_id\) !== String\(stockSite\.id\)[\s\S]*different fulfillment Store/
+  );
+});
+
+test('reservation and consumption audit fields remain server-owned', () => {
+  const preparationSource = source('server/entityPreparation.js');
+  const productionBlock = sourceBlock(
+    preparationSource,
+    "if (entity === 'Production') {",
+    '\n  return merged;'
+  );
+  for (const field of [
+    'inventory_commitment',
+    'inventory_reserved_at',
+    'inventory_reserved_by',
+    'inventory_consumed_at',
+    'inventory_consumed_by'
+  ]) {
+    assert.match(productionBlock, new RegExp(`['\"]${field}['\"]`));
+  }
+  assert.match(productionBlock, /workflowManagedFields\.forEach\(\(field\) => delete userPayload\[field\]\)/);
+});
+
+test('stock reports expose free, reserved, and physical quantities while valuing physical usable stock', () => {
+  const inventorySource = source('server/inventory.js');
+  const reportBlock = sourceBlock(
+    inventorySource,
+    'async function getStockOnHandReport({',
+    'async function getStockMovementReport({'
+  );
+
+  assert.match(reportBlock, /reservedQuantity[\s\S]*getInventoryLotReservedQuantity/);
+  assert.match(reportBlock, /availableQuantity[\s\S]*getInventoryLotAvailableQuantity/);
+  assert.match(reportBlock, /fifoValue[\s\S]*usableLots\.reduce/);
+  assert.match(reportBlock, /weightedValue[\s\S]*usableLots\.reduce/);
+  assert.match(reportBlock, /average_unit_cost: usableQuantity > 0/);
+  assert.match(reportBlock, /available_quantity: roundQuantity\(availableQuantity\)/);
+  assert.match(reportBlock, /reserved_quantity: roundQuantity\(reservedQuantity\)/);
+  assert.match(reportBlock, /on_hand_quantity: roundQuantity\(onHandQuantity\)/);
+
+  const valuationBlock = sourceBlock(
+    inventorySource,
+    'async function getInventoryValuationReport({',
+    '\nexport {'
+  );
+  assert.match(
+    valuationBlock,
+    /item\.usable_on_hand_quantity \?\? item\.on_hand_quantity \?\? item\.quantity/,
+    'valuation quantity must remain physical when approval reduces free stock'
+  );
+  assert.match(valuationBlock, /item\.weighted_average_value/);
+  assert.doesNotMatch(valuationBlock, /const quantity = toNumber\(item\.quantity/);
+});
+
+test('completion reconciles current physical movements while preserving exact consumed layers', () => {
+  const inventorySource = source('server/inventory.js');
+  const completionBlock = sourceBlock(
+    inventorySource,
+    'async function completeProductionWithExecutor(',
+    'async function completeProduction('
+  );
+
+  assert.match(completionBlock, /operation: 'completion_reconciliation'/);
+  assert.match(completionBlock, /asOfDate: toDateOnly\(\)/);
+  assert.doesNotMatch(
+    completionBlock,
+    /operation: 'completion_reconciliation'[\s\S]{0,800}asOfDate: production\.production_date/
+  );
+  assert.match(completionBlock, /movement_layers: Array\.isArray\(committedLine\.allocation_layers\)/);
+  assert.match(completionBlock, /inventory_transaction_ids: movement\.transaction_ids/);
 });
 
 test('workflow permits safe pre-start cancellation but not cancellation after production starts', () => {

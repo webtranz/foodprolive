@@ -424,6 +424,60 @@ const cases = [
     }
   },
   {
+    name: 'compares D365 physical snapshots with on-hand stock without undoing local reservations',
+    async run() {
+      const memory = createMemoryDependencies({
+        Ingredient: ingredients,
+        Site: sites,
+        Inventory: [{
+          id: 'inventory-reserved',
+          site_id: 'store-one',
+          site_name: 'Main Store',
+          ingredient_id: 'ingredient-corn',
+          ingredient_name: 'Corn Flour',
+          unit: 'kg',
+          on_hand_quantity: 10,
+          usable_on_hand_quantity: 10,
+          reserved_quantity: 4,
+          available_quantity: 6,
+          quantity: 6,
+          average_unit_cost: 4
+        }]
+      });
+      const payload = {
+        sync_id: 'snapshot-reserved-preview',
+        quantity_semantics: 'snapshot',
+        records: [{
+          item_id: 'CORN-1',
+          warehouse_id: 'WH-1',
+          available_quantity: 10,
+          unit: 'kg',
+          external_event_id: 'snapshot-reserved',
+          external_line_id: '1'
+        }]
+      };
+
+      const preview = await previewD365InventoryImport(payload, memory.dependencies);
+      assert.equal(preview.rows[0].before_quantity, 10);
+      assert.equal(preview.rows[0].adjustment_quantity, 0);
+      assert.equal(memory.calls.receipts.length, 0);
+      assert.equal(memory.calls.deductions.length, 0);
+
+      const imported = await importD365Inventory({
+        ...payload,
+        sync_id: 'snapshot-reserved-apply'
+      }, memory.dependencies);
+      assert.equal(imported.summary.applied_rows, 1);
+      assert.equal(imported.rows[0].adjustment_quantity, 0);
+      assert.equal(memory.calls.receipts.length, 0, 'reserved stock must not look like a missing physical receipt');
+      assert.equal(memory.calls.deductions.length, 0);
+      const inventory = memory.rows('Inventory')[0];
+      assert.equal(inventory.on_hand_quantity, 10);
+      assert.equal(inventory.reserved_quantity, 4);
+      assert.equal(inventory.available_quantity, 6);
+    }
+  },
+  {
     name: 'preserves missing costs, falls back to known FoodPro cost, and rejects unknown valuation',
     async run() {
       const normalized = normalizeD365InventoryRow({
@@ -894,6 +948,9 @@ const cases = [
       assert.match(source, /'Unit Cost': 'unit_cost'/);
       assert.match(source, /'Total Cost': 'total_cost'/);
       assert.match(source, /'pos_sale'/);
+      assert.match(source, /item\.d365_ordered_in_total \?\? item\.ordered_quantity/);
+      assert.match(source, /item\.d365_on_order_reserved \?\? item\.on_order_reserved/);
+      assert.doesNotMatch(source, /item\.reserved_quantity \|\| item\.on_order_reserved/);
       assert.match(routeSource, /preview_fingerprint/);
       assert.match(routeSource, /import_payload/);
       assert.match(routeSource, /does not match selected warehouse/);

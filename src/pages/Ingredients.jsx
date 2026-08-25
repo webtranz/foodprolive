@@ -30,6 +30,7 @@ import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
 import { getItemCode, getItemCodeFromRecords, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
+import { getInventoryQuantities } from '@/lib/inventoryAvailability';
 
 const CATEGORIES = [
   { value: 'all', label: 'All Categories' },
@@ -188,6 +189,7 @@ export default function Ingredients() {
       const ing = ingredients.find(i => i.id === item.ingredient_id);
       return {
         ...item,
+        ...getInventoryQuantities(item),
         _ing: ing,
         item_code: getItemCodeFromRecords([ing, item])
       };
@@ -245,7 +247,7 @@ export default function Ingredients() {
       <div className="max-w-[1600px] mx-auto">
         <PageHeader
           title="Ingredients & Inventory"
-          description="Unified view of ingredient master data and real-time stock levels"
+          description="Unified ingredient master data with real-time on-hand, production-reserved, and available stock."
         >
           {activeTab === 'ingredients' ? (
             <>
@@ -493,7 +495,9 @@ export default function Ingredients() {
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
                         <TableHead>Site</TableHead>
-                        <TableHead>Available Qty</TableHead>
+                        <TableHead>On Hand</TableHead>
+                        <TableHead>Reserved</TableHead>
+                        <TableHead>Available</TableHead>
                         <TableHead className="text-center">Cal/100g</TableHead>
                         <TableHead className="text-center">Total Cal</TableHead>
                         <TableHead className="text-center">Protein</TableHead>
@@ -507,10 +511,10 @@ export default function Ingredients() {
                     <TableBody>
                       {enrichedInventory.map(item => {
                         const ing = item._ing;
-                        const stockPct = item.max_stock_level ? Math.min(100, (item.quantity / item.max_stock_level) * 100) : 50;
+                        const stockPct = item.max_stock_level ? Math.min(100, (item.available_quantity / item.max_stock_level) * 100) : 50;
                         // Total calories: qty in kg * 1000g/kg * cal_per_100g / 100
-                        const totalCal = ing?.calories_per_100g && item.quantity
-                          ? Math.round((item.quantity * 1000 * ing.calories_per_100g) / 100)
+                        const totalCal = ing?.calories_per_100g && item.on_hand_quantity
+                          ? Math.round((item.on_hand_quantity * 1000 * ing.calories_per_100g) / 100)
                           : null;
                         return (
                           <TableRow key={item.id}>
@@ -518,7 +522,13 @@ export default function Ingredients() {
                             <TableCell className="font-medium">{item.ingredient_name}</TableCell>
                             <TableCell className="text-slate-500 text-sm">{item.site_name}</TableCell>
                             <TableCell>
-                              <span className="font-semibold">{item.quantity}</span> <span className="text-slate-500 text-xs">{item.unit}</span>
+                              <span className="font-semibold">{item.on_hand_quantity}</span> <span className="text-slate-500 text-xs">{item.unit}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="font-semibold text-violet-700">{item.reserved_quantity}</span> <span className="text-slate-500 text-xs">{item.unit}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="font-semibold text-cyan-800">{item.available_quantity}</span> <span className="text-slate-500 text-xs">{item.unit}</span>
                             </TableCell>
                             <TableCell className="text-center">
                               <span className="inline-flex items-center gap-1 text-orange-600 font-medium">

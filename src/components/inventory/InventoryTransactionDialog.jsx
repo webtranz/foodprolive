@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { PlusCircle, MinusCircle, SlidersHorizontal } from 'lucide-react';
 import { getItemCode } from '../../../shared/itemCode.js';
 import { format } from 'date-fns';
+import { getInventoryQuantities } from '@/lib/inventoryAvailability';
 
 export default function InventoryTransactionDialog({ 
   open, 
@@ -98,6 +99,7 @@ export default function InventoryTransactionDialog({
   };
 
   const isAddition = transactionType === 'addition';
+  const stockQuantities = getInventoryQuantities(inventoryItem);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -125,7 +127,11 @@ export default function InventoryTransactionDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="bg-slate-50 rounded-lg p-3 text-sm">
             <p><span className="font-medium">Site:</span> {inventoryItem?.site_name}</p>
-            <p><span className="font-medium">Current Stock:</span> {inventoryItem?.quantity} {inventoryItem?.unit}</p>
+            <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+              <p><span className="block font-medium text-slate-500">On Hand</span>{stockQuantities.on_hand_quantity} {inventoryItem?.unit}</p>
+              <p><span className="block font-medium text-violet-600">Reserved</span>{stockQuantities.reserved_quantity} {inventoryItem?.unit}</p>
+              <p><span className="block font-medium text-cyan-700">Available</span>{stockQuantities.available_quantity} {inventoryItem?.unit}</p>
+            </div>
           </div>
 
           <div>
@@ -134,6 +140,7 @@ export default function InventoryTransactionDialog({
               type="number"
               step="0.01"
               min="0.01"
+              max={transactionType === 'issuance' ? stockQuantities.available_quantity : undefined}
               value={formData.quantity}
               onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
               placeholder={`Amount to ${isAddition ? 'add' : transactionType === 'adjustment' ? 'adjust' : 'issue'} (${inventoryItem?.unit})`}

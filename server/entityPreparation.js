@@ -44,6 +44,91 @@ const APPROVED_PRODUCTION_QUANTITY_FIELDS = Object.freeze([
   'cost_quantity'
 ]);
 
+const GENERIC_INVENTORY_CREATE_FIELDS = Object.freeze([
+  'site_id',
+  'site_name',
+  'ingredient_id',
+  'ingredient_name',
+  'unit',
+  'min_stock_level',
+  'max_stock_level',
+  'reorder_level',
+  'valuation_method'
+]);
+
+const GENERIC_INVENTORY_UPDATE_FIELDS = Object.freeze([
+  'min_stock_level',
+  'max_stock_level',
+  'reorder_level',
+  'valuation_method'
+]);
+
+const INVENTORY_BALANCE_EPSILON = 0.0000001;
+
+function inventoryLedgerWriteError(entity) {
+  const label = entity === 'InventoryTransaction' ? 'inventory transactions' : 'inventory lots';
+  const error = new Error(
+    `Direct writes to ${label} are not allowed. Use the protected inventory movement endpoints.`
+  );
+  error.status = 405;
+  return error;
+}
+
+/**
+ * Generic entity writes must never become an alternate stock-posting path.
+ * Aggregate Inventory edits are intentionally limited to planning/valuation
+ * settings; physical balances are derived from the immutable lot ledger.
+ */
+export function sanitizeInventoryLedgerPayload(entity, payload = {}, existing = null) {
+  if (entity === 'InventoryLot' || entity === 'InventoryTransaction') {
+    throw inventoryLedgerWriteError(entity);
+  }
+  if (entity !== 'Inventory') return payload;
+
+  const allowedFields = existing
+    ? GENERIC_INVENTORY_UPDATE_FIELDS
+    : GENERIC_INVENTORY_CREATE_FIELDS;
+  return Object.fromEntries(
+    Object.entries(payload || {}).filter(([field]) => allowedFields.includes(field))
+  );
+}
+
+export function assertInventoryLedgerDeleteAllowed(
+  entity,
+  record = {},
+  relatedLots = [],
+  relatedTransactions = []
+) {
+  if (entity === 'InventoryTransaction') {
+    const error = new Error('Posted inventory transactions are immutable and cannot be deleted.');
+    error.status = 409;
+    throw error;
+  }
+
+  if (entity === 'InventoryLot') {
+    const error = new Error('Inventory lots are immutable batch-history records and cannot be deleted.');
+    error.status = 409;
+    throw error;
+  }
+  if (entity === 'Inventory') {
+    const aggregateHasStock = [
+      record?.on_hand_quantity,
+      record?.reserved_quantity,
+      record?.available_quantity,
+      record?.quantity
+    ].some((value) => Math.max(0, Number(value) || 0) > INVENTORY_BALANCE_EPSILON);
+    const hasRelatedLots = Array.isArray(relatedLots) && relatedLots.length > 0;
+    const hasRelatedTransactions = Array.isArray(relatedTransactions) && relatedTransactions.length > 0;
+    if (aggregateHasStock || hasRelatedLots || hasRelatedTransactions) {
+      const error = new Error(
+        'Inventory records with stock, batch history, or posted transactions cannot be deleted.'
+      );
+      error.status = 409;
+      throw error;
+    }
+  }
+}
+
 function roundApprovedProductionQuantity(value) {
   return Number(Number(value).toFixed(6));
 }
@@ -177,9 +262,10 @@ export function scaleApprovedProductionSnapshot(production = {}, targetServings)
 }
 
 export async function prepareEntityPayload(user, entity, payload = {}, existing = null, context = {}) {
+  const protectedPayload = sanitizeInventoryLedgerPayload(entity, payload, existing);
   const scope = context.scope || await getLocationScope(user);
-  assertPayloadLocationAccess(user, entity, payload, scope);
-  const merged = existing ? { ...existing, ...payload } : payload;
+  assertPayloadLocationAccess(user, entity, protectedPayload, scope);
+  const merged = existing ? { ...existing, ...protectedPayload } : protectedPayload;
 
   if (entity === 'UserGroup') {
     assertStandardUserGroupMemberEdit(user, payload, existing);
@@ -515,6 +601,8 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
       'inventory_committed_lines', 'inventory_commitment_operation_id',
       'inventory_commitment_idempotency_key',
       'inventory_commitment_updated_at', 'inventory_commitment_updated_by',
+      'inventory_reserved_at', 'inventory_reserved_by', 'inventory_reserved_by_name',
+      'inventory_consumed_at', 'inventory_consumed_by', 'inventory_consumed_by_name',
       'inventory_reconciled_at', 'inventory_reconciled_by',
       'inventory_released_at', 'inventory_released_by',
       'cancellation_reason', 'cancelled_at', 'cancelled_by', 'cancelled_by_name'

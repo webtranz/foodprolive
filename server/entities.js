@@ -449,7 +449,13 @@ export const entityRegistry = {
     }).passthrough()
   },
   Inventory: {
-    defaults: { quantity: 0, status: 'in_stock' },
+    defaults: {
+      quantity: 0,
+      available_quantity: 0,
+      reserved_quantity: 0,
+      on_hand_quantity: 0,
+      status: 'in_stock'
+    },
     unique: [
       { fields: ['site_id', 'ingredient_id'], label: 'inventory item for this location' }
     ],
@@ -471,7 +477,7 @@ export const entityRegistry = {
     })
   },
   InventoryLot: {
-    defaults: { remaining_quantity: 0, status: 'active' }
+    defaults: { remaining_quantity: 0, reserved_quantity: 0, status: 'active' }
   },
   InventoryTransaction: {
     defaults: { status: 'posted' }

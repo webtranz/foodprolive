@@ -54,9 +54,13 @@ const PRODUCTION_HISTORY_ACTION_LABELS = Object.freeze({
   started: 'Production Started',
   production_completed: 'Production Completed',
   completed: 'Production Completed',
-  inventory_committed: 'Inventory Committed at Area Approval',
-  inventory_reconciled: 'Inventory Commitment Reconciled',
-  inventory_released: 'Committed Inventory Returned',
+  inventory_reserved: 'Inventory Reserved at Area Approval',
+  inventory_reservation_reconciled: 'Inventory Reservation Reconciled',
+  inventory_reservation_released: 'Inventory Reservation Released',
+  inventory_consumed: 'Reserved Inventory Consumed at Production Start',
+  inventory_committed: 'Legacy Inventory Deduction Recorded',
+  inventory_reconciled: 'Inventory Consumption Reconciled',
+  inventory_released: 'Inventory Returned',
   production_cancelled: 'Production Cancelled',
   cancelled: 'Production Cancelled'
 });
@@ -230,7 +234,55 @@ export function hasAuthoritativeNoMaterialRequirement(production) {
 }
 
 export function canStartApprovedProduction(production) {
-  return hasAreaProductionApproval(production) && hasAcknowledgedMaterialRequest(production);
+  return hasAreaProductionApproval(production)
+    && hasAcknowledgedMaterialRequest(production)
+    && hasStartableProductionInventory(production);
+}
+
+export function hasStartableProductionInventory(production = {}) {
+  if (hasAuthoritativeNoMaterialRequirement(production)) return true;
+  const commitment = production?.inventory_commitment && typeof production.inventory_commitment === 'object'
+    ? production.inventory_commitment
+    : {};
+  const status = String(
+    commitment.status || production?.inventory_commitment_status || ''
+  ).trim().toLowerCase();
+  const model = String(commitment.stock_model || commitment.model_version || '').trim().toLowerCase();
+  const shortage = Number(commitment.total_shortage_quantity || 0);
+  if (!Number.isFinite(shortage) || shortage > 0.0000005) return false;
+  if (model === 'reserve_then_consume_v1') {
+    if (status !== 'reserved') return false;
+    if (
+      commitment.site_id
+      && production?.fulfillment_store_id
+      && String(commitment.site_id) !== String(production.fulfillment_store_id)
+    ) return false;
+    const lines = Array.isArray(commitment.lines)
+      ? commitment.lines
+      : Array.isArray(production?.inventory_committed_lines)
+        ? production.inventory_committed_lines
+        : [];
+    const expectsMaterials = Number(commitment.total_desired_quantity || 0) > 0.0000005
+      || (Array.isArray(production?.ingredients_used) && production.ingredients_used.length > 0);
+    if (expectsMaterials && lines.length === 0) return false;
+    return lines.every((line) => {
+      const desired = Number(line?.desired_quantity || 0);
+      const reserved = Number(line?.reserved_quantity ?? line?.committed_quantity ?? 0);
+      const allocated = (Array.isArray(line?.allocation_layers) ? line.allocation_layers : [])
+        .reduce((sum, layer) => sum + Number(layer?.quantity || 0), 0);
+      return Number.isFinite(desired)
+        && Number.isFinite(reserved)
+        && Number.isFinite(allocated)
+        && Math.abs(desired - reserved) <= 0.0000005
+        && Math.abs(reserved - allocated) <= 0.0000005;
+    });
+  }
+  // Records approved before reservation support already deducted inventory at
+  // approval. They are startable but are recognized as consumed without a
+  // second issue when the start transition is posted. Approved records with no
+  // reliable commitment metadata are repaired by reserving and consuming in
+  // the same atomic start transaction.
+  return status === 'committed' || !status;
 }
 
 export function getProductionStartBlockReason(production) {
@@ -242,6 +294,9 @@ export function getProductionStartBlockReason(production) {
   }
   if (!hasAcknowledgedMaterialRequest(production)) {
     return 'Production cannot start until Store / Procurement acknowledges the material request.';
+  }
+  if (!hasStartableProductionInventory(production)) {
+    return 'Production cannot start until its yield-adjusted inventory requirement is fully reserved.';
   }
   return '';
 }

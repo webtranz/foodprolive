@@ -282,7 +282,16 @@ async function findInventory(siteId, ingredientId, dependencies, executor) {
 }
 
 function inventoryQuantity(record) {
-  const numeric = Number(record?.available_quantity ?? record?.quantity ?? 0);
+  // D365 snapshots represent physical stock. Local production reservations
+  // reduce allocatable quantity without changing physical on-hand, so comparing
+  // a snapshot with available_quantity would fabricate an inbound receipt.
+  const numeric = Number(
+    record?.on_hand_quantity
+      ?? record?.usable_on_hand_quantity
+      ?? record?.available_quantity
+      ?? record?.quantity
+      ?? 0
+  );
   return Number.isFinite(numeric) ? numeric : 0;
 }
 

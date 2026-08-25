@@ -19,6 +19,10 @@ import { formatCurrency } from '@/lib/currency';
 import StandardDecimalInput from '@/components/recipes/StandardDecimalInput';
 import { buildProductionPlanExportRows } from '@/lib/productionPlanning';
 import {
+  getInventoryQuantities,
+  getProductionInventoryState
+} from '@/lib/inventoryAvailability';
+import {
   calculateIngredientCost,
   convertIngredientQuantity
 } from '../../shared/ingredientUnits.js';
@@ -314,13 +318,20 @@ export default function Production() {
         return;
       }
 
+      if (status === 'in_progress') {
+        await base44.productionWorkflow.start(id);
+        return;
+      }
+
       await base44.entities.Production.update(id, { status });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
       queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
       setCompletionOpen(false);
       setCompletionProduction(null);
@@ -358,7 +369,7 @@ export default function Production() {
       setActionError('');
     },
     onError: (error) => {
-      setActionError(error.message || 'Unable to reconcile the approved production inventory.');
+      setActionError(error.message || 'Unable to reconcile the approved production inventory reservation.');
     }
   });
 
@@ -432,8 +443,9 @@ export default function Production() {
             costUnit,
             ingredientData
           );
-          const currentStock = invItem?.quantity || 0;
-          const shortage = Math.max(0, requiredInventoryQty - currentStock);
+          const stockQuantities = getInventoryQuantities(invItem);
+          const availableStock = stockQuantities.available_quantity;
+          const shortage = Math.max(0, requiredInventoryQty - availableStock);
           const unitCost = toNumber(ingredientData?.cost_per_unit, 0);
           const estimatedCost = calculateIngredientCost(adjustedQty, ing.unit, ingredientData, unitCost);
           
@@ -444,7 +456,10 @@ export default function Production() {
             source_recipe_names: ing.source_recipe_names || [],
             planned_quantity: roundStandardDecimal(plannedQty, getRecipeQuantityPrecision(ing.unit)),
             adjusted_quantity: roundStandardDecimal(adjustedQty, getRecipeQuantityPrecision(ing.unit)),
-            current_stock: roundStandardDecimal(currentStock, getRecipeQuantityPrecision(inventoryUnit)),
+            on_hand_stock: roundStandardDecimal(stockQuantities.on_hand_quantity, getRecipeQuantityPrecision(inventoryUnit)),
+            reserved_stock: roundStandardDecimal(stockQuantities.reserved_quantity, getRecipeQuantityPrecision(inventoryUnit)),
+            available_stock: roundStandardDecimal(availableStock, getRecipeQuantityPrecision(inventoryUnit)),
+            current_stock: roundStandardDecimal(availableStock, getRecipeQuantityPrecision(inventoryUnit)),
             shortage: roundStandardDecimal(shortage, getRecipeQuantityPrecision(inventoryUnit)),
             unit: ing.unit,
             inventory_unit: inventoryUnit,
@@ -454,7 +469,7 @@ export default function Production() {
             yield_percent: Number(yieldAdjustment.yield_percent.toFixed(2)),
             yield_source: yieldAdjustment.yield_source,
             shrinkage_percent: toNumber(ingredientData?.shrinkage_percent, 0),
-            sufficient: currentStock >= requiredInventoryQty,
+            sufficient: availableStock >= requiredInventoryQty,
             unit_cost: Number(unitCost.toFixed(2)),
             estimated_cost: Number(estimatedCost.toFixed(2))
           };
@@ -683,26 +698,107 @@ export default function Production() {
       const ingredientData = ingredients.find((ingredient) => ingredient.id === line.ingredient_id);
       const inventoryUnit = inventoryItem?.unit || ingredientData?.unit || line.unit;
       const requiredQuantity = convertIngredientQuantity(
-        line.actual_quantity ?? line.planned_quantity ?? line.adjusted_quantity ?? 0,
+        line.required_quantity
+          ?? line.yield_adjusted_quantity
+          ?? line.planned_quantity
+          ?? line.adjusted_quantity
+          ?? line.actual_quantity
+          ?? 0,
         line.unit || inventoryUnit,
         inventoryUnit,
         ingredientData
       );
-      const currentStock = toNumber(inventoryItem?.quantity, 0);
-      const shortage = Math.max(0, requiredQuantity - currentStock);
+      const stockQuantities = getInventoryQuantities(inventoryItem);
+      const availableStock = stockQuantities.available_quantity;
+      const shortage = Math.max(0, requiredQuantity - availableStock);
 
       return {
         item_code: getItemCode(ingredientData, getItemCode(line)),
         ingredient_id: line.ingredient_id,
         ingredient_name: line.ingredient_name,
         adjusted_quantity: roundStandardDecimal(requiredQuantity, getRecipeQuantityPrecision(inventoryUnit)),
-        current_stock: roundStandardDecimal(currentStock, getRecipeQuantityPrecision(inventoryUnit)),
+        on_hand_stock: roundStandardDecimal(stockQuantities.on_hand_quantity, getRecipeQuantityPrecision(inventoryUnit)),
+        reserved_stock: roundStandardDecimal(stockQuantities.reserved_quantity, getRecipeQuantityPrecision(inventoryUnit)),
+        available_stock: roundStandardDecimal(availableStock, getRecipeQuantityPrecision(inventoryUnit)),
+        current_stock: roundStandardDecimal(availableStock, getRecipeQuantityPrecision(inventoryUnit)),
         shortage: roundStandardDecimal(shortage, getRecipeQuantityPrecision(inventoryUnit)),
         unit: inventoryUnit,
         inventory_unit: inventoryUnit,
-        sufficient: currentStock >= requiredQuantity
+        sufficient: availableStock >= requiredQuantity
       };
     }) || [];
+  };
+
+  const buildApprovedReservationPreview = (production, targetServings) => {
+    const revisedServings = Number(targetServings);
+    const currentServings = Number(production?.target_servings);
+    const inventorySiteId = production?.fulfillment_store_id;
+    if (
+      !production
+      || !inventorySiteId
+      || !Number.isFinite(revisedServings)
+      || revisedServings <= 0
+      || !Number.isFinite(currentServings)
+      || currentServings <= 0
+    ) {
+      return [];
+    }
+
+    const state = getProductionInventoryState(production);
+    const siteInventory = inventory.filter((item) => String(item.site_id) === String(inventorySiteId));
+    const sourceLines = state.lines.length > 0 ? state.lines : (production.ingredients_used || []);
+    const servingFactor = revisedServings / currentServings;
+
+    return sourceLines.map((line) => {
+      const ingredientData = ingredients.find((ingredient) => String(ingredient.id) === String(line.ingredient_id));
+      const inventoryItem = siteInventory.find((item) => String(item.ingredient_id) === String(line.ingredient_id));
+      const inventoryUnit = inventoryItem?.unit || line.inventory_unit || ingredientData?.unit || line.unit || 'unit';
+      const sourceUnit = line.inventory_unit || line.unit || inventoryUnit;
+      const currentRequired = convertIngredientQuantity(
+        line.desired_quantity
+          ?? line.required_quantity
+          ?? line.yield_adjusted_quantity
+          ?? line.planned_quantity
+          ?? line.adjusted_quantity
+          ?? line.actual_quantity
+          ?? 0,
+        sourceUnit,
+        inventoryUnit,
+        ingredientData
+      );
+      const ownReserved = state.is_reserved
+        ? convertIngredientQuantity(
+          line.reserved_quantity ?? line.committed_quantity ?? 0,
+          sourceUnit,
+          inventoryUnit,
+          ingredientData
+        )
+        : 0;
+      const stock = getInventoryQuantities(inventoryItem);
+      const revisedRequired = Math.max(0, currentRequired * servingFactor);
+      // Aggregate availability excludes every active reservation. Add this
+      // production's reservation back when evaluating its revised capacity.
+      const totalCapacity = stock.available_quantity + ownReserved;
+      const shortage = Math.max(0, revisedRequired - totalCapacity);
+      const additionalReservation = Math.max(0, revisedRequired - ownReserved);
+      const releaseQuantity = Math.max(0, ownReserved - revisedRequired);
+      const precision = getRecipeQuantityPrecision(inventoryUnit);
+
+      return {
+        ingredient_id: line.ingredient_id,
+        item_code: getItemCode(ingredientData, getItemCode(line)),
+        ingredient_name: line.ingredient_name || ingredientData?.name || 'Ingredient',
+        unit: inventoryUnit,
+        revised_required: roundStandardDecimal(revisedRequired, precision),
+        own_reserved: roundStandardDecimal(ownReserved, precision),
+        free_available: roundStandardDecimal(stock.available_quantity, precision),
+        total_capacity: roundStandardDecimal(totalCapacity, precision),
+        additional_reservation: roundStandardDecimal(additionalReservation, precision),
+        release_quantity: roundStandardDecimal(releaseQuantity, precision),
+        shortage: roundStandardDecimal(shortage, precision),
+        sufficient: shortage <= 0
+      };
+    });
   };
 
   const handleReview = async (action) => {
@@ -856,6 +952,12 @@ export default function Production() {
   const renderProductionActions = (production) => {
     const approvalHistory = getProductionApprovalHistory(production);
     const startBlockReason = getProductionStartBlockReason(production);
+    const productionInventoryState = getProductionInventoryState(production);
+    const startActionLabel = productionInventoryState.is_legacy_consumption
+      ? 'Start Production (Legacy Stock Already Deducted)'
+      : productionInventoryState.is_reserved
+        ? 'Start Production & Consume Reserved Stock'
+        : 'Start Production & Consume Stock';
     return (
       <div className="flex flex-wrap gap-2">
       {['draft', 'planned', 'changes_requested'].includes(production.status) && can('edit_production_request') ? (
@@ -906,7 +1008,7 @@ export default function Production() {
           disabled={!canStartApprovedProduction(production) || isStatusActionPending(production, 'in_progress')}
           title={!canStartApprovedProduction(production) ? startBlockReason : undefined}
         >
-          {isStatusActionPending(production, 'in_progress') ? 'Starting...' : 'Start Production'}
+          {isStatusActionPending(production, 'in_progress') ? 'Starting & Consuming...' : startActionLabel}
         </Button>
       ) : null}
       {production.status === 'approved' && (can('adjust_approved_production') || can('approve_production')) ? (
@@ -921,7 +1023,7 @@ export default function Production() {
           className="border-red-200 text-red-700 hover:bg-red-50"
           onClick={() => openInventoryAction(production, 'cancel')}
         >
-          Cancel & Return Stock
+          Cancel & Release Reservation
         </Button>
       ) : null}
       {production.status === 'in_progress' && can('complete_production') ? (
@@ -964,6 +1066,14 @@ export default function Production() {
     || materialRequestsError?.message
     || '';
   const selectedIsAreaReview = isAreaApprovalReview(selectedProduction);
+  const inventoryActionState = getProductionInventoryState(inventoryAction || {});
+  const inventoryActionPreview = inventoryActionMode === 'adjust'
+    ? buildApprovedReservationPreview(inventoryAction, inventoryActionServings)
+    : [];
+  const inventoryActionHasShortage = inventoryActionPreview.some((line) => !line.sufficient);
+  const inventoryActionReservedLineCount = inventoryActionState.lines.filter(
+    (line) => Number(line.reserved_quantity ?? line.committed_quantity ?? 0) > 0
+  ).length;
   const selectedReviewStoreOptions = selectedProduction
     ? getProductionStoreOptions(selectedProduction)
     : [];
@@ -1236,7 +1346,9 @@ export default function Production() {
                         <TableHead>Raw Required</TableHead>
                         <TableHead>Unit Cost</TableHead>
                         <TableHead>Est. Cost</TableHead>
-                        <TableHead>In Stock</TableHead>
+                        <TableHead>On Hand</TableHead>
+                        <TableHead>Reserved</TableHead>
+                        <TableHead>Available</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1250,7 +1362,9 @@ export default function Production() {
                           <TableCell className="font-medium">{formatRecipeQuantity(ing.adjusted_quantity, ing.unit)} {ing.unit}</TableCell>
                           <TableCell>{formatCurrency(toNumber(ing.unit_cost, 0))} / {ing.cost_unit}</TableCell>
                           <TableCell>{formatCurrency(toNumber(ing.estimated_cost, 0))}</TableCell>
-                          <TableCell>{formatRecipeQuantity(ing.current_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
+                          <TableCell>{formatRecipeQuantity(ing.on_hand_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
+                          <TableCell>{formatRecipeQuantity(ing.reserved_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
+                          <TableCell>{formatRecipeQuantity(ing.available_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
                           <TableCell>
                             {ing.sufficient ? (
                               <Badge className="bg-green-600">Sufficient</Badge>
@@ -1385,7 +1499,9 @@ export default function Production() {
                       <TableHead>Item Code</TableHead>
                       <TableHead>Item Name</TableHead>
                       <TableHead>Required</TableHead>
-                      <TableHead>In Stock</TableHead>
+                      <TableHead>On Hand</TableHead>
+                      <TableHead>Reserved</TableHead>
+                      <TableHead>Available to Reserve</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1395,7 +1511,9 @@ export default function Production() {
                         <TableCell className="font-mono text-xs text-slate-600">{ing.item_code}</TableCell>
                         <TableCell>{ing.ingredient_name}</TableCell>
                         <TableCell>{formatRecipeQuantity(ing.adjusted_quantity, ing.unit)} {ing.unit}</TableCell>
-                        <TableCell>{formatRecipeQuantity(ing.current_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
+                        <TableCell>{formatRecipeQuantity(ing.on_hand_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
+                        <TableCell>{formatRecipeQuantity(ing.reserved_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
+                        <TableCell>{formatRecipeQuantity(ing.available_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
                         <TableCell>
                           {ing.sufficient ? (
                             <Badge className="bg-green-600">✓ OK</Badge>
@@ -1421,7 +1539,7 @@ export default function Production() {
                       </p>
                       <p className="text-sm text-amber-700 mt-1">
                         {isAreaApprovalReview(selectedProduction)
-                          ? 'Final approval is blocked until the Store receives or corrects the remaining shortage. Inventory is posted atomically only when every required ingredient is available.'
+                          ? 'Final approval is blocked until the Store receives or corrects the remaining shortage. Approval reserves the yield-adjusted quantities; physical stock is deducted only when production starts.'
                           : 'After PM approval, the linked material request moves to the Store Keeper / Procurement Officer. Production then waits for Area Manager approval before it can start.'}
                       </p>
                     </div>
@@ -1478,7 +1596,7 @@ export default function Production() {
                     {reviewAction === 'approve'
                       ? 'Approving...'
                       : selectedIsAreaReview
-                        ? 'Approve, Post Inventory & Mark Ready'
+                        ? 'Approve, Reserve Inventory & Mark Ready'
                         : 'Approve & Send to Store / Procurement'}
                   </Button>
                 ) : null}
@@ -1527,12 +1645,12 @@ export default function Production() {
             <DialogHeader>
               <DialogTitle>
                 {inventoryActionMode === 'cancel'
-                  ? 'Cancel Production & Return Inventory'
-                  : 'Adjust Approved Production Quantity'}
+                  ? 'Cancel Production & Release Reservation'
+                  : 'Adjust Approved Production Reservation'}
               </DialogTitle>
             </DialogHeader>
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-              Inventory was posted when the Area Manager approved this request. This action changes only the quantity difference and preserves the original batch, stock-date, expiry, and cost trail.
+              Area Manager approval reserves inventory without deducting physical stock. Before production starts, quantity changes adjust only the reservation and preserve the selected batch, stock-date, expiry, and cost trail.
             </div>
             {inventoryAction ? (
               <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
@@ -1541,7 +1659,7 @@ export default function Production() {
                   Current approved quantity: {formatRecipeQuantity(inventoryAction.target_servings || 0, 'serving')} servings
                 </p>
                 <p className="text-xs text-slate-500">
-                  Inventory revision {Number(inventoryAction.inventory_commitment_revision || 0)}
+                  Reservation revision {inventoryActionState.revision} · {inventoryActionState.label}
                 </p>
               </div>
             ) : null}
@@ -1561,12 +1679,72 @@ export default function Production() {
                   onValueChange={setInventoryActionServings}
                 />
                 <p className="mt-1 text-xs text-slate-500">
-                  An increase consumes only the additional yield-adjusted ingredients; a reduction returns the difference to its original lots.
+                  An increase reserves only the additional yield-adjusted ingredients; a reduction releases the difference back to available stock.
                 </p>
+                {inventoryActionPreview.length > 0 ? (
+                  <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Ingredient</TableHead>
+                          <TableHead>Revised Required</TableHead>
+                          <TableHead>Own Reservation</TableHead>
+                          <TableHead>Free Available</TableHead>
+                          <TableHead>Total Capacity</TableHead>
+                          <TableHead>Reservation Change</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {inventoryActionPreview.map((line) => (
+                          <TableRow key={line.ingredient_id}>
+                            <TableCell>
+                              <p className="font-medium text-slate-900">{line.ingredient_name}</p>
+                              <p className="font-mono text-xs text-slate-500">{line.item_code}</p>
+                            </TableCell>
+                            <TableCell>{formatRecipeQuantity(line.revised_required, line.unit)} {line.unit}</TableCell>
+                            <TableCell className="text-violet-700">
+                              {formatRecipeQuantity(line.own_reserved, line.unit)} {line.unit}
+                            </TableCell>
+                            <TableCell className="text-cyan-700">
+                              {formatRecipeQuantity(line.free_available, line.unit)} {line.unit}
+                            </TableCell>
+                            <TableCell className="font-medium">
+                              {formatRecipeQuantity(line.total_capacity, line.unit)} {line.unit}
+                            </TableCell>
+                            <TableCell>
+                              {!line.sufficient ? (
+                                <Badge className="bg-red-100 text-red-700">
+                                  Short {formatRecipeQuantity(line.shortage, line.unit)} {line.unit}
+                                </Badge>
+                              ) : line.release_quantity > 0 ? (
+                                <Badge className="bg-cyan-100 text-cyan-800">
+                                  Release {formatRecipeQuantity(line.release_quantity, line.unit)} {line.unit}
+                                </Badge>
+                              ) : line.additional_reservation > 0 ? (
+                                <Badge className="bg-violet-100 text-violet-800">
+                                  Reserve {formatRecipeQuantity(line.additional_reservation, line.unit)} {line.unit}
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-slate-100 text-slate-700">No change</Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : null}
+                {inventoryActionHasShortage ? (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                    The revised quantity exceeds free stock plus this production's own reservation. The request will remain blocked from starting until the shortage is reserved.
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                This cancels the request and returns all inventory committed by this approval. The action remains in the approval and inventory histories.
+                This cancels the request and releases all inventory reserved by this approval
+                {inventoryActionReservedLineCount > 0 ? ` across ${inventoryActionReservedLineCount} ingredient line${inventoryActionReservedLineCount === 1 ? '' : 's'}` : ''}.
+                {' '}No physical consumption is posted before production starts, and the release remains in the approval history.
               </div>
             )}
             <div>
@@ -1598,7 +1776,7 @@ export default function Production() {
                 {inventoryCommitmentMutation.isPending
                   ? 'Reconciling...'
                   : inventoryActionMode === 'cancel'
-                    ? 'Cancel & Return Inventory'
+                    ? 'Cancel & Release Reservation'
                     : 'Apply Quantity Change'}
               </Button>
             </DialogFooter>
@@ -1622,7 +1800,7 @@ export default function Production() {
               <DialogTitle>Complete Production & Reconcile Consumption</DialogTitle>
             </DialogHeader>
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-              Confirm the actual raw quantity consumed for each ingredient. Completion reconciles any difference from the Area Manager approval posting and creates one immutable Production Consumption Report; it does not deduct the approved plan twice.
+              Reserved inventory was physically deducted when production started. Confirm the actual raw quantity consumed for each ingredient; completion reconciles only the difference and creates one immutable Production Consumption Report without deducting the start quantity twice.
             </div>
             {actionError ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>

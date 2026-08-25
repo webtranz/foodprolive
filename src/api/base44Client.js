@@ -530,6 +530,12 @@ export const base44 = {
         body: JSON.stringify(data)
       });
     },
+    start(id, data = {}) {
+      return apiRequest(`/api/entities/Production/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ...data, status: 'in_progress' })
+      });
+    },
     adjustApprovedQuantity(id, data = {}) {
       return apiRequest(`/api/productions/${id}/approved-quantity`, {
         method: 'PATCH',

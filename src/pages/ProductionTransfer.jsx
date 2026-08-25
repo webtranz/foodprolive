@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Plus, ArrowRight, Package, CheckCircle2, Truck, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { getItemCodeFromRecords } from '../../shared/itemCode.js';
+import { getAvailableInventoryQuantity, getInventoryQuantities } from '@/lib/inventoryAvailability';
 
 const STATUS_CONFIG = {
   pending: { color: 'bg-amber-500', label: 'Pending', icon: Package },
@@ -148,7 +149,10 @@ export default function ProductionTransfer() {
     await createMutation.mutateAsync(transferData);
   };
 
-  const availableInventory = inventory.filter(i => i.site_id === formData.from_site_id && i.quantity > 0);
+  const availableInventory = inventory.filter((item) => (
+    item.site_id === formData.from_site_id
+    && getAvailableInventoryQuantity(item) > 0
+  ));
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-[1600px] mx-auto">
@@ -306,13 +310,17 @@ export default function ProductionTransfer() {
                       <TableRow>
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
+                        <TableHead>On Hand / Reserved / Available</TableHead>
                         <TableHead>Quantity</TableHead>
                         <TableHead>Unit</TableHead>
                         <TableHead></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {selectedItems.map((item, idx) => (
+                      {selectedItems.map((item, idx) => {
+                        const selectedStock = availableInventory.find((entry) => entry.ingredient_id === item.ingredient_id);
+                        const stockQuantities = getInventoryQuantities(selectedStock);
+                        return (
                         <TableRow key={idx}>
                           <TableCell className="font-mono text-xs text-slate-600">
                             {getItemCodeFromRecords([item])}
@@ -327,7 +335,7 @@ export default function ProductionTransfer() {
                                   item_code: item.item_code,
                                   name: item.ingredient_name || stock?.ingredient_name,
                                   unit: item.unit || stock?.unit,
-                                  current_stock: stock?.quantity
+                                  current_stock: getAvailableInventoryQuantity(stock)
                                 } : null;
                               })()}
                               siteId={formData.from_site_id}
@@ -335,10 +343,20 @@ export default function ProductionTransfer() {
                               onValueChange={(value, ingredient) => updateItem(idx, 'ingredient_id', value, ingredient)}
                             />
                           </TableCell>
+                          <TableCell className="text-xs text-slate-600">
+                            {selectedStock ? (
+                              <div className="space-y-0.5">
+                                <p>On hand: {stockQuantities.on_hand_quantity} {selectedStock.unit}</p>
+                                <p className="text-violet-700">Reserved: {stockQuantities.reserved_quantity} {selectedStock.unit}</p>
+                                <p className="font-medium text-cyan-800">Available: {stockQuantities.available_quantity} {selectedStock.unit}</p>
+                              </div>
+                            ) : '-'}
+                          </TableCell>
                           <TableCell>
                             <Input
                               type="number"
                               min="0"
+                              max={selectedStock ? stockQuantities.available_quantity : undefined}
                               value={item.quantity}
                               onChange={(e) => updateItem(idx, 'quantity', parseFloat(e.target.value))}
                             />
@@ -355,7 +373,8 @@ export default function ProductionTransfer() {
                             </Button>
                           </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 )}
