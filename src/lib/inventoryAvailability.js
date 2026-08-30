@@ -16,19 +16,20 @@ function nonNegative(value, fallback = 0) {
  * promised to another request.
  */
 export function getInventoryQuantities(record = {}) {
+  const inventoryRecord = record && typeof record === 'object' ? record : {};
   const explicitOnHand = finiteNumber(
-    record.on_hand_quantity
-      ?? record.physical_quantity
-      ?? record.stock_on_hand_quantity
-      ?? record.remaining_quantity
+    inventoryRecord.on_hand_quantity
+      ?? inventoryRecord.physical_quantity
+      ?? inventoryRecord.stock_on_hand_quantity
+      ?? inventoryRecord.remaining_quantity
   );
   const explicitReserved = finiteNumber(
-    record.reserved_quantity
-      ?? record.reservation_quantity
-      ?? record.allocated_quantity
+    inventoryRecord.reserved_quantity
+      ?? inventoryRecord.reservation_quantity
+      ?? inventoryRecord.allocated_quantity
   );
-  const explicitAvailable = finiteNumber(record.available_quantity);
-  const legacyQuantity = nonNegative(record.quantity, 0);
+  const explicitAvailable = finiteNumber(inventoryRecord.available_quantity);
+  const legacyQuantity = nonNegative(inventoryRecord.quantity, 0);
   const reservedQuantity = nonNegative(explicitReserved, 0);
   const onHandQuantity = Math.max(0, explicitOnHand ?? (
     explicitAvailable === null

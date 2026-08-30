@@ -24,6 +24,13 @@ assert.deepEqual(getInventoryQuantities({ quantity: 12 }), {
   available_quantity: 12
 });
 
+assert.deepEqual(getInventoryQuantities(null), {
+  on_hand_quantity: 0,
+  reserved_quantity: 0,
+  available_quantity: 0
+});
+assert.equal(getAvailableInventoryQuantity(null), 0);
+
 assert.deepEqual(getInventoryQuantities({
   remaining_quantity: 9,
   reserved_quantity: 4,
