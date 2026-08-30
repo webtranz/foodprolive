@@ -37,6 +37,7 @@ import {
   createDocument,
   updateDocument,
   deleteDocument,
+  deleteSiteSubtree,
   initDatabase,
   getUserByToken,
   revokeToken,
@@ -3677,6 +3678,34 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
       }
     }
     authorizeEntityAction(request.user, entity, 'delete', null, existing);
+    const includeDescendants = ['1', 'true'].includes(
+      String(request.query.include_descendants || '').trim().toLowerCase()
+    );
+    if (entity === 'Site' && includeDescendants) {
+      const deletion = await deleteSiteSubtree(existing.id);
+      invalidateEntityAccessCaches(entity);
+      recordChanged(entity);
+      await auditAction({
+        user: request.user,
+        action: 'SITE_SUBTREE_DELETE',
+        entity,
+        entityId: existing.id,
+        details: {
+          include_descendants: true,
+          root_site_id: deletion.root_site_id,
+          deleted_count: deletion.deleted_count,
+          deleted_site_ids: deletion.deleted_site_ids,
+          deleted_records: deletion.deleted_sites
+        }
+      });
+      return response.json({
+        success: true,
+        include_descendants: true,
+        root_site_id: deletion.root_site_id,
+        deleted_count: deletion.deleted_count,
+        deleted_site_ids: deletion.deleted_site_ids
+      });
+    }
     const removed = await deleteDocument(entity, request.params.id);
     if (!removed) {
       return response.status(404).json({ message: 'Record not found' });
@@ -5762,7 +5791,10 @@ if (fs.existsSync(distDir)) {
 
 app.use((error, _request, response, _next) => {
   console.error(error);
-  response.status(Number(error.status) || 500).json({ message: error.message || 'Internal server error' });
+  const payload = { message: error.message || 'Internal server error' };
+  if (error.code) payload.code = error.code;
+  if (typeof error.details !== 'undefined') payload.details = error.details;
+  response.status(Number(error.status) || 500).json(payload);
 });
 
 await initDatabaseWithRetry();

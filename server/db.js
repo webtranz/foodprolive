@@ -702,6 +702,277 @@ const normalizedReferenceChecks = {
   ]
 };
 
+const siteSubtreeReferenceChecks = Object.freeze([
+  {
+    key: 'user_location_assignments',
+    label: 'user location assignments',
+    table: 'users',
+    sql: `SELECT id FROM users
+           WHERE site_id = ANY($1::text[])
+              OR COALESCE(profile->'allowed_site_ids', '[]'::jsonb) ?| $1::text[]
+           FOR SHARE`
+  },
+  {
+    key: 'pos_sources',
+    label: 'POS sources',
+    table: 'pos_sources',
+    sql: `SELECT id FROM pos_sources
+           WHERE default_site_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'pos_sales_orders',
+    label: 'POS sales orders',
+    table: 'pos_sales_orders',
+    sql: `SELECT id FROM pos_sales_orders
+           WHERE site_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'pos_sales_items',
+    label: 'POS sales items',
+    table: 'pos_sales_items',
+    sql: `SELECT id FROM pos_sales_items
+           WHERE site_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'pos_recipe_mappings',
+    label: 'POS recipe mappings',
+    table: 'pos_recipe_mapping',
+    sql: `SELECT id FROM pos_recipe_mapping
+           WHERE site_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'purchase_requests',
+    label: 'purchase requests',
+    table: 'purchase_requests',
+    sql: `SELECT id FROM purchase_requests
+           WHERE site_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'purchase_orders',
+    label: 'purchase orders',
+    table: 'purchase_orders',
+    sql: `SELECT id FROM purchase_orders
+           WHERE site_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'goods_receipts',
+    label: 'goods receipts',
+    table: 'goods_receipts',
+    sql: `SELECT id FROM goods_receipts
+           WHERE site_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'supplier_price_history',
+    label: 'supplier price history',
+    table: 'supplier_price_history',
+    sql: `SELECT id FROM supplier_price_history
+           WHERE site_id = ANY($1::text[])
+           FOR SHARE`
+  }
+]);
+
+async function getExternalSiteSubtreeDependencies(siteIds, executor) {
+  const subtreeIds = [...new Set((siteIds || []).map(String))].sort();
+  const subtreeIdSet = new Set(subtreeIds);
+  const groupedDocumentDependencies = new Map();
+  const documentRows = await query(
+    `SELECT id, entity_name, data
+       FROM entity_records
+      WHERE NOT (entity_name = 'Site' AND id = ANY($1::text[]))
+      FOR SHARE`,
+    [subtreeIds],
+    executor
+  );
+
+  for (const row of documentRows.rows) {
+    if (row.entity_name === 'Site' && subtreeIdSet.has(String(row.id))) continue;
+    const matchingReferences = collectDocumentReferences(row.data).filter((reference) => (
+      reference.targetEntity === 'Site' && subtreeIdSet.has(String(reference.id))
+    ));
+    if (!matchingReferences.length) continue;
+
+    const key = `entity_records:${row.entity_name}`;
+    const dependency = groupedDocumentDependencies.get(key) || {
+      key,
+      label: `${row.entity_name} records`,
+      source: 'entity_records',
+      entity_name: row.entity_name,
+      count: 0,
+      reference_count: 0,
+      sample_ids: [],
+      referenced_site_ids: []
+    };
+    dependency.count += 1;
+    dependency.reference_count += matchingReferences.length;
+    if (dependency.sample_ids.length < 5) dependency.sample_ids.push(String(row.id));
+    dependency.referenced_site_ids = [...new Set([
+      ...dependency.referenced_site_ids,
+      ...matchingReferences.map((reference) => String(reference.id))
+    ])].sort();
+    groupedDocumentDependencies.set(key, dependency);
+  }
+
+  const normalizedDependencies = [];
+  for (const check of siteSubtreeReferenceChecks) {
+    const result = await query(check.sql, [subtreeIds], executor);
+    const aggregateCount = result.rows[0]?.dependency_count;
+    const count = Number(
+      aggregateCount === null || typeof aggregateCount === 'undefined'
+        ? (result.rowCount ?? result.rows.length ?? 0)
+        : aggregateCount
+    );
+    if (count <= 0) continue;
+    const aggregateSampleIds = result.rows[0]?.sample_ids;
+    normalizedDependencies.push({
+      key: check.key,
+      label: check.label,
+      source: check.table,
+      count,
+      sample_ids: Array.isArray(aggregateSampleIds)
+        ? aggregateSampleIds.slice(0, 5).map(String)
+        : result.rows.slice(0, 5).map((row) => String(row.id))
+    });
+  }
+
+  return [
+    ...groupedDocumentDependencies.values(),
+    ...normalizedDependencies
+  ].sort((left, right) => left.key.localeCompare(right.key));
+}
+
+async function deleteSiteSubtreeWithExecutor(rootId, executor) {
+  const normalizedRootId = String(rootId || '').trim();
+  if (!normalizedRootId) {
+    const error = new Error('A root Site ID is required');
+    error.status = 400;
+    error.code = 'SITE_ID_REQUIRED';
+    throw error;
+  }
+
+  await query(
+    'SELECT pg_advisory_xact_lock(hashtext($1))',
+    ['site-hierarchy'],
+    executor
+  );
+  const siteResult = await query(
+    `SELECT id, data
+       FROM entity_records
+      WHERE entity_name = 'Site'
+      FOR UPDATE`,
+    [],
+    executor
+  );
+  const sites = siteResult.rows.map((row) => ({
+    ...(row.data && typeof row.data === 'object' ? row.data : {}),
+    id: String(row.data?.id || row.id)
+  }));
+  const siteById = new Map(sites.map((site) => [String(site.id), site]));
+  if (!siteById.has(normalizedRootId)) {
+    const error = new Error('Site not found');
+    error.status = 404;
+    error.code = 'SITE_NOT_FOUND';
+    error.details = { root_site_id: normalizedRootId };
+    throw error;
+  }
+
+  const childrenByParentId = new Map();
+  for (const site of sites) {
+    const parentId = String(site.parent_site_id || '').trim();
+    if (!parentId) continue;
+    if (!childrenByParentId.has(parentId)) childrenByParentId.set(parentId, []);
+    childrenByParentId.get(parentId).push(site);
+  }
+
+  const subtree = [];
+  const visited = new Set();
+  const queue = [siteById.get(normalizedRootId)];
+  while (queue.length > 0) {
+    const site = queue.shift();
+    const siteId = String(site?.id || '');
+    if (!siteId || visited.has(siteId)) continue;
+    visited.add(siteId);
+    subtree.push(site);
+    queue.push(...(childrenByParentId.get(siteId) || []));
+  }
+
+  const subtreeIds = subtree.map((site) => String(site.id)).sort();
+  for (const siteId of subtreeIds) {
+    await query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      [`entity-reference:Site:${siteId}`],
+      executor
+    );
+  }
+
+  // The normalized operational tables do not use entity_records relationship
+  // validation. A brief SHARE lock prevents a new Site reference from being
+  // inserted between the dependency check and subtree deletion.
+  const normalizedTables = [...new Set(siteSubtreeReferenceChecks.map((check) => check.table))];
+  await query(
+    `LOCK TABLE ${normalizedTables.join(', ')} IN SHARE MODE`,
+    [],
+    executor
+  );
+
+  const dependencies = await getExternalSiteSubtreeDependencies(subtreeIds, executor);
+  if (dependencies.length > 0) {
+    const dependencyCount = dependencies.reduce((sum, dependency) => sum + Number(dependency.count || 0), 0);
+    const error = new Error(
+      `Site hierarchy cannot be deleted because ${dependencyCount} external record${dependencyCount === 1 ? '' : 's'} still reference it.`
+    );
+    error.status = 409;
+    error.code = 'SITE_IN_USE';
+    error.details = {
+      root_site_id: normalizedRootId,
+      subtree_count: subtree.length,
+      subtree_site_ids: subtreeIds,
+      dependency_count: dependencyCount,
+      blockers: dependencies,
+      dependencies
+    };
+    throw error;
+  }
+
+  const deleteResult = await query(
+    `DELETE FROM entity_records
+      WHERE entity_name = 'Site'
+        AND id = ANY($1::text[])
+      RETURNING id`,
+    [subtreeIds],
+    executor
+  );
+  if (deleteResult.rowCount !== subtree.length) {
+    const error = new Error('Site hierarchy changed while it was being deleted. Retry the operation.');
+    error.status = 409;
+    error.code = 'SITE_DELETE_CONFLICT';
+    error.details = {
+      root_site_id: normalizedRootId,
+      expected_count: subtree.length,
+      deleted_count: deleteResult.rowCount
+    };
+    throw error;
+  }
+
+  return {
+    root_site_id: normalizedRootId,
+    deleted_count: deleteResult.rowCount,
+    deleted_site_ids: subtreeIds,
+    deleted_sites: subtree
+  };
+}
+
+async function deleteSiteSubtree(rootId, executor = null) {
+  if (executor) return deleteSiteSubtreeWithExecutor(rootId, executor);
+  return withTransaction((client) => deleteSiteSubtreeWithExecutor(rootId, client));
+}
+
 async function ensureDocumentNotReferenced(entity, id, executor = pool) {
   if (entity === 'Site') {
     await query(
@@ -1622,6 +1893,18 @@ async function claimNextBulkUploadJob({ staleAfterMs = 15 * 60 * 1000 } = {}) {
 
 async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
   ensureKnownEntity(entity);
+  if (entity === 'Site') {
+    const error = new Error(
+      'Site hierarchy records cannot be cleared through bulk upload. Delete an unused subtree through the protected Site deletion endpoint.'
+    );
+    error.status = 409;
+    error.code = 'SITE_BULK_CLEAR_FORBIDDEN';
+    error.details = {
+      protected_entity: 'Site',
+      supported_delete_endpoint: '/api/entities/Site/:id?include_descendants=true'
+    };
+    throw error;
+  }
   if (entity === 'User') {
     const error = new Error('Users cannot be deleted through bulk upload.');
     error.status = 400;
@@ -1629,14 +1912,12 @@ async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
   }
   if (Array.isArray(siteIds)) {
     if (!siteIds.length) return 0;
-    const result = entity === 'Site'
-      ? await query('DELETE FROM entity_records WHERE entity_name = $1 AND id = ANY($2::text[])', [entity, siteIds], executor)
-      : await query(
-        `DELETE FROM entity_records
-         WHERE entity_name = $1 AND data->>'site_id' = ANY($2::text[])`,
-        [entity, siteIds],
-        executor
-      );
+    const result = await query(
+      `DELETE FROM entity_records
+       WHERE entity_name = $1 AND data->>'site_id' = ANY($2::text[])`,
+      [entity, siteIds],
+      executor
+    );
     return result.rowCount;
   }
   const result = await query('DELETE FROM entity_records WHERE entity_name = $1', [entity], executor);
@@ -1667,6 +1948,7 @@ export {
   createDocument,
   updateDocument,
   deleteDocument,
+  deleteSiteSubtree,
   sanitizeUser,
   getUserByToken,
   revokeToken,

@@ -95,8 +95,9 @@ assert.deepEqual(
   }
 );
 
-const [sitesPage, entityPreparation, database, entities] = await Promise.all([
+const [sitesPage, entityClient, entityPreparation, database, entities] = await Promise.all([
   fs.readFile(new URL('../src/pages/Sites.jsx', import.meta.url), 'utf8'),
+  fs.readFile(new URL('../src/api/base44Client.js', import.meta.url), 'utf8'),
   fs.readFile(new URL('../server/entityPreparation.js', import.meta.url), 'utf8'),
   fs.readFile(new URL('../server/db.js', import.meta.url), 'utf8'),
   fs.readFile(new URL('../server/entities.js', import.meta.url), 'utf8')
@@ -109,5 +110,18 @@ assert.match(entityPreparation, /validateCanonicalSiteParent/);
 assert.match(database, /isCanonicalSiteType\(record\.type\)/);
 assert.match(database, /validateSiteChildrenAfterStructureChange/);
 assert.match(entities, /SUPPORTED_SITE_TYPES/);
+
+if (/deleteSiteSubtree/.test(database)) {
+  assert.match(entityClient, /includeDescendants[\s\S]*include_descendants=true/);
+  assert.match(sitesPage, /Site\.delete\(id, \{ includeDescendants: true \}\)/);
+  assert.match(sitesPage, /onError:[\s\S]*setDeleteError/);
+  assert.match(sitesPage, /deleteMutation\.isPending/);
+  assert.match(sitesPage, /role="alert"/);
+  assert.match(
+    database,
+    /clearDocumentsForBulk[\s\S]*entity === 'Site'[\s\S]*SITE_BULK_CLEAR_FORBIDDEN/,
+    'bulk Site replace/delete must be rejected instead of bypassing subtree reference checks'
+  );
+}
 
 console.log('PASS site hierarchy canonical types, legacy aliases, parent rules, and wiring');

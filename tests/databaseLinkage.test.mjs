@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 
 import {
   collectDocumentReferences,
+  deleteSiteSubtree,
   validateDocumentRelationships,
   validateSiteChildrenAfterStructureChange
 } from '../server/db.js';
@@ -11,6 +12,71 @@ import {
   getAvailableLotQuantity
 } from '../server/inventory.js';
 import { buildSiteHierarchy } from '../server/locationScope.js';
+
+function createSiteDeletionExecutor({ sites = [], documents = [], users = [] } = {}) {
+  const deleteCalls = [];
+  const allDocuments = [
+    ...sites.map((site) => ({ id: site.id, entity_name: 'Site', data: site })),
+    ...documents
+  ];
+
+  return {
+    deleteCalls,
+    async query(sql, params = []) {
+      const normalizedSql = String(sql).replace(/\s+/g, ' ').trim();
+
+      if (normalizedSql.includes('pg_advisory_xact_lock')) {
+        return { rowCount: 1, rows: [{}] };
+      }
+
+      if (/^LOCK TABLE /i.test(normalizedSql)) {
+        return { rowCount: 0, rows: [] };
+      }
+
+      if (/SELECT .* FROM entity_records/i.test(normalizedSql)) {
+        if (/WHERE NOT \(entity_name = 'Site'/i.test(normalizedSql)) {
+          return { rowCount: documents.length, rows: documents };
+        }
+        if (/entity_name\s*=\s*'Site'/i.test(normalizedSql)) {
+          return {
+            rowCount: sites.length,
+            rows: sites.map((site) => ({ id: site.id, entity_name: 'Site', data: site }))
+          };
+        }
+        return { rowCount: allDocuments.length, rows: allDocuments };
+      }
+
+      if (/FROM users/i.test(normalizedSql)) {
+        const targetIds = new Set((Array.isArray(params[0]) ? params[0] : params).flat().filter(Boolean).map(String));
+        const match = users.find((user) => (
+          targetIds.has(String(user.site_id || ''))
+          || (user.allowed_site_ids || []).some((siteId) => targetIds.has(String(siteId)))
+        ));
+        return {
+          rowCount: 1,
+          rows: [{ dependency_count: match ? 1 : 0, sample_ids: match ? [match.id] : [] }]
+        };
+      }
+
+      if (/FROM (pos_|purchase_|goods_|supplier_)/i.test(normalizedSql)) {
+        return { rowCount: 1, rows: [{ dependency_count: 0, sample_ids: [] }] };
+      }
+
+      if (/^DELETE FROM entity_records/i.test(normalizedSql)) {
+        deleteCalls.push({ sql: normalizedSql, params });
+        const ids = (Array.isArray(params[1]) ? params[1] : params).flat().filter((value) => (
+          sites.some((site) => String(site.id) === String(value))
+        ));
+        return {
+          rowCount: ids.length,
+          rows: ids.map((id) => ({ id, data: sites.find((site) => String(site.id) === String(id)) }))
+        };
+      }
+
+      throw new Error(`Unexpected site deletion query: ${normalizedSql}`);
+    }
+  };
+}
 
 const cases = [
   {
@@ -141,6 +207,71 @@ const cases = [
           { async query() { throw new Error('Unchanged structure must not query children'); } }
         )
       );
+    }
+  },
+  {
+    name: 'deletes an unused Project subtree without treating its child links as external references',
+    async run() {
+      const project = { id: 'project-jeddah', name: 'Jeddah Project', type: 'project', parent_site_id: 'area-west' };
+      const stores = [
+        { id: 'store-main', name: 'Main Store', type: 'store', parent_site_id: project.id },
+        { id: 'store-cold', name: 'Cold Store', type: 'store', parent_site_id: project.id }
+      ];
+      const executor = createSiteDeletionExecutor({ sites: [project, ...stores] });
+
+      const result = await deleteSiteSubtree(project.id, executor);
+      const deletedIds = new Set(
+        executor.deleteCalls.flatMap((call) => call.params.flatMap((value) => Array.isArray(value) ? value : [value]))
+      );
+
+      assert.equal(executor.deleteCalls.length, 1, 'the unused subtree must be deleted atomically');
+      assert.deepEqual(
+        [...deletedIds].filter((id) => [project.id, ...stores.map((store) => store.id)].includes(id)).sort(),
+        [project.id, ...stores.map((store) => store.id)].sort()
+      );
+      assert.equal(result.deleted_count ?? result.deletedCount ?? result.count, 3);
+    }
+  },
+  {
+    name: 'rejects Site subtree deletion with structured blockers and performs no delete',
+    async run() {
+      const project = { id: 'project-jeddah', name: 'Jeddah Project', type: 'project', parent_site_id: 'area-west' };
+      const store = { id: 'store-main', name: 'Main Store', type: 'store', parent_site_id: project.id };
+      const scenarios = [
+        {
+          label: 'user assignment',
+          users: [{ id: 'user-1', site_id: store.id, allowed_site_ids: [store.id] }],
+          documents: []
+        },
+        {
+          label: 'operational document',
+          users: [],
+          documents: [{ id: 'production-1', entity_name: 'Production', data: { id: 'production-1', site_id: project.id } }]
+        }
+      ];
+
+      for (const scenario of scenarios) {
+        const executor = createSiteDeletionExecutor({
+          sites: [project, store],
+          users: scenario.users,
+          documents: scenario.documents
+        });
+        let caught = null;
+        try {
+          await deleteSiteSubtree(project.id, executor);
+        } catch (error) {
+          caught = error;
+        }
+
+        assert.ok(caught, `${scenario.label} must block subtree deletion`);
+        assert.equal(caught.code, 'SITE_IN_USE');
+        assert.equal(caught.status, 409);
+        assert.ok(
+          Array.isArray(caught.details?.blockers || caught.blockers),
+          `${scenario.label} must expose structured blockers`
+        );
+        assert.equal(executor.deleteCalls.length, 0, `${scenario.label} must leave the entire subtree intact`);
+      }
     }
   },
   {

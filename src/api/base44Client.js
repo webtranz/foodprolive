@@ -231,8 +231,9 @@ function createEntityModule(entity) {
         return result;
       });
     },
-    delete(id) {
-      return apiRequest(`/api/entities/${entity}/${id}`, {
+    delete(id, { includeDescendants = false } = {}) {
+      const query = includeDescendants ? '?include_descendants=true' : '';
+      return apiRequest(`/api/entities/${entity}/${id}${query}`, {
         method: 'DELETE'
       }).then((result) => {
         emitEntityChange(entity, { action: 'delete', result, id });

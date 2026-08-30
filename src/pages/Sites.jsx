@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -239,6 +239,7 @@ export default function Sites() {
   const [editingSite, setEditingSite] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [siteToDelete, setSiteToDelete] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
   const [managingUsersSite, setManagingUsersSite] = useState(null);
   const [formData, setFormData] = useState(emptyForm);
   const [bulkRows, setBulkRows] = useState([]);
@@ -279,12 +280,31 @@ export default function Sites() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.Site.delete(id),
+    mutationFn: (id) => base44.entities.Site.delete(id, { includeDescendants: true }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sites'] });
       setDeleteDialogOpen(false);
       setSiteToDelete(null);
-    }
+      setDeleteError(null);
+    },
+    onError: (error) => setDeleteError({
+      message: error?.message || 'Could not delete this hierarchy node',
+      details: error?.data?.details || null
+    })
+  });
+
+  const deactivateMutation = useMutation({
+    mutationFn: (site) => base44.entities.Site.update(site.id, { is_active: false }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sites'] });
+      setDeleteDialogOpen(false);
+      setSiteToDelete(null);
+      setDeleteError(null);
+    },
+    onError: (error) => setDeleteError({
+      message: error?.message || 'Could not deactivate this hierarchy node',
+      details: error?.data?.details || null
+    })
   });
 
   const bulkCreateMutation = useMutation({
@@ -335,6 +355,59 @@ export default function Sites() {
     });
     return map;
   }, [sites]);
+
+  const deletePreview = useMemo(() => {
+    if (!siteToDelete?.id) {
+      return { directChildren: [], descendants: [] };
+    }
+
+    const directChildren = childMap.get(siteToDelete.id) || [];
+    const descendants = [];
+    const queue = [...directChildren];
+    const visited = new Set([String(siteToDelete.id)]);
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current?.id || visited.has(String(current.id))) continue;
+      visited.add(String(current.id));
+      descendants.push(current);
+      queue.push(...(childMap.get(current.id) || []));
+    }
+
+    return { directChildren, descendants };
+  }, [childMap, siteToDelete]);
+
+  const deleteErrorDetails = useMemo(() => {
+    const details = deleteError?.details;
+    if (!details) return [];
+    const blockers = Array.isArray(details.blockers)
+      ? details.blockers
+      : (Array.isArray(details.dependencies) ? details.dependencies : []);
+    if (blockers.length > 0) {
+      return blockers.map((blocker) => {
+        const count = Number(blocker?.count || 0);
+        const label = blocker?.label || blocker?.entity_name || blocker?.source || 'linked records';
+        return `${label}: ${count} linked record${count === 1 ? '' : 's'}`;
+      });
+    }
+    if (Array.isArray(details)) {
+      return details.map((detail) => (
+        typeof detail === 'string' ? detail : JSON.stringify(detail)
+      ));
+    }
+    if (typeof details === 'object') {
+      return Object.entries(details)
+        .filter(([key]) => ![
+          'root_site_id',
+          'subtree_site_ids',
+          'dependencies',
+          'blockers'
+        ].includes(key))
+        .map(([key, value]) => (
+          `${key.replace(/_/g, ' ')}: ${typeof value === 'string' ? value : JSON.stringify(value)}`
+        ));
+    }
+    return [String(details)];
+  }, [deleteError]);
 
   const filteredIds = useMemo(() => {
     const matches = sites.filter((site) =>
@@ -582,7 +655,13 @@ export default function Sites() {
                     <UserCog className="h-4 w-4 mr-2" />
                     Manage Users
                   </DropdownMenuItem>
-                  <DropdownMenuItem className="text-red-600" onClick={() => { setSiteToDelete(site); setDeleteDialogOpen(true); }}>
+                  <DropdownMenuItem className="text-red-600" onClick={() => {
+                    setSiteToDelete(site);
+                    setDeleteError(null);
+                    deleteMutation.reset();
+                    deactivateMutation.reset();
+                    setDeleteDialogOpen(true);
+                  }}>
                     <Trash2 className="h-4 w-4 mr-2" />
                     Delete
                   </DropdownMenuItem>
@@ -879,19 +958,93 @@ export default function Sites() {
           <SiteUserManager site={managingUsersSite} onClose={() => setManagingUsersSite(null)} />
         ) : null}
 
-        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-          <AlertDialogContent>
+        <AlertDialog
+          open={deleteDialogOpen}
+          onOpenChange={(open) => {
+            if (deleteMutation.isPending || deactivateMutation.isPending) return;
+            setDeleteDialogOpen(open);
+            if (!open) {
+              setSiteToDelete(null);
+              setDeleteError(null);
+              deleteMutation.reset();
+              deactivateMutation.reset();
+            }
+          }}
+        >
+          <AlertDialogContent className="max-w-xl">
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete Hierarchy Node</AlertDialogTitle>
-              <AlertDialogDescription>
-                Delete "{siteToDelete?.name}" from the location hierarchy? This action cannot be undone.
+              <AlertDialogTitle>Delete {getSiteTypeLabel(siteToDelete?.type)}</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-left">
+                  <p>
+                    Delete <span className="font-medium text-slate-900">{siteToDelete?.name}</span> and its unused descendants from the location hierarchy?
+                  </p>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                    <p><span className="font-medium">Direct descendants:</span> {deletePreview.directChildren.length}</p>
+                    <p><span className="font-medium">Total subtree:</span> {deletePreview.descendants.length + 1} node{deletePreview.descendants.length === 0 ? '' : 's'}</p>
+                    {deletePreview.directChildren.length > 0 ? (
+                      <p className="mt-2">
+                        <span className="font-medium">Directly below:</span>{' '}
+                        {deletePreview.directChildren.slice(0, 8).map((site) => site.name).join(', ')}
+                        {deletePreview.directChildren.length > 8 ? `, and ${deletePreview.directChildren.length - 8} more` : ''}
+                      </p>
+                    ) : null}
+                    {deletePreview.descendants.length > deletePreview.directChildren.length ? (
+                      <p className="mt-1">
+                        <span className="font-medium">Full subtree:</span>{' '}
+                        {deletePreview.descendants.slice(0, 12).map((site) => site.name).join(', ')}
+                        {deletePreview.descendants.length > 12 ? `, and ${deletePreview.descendants.length - 12} more` : ''}
+                      </p>
+                    ) : null}
+                  </div>
+                  <p>
+                    Only unused nodes will be removed. If any node has users, inventory, production, procurement, POS, or other operational history, deletion will stop without removing the subtree.
+                  </p>
+                  <p className="font-medium text-red-700">This action cannot be undone.</p>
+                </div>
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {deleteError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">
+                <p className="font-medium">This hierarchy cannot be deleted</p>
+                <p className="mt-1">{deleteError.message}</p>
+                {deleteErrorDetails.length > 0 ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    {deleteErrorDetails.map((detail) => <li key={detail}>{detail}</li>)}
+                  </ul>
+                ) : null}
+                <p className="mt-2">
+                  {deletePreview.descendants.length > 0
+                    ? 'Move or deactivate the linked child locations and operational records, then try again.'
+                    : 'Remove or reassign the linked records, or deactivate this location to preserve its history.'}
+                </p>
+              </div>
+            ) : null}
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteMutation.mutate(siteToDelete?.id)}>
-                Delete
-              </AlertDialogAction>
+              <AlertDialogCancel disabled={deleteMutation.isPending || deactivateMutation.isPending}>Cancel</AlertDialogCancel>
+              {deleteError && deletePreview.descendants.length === 0 && siteToDelete?.is_active !== false ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={deleteMutation.isPending || deactivateMutation.isPending}
+                  onClick={() => deactivateMutation.mutate(siteToDelete)}
+                >
+                  {deactivateMutation.isPending ? 'Deactivating...' : 'Deactivate Instead'}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                className="bg-red-600 hover:bg-red-700"
+                disabled={!siteToDelete?.id || deleteMutation.isPending || deactivateMutation.isPending}
+                onClick={() => {
+                  setDeleteError(null);
+                  deleteMutation.mutate(siteToDelete.id);
+                }}
+              >
+                {deleteMutation.isPending
+                  ? 'Checking & deleting...'
+                  : `Delete ${deletePreview.descendants.length + 1} node${deletePreview.descendants.length === 0 ? '' : 's'}`}
+              </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
