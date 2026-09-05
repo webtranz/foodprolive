@@ -1,5 +1,10 @@
 const MAX_INTERNAL_PAGE_SIZE = 10000;
 const NUMERIC_PATTERN = "^-?[0-9]+([.][0-9]+)?$";
+const SAFE_JSON_FIELD_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const RANGE_OPERATORS = Object.freeze({
+  gte: '>=',
+  lte: '<='
+});
 
 function addParameter(parameters, value) {
   parameters.push(value);
@@ -36,6 +41,15 @@ function inventoryStatusExpression() {
   END)`;
 }
 
+function normalizeAccessibleSiteIds(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value[Symbol.iterator] === 'function' && typeof value !== 'string') {
+    return [...value].map(String);
+  }
+  return [String(value)];
+}
+
 function buildFilterClause(parameters, entity, field, expected) {
   if (entity === 'Inventory' && field === 'status') {
     const derivedStatus = inventoryStatusExpression();
@@ -67,9 +81,36 @@ function buildFilterClause(parameters, entity, field, expected) {
   )`;
 }
 
+function buildRangeClauses(parameters, rangeFilters = {}) {
+  if (!rangeFilters || typeof rangeFilters !== 'object' || Array.isArray(rangeFilters)) {
+    throw new TypeError('rangeFilters must be an object');
+  }
+
+  return Object.entries(rangeFilters).flatMap(([field, bounds]) => {
+    if (!SAFE_JSON_FIELD_PATTERN.test(field)) {
+      throw new TypeError(`Invalid range filter field: ${field}`);
+    }
+    if (!bounds || typeof bounds !== 'object' || Array.isArray(bounds)) {
+      throw new TypeError(`Range filter for ${field} must be an object`);
+    }
+    const unsupported = Object.keys(bounds).find((operator) => !RANGE_OPERATORS[operator]);
+    if (unsupported) {
+      throw new TypeError(`Unsupported range operator: ${unsupported}`);
+    }
+
+    const fieldExpression = `record.data->>'${field}'`;
+    return Object.entries(RANGE_OPERATORS).flatMap(([operator, sqlOperator]) => {
+      const expected = bounds[operator];
+      if (expected === null || typeof expected === 'undefined' || expected === '') return [];
+      const expectedParameter = addParameter(parameters, String(expected));
+      return [`${fieldExpression} ${sqlOperator} ${expectedParameter}::text`];
+    });
+  });
+}
+
 function buildLocationClause(parameters, entity, location = null) {
   if (!location || location.unrestricted) return null;
-  const accessibleSiteIds = [...new Set((location.accessibleSiteIds || []).map(String))];
+  const accessibleSiteIds = [...new Set(normalizeAccessibleSiteIds(location.accessibleSiteIds))];
   const siteParameter = addParameter(parameters, accessibleSiteIds);
 
   if (entity === 'Site') {
@@ -141,6 +182,7 @@ function buildOrderClause(parameters, entity, sort) {
 export function buildEntityListQuery({
   entity,
   filters = {},
+  rangeFilters = {},
   sort,
   limit,
   offset = 0,
@@ -155,6 +197,7 @@ export function buildEntityListQuery({
   Object.entries(filters || {}).forEach(([field, expected]) => {
     clauses.push(buildFilterClause(parameters, entity, field, expected));
   });
+  clauses.push(...buildRangeClauses(parameters, rangeFilters));
 
   const locationClause = buildLocationClause(parameters, entity, location);
   if (locationClause) clauses.push(locationClause);

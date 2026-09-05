@@ -4,7 +4,8 @@ import {
   filterRecordsByLocation,
   hasOrganizationWideLocationAccess,
   hasUnrestrictedLocationAccess,
-  isLocationScopedEntity
+  isLocationScopedEntity,
+  normalizeRecipeLocationPayload
 } from '../server/locationScope.js';
 
 const sites = [
@@ -61,11 +62,12 @@ const areaBudgetScope = buildUserLocationScope({
 }, sites);
 assert.deepEqual(
   filterRecordsByLocation(areaUser, 'Budget', [
-    { id: 'area-budget', site_id: 'project-a' },
+    { id: 'area-budget', site_id: 'area-a' },
+    { id: 'project-budget', site_id: 'project-a' },
     { id: 'other-area-budget', site_id: 'project-b' },
     { id: 'unattributed-budget' }
   ], areaBudgetScope).map((record) => record.id),
-  ['area-budget'],
+  ['area-budget', 'project-budget'],
   'an Area Manager sees only budgets attributed to the assigned Area subtree'
 );
 
@@ -76,6 +78,7 @@ const projectBudgetScope = buildUserLocationScope({
 }, sites);
 assert.deepEqual(
   filterRecordsByLocation(projectUser, 'Budget', [
+    { id: 'area-budget', site_id: 'area-a' },
     { id: 'project-budget', site_id: 'project-a' },
     { id: 'store-budget', site_id: 'store-a' },
     { id: 'sibling-project-budget', site_id: 'project-a2' },
@@ -92,6 +95,23 @@ assert.deepEqual(
     { id: 'other-recipe', site_scope: 'specific', site_ids: ['project-b'] }
   ], scope).map((record) => record.id),
   ['global', 'area-recipe']
+);
+
+assert.deepEqual(
+  normalizeRecipeLocationPayload(
+    { site_scope: 'specific', site_ids: ['KBR-384'], site_names: ['KBR'] },
+    {
+      sites: [
+        { id: 'site-kbr-384', name: 'KBR', project_code: 'KBR-384', is_active: true }
+      ]
+    }
+  ),
+  {
+    site_scope: 'specific',
+    site_ids: ['site-kbr-384'],
+    site_names: ['KBR']
+  },
+  'recipe uploads can use project codes from CSV templates and still store real Site IDs'
 );
 
 assert.equal(hasOrganizationWideLocationAccess({ role: 'general_manager', role_is_active: true }), true);

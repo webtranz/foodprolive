@@ -22,12 +22,19 @@ export const ADMIN_DASHBOARD_VIEW_ORDER = Object.freeze([
 const managementDashboardPermissions = Object.freeze([
   'granular_page_access',
   'access_dashboard',
+  'access_sites',
+  'access_budget',
   'access_reports',
   'access_advanced_reports',
   'access_data_exports',
   'access_reports_preview',
+  'access_meal_service',
+  'access_attendance',
   'view_dashboard',
+  'view_budget',
+  'manage_budget',
   'view_reports',
+  'view_customer_meal_service',
   'export_data'
 ]);
 
@@ -47,18 +54,20 @@ const areaManagerPermissions = Object.freeze([
 ]);
 
 const projectManagerPermissions = Object.freeze([
-  'granular_page_access', 'access_dashboard', 'access_sites', 'access_menu',
+  'granular_page_access', 'access_dashboard', 'access_sites', 'access_budget', 'access_menu',
   'access_menu_planning', 'access_event_planning', 'access_production',
   'access_inventory', 'access_material_requests', 'access_food_waste',
   'access_reports', 'access_advanced_reports', 'access_data_exports',
-  'access_reports_preview', 'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
-  'view_ingredients', 'view_recipes', 'view_inventory',
+  'access_reports_preview', 'access_meal_service', 'access_meal_qr_generator',
+  'access_attendance', 'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
+  'view_ingredients', 'view_recipes', 'view_inventory', 'view_budget', 'manage_budget',
   'manage_inventory', 'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event',
   'edit_special_event', 'submit_special_event', 'review_special_event', 'approve_special_event',
   'reject_special_event', 'manage_production',
   'review_production_request', 'approve_production_request', 'reject_production_request',
   'request_changes_production', 'view_material_request',
-  'cancel_production',
+  'cancel_production', 'view_customer_meal_service', 'record_customer_meal_service',
+  'generate_staff_meal_qr', 'create_employee_meal_qr',
   'manage_waste', 'approve_waste'
 ]);
 
@@ -118,16 +127,17 @@ export const MANAGEMENT_ROLE_FALLBACK_PROFILES = Object.freeze(
 
 const allGranularPagePermissions = Object.freeze([
   'granular_page_access',
-  'access_dashboard', 'access_sites', 'access_ingredients', 'access_food_categories',
+  'access_dashboard', 'access_sites', 'access_budget', 'access_ingredients', 'access_food_categories',
   'access_recipes', 'access_nutrition_allergen', 'access_ai_recipes', 'access_food_cost',
   'access_menu', 'access_menu_planning', 'access_event_planning', 'access_menu_builder',
   'access_auto_schedule', 'access_production', 'access_inventory', 'access_material_requests',
   'access_yield_cost', 'access_batch_tracking', 'access_branch_orders',
   'access_production_transfer', 'access_procurement_planning', 'access_procurement',
   'access_supplier_portal', 'access_pos', 'access_d365', 'access_forecasting',
-  'access_attendance', 'access_daily_meal_checkin', 'access_dining_scanner',
+  'access_meal_service', 'access_meal_qr_generator', 'access_attendance',
+  'access_daily_meal_checkin', 'access_dining_scanner',
   'access_event_dining_checkin', 'access_event_inquiry', 'access_qr_management',
-  'access_user_roles', 'access_food_waste', 'access_food_waste_qr',
+  'access_user_roles', 'access_food_waste',
   'access_quality_control', 'access_reports', 'access_advanced_reports',
   'access_cost_control', 'access_productivity_tracking', 'access_production_calculator',
   'access_calories_calculator', 'access_bulk_upload_center', 'access_bulk_upload_templates',
@@ -139,6 +149,7 @@ const allCapabilityPermissions = Object.freeze([
   'scan_qr', 'create_session', 'manage_sessions', 'manage_groups', 'delete_records',
   'view_ai_waste', 'camera_detection', 'view_dashboard', 'view_reports', 'export_data',
   'manage_bulk_uploads', 'view_audit_logs', 'view_bulk_upload_progress', 'manage_projects',
+  'view_budget', 'manage_budget',
   'view_ingredients', 'manage_ingredients', 'manage_food_categories', 'view_inventory', 'manage_inventory',
   'transfer_inventory', 'view_recipes', 'manage_recipes', 'manage_menu_planning',
   'generate_menu_plan_pr', 'create_special_event',
@@ -151,7 +162,9 @@ const allCapabilityPermissions = Object.freeze([
   'complete_production', 'create_material_request', 'view_material_request',
   'acknowledge_material_request', 'manage_procurement', 'approve_procurement',
   'manage_suppliers', 'manage_waste', 'approve_waste', 'manage_pos', 'manage_erp',
-  'manage_forecasting', 'manage_attendance', 'approve_attendance', 'manage_quality',
+  'manage_forecasting', 'manage_attendance', 'approve_attendance',
+  'view_customer_meal_service', 'record_customer_meal_service', 'generate_staff_meal_qr',
+  'create_employee_meal_qr', 'manage_quality',
   'manage_users', 'manage_roles'
 ]);
 
@@ -161,16 +174,17 @@ const adminPermissions = Object.freeze([
 ]);
 
 const managerPermissions = Object.freeze([
-  'granular_page_access', 'access_dashboard', 'access_sites', 'access_ingredients',
+  'granular_page_access', 'access_dashboard', 'access_sites', 'access_budget', 'access_ingredients',
   'access_food_categories', 'access_recipes', 'access_nutrition_allergen', 'access_food_cost',
   'access_menu', 'access_menu_planning', 'access_event_planning', 'access_menu_builder',
   'access_auto_schedule', 'access_production', 'access_inventory', 'access_material_requests',
   'access_yield_cost', 'access_batch_tracking', 'access_branch_orders',
   'access_production_transfer', 'access_procurement_planning', 'access_procurement',
-  'access_supplier_portal', 'access_pos', 'access_forecasting', 'access_attendance',
+  'access_supplier_portal', 'access_pos', 'access_forecasting', 'access_meal_service',
+  'access_meal_qr_generator', 'access_attendance',
   'access_daily_meal_checkin', 'access_dining_scanner', 'access_event_dining_checkin',
   'access_event_inquiry', 'access_qr_management', 'access_food_waste',
-  'access_food_waste_qr', 'access_quality_control', 'access_reports',
+  'access_quality_control', 'access_reports',
   'access_advanced_reports', 'access_cost_control', 'access_productivity_tracking',
   'access_production_calculator', 'access_calories_calculator',
   'access_bulk_upload_templates', 'access_data_exports',
@@ -178,6 +192,7 @@ const managerPermissions = Object.freeze([
   'scan_qr', 'view_dashboard', 'view_reports', 'export_data', 'create_session',
   'view_audit_logs', 'view_bulk_upload_progress', 'manage_sessions',
   'manage_groups', 'view_ai_waste', 'camera_detection', 'manage_projects',
+  'view_budget', 'manage_budget',
   'manage_ingredients', 'manage_food_categories', 'view_inventory', 'manage_inventory', 'transfer_inventory',
   'manage_recipes', 'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event',
   'edit_special_event', 'submit_special_event', 'review_special_event',
@@ -186,7 +201,9 @@ const managerPermissions = Object.freeze([
   'cancel_production', 'start_production', 'complete_production', 'create_material_request', 'view_material_request',
   'acknowledge_material_request', 'manage_procurement', 'approve_procurement',
   'manage_suppliers', 'manage_waste', 'approve_waste', 'manage_pos',
-  'manage_forecasting', 'manage_attendance', 'approve_attendance', 'manage_quality'
+  'manage_forecasting', 'manage_attendance', 'approve_attendance',
+  'view_customer_meal_service', 'record_customer_meal_service', 'generate_staff_meal_qr',
+  'create_employee_meal_qr', 'manage_quality'
 ]);
 
 const userPermissions = Object.freeze([
@@ -225,18 +242,21 @@ const procurementOfficerPermissions = Object.freeze([
 const productionSupervisorPermissions = Object.freeze([
   'granular_page_access', 'access_dashboard', 'access_menu_planning',
   'access_event_planning', 'access_production', 'access_material_requests',
-  'access_batch_tracking', 'access_yield_cost', 'access_food_waste',
+  'access_batch_tracking', 'access_yield_cost', 'access_meal_service',
+  'access_meal_qr_generator', 'access_attendance', 'access_food_waste',
   'access_quality_control', 'access_reports', 'view_dashboard', 'view_reports',
   'view_ingredients', 'view_recipes', 'view_inventory',
   'create_special_event', 'edit_special_event', 'submit_special_event',
   'review_special_event', 'approve_special_event', 'reject_special_event',
   'manage_production', 'start_production', 'complete_production', 'view_material_request',
-  'manage_menu_planning', 'manage_quality', 'manage_waste'
+  'manage_menu_planning', 'manage_attendance', 'approve_attendance',
+  'view_customer_meal_service', 'record_customer_meal_service', 'generate_staff_meal_qr',
+  'create_employee_meal_qr', 'manage_quality', 'manage_waste'
 ]);
 
 const qualityControllerPermissions = Object.freeze([
   'granular_page_access', 'access_dashboard', 'access_food_waste',
-  'access_food_waste_qr', 'access_quality_control', 'access_reports',
+  'access_quality_control', 'access_reports',
   'view_dashboard', 'view_reports', 'manage_quality', 'manage_waste', 'approve_waste'
 ]);
 
@@ -299,6 +319,13 @@ export const OPERATIONAL_ROLE_DEFINITIONS = Object.freeze({
     name: 'Production Supervisor',
     access_level: 'manager',
     description: 'Supervises production planning, approvals, batches, and kitchen execution.',
+    permissions: productionSupervisorPermissions
+  }),
+  supervisor: Object.freeze({
+    role_key: 'supervisor',
+    name: 'Supervisor',
+    access_level: 'manager',
+    description: 'Supervises staff scheduling, manual attendance, and operational execution.',
     permissions: productionSupervisorPermissions
   }),
   quality_controller: Object.freeze({

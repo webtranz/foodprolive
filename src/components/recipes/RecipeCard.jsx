@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { MoreVertical, Pencil, Trash2, Clock, Users, Flame, ShieldAlert, Candy, Droplets } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 
@@ -28,16 +29,25 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
     () => calculateRecipeServingWeight(recipe, recipes, ingredients),
     [ingredients, recipe, recipes]
   );
-  const formattedServingWeight = servingWeight.is_complete
-    ? formatRecipeQuantity(servingWeight.grams_per_serving, 'g')
+  const costSnapshot = useMemo(
+    () => calculateRecipeCostSnapshot(recipe, ingredients, recipes),
+    [ingredients, recipe, recipes]
+  );
+  const savedPortionSize = Number(recipe.portion_size_grams);
+  const hasSavedPortionSize = Number.isFinite(savedPortionSize) && savedPortionSize > 0;
+  const displayServingWeight = hasSavedPortionSize ? savedPortionSize : servingWeight.grams_per_serving;
+  const formattedServingWeight = hasSavedPortionSize || servingWeight.is_complete
+    ? formatRecipeQuantity(displayServingWeight, 'g')
     : '—';
   const servingCount = Number(recipe.servings) || 1;
   const ingredientMap = useMemo(
     () => new Map(ingredients.map((ingredient) => [ingredient.id, ingredient])),
     [ingredients]
   );
-  const servingWeightTitle = servingWeight.is_complete
-    ? 'Yield-adjusted cooked weight per serving'
+  const servingWeightTitle = hasSavedPortionSize
+    ? 'Saved portion size per serving'
+    : servingWeight.is_complete
+      ? 'Yield-adjusted cooked weight per serving'
     : servingWeight.warnings.join(' ') || 'Add ingredient weights and units to calculate grams per serving.';
 
   return (
@@ -98,7 +108,7 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
           <div className="flex items-center gap-1 text-slate-600">
             <Users className="w-4 h-4 text-slate-400" />
             <span>{formatRecipeQuantity(servingCount, 'servings')} serving{servingCount === 1 ? '' : 's'}</span>
-            <span className={servingWeight.is_complete ? 'font-medium text-emerald-700' : 'text-slate-400'} title={servingWeightTitle}>
+            <span className={hasSavedPortionSize || servingWeight.is_complete ? 'font-medium text-emerald-700' : 'text-slate-400'} title={servingWeightTitle}>
               · {formattedServingWeight} g
             </span>
           </div>
@@ -118,19 +128,11 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
           )}
         </div>
 
-        {recipe.total_cost !== null && recipe.total_cost !== undefined ? (
-          <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 text-xs">
-            <div>
-              <p className="text-slate-500">Total cost</p>
-              <p className="font-semibold text-slate-900">{formatCurrency(recipe.total_cost)}</p>
-            </div>
-            <div>
-              <p className="text-slate-500">Per serving</p>
-              <p className="font-semibold text-slate-900">{recipe.cost_per_serving == null ? '—' : formatCurrency(recipe.cost_per_serving)}</p>
-            </div>
-            <div>
-              <p className="text-slate-500">Per 100 g</p>
-              <p className="font-semibold text-slate-900">{recipe.cost_per_100g == null ? '—' : formatCurrency(recipe.cost_per_100g)}</p>
+        {costSnapshot.has_cost ? (
+          <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 text-xs">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-medium text-slate-600">Per serving cost</p>
+              <p className="text-base font-semibold text-slate-900">{formatCurrency(costSnapshot.cost_per_serving)}</p>
             </div>
           </div>
         ) : null}

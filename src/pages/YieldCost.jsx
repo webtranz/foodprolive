@@ -88,7 +88,7 @@ export default function YieldCost() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         <PageHeader
-          title="Yield & Cost Management"
+          title="Yields & Cost Management"
           description="Track cooking yields, shrinkage, and cost analysis"
         >
           <Button
@@ -226,7 +226,7 @@ export default function YieldCost() {
             {/* Ingredients Table */}
             <Card>
               <CardHeader>
-                <CardTitle>Ingredient Yield & Cost Analysis</CardTitle>
+                <CardTitle>Ingredient Yields & Cost Analysis</CardTitle>
               </CardHeader>
               <CardContent>
                 {isLoading ? (

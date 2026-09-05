@@ -1,4 +1,4 @@
-import { quantityInIngredientBaseUnit } from './ingredientUnits.js';
+import { isIngredientUnitCompatible, quantityInIngredientBaseUnit } from './ingredientUnits.js';
 import { expandRecipeIngredients } from './recipeComposition.js';
 import { calculateRecipeServingWeight } from './recipeWeight.js';
 import { roundStandardDecimal } from './recipeNumbers.js';
@@ -38,6 +38,19 @@ export function resolveIngredientItemCost(ingredient = {}, costingMethod = 'aver
 
 export function calculateRecipeIngredientLineCost(line = {}, ingredient = {}, costingMethod = 'average_cost') {
   const itemCost = resolveIngredientItemCost(ingredient, costingMethod);
+  const isCompatible = isIngredientUnitCompatible(
+    line.unit || ingredient.unit,
+    ingredient.unit,
+    ingredient
+  );
+  if (!isCompatible) {
+    return {
+      item_cost: itemCost,
+      normalized_quantity: null,
+      line_cost: null,
+      incompatible_unit: true
+    };
+  }
   const normalizedQuantity = quantityInIngredientBaseUnit(
     line.quantity,
     line.unit || ingredient.unit,
@@ -46,6 +59,7 @@ export function calculateRecipeIngredientLineCost(line = {}, ingredient = {}, co
   return {
     item_cost: itemCost,
     normalized_quantity: normalizedQuantity,
+    raw_quantity: normalizedQuantity,
     line_cost: itemCost === null ? null : normalizedQuantity * itemCost
   };
 }
@@ -80,6 +94,9 @@ export function calculateRecipeCostingSnapshot(recipe = {}, ingredients = [], re
     cost_per_serving: costPerServing === null ? null : roundStandardDecimal(costPerServing, 4),
     cost_per_100g: costPer100g === null ? null : roundStandardDecimal(costPer100g, 4),
     total_recipe_weight_grams: weight.cooked_total_grams,
+    total_raw_recipe_weight_grams: weight.raw_total_grams,
+    expected_yield_weight_grams: weight.yielded_total_grams,
+    quantity_semantics: 'raw_recipe_to_yielded_output_v2',
     target_selling_price: sellingPrice,
     margin_per_serving: sellingPrice === null || costPerServing === null
       ? null

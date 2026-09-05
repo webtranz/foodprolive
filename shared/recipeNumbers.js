@@ -3,9 +3,13 @@ import { normalizeIngredientUnit } from './ingredientUnits.js';
 const UNIT_PRECISION = Object.freeze({
   kg: 3,
   g: 2,
-  l: 3,
+  l: 4,
   ml: 2,
   pieces: 3,
+  ea: 6,
+  bdl: 6,
+  pak: 6,
+  cs: 6,
   batch: 3,
   servings: 0
 });

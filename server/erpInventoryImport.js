@@ -599,6 +599,7 @@ export async function importD365Inventory(payload = {}, dependencyOverrides = {}
             reason_code: semantics === D365_QUANTITY_SEMANTICS.RECEIPT
               ? 'd365_new_stock_upload'
               : 'd365_stock_correction',
+            source_name: 'D365',
             source: sourceSystem,
             source_type: semantics === D365_QUANTITY_SEMANTICS.RECEIPT ? 'new_stock_upload' : 'stock_correction',
             operation: 'd365_inventory_import',
@@ -632,6 +633,7 @@ export async function importD365Inventory(payload = {}, dependencyOverrides = {}
             valuation_method: existingInventory?.valuation_method || 'fifo',
             reason_code: 'd365_stock_correction',
             allow_shortage: false,
+            source_name: 'D365',
             source: sourceSystem,
             source_type: 'stock_correction',
             operation: 'd365_inventory_import',
@@ -907,7 +909,8 @@ export async function importD365Ingredients(payload = {}, dependencyOverrides = 
           cost_per_unit: normalized.cost_per_unit,
           is_active: current ? normalized.is_active : (normalized.is_active ?? true),
           d365_last_sync_id: syncId,
-          d365_last_synced_at: nowIso()
+          d365_last_synced_at: nowIso(),
+          source_name: 'D365'
         });
         const saved = current
           ? await dependencies.updateDocument('Ingredient', current.id, fields, client)

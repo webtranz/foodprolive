@@ -497,6 +497,10 @@ const singleReferenceTargets = new Map([
   ['menu_plan_id', 'MenuPlan'],
   ['source_event_id', 'MenuPlan'],
   ['production_id', 'Production'],
+  ['produced_item_batch_id', 'ProducedItemBatch'],
+  ['meal_service_attendance_id', 'MealServiceAttendance'],
+  ['customer_meal_plan_id', 'CustomerMealPlan'],
+  ['reverses_consumption_id', 'MealServiceConsumption'],
   ['batch_id', 'ProductionBatch'],
   ['source_production_id', 'Production'],
   ['linked_material_request_id', 'MaterialRequest'],
@@ -1370,7 +1374,7 @@ async function deactivateUserAccount({ actor, targetId, confirmation, reason }, 
 
 async function listDocuments(
   entity,
-  { filters = {}, sort, limit, offset = 0, lock = false, location = null } = {},
+  { filters = {}, rangeFilters = {}, sort, limit, offset = 0, lock = false, location = null } = {},
   executor = pool
 ) {
   ensureKnownEntity(entity);
@@ -1381,14 +1385,14 @@ async function listDocuments(
     return typeof limit === 'number' ? sorted.slice(start, start + limit) : sorted.slice(start);
   }
 
-  const built = buildEntityListQuery({ entity, filters, sort, limit, offset, lock, location });
+  const built = buildEntityListQuery({ entity, filters, rangeFilters, sort, limit, offset, lock, location });
   const result = await query(built.text, built.parameters, executor);
   return result.rows.map((row) => hydrateDerivedFields(entity, row.data));
 }
 
 async function listDocumentsPage(
   entity,
-  { filters = {}, sort, limit = 50, offset = 0, location = null } = {},
+  { filters = {}, rangeFilters = {}, sort, limit = 50, offset = 0, location = null } = {},
   executor = pool
 ) {
   ensureKnownEntity(entity);
@@ -1409,6 +1413,7 @@ async function listDocumentsPage(
   const built = buildEntityListQuery({
     entity,
     filters,
+    rangeFilters,
     sort,
     limit: safeLimit,
     offset: safeOffset,
@@ -1422,6 +1427,7 @@ async function listDocumentsPage(
     const countProbe = buildEntityListQuery({
       entity,
       filters,
+      rangeFilters,
       sort,
       limit: 1,
       offset: 0,
@@ -1673,6 +1679,21 @@ async function createAuditLog({
     ],
     executor
   );
+  await query(
+    `SELECT pg_notify(
+       'foodpro_entity_events',
+       jsonb_build_object(
+         'entity', 'AuditLog',
+         'action', 'insert',
+         'id', $1::text,
+         'site_id', $2::text,
+         'site_ids', '[]'::jsonb,
+         'occurred_at', $3::text
+       )::text
+     )`,
+    [id, site_id, createdAt],
+    executor
+  );
   return {
     id,
     actor_id,
@@ -1728,6 +1749,8 @@ async function listAuditLogs({
         ? `(site_id = ANY(${siteParameter}::text[]) OR actor_id = ${actorParameter})`
         : `site_id = ANY(${siteParameter}::text[])`);
     }
+  } else if (actorId) {
+    conditions.push(`actor_id = ${bind(actorId)}`);
   }
 
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
@@ -1757,17 +1780,22 @@ async function createBulkUploadJob({
   batch_size = 500,
   actor = null,
   site_id = null,
-  site_name = null
+  site_name = null,
+  source_name = null,
+  options = {}
 }, executor = pool) {
   const id = randomId('bulk');
   const createdAt = nowIso();
-  const actorSnapshot = actor ? sanitizeUser(actor) : {};
+  const actorSnapshot = {
+    ...(actor ? sanitizeUser(actor) : {}),
+    ...(options && Object.keys(options).length ? { bulk_options: options } : {})
+  };
   await query(
     `INSERT INTO bulk_upload_jobs (
        id, module_key, entity_name, import_mode, file_name, file_path, file_size,
-       batch_size, actor_id, actor_email, actor_name, role, site_id, site_name,
+       batch_size, actor_id, actor_email, actor_name, role, site_id, site_name, source_name,
        actor_snapshot, created_at, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $16)`,
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $17)`,
     [
       id,
       module_key,
@@ -1783,6 +1811,7 @@ async function createBulkUploadJob({
       actor?.role || null,
       site_id,
       site_name,
+      source_name,
       JSON.stringify(actorSnapshot),
       createdAt
     ],
@@ -1893,6 +1922,12 @@ async function claimNextBulkUploadJob({ staleAfterMs = 15 * 60 * 1000 } = {}) {
 
 async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
   ensureKnownEntity(entity);
+  if (['ProducedItemBatch', 'MealServiceAttendance', 'MealServiceConsumption'].includes(entity)) {
+    const error = new Error(`${entity} records cannot be cleared through bulk upload; use the protected meal-service workflow`);
+    error.status = 409;
+    error.code = 'MEAL_SERVICE_BULK_MUTATION_FORBIDDEN';
+    throw error;
+  }
   if (entity === 'Site') {
     const error = new Error(
       'Site hierarchy records cannot be cleared through bulk upload. Delete an unused subtree through the protected Site deletion endpoint.'
@@ -1910,18 +1945,42 @@ async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
     error.status = 400;
     throw error;
   }
+  const preserveServerMealServiceWaste = entity === 'FoodWaste'
+    ? `AND NOT (
+         COALESCE(data->>'auto_generated', '') = 'true'
+         OR LOWER(COALESCE(data->>'source_type', '')) IN ('meal_service_leftover', 'batch_overproduction')
+         OR COALESCE(data->>'meal_service_attendance_id', '') <> ''
+       )`
+    : '';
   if (Array.isArray(siteIds)) {
     if (!siteIds.length) return 0;
     const result = await query(
       `DELETE FROM entity_records
-       WHERE entity_name = $1 AND data->>'site_id' = ANY($2::text[])`,
+       WHERE entity_name = $1
+         AND (
+           data->>'site_id' = ANY($2::text[])
+           OR COALESCE(data->'site_ids', '[]'::jsonb) ?| $2::text[]
+         )
+       ${preserveServerMealServiceWaste}`,
       [entity, siteIds],
       executor
     );
     return result.rowCount;
   }
-  const result = await query('DELETE FROM entity_records WHERE entity_name = $1', [entity], executor);
+  const result = await query(
+    `DELETE FROM entity_records WHERE entity_name = $1 ${preserveServerMealServiceWaste}`,
+    [entity],
+    executor
+  );
   return result.rowCount;
+}
+
+async function acquireMealServiceScopeLock(scopeKey, executor = pool) {
+  await query(
+    'SELECT pg_advisory_xact_lock(hashtext($1))',
+    [`staff-meal-service:${String(scopeKey || '')}`],
+    executor
+  );
 }
 
 async function createEmailLog(payload) {
@@ -1964,6 +2023,7 @@ export {
   updateBulkUploadJob,
   claimNextBulkUploadJob,
   clearDocumentsForBulk,
+  acquireMealServiceScopeLock,
   createEmailLog,
   invalidateRoleProfileCache
 };

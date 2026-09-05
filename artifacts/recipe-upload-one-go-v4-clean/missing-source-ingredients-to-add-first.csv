@@ -1,0 +1,49 @@
+﻿item_code,name,ingredient_code,sku,alias,supplier_item_name,unit,category,cuisine_type,cost_per_unit,calories_per_100g,protein_per_100g,carbs_per_100g,fat_per_100g,sodium_per_100g,sugar_per_100g,cooking_yield_percent,shrinkage_percent,raw_weight_per_unit,cooked_weight_per_unit,allergens,is_active
+RCPMIS-CLEAN-001-DILLPICK,Dill Pickles,RCPMIS-CLEAN-001-DILLPICK,RCPMIS-CLEAN-001-DILLPICK,,Dill Pickles,kg,FW,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-002-FRESHDIL,Fresh Dill,RCPMIS-CLEAN-002-FRESHDIL,RCPMIS-CLEAN-002-FRESHDIL,,Fresh Dill,ml,FW,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-003-STRAWBER,Strawberries,RCPMIS-CLEAN-003-STRAWBER,RCPMIS-CLEAN-003-STRAWBER,,Strawberries,kg,FW,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-004-WHOLEPIN,whole Pineapples,RCPMIS-CLEAN-004-WHOLEPIN,RCPMIS-CLEAN-004-WHOLEPIN,,whole Pineapples,pieces,FW,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-005-FRESHBLU,Fresh Blueberries,RCPMIS-CLEAN-005-FRESHBLU,RCPMIS-CLEAN-005-FRESHBLU,,Fresh Blueberries,kg,FW,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-006-ORANGELI,Orange & Lime Zest,RCPMIS-CLEAN-006-ORANGELI,RCPMIS-CLEAN-006-ORANGELI,,Orange & Lime Zest,ml,FW,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-007-CHANAMAS,Chana masala spice mix,RCPMIS-CLEAN-007-CHANAMAS,RCPMIS-CLEAN-007-CHANAMAS,,Chana masala spice mix,g,Breakfast Items,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-008-DRYREDCH,Dry Red Chilies,RCPMIS-CLEAN-008-DRYREDCH,RCPMIS-CLEAN-008-DRYREDCH,,Dry Red Chilies,g,Breakfast Items,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-009-FRESHPAR,Fresh parsley,RCPMIS-CLEAN-009-FRESHPAR,RCPMIS-CLEAN-009-FRESHPAR,,Fresh parsley,ml,Breakfast Items,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-010-SAFFRON,Saffron,RCPMIS-CLEAN-010-SAFFRON,RCPMIS-CLEAN-010-SAFFRON,,Saffron,g,Chicken,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-011-CHILISAU,Chili sauce,RCPMIS-CLEAN-011-CHILISAU,RCPMIS-CLEAN-011-CHILISAU,,Chili sauce,l,Chicken,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-012-WHOLESPI,Whole spices,RCPMIS-CLEAN-012-WHOLESPI,RCPMIS-CLEAN-012-WHOLESPI,,Whole spices,g,Chicken,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-013-BELLPEPP,"Bell peppers , chopped",RCPMIS-CLEAN-013-BELLPEPP,RCPMIS-CLEAN-013-BELLPEPP,,"Bell peppers , chopped",kg,Chicken,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-014-KEWRAWAT,Kewra water,RCPMIS-CLEAN-014-KEWRAWAT,RCPMIS-CLEAN-014-KEWRAWAT,,Kewra water,ml,Chicken,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-015-LEMONZES,Lemon Zest,RCPMIS-CLEAN-015-LEMONZES,RCPMIS-CLEAN-015-LEMONZES,,Lemon Zest,g,Fish,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-016-FINELYCH,Finely chopped fresh dill or parsley,RCPMIS-CLEAN-016-FINELYCH,RCPMIS-CLEAN-016-FINELYCH,,Finely chopped fresh dill or parsley,g,Fish,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-017-ROSEWATE,Rose water / Kewra water,RCPMIS-CLEAN-017-ROSEWATE,RCPMIS-CLEAN-017-ROSEWATE,,Rose water / Kewra water,ml,Meat,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-018-MEATMASA,Meat masala powder,RCPMIS-CLEAN-018-MEATMASA,RCPMIS-CLEAN-018-MEATMASA,,Meat masala powder,g,Meat,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-019-BLACKPEP,Black peppercorns,RCPMIS-CLEAN-019-BLACKPEP,RCPMIS-CLEAN-019-BLACKPEP,,Black peppercorns,g,Meat,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-020-CHARCOAL,Charcoal,RCPMIS-CLEAN-020-CHARCOAL,RCPMIS-CLEAN-020-CHARCOAL,,Charcoal,pieces,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-021-BLACKPEP,Black Peppercorn,RCPMIS-CLEAN-021-BLACKPEP,RCPMIS-CLEAN-021-BLACKPEP,,Black Peppercorn,g,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-022-STARANIS,Star Anise,RCPMIS-CLEAN-022-STARANIS,RCPMIS-CLEAN-022-STARANIS,,Star Anise,g,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-023-RAISINS,Raisins,RCPMIS-CLEAN-023-RAISINS,RCPMIS-CLEAN-023-RAISINS,,Raisins,kg,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-024-TOASTEDA,Toasted almonds or cashews,RCPMIS-CLEAN-024-TOASTEDA,RCPMIS-CLEAN-024-TOASTEDA,,Toasted almonds or cashews,kg,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-025-MIXEDVEG,Mixed Vegetables,RCPMIS-CLEAN-025-MIXEDVEG,RCPMIS-CLEAN-025-MIXEDVEG,,Mixed Vegetables,kg,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-026-SAFFRONT,Saffron Threads,RCPMIS-CLEAN-026-SAFFRONT,RCPMIS-CLEAN-026-SAFFRONT,,Saffron Threads,ml,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-027-SLIVERED,Slivered Almonds,RCPMIS-CLEAN-027-SLIVERED,RCPMIS-CLEAN-027-SLIVERED,,Slivered Almonds,g,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-028-GOLDENRA,Golden Raisins,RCPMIS-CLEAN-028-GOLDENRA,RCPMIS-CLEAN-028-GOLDENRA,,Golden Raisins,g,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-029-ALMONDS,Almonds,RCPMIS-CLEAN-029-ALMONDS,RCPMIS-CLEAN-029-ALMONDS,,Almonds,g,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-030-KHOYA,Khoya,RCPMIS-CLEAN-030-KHOYA,RCPMIS-CLEAN-030-KHOYA,,Khoya,kg,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-031-BAKINGSO,Baking soda,RCPMIS-CLEAN-031-BAKINGSO,RCPMIS-CLEAN-031-BAKINGSO,,Baking soda,ml,Salad,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-032-TAMARIND,Tamarind chutney,RCPMIS-CLEAN-032-TAMARIND,RCPMIS-CLEAN-032-TAMARIND,,Tamarind chutney,l,Salad,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-033-FINESEV,Fine Sev,RCPMIS-CLEAN-033-FINESEV,RCPMIS-CLEAN-033-FINESEV,,Fine Sev,g,Salad,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-034-PAPDI,Papdi,RCPMIS-CLEAN-034-PAPDI,RCPMIS-CLEAN-034-PAPDI,,Papdi,kg,Salad,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-035-CUCUMBER,Cucumbers,RCPMIS-CLEAN-035-CUCUMBER,RCPMIS-CLEAN-035-CUCUMBER,,Cucumbers,kg,Salad,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-036-CORNFLOU,Cornflour,RCPMIS-CLEAN-036-CORNFLOU,RCPMIS-CLEAN-036-CORNFLOU,,Cornflour,g,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-037-ROSESYRU,Rose syrup,RCPMIS-CLEAN-037-ROSESYRU,RCPMIS-CLEAN-037-ROSESYRU,,Rose syrup,ml,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-038-PISTACHI,Pistachios,RCPMIS-CLEAN-038-PISTACHI,RCPMIS-CLEAN-038-PISTACHI,,Pistachios,g,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-039-CHIASEED,Chia seeds / Tukmaria,RCPMIS-CLEAN-039-CHIASEED,RCPMIS-CLEAN-039-CHIASEED,,Chia seeds / Tukmaria,g,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-040-CRUSHEDP,Crushed pistachios,RCPMIS-CLEAN-040-CRUSHEDP,RCPMIS-CLEAN-040-CRUSHEDP,,Crushed pistachios,g,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-041-SULTANAS,Sultanas or raisins,RCPMIS-CLEAN-041-SULTANAS,RCPMIS-CLEAN-041-SULTANAS,,Sultanas or raisins,g,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-042-FLAVORED,Flavored Gelatin Powder,RCPMIS-CLEAN-042-FLAVORED,RCPMIS-CLEAN-042-FLAVORED,,Flavored Gelatin Powder,kg,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-043-UNFLAVOR,Unflavored gelatin powder,RCPMIS-CLEAN-043-UNFLAVOR,RCPMIS-CLEAN-043-UNFLAVOR,,Unflavored gelatin powder,g,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-044-ACHARIMA,Achari Masala,RCPMIS-CLEAN-044-ACHARIMA,RCPMIS-CLEAN-044-ACHARIMA,,Achari Masala,g,Vegetable,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-045-ASAFOETI,Asafoetida,RCPMIS-CLEAN-045-ASAFOETI,RCPMIS-CLEAN-045-ASAFOETI,,Asafoetida,g,Vegetable,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-046-CURRYLEA,Curry leaves,RCPMIS-CLEAN-046-CURRYLEA,RCPMIS-CLEAN-046-CURRYLEA,,Curry leaves,g,Vegetable,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-047-SWEETBEL,Sweet bell peppers,RCPMIS-CLEAN-047-SWEETBEL,RCPMIS-CLEAN-047-SWEETBEL,,Sweet bell peppers,kg,Vegetable,,0,,,,,,,100,0,,,none,true
+RCPMIS-CLEAN-048-FRESHROS,Fresh rosemary / thyme,RCPMIS-CLEAN-048-FRESHROS,RCPMIS-CLEAN-048-FRESHROS,,Fresh rosemary / thyme,g,Vegetable,,0,,,,,,,100,0,,,none,true

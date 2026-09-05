@@ -104,6 +104,25 @@ const cases = [
     }
   },
   {
+    name: 'keeps menu plans isolated by cuisine and category',
+    run() {
+      const records = [
+        { id: 'general-senior', site_id: 'site-1', plan_date: '2026-08-10', cuisine_type: 'general', menu_category: 'senior', meals: [] },
+        { id: 'general-junior', site_id: 'site-1', plan_date: '2026-08-10', cuisine_type: 'general', menu_category: 'junior', meals: [] },
+        { id: 'philippines-labor', site_id: 'site-1', plan_date: '2026-08-10', cuisine_type: 'philippines', menu_category: 'labor', meals: [] }
+      ];
+
+      assert.deepEqual(
+        filterMenuPlansForWeek(records, 'site-1', '2026-08-10', { cuisine_type: 'general', menu_category: 'junior' }).map((record) => record.id),
+        ['general-junior']
+      );
+      assert.deepEqual(
+        filterMenuPlansForWeek(records, 'site-1', '2026-08-10', { cuisine_type: 'philippines', menu_category: 'labor' }).map((record) => record.id),
+        ['philippines-labor']
+      );
+    }
+  },
+  {
     name: 'validates operational menu plan payloads',
     run() {
       const errors = validateMenuPlanPayload({

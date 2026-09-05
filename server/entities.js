@@ -16,6 +16,8 @@ import {
   normalizeProductionStatus,
   requiresAreaProductionApproval
 } from '../shared/productionWorkflow.js';
+import { DEFAULT_SOURCE_NAME, normalizeSourceName } from '../shared/sourceNames.js';
+import { normalizeMenuCategory, normalizeMenuCuisine } from '../shared/menuCategories.js';
 
 export { getUserEffectiveRole } from './accessControl.js';
 
@@ -24,10 +26,29 @@ const numberOptional = z.coerce.number().optional().nullable();
 const booleanOptional = z.coerce.boolean().optional().nullable();
 const arrayOptional = z.array(z.any()).optional().nullable();
 const objectOptional = z.record(z.any()).optional().nullable();
+const sourceNameOptional = z.preprocess(
+  (value) => (value === null || typeof value === 'undefined' || value === ''
+    ? undefined
+    : normalizeSourceName(value, '')),
+  z.enum(['D365', 'Cash']).optional().nullable()
+);
+const menuCuisineOptional = z.preprocess(
+  (value) => (value === null || typeof value === 'undefined' || value === ''
+    ? undefined
+    : normalizeMenuCuisine(value, '')),
+  z.enum(['general', 'philippines']).optional().nullable()
+);
+const menuCategoryOptional = z.preprocess(
+  (value) => (value === null || typeof value === 'undefined' || value === ''
+    ? undefined
+    : normalizeMenuCategory(value, '')),
+  z.enum(['senior', 'junior', 'labor', 'management_menu']).optional().nullable()
+);
 
 const granularPagePermissionLabels = {
   access_dashboard: 'Open Dashboard',
   access_sites: 'Open Projects & Sites',
+  access_budget: 'Open Budget',
   access_ingredients: 'Open Ingredients',
   access_food_categories: 'Open Food Categories',
   access_recipes: 'Open Recipes',
@@ -52,7 +73,9 @@ const granularPagePermissionLabels = {
   access_pos: 'Open POS Integration',
   access_d365: 'Open D365 / ERP Integration',
   access_forecasting: 'Open Forecasting',
-  access_attendance: 'Open Attendance',
+  access_meal_service: 'Open Meal Service',
+  access_meal_qr_generator: 'Open Meal QR Generator',
+  access_attendance: 'Open Food Consumption (Legacy)',
   access_daily_meal_checkin: 'Open Daily Meal Check-in',
   access_dining_scanner: 'Open Dining Scanner',
   access_event_dining_checkin: 'Open Event Dining Check-in',
@@ -60,7 +83,6 @@ const granularPagePermissionLabels = {
   access_qr_management: 'Open QR Management',
   access_user_roles: 'Open Users & Roles',
   access_food_waste: 'Open Food Waste',
-  access_food_waste_qr: 'Open Food Waste QR',
   access_quality_control: 'Open Quality Control',
   access_reports: 'Open Reports',
   access_advanced_reports: 'Open Advanced Reports',
@@ -87,6 +109,8 @@ export const permissionCatalog = [
   { key: 'view_ai_waste', label: 'View AI Waste Detection' },
   { key: 'camera_detection', label: 'Use Camera Waste Detection' },
   { key: 'view_dashboard', label: 'View Dashboard' },
+  { key: 'view_budget', label: 'View Budget Planning & Reporting' },
+  { key: 'manage_budget', label: 'Manage Informational Food Budgets' },
   { key: 'view_reports', label: 'View Reports' },
   { key: 'export_data', label: 'Export Data' },
   { key: 'manage_bulk_uploads', label: 'Manage Background Bulk Uploads' },
@@ -137,6 +161,10 @@ export const permissionCatalog = [
   { key: 'manage_forecasting', label: 'Manage Forecasting' },
   { key: 'manage_attendance', label: 'Manage Attendance & Scheduling' },
   { key: 'approve_attendance', label: 'Approve Attendance' },
+  { key: 'view_customer_meal_service', label: 'View Meal Service production balances' },
+  { key: 'record_customer_meal_service', label: 'Save Meal Service covers' },
+  { key: 'generate_staff_meal_qr', label: 'Generate Meal Service cover QR codes' },
+  { key: 'create_employee_meal_qr', label: 'Create meal QR codes' },
   { key: 'manage_quality', label: 'Manage Quality Control' },
   { key: 'manage_users', label: 'Manage Users' },
   { key: 'manage_roles', label: 'Manage Roles & Permissions' }
@@ -158,7 +186,7 @@ export const systemRoleDefinitions = {
     access_level: 'manager',
     description: 'Cross-functional operational management for assigned projects and kitchens.',
     permissions: [
-      'view_dashboard', 'view_reports', 'export_data',
+      'view_dashboard', 'view_budget', 'manage_budget', 'view_reports', 'export_data',
       'view_audit_logs', 'view_bulk_upload_progress', 'manage_projects',
       'manage_ingredients', 'manage_food_categories', 'view_inventory', 'manage_inventory', 'transfer_inventory', 'manage_recipes',
       'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event', 'edit_special_event',
@@ -168,7 +196,8 @@ export const systemRoleDefinitions = {
       'complete_production', 'create_material_request', 'view_material_request',
       'acknowledge_material_request', 'manage_procurement', 'approve_procurement', 'manage_suppliers', 'manage_waste',
       'approve_waste', 'manage_pos', 'manage_forecasting', 'manage_attendance',
-      'approve_attendance', 'manage_quality'
+      'approve_attendance', 'view_customer_meal_service', 'record_customer_meal_service',
+      'generate_staff_meal_qr', 'create_employee_meal_qr', 'manage_quality'
     ]
   },
   general_manager: {
@@ -239,7 +268,23 @@ export const systemRoleDefinitions = {
       'view_dashboard', 'view_reports', 'create_special_event', 'edit_special_event',
       'submit_special_event', 'review_special_event', 'approve_special_event', 'reject_special_event', 'manage_production',
       'start_production', 'complete_production', 'view_material_request', 'view_inventory', 'manage_menu_planning',
-      'manage_quality', 'manage_waste'
+      'access_meal_service', 'access_meal_qr_generator', 'access_attendance',
+      'manage_attendance', 'approve_attendance', 'view_customer_meal_service',
+      'record_customer_meal_service', 'generate_staff_meal_qr', 'create_employee_meal_qr', 'manage_quality', 'manage_waste'
+    ]
+  },
+  supervisor: {
+    role_key: 'supervisor',
+    name: 'Supervisor',
+    access_level: 'manager',
+    description: 'Supervises staff scheduling, production-linked meal service, and operational execution.',
+    permissions: [
+      'view_dashboard', 'view_reports', 'access_meal_service', 'access_meal_qr_generator',
+      'access_attendance', 'manage_attendance',
+      'approve_attendance', 'view_customer_meal_service', 'record_customer_meal_service',
+      'generate_staff_meal_qr', 'create_employee_meal_qr',
+      'manage_production', 'start_production', 'complete_production',
+      'view_material_request', 'view_inventory'
     ]
   },
   quality_controller: {
@@ -332,6 +377,170 @@ export const entityRegistry = {
   CustomerMealPlan: {
     defaults: { status: 'draft', meals: [] }
   },
+  ProducedItemBatch: {
+    defaults: {
+      status: 'available',
+      served_servings: 0,
+      served_weight_grams: 0,
+      wasted_servings: 0,
+      wasted_weight_grams: 0,
+      cutover_version: 1
+    },
+    unique: [
+      { fields: ['production_id'], label: 'produced-item batch for this production' },
+      { fields: ['batch_number'], label: 'produced-item batch number' }
+    ],
+    schema: z.object({
+      batch_number: z.string().trim().min(1, 'Produced-item batch number is required'),
+      production_id: z.string().trim().min(1, 'Production is required'),
+      production_name: stringOptional,
+      production_date: z.string().trim().min(1, 'Production date is required'),
+      completed_at: z.string().trim().min(1, 'Completion time is required'),
+      site_id: z.string().trim().min(1, 'Produced-item location is required'),
+      site_name: stringOptional,
+      recipe_id: z.string().trim().min(1, 'Produced recipe is required'),
+      recipe_name: z.string().trim().min(1, 'Produced recipe name is required'),
+      source_type: stringOptional,
+      source_event_id: stringOptional,
+      menu_plan_id: stringOptional,
+      meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack']),
+      menu_type: menuCuisineOptional,
+      menu_category: menuCategoryOptional,
+      portion_size_grams: z.coerce.number().positive('Serving size must be greater than zero'),
+      service_portion_size_grams: z.coerce.number().positive().optional().nullable(),
+      service_portion_updated_by: stringOptional,
+      service_portion_updated_by_name: stringOptional,
+      service_portion_updated_at: stringOptional,
+      expected_servings: z.coerce.number().min(0),
+      expected_finished_weight_grams: z.coerce.number().min(0),
+      actual_finished_weight_grams: z.coerce.number().positive('Actual finished weight must be greater than zero'),
+      produced_servings: z.coerce.number().positive('Produced servings must be greater than zero'),
+      produced_weight_grams: z.coerce.number().positive('Produced weight must be greater than zero'),
+      served_servings: z.coerce.number().min(0),
+      served_weight_grams: z.coerce.number().min(0),
+      wasted_servings: z.coerce.number().min(0).optional().default(0),
+      wasted_weight_grams: z.coerce.number().min(0).optional().default(0),
+      remaining_servings: z.coerce.number().min(0),
+      remaining_weight_grams: z.coerce.number().min(0),
+      completed_by: stringOptional,
+      completed_by_name: stringOptional,
+      status: z.enum(['available', 'partial', 'consumed']),
+      cutover_version: z.coerce.number().int().min(1)
+    }).passthrough().superRefine((batch, context) => {
+      const tolerance = 0.00001;
+      if (batch.served_servings - batch.produced_servings > tolerance
+        || batch.remaining_servings - batch.produced_servings > tolerance
+        || Math.abs((batch.served_servings + (batch.wasted_servings || 0) + batch.remaining_servings) - batch.produced_servings) > tolerance) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['remaining_servings'],
+          message: 'Produced-item serving balances must reconcile to produced servings'
+        });
+      }
+      if (batch.served_weight_grams - batch.produced_weight_grams > tolerance
+        || batch.remaining_weight_grams - batch.produced_weight_grams > tolerance
+        || Math.abs((batch.served_weight_grams + (batch.wasted_weight_grams || 0) + batch.remaining_weight_grams) - batch.produced_weight_grams) > tolerance) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['remaining_weight_grams'],
+          message: 'Produced-item weight balances must reconcile to produced weight'
+        });
+      }
+    })
+  },
+  MealServiceAttendance: {
+    defaults: { status: 'posted', items: [], summary: {}, scan_method: 'manual_supervisor', cutover_version: 1 },
+    unique: [
+      { fields: ['service_reference'], label: 'meal-service reference' },
+      { fields: ['idempotency_key'], label: 'meal-service idempotency key' },
+      { fields: ['reversal_idempotency_key'], label: 'meal-service reversal key', ignoreEmpty: true }
+    ],
+    schema: z.object({
+      service_reference: z.string().trim().min(1, 'Meal-service reference is required'),
+      idempotency_key: z.string().trim().min(1, 'Idempotency key is required').max(200),
+      request_fingerprint: z.string().trim().length(64, 'Request fingerprint must be a SHA-256 digest'),
+      reversal_idempotency_key: stringOptional,
+      reversal_request_fingerprint: stringOptional,
+      scope_key: stringOptional,
+      menu_plan_id: stringOptional,
+      menu_plan_name: stringOptional,
+      menu_type: menuCuisineOptional,
+      menu_category: menuCategoryOptional,
+      customer_meal_plan_id: stringOptional,
+      customer_meal_plan_name: stringOptional,
+      site_id: z.string().trim().min(1, 'Location is required'),
+      site_name: stringOptional,
+      service_date: z.string().trim().min(1, 'Service date is required'),
+      meal_type: z.enum(['breakfast', 'lunch', 'dinner']),
+      customer_name: z.string().trim().min(1, 'Customer or group name is required'),
+      customer_id: stringOptional,
+      category: stringOptional,
+      attendee_count: z.coerce.number().int().min(1).max(1000000),
+      scan_method: z.literal('manual_supervisor'),
+      notes: stringOptional,
+      items: arrayOptional,
+      summary: objectOptional,
+      required_servings: z.coerce.number().min(0),
+      required_weight_grams: z.coerce.number().min(0),
+      served_servings: z.coerce.number().min(0),
+      served_weight_grams: z.coerce.number().min(0),
+      shortage_servings: z.coerce.number().min(0),
+      shortage_weight_grams: z.coerce.number().min(0),
+      recorded_by: stringOptional,
+      recorded_by_name: stringOptional,
+      recorded_at: z.string().trim().min(1),
+      reversed_by: stringOptional,
+      reversed_by_name: stringOptional,
+      reversed_at: stringOptional,
+      reversal_reason: stringOptional,
+      status: z.enum(['posted', 'partially_fulfilled', 'reversed']),
+      cutover_version: z.coerce.number().int().min(1)
+    }).passthrough()
+  },
+  MealServiceConsumption: {
+    defaults: { status: 'posted', allocations: [], movement_type: 'consumption', cutover_version: 1 },
+    unique: [
+      { fields: ['idempotency_key'], label: 'meal-service consumption idempotency key' }
+    ],
+    schema: z.object({
+      idempotency_key: z.string().trim().min(1).max(260),
+      meal_service_attendance_id: z.string().trim().min(1),
+      service_reference: z.string().trim().min(1),
+      reverses_consumption_id: stringOptional,
+      menu_plan_id: stringOptional,
+      menu_type: menuCuisineOptional,
+      menu_category: menuCategoryOptional,
+      customer_meal_plan_id: stringOptional,
+      site_id: z.string().trim().min(1),
+      site_name: stringOptional,
+      service_date: z.string().trim().min(1),
+      meal_type: z.enum(['breakfast', 'lunch', 'dinner']),
+      recipe_id: z.string().trim().min(1),
+      recipe_name: z.string().trim().min(1),
+      attendee_count: z.coerce.number().int().min(1).max(1000000),
+      portions_per_attendee: z.coerce.number().positive().max(20).optional().nullable(),
+      servings_per_attendee: z.coerce.number().positive(),
+      portion_size_grams: z.coerce.number().positive(),
+      manual_portion_size_grams: z.coerce.number().positive().max(100000).optional().nullable(),
+      portion_size_source: z.enum(['meal_service_manual', 'meal_service_configured']).optional().nullable(),
+      covers: z.coerce.number().int().min(0).max(1000000).optional().nullable(),
+      required_servings: numberOptional,
+      required_weight_grams: numberOptional,
+      consumed_servings: numberOptional,
+      consumed_production_equivalent_servings: numberOptional,
+      consumed_weight_grams: numberOptional,
+      shortage_servings: numberOptional,
+      shortage_weight_grams: numberOptional,
+      allocations: arrayOptional,
+      movement_type: z.enum(['consumption', 'reversal']),
+      reversal_reason: stringOptional,
+      performed_by: stringOptional,
+      performed_by_name: stringOptional,
+      performed_at: z.string().trim().min(1),
+      status: z.literal('posted'),
+      cutover_version: z.coerce.number().int().min(1)
+    }).passthrough()
+  },
   FoodWaste: {
     defaults: {
       status: 'logged',
@@ -368,6 +577,12 @@ export const entityRegistry = {
       approval_status: stringOptional,
       status: stringOptional,
       high_value: booleanOptional,
+      evidence_image_url: stringOptional,
+      image_url: stringOptional,
+      inventory_transaction_id: stringOptional,
+      inventory_deduction_quantity: numberOptional,
+      inventory_shortage_quantity: numberOptional,
+      inventory_movement_layers: arrayOptional,
       notes: stringOptional
     }).passthrough()
   },
@@ -410,7 +625,7 @@ export const entityRegistry = {
     }).passthrough()
   },
   Ingredient: {
-    defaults: { is_active: true, allergens: [] },
+    defaults: { is_active: true, allergens: [], source_name: DEFAULT_SOURCE_NAME },
     unique: [
       { fields: ['name'], label: 'ingredient name' },
       { fields: ['item_code'], label: 'item code', ignoreEmpty: true },
@@ -433,7 +648,15 @@ export const entityRegistry = {
       alternative_names: arrayOptional,
       supplier_item_name: stringOptional,
       supplier_item_names: arrayOptional,
+      source_name: sourceNameOptional,
       cost_per_unit: numberOptional,
+      package_pack_count: numberOptional,
+      package_inner_count: numberOptional,
+      package_size_quantity: numberOptional,
+      package_size_unit: stringOptional,
+      package_base_quantity: numberOptional,
+      package_base_unit: stringOptional,
+      package_parse_source: stringOptional,
       calories_per_100g: numberOptional,
       protein_per_100g: numberOptional,
       carbs_per_100g: numberOptional,
@@ -454,6 +677,7 @@ export const entityRegistry = {
       available_quantity: 0,
       reserved_quantity: 0,
       on_hand_quantity: 0,
+      source_name: DEFAULT_SOURCE_NAME,
       status: 'in_stock'
     },
     unique: [
@@ -463,6 +687,7 @@ export const entityRegistry = {
       min_stock_level: z.coerce.number().min(0, 'Minimum stock level must be zero or greater').optional().nullable(),
       max_stock_level: z.coerce.number().min(0, 'Maximum stock level must be zero or greater').optional().nullable(),
       reorder_level: z.coerce.number().min(0, 'Reorder level must be zero or greater').optional().nullable(),
+      source_name: sourceNameOptional,
       valuation_method: z.enum(['fifo', 'weighted_average']).optional().nullable()
     }).passthrough().superRefine((record, context) => {
       const min = record.min_stock_level == null ? 0 : Number(record.min_stock_level);
@@ -486,11 +711,13 @@ export const entityRegistry = {
     defaults: { status: 'pending_procurement_ack', source_type: 'manual' }
   },
   MenuPlan: {
-    defaults: { status: 'draft', meals: [] },
+    defaults: { status: 'draft', meals: [], cuisine_type: 'general', menu_category: 'senior' },
     schema: z.object({
       site_id: stringOptional,
       site_name: stringOptional,
       plan_date: z.string().trim().min(1, 'Plan date is required'),
+      cuisine_type: menuCuisineOptional,
+      menu_category: menuCategoryOptional,
       status: stringOptional,
       event_name: stringOptional,
       event_date: stringOptional,
@@ -826,6 +1053,9 @@ const writeRoles = {
   UserGroup: 'manager',
   Production: 'manager',
   ProductionConsumptionReport: 'manager',
+  ProducedItemBatch: 'manager',
+  MealServiceAttendance: 'manager',
+  MealServiceConsumption: 'manager',
   ProductionBatch: 'manager',
   ProductionTransfer: 'manager',
   Inventory: 'manager',
@@ -861,7 +1091,7 @@ const entityPermissions = {
   User: { read: 'manage_users', write: 'manage_users' },
   Ingredient: { read: ['view_ingredients', 'manage_ingredients'], write: 'manage_ingredients' },
   FoodCategory: { read: 'manage_food_categories', write: 'manage_food_categories' },
-  Budget: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
+  Budget: { read: ['view_budget', 'manage_budget', 'manage_menu_planning'], write: 'manage_budget' },
   Inventory: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
   InventoryTransaction: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
   InventoryLot: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
@@ -871,6 +1101,9 @@ const entityPermissions = {
   MenuPlanPRRun: { read: 'generate_menu_plan_pr', write: 'generate_menu_plan_pr' },
   Production: { read: 'manage_production', write: 'manage_production' },
   ProductionConsumptionReport: { read: 'manage_production', write: 'complete_production' },
+  ProducedItemBatch: { read: 'view_customer_meal_service', write: 'record_customer_meal_service' },
+  MealServiceAttendance: { read: 'view_customer_meal_service', write: 'record_customer_meal_service' },
+  MealServiceConsumption: { read: 'view_customer_meal_service', write: 'record_customer_meal_service' },
   ProductionBatch: { read: 'manage_production', write: 'manage_production' },
   ProductionTransfer: { read: 'transfer_inventory', write: 'transfer_inventory' },
   MaterialRequest: {
@@ -884,7 +1117,10 @@ const entityPermissions = {
   WasteTarget: { read: 'manage_waste', write: 'manage_waste' },
   WasteDetectionLog: { read: 'manage_waste', write: 'manage_waste' },
   QualityControl: { read: 'manage_quality', write: 'manage_quality' },
-  CustomerMealPlan: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
+  CustomerMealPlan: {
+    read: ['manage_menu_planning', 'view_customer_meal_service', 'record_customer_meal_service'],
+    write: 'manage_menu_planning'
+  },
   AttendanceSession: { read: 'manage_attendance', write: 'manage_attendance' },
   AttendanceRecord: { read: 'manage_attendance', write: 'manage_attendance' },
   StaffShift: { read: 'manage_attendance', write: 'manage_attendance' },
@@ -952,6 +1188,32 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
       : Boolean(requirement && hasPermission(user, requirement))
   );
 
+  if (entity === 'FoodWaste' && ['create', 'update', 'delete'].includes(action)) {
+    const reservedFields = [
+      'auto_generated',
+      'output_allocations',
+      'meal_service_attendance_id',
+      'service_reference'
+    ];
+    const attemptsReservedWrite = ['create', 'update'].includes(action) && (
+      reservedFields.some((field) => Object.prototype.hasOwnProperty.call(payload || {}, field))
+      || String(payload?.source_type || '').trim().toLowerCase() === 'meal_service_leftover'
+    );
+    if (attemptsReservedWrite) {
+      const error = new Error('Meal-service leftover fields are server-managed and cannot be supplied through Food Waste APIs');
+      error.status = 409;
+      throw error;
+    }
+    const protectedLeftover = resource?.auto_generated === true
+      || String(resource?.source_type || '').trim().toLowerCase() === 'meal_service_leftover'
+      || Boolean(String(resource?.meal_service_attendance_id || '').trim());
+    if (protectedLeftover && ['update', 'delete'].includes(action)) {
+      const error = new Error('Automatic meal-service leftover waste can only be changed by the protected meal-service reversal');
+      error.status = 409;
+      throw error;
+    }
+  }
+
   if (
     ['D365Master', 'ERPIntegrationLog'].includes(entity)
     && ['list', 'filter', 'read'].includes(action)
@@ -988,6 +1250,15 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     && ['create', 'update', 'delete'].includes(action)
   ) {
     const error = new Error(`${entity} records are immutable through generic APIs and must be posted by their protected service`);
+    error.status = 409;
+    throw error;
+  }
+
+  if (
+    ['ProducedItemBatch', 'MealServiceAttendance', 'MealServiceConsumption'].includes(entity)
+    && ['create', 'update', 'delete'].includes(action)
+  ) {
+    const error = new Error(`${entity} records are protected meal-service records and must be changed through the transactional meal-service workflow`);
     error.status = 409;
     throw error;
   }

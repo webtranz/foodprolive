@@ -1,5 +1,4 @@
-import { quantityInIngredientBaseUnit } from '../../shared/ingredientUnits.js';
-import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
+import { calculateRecipeCostingSnapshot } from '../../shared/recipeCosting.js';
 
 export const CORE_MENU_MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 export const createEmptyMealEntry = () => ({ recipe_id: '', expected_servings: '' });
@@ -15,8 +14,32 @@ function safeNumber(value, fallback = '') {
 }
 
 export function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
-  const directCostPerServing = safeNumber(recipe?.cost_per_serving, null);
+  const hasRecipeLines = (Array.isArray(recipe?.ingredients) && recipe.ingredients.length > 0)
+    || (Array.isArray(recipe?.sub_recipes) && recipe.sub_recipes.length > 0);
   const servings = safeNumber(recipe?.servings, 0);
+  const ingredientCost = calculateRecipeCostingSnapshot(recipe, ingredients, recipes);
+  if (ingredientCost.has_cost) {
+    const totalCost = safeNumber(ingredientCost.total_cost, 0);
+    return {
+      cost_per_serving: servings > 0 ? totalCost / servings : totalCost,
+      total_cost: totalCost,
+      has_cost: true,
+      source: 'ingredients',
+      costing_method: ingredientCost.costing_method
+    };
+  }
+
+  if (hasRecipeLines) {
+    return {
+      cost_per_serving: 0,
+      total_cost: 0,
+      has_cost: false,
+      source: 'missing',
+      missing_cost_count: ingredientCost.missing_cost_count || 0
+    };
+  }
+
+  const directCostPerServing = safeNumber(recipe?.cost_per_serving, null);
 
   if (directCostPerServing !== null && directCostPerServing >= 0) {
     return {
@@ -37,46 +60,7 @@ export function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = 
     };
   }
 
-  const recipeIngredients = expandRecipeIngredients(
-    recipe,
-    recipes,
-    ingredients,
-    { aggregate: true }
-  ).ingredients;
-  if (recipeIngredients.length === 0) {
-    return { cost_per_serving: 0, total_cost: 0, has_cost: false, source: 'missing' };
-  }
-
-  let totalCost = 0;
-  let hasAllCosts = true;
-
-  recipeIngredients.forEach((recipeIngredient) => {
-    const ingredient = ingredients.find((entry) => entry.id === recipeIngredient.ingredient_id);
-    const ingredientCost = safeNumber(ingredient?.cost_per_unit, null);
-    if (ingredientCost === null || ingredientCost < 0) {
-      hasAllCosts = false;
-      return;
-    }
-
-    const quantityInCostUnits = quantityInIngredientBaseUnit(
-      recipeIngredient.quantity,
-      recipeIngredient.unit || ingredient?.unit,
-      ingredient
-    );
-
-    totalCost += quantityInCostUnits * ingredientCost;
-  });
-
-  if (!hasAllCosts) {
-    return { cost_per_serving: 0, total_cost: 0, has_cost: false, source: 'missing' };
-  }
-
-  return {
-    cost_per_serving: servings > 0 ? totalCost / servings : totalCost,
-    total_cost: totalCost,
-    has_cost: true,
-    source: 'ingredients'
-  };
+  return { cost_per_serving: 0, total_cost: 0, has_cost: false, source: 'missing' };
 }
 
 export function createEmptyDailyMenuState() {

@@ -930,7 +930,7 @@ export default function ManagementDashboard({
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 text-xs text-slate-500">
-        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />Operational metrics, tables and trends use the selected date range; current stock and unresolved approvals show current state.</span>
+        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />Operational metrics, tables and trends use the selected date range; budgets are informational and do not stop production.</span>
         <span>{snapshot.scope?.selected_site_name || (normalizedView === 'area_manager' ? 'Assigned area' : 'All assigned locations')} · {snapshot.range_start || startDate} to {snapshot.range_end || endDate}</span>
       </div>
     </div>

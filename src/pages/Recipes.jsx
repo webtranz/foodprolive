@@ -18,13 +18,12 @@ import { createPageUrl } from '@/utils';
 
 const CATEGORIES = [
   { value: 'all', label: 'All Categories' },
-  { value: 'breakfast', label: 'Breakfast' },
-  { value: 'lunch', label: 'Lunch' },
-  { value: 'dinner', label: 'Dinner' },
-  { value: 'snack', label: 'Snack' },
+  { value: 'starter_salad_soup', label: 'Starter / Salad / Soup' },
+  { value: 'main_course', label: 'Main Course' },
+  { value: 'vegetable', label: 'Vegetable' },
   { value: 'dessert', label: 'Dessert' },
-  { value: 'beverage', label: 'Beverage' },
-  { value: 'side', label: 'Side Dish' }
+  { value: 'beverages', label: 'Beverages' },
+  { value: 'side_dish', label: 'Side Dish' }
 ];
 
 export default function Recipes() {
@@ -75,6 +74,9 @@ export default function Recipes() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
       setFormOpen(false);
+    },
+    onError: (error) => {
+      console.error('Recipe create failed:', error);
     }
   });
 
@@ -84,6 +86,9 @@ export default function Recipes() {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
       setFormOpen(false);
       setEditingRecipe(null);
+    },
+    onError: (error) => {
+      console.error('Recipe update failed:', error);
     }
   });
 
@@ -110,12 +115,12 @@ export default function Recipes() {
     return matchesSearch && matchesCategory && matchesCuisine && matchesSite;
   });
 
-  const handleSubmit = (data) => {
+  const handleSubmit = async (data) => {
     if (editingRecipe) {
-      updateMutation.mutate({ id: editingRecipe.id, data });
-    } else {
-      createMutation.mutate(data);
+      await updateMutation.mutateAsync({ id: editingRecipe.id, data });
+      return;
     }
+    await createMutation.mutateAsync(data);
   };
 
   const handleEdit = (recipe) => {

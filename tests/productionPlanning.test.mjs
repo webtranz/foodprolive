@@ -68,12 +68,17 @@ const productions = [
     target_servings: 60,
     kitchen_station: 'Hot Line',
     status: 'approved',
+    yield_adjustment_version: 2,
+    quantity_semantics: 'raw_recipe_to_yielded_output_v2',
+    expected_finished_weight_grams: 60000,
     notes: 'Hold ten portions for late service.',
     ingredients_used: [
       {
         ingredient_id: 'rice',
         ingredient_name: 'Basmati Rice',
+        raw_quantity: 6,
         net_quantity: 5,
+        yielded_quantity: 5,
         planned_quantity: 6,
         actual_quantity: 0,
         yield_percent: 83.33,
@@ -164,6 +169,8 @@ assert.equal(breakfast.batches_required, 6);
 assert.equal(breakfast.estimated_batch_cost, 60);
 assert.equal(breakfast.station, 'Hot Line');
 assert.equal(breakfast.prep_status.key, 'pending');
+assert.equal(breakfast.expected_finished_weight_grams, 60000);
+assert.equal(breakfast.quantity_semantics, 'raw_recipe_to_yielded_output_v2');
 
 const lunch = dashboard.items.find((item) => item.id === 'lunch-1');
 assert.equal(lunch.batches_required, 2);
@@ -197,8 +204,122 @@ assert.equal(exportRows[0].kitchen_station, 'Hot Line');
 assert.equal(exportRows[0].prep_status, 'Pending');
 assert.equal(exportRows[0].shortages, '');
 assert.equal(exportRows[0].net_recipe_quantities, 'Basmati Rice: 5 kg');
+assert.equal(exportRows[0].raw_recipe_quantities, 'Basmati Rice: 6 kg');
+assert.equal(exportRows[0].expected_yielded_quantities, 'Basmati Rice: 5 kg');
 assert.equal(exportRows[0].ingredient_quantities, 'Basmati Rice: 6 kg');
 assert.equal(exportRows[0].yield_details, 'Basmati Rice: 83.33%');
+
+const groupedMenuDashboard = buildProductionPlanningDashboard({
+  productions: [{
+    id: 'breakfast-menu-group',
+    site_id: 'site-a',
+    site_name: 'Main Kitchen',
+    production_date: '2026-08-16',
+    recipe_id: 'rice-recipe',
+    recipe_name: 'Breakfast Menu Production (2 dishes)',
+    meal_type: 'breakfast',
+    target_servings: 40,
+    status: 'pending_approval',
+    production_issue_grouped: true,
+    production_issue_dish_count: 2,
+    menu_issue_items: [
+      { key: 'dish-1', recipe_id: 'rice-recipe', recipe_name: 'Rice A', production_covers: 20 },
+      { key: 'dish-2', recipe_id: 'rice-recipe', recipe_name: 'Rice B', production_covers: 20 }
+    ],
+    ingredients_used: [{
+      ingredient_id: 'rice',
+      ingredient_name: 'Basmati Rice',
+      planned_quantity: 20,
+      unit: 'kg',
+      source_recipe_names: ['Rice A', 'Rice B']
+    }]
+  }],
+  recipes,
+  ingredients,
+  inventory: [{ site_id: 'site-a', ingredient_id: 'rice', quantity: 18, unit: 'kg' }]
+});
+const groupedBreakfastSection = groupedMenuDashboard.sections.find((section) => section.key === 'breakfast');
+assert.equal(groupedBreakfastSection.items.length, 1);
+assert.equal(groupedBreakfastSection.total_recipes, 2);
+assert.equal(groupedMenuDashboard.summary.total_recipes, 2);
+assert.equal(groupedMenuDashboard.shortages.length, 1);
+assert.deepEqual(groupedMenuDashboard.shortages[0].recipe_names, ['Rice A', 'Rice B']);
+assert.equal(groupedMenuDashboard.shortages[0].shortage_quantity, 2);
+
+const legacyMenuReviewDashboard = buildProductionPlanningDashboard({
+  productions: [
+    {
+      id: 'legacy-breakfast-a',
+      site_id: 'site-a',
+      site_name: 'Main Kitchen',
+      production_date: '2026-08-16',
+      recipe_id: 'rice-recipe',
+      recipe_name: 'Rice A',
+      meal_type: 'breakfast',
+      target_servings: 20,
+      status: 'pending_approval',
+      source_type: 'menu_plan',
+      source_menu_plan_id: 'menu-plan-1',
+      source_menu_plan_item_key: 'breakfast-a',
+      ingredients_used: [{ ingredient_id: 'rice', ingredient_name: 'Basmati Rice', planned_quantity: 10, unit: 'kg' }]
+    },
+    {
+      id: 'legacy-breakfast-b',
+      site_id: 'site-a',
+      site_name: 'Main Kitchen',
+      production_date: '2026-08-16',
+      recipe_id: 'rice-recipe',
+      recipe_name: 'Rice B',
+      meal_type: 'breakfast',
+      target_servings: 20,
+      status: 'pending_approval',
+      source_type: 'menu_plan',
+      source_menu_plan_id: 'menu-plan-1',
+      source_menu_plan_item_key: 'breakfast-b',
+      ingredients_used: [{ ingredient_id: 'rice', ingredient_name: 'Basmati Rice', planned_quantity: 10, unit: 'kg' }]
+    },
+    {
+      id: 'legacy-lunch',
+      site_id: 'site-a',
+      site_name: 'Main Kitchen',
+      production_date: '2026-08-16',
+      recipe_id: 'chicken-recipe',
+      recipe_name: 'Lunch Chicken',
+      meal_type: 'lunch',
+      target_servings: 20,
+      status: 'pending_approval',
+      source_type: 'menu_plan',
+      source_menu_plan_id: 'menu-plan-1',
+      source_menu_plan_item_key: 'lunch-a',
+      ingredients_used: [{ ingredient_id: 'chicken', ingredient_name: 'Chicken', planned_quantity: 5, unit: 'kg' }]
+    }
+  ],
+  recipes,
+  ingredients,
+  inventory: [
+    { site_id: 'site-a', ingredient_id: 'rice', quantity: 18, unit: 'kg' },
+    { site_id: 'site-a', ingredient_id: 'chicken', quantity: 10, unit: 'kg' }
+  ]
+});
+const legacyBreakfastItems = legacyMenuReviewDashboard.sections
+  .find((section) => section.key === 'breakfast')
+  .items;
+assert.equal(legacyBreakfastItems.length, 1);
+assert.equal(legacyBreakfastItems[0].production.is_menu_review_group, true);
+assert.equal(legacyBreakfastItems[0].production.grouped_productions.length, 2);
+assert.equal(legacyBreakfastItems[0].menu_issue_items.length, 2);
+assert.equal(legacyBreakfastItems[0].dish_count, 2);
+const legacyLunchItems = legacyMenuReviewDashboard.sections
+  .find((section) => section.key === 'lunch')
+  .items;
+assert.equal(legacyLunchItems.length, 1);
+assert.equal(legacyLunchItems[0].production.is_menu_review_group, true);
+assert.equal(legacyLunchItems[0].production.grouped_productions.length, 1);
+assert.equal(legacyMenuReviewDashboard.summary.total_recipes, 3);
+assert.equal(legacyMenuReviewDashboard.shortages.length, 1);
+assert.deepEqual(legacyMenuReviewDashboard.shortages[0].production_ids, ['legacy-breakfast-a', 'legacy-breakfast-b']);
+assert.deepEqual(legacyMenuReviewDashboard.shortages[0].recipe_names, ['Rice A', 'Rice B']);
+assert.equal(legacyMenuReviewDashboard.shortages[0].shortage_quantity, 2);
 
 const statusDashboard = buildProductionPlanningDashboard({
   productions: [

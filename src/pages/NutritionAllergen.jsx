@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Download, FileText, Plus, ShieldAlert, UtensilsCrossed, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import { downloadCSV, downloadPDF } from '@/components/utils/exportData';
+import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 
 function formatNutritionRows(recipe) {
   return [
@@ -71,7 +72,7 @@ export default function NutritionAllergen() {
     plan_date: format(new Date(), 'yyyy-MM-dd'),
     customer_name: '',
     notes: '',
-    meals: [{ recipe_id: '', portions: 1 }]
+    meals: [{ recipe_id: '', meal_type: 'lunch', portions: 1, servings_per_attendee: 1 }]
   });
 
   const { data: recipes = [], isLoading: recipesLoading } = useQuery({
@@ -110,7 +111,7 @@ export default function NutritionAllergen() {
         plan_date: format(new Date(), 'yyyy-MM-dd'),
         customer_name: '',
         notes: '',
-        meals: [{ recipe_id: '', portions: 1 }]
+        meals: [{ recipe_id: '', meal_type: 'lunch', portions: 1, servings_per_attendee: 1 }]
       });
     }
   });
@@ -177,6 +178,10 @@ export default function NutritionAllergen() {
   }, [mealPlans]);
 
   const categoryOptions = Array.from(new Set(recipes.map((recipe) => recipe.category).filter(Boolean)));
+  const projectSites = sites.filter((site) => (
+    site.is_active !== false
+    && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT
+  ));
 
   const buildMealPlanPayload = () => {
     const site = sites.find((item) => item.id === mealPlanForm.site_id);
@@ -190,7 +195,10 @@ export default function NutritionAllergen() {
         return {
           recipe_id: recipe.id,
           recipe_name: recipe.name,
+          meal_type: meal.meal_type || 'lunch',
           portions,
+          servings_per_attendee: Math.max(0.01, Number(meal.servings_per_attendee) || 1),
+          portion_size_grams: Number(recipe.portion_size_grams) || null,
           calories_per_serving: recipe.calories_per_serving || 0,
           protein_per_serving: recipe.protein_per_serving || 0,
           carbs_per_serving: recipe.carbs_per_serving || 0,
@@ -224,7 +232,7 @@ export default function NutritionAllergen() {
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-[1600px]">
         <PageHeader
-          title="Nutrition & Allergen"
+          title="Nutrition & Allergens"
           description="Manage ingredient nutrition, recipe labels, menu allergen warnings, and customer meal plans."
         >
           <Button
@@ -481,7 +489,9 @@ export default function NutritionAllergen() {
                             <div className="flex items-center justify-between gap-3">
                               <div>
                                 <p className="font-medium text-slate-900">{meal.recipe_name}</p>
-                                <p className="text-sm text-slate-500">{meal.portions} portions · {meal.total_calories} kcal</p>
+                                <p className="text-sm text-slate-500">
+                                  {meal.portions} portions · {meal.meal_type || 'lunch'} · {meal.servings_per_attendee || 1} serving/customer · {meal.total_calories} kcal
+                                </p>
                               </div>
                               <div className="flex flex-wrap gap-1">
                                 {(meal.allergens || []).map((allergen) => (
@@ -543,7 +553,7 @@ export default function NutritionAllergen() {
                     <SelectValue placeholder="Select location" />
                   </SelectTrigger>
                   <SelectContent>
-                    {sites.map((site) => (
+                    {projectSites.map((site) => (
                       <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -558,8 +568,14 @@ export default function NutritionAllergen() {
             <div>
               <Label>Meals</Label>
               <div className="mt-2 space-y-3">
+                <div className="hidden grid-cols-[minmax(180px,1fr)_140px_120px_160px] gap-3 px-3 text-xs font-medium text-slate-500 md:grid">
+                  <span>Recipe</span>
+                  <span>Meal period</span>
+                  <span>Planned portions</span>
+                  <span>Servings per customer</span>
+                </div>
                 {mealPlanForm.meals.map((meal, index) => (
-                  <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 p-3 md:grid-cols-[1fr_120px]">
+                  <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 p-3 md:grid-cols-[minmax(180px,1fr)_140px_120px_160px]">
                     <Select
                       value={meal.recipe_id}
                       onValueChange={(value) => setMealPlanForm((current) => ({
@@ -578,6 +594,20 @@ export default function NutritionAllergen() {
                         ))}
                       </SelectContent>
                     </Select>
+                    <Select
+                      value={meal.meal_type || 'lunch'}
+                      onValueChange={(value) => setMealPlanForm((current) => ({
+                        ...current,
+                        meals: current.meals.map((currentMeal, currentIndex) => currentIndex === index ? { ...currentMeal, meal_type: value } : currentMeal)
+                      }))}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="breakfast">Breakfast</SelectItem>
+                        <SelectItem value="lunch">Lunch</SelectItem>
+                        <SelectItem value="dinner">Dinner</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Input
                       type="number"
                       min="1"
@@ -588,6 +618,19 @@ export default function NutritionAllergen() {
                       }))}
                       placeholder="Portions"
                     />
+                    <Input
+                      type="number"
+                      min="0.01"
+                      max="20"
+                      step="0.01"
+                      value={meal.servings_per_attendee ?? 1}
+                      onChange={(event) => setMealPlanForm((current) => ({
+                        ...current,
+                        meals: current.meals.map((currentMeal, currentIndex) => currentIndex === index ? { ...currentMeal, servings_per_attendee: event.target.value } : currentMeal)
+                      }))}
+                      aria-label="Servings per attendee"
+                      placeholder="Servings / customer"
+                    />
                   </div>
                 ))}
               </div>
@@ -597,7 +640,7 @@ export default function NutritionAllergen() {
                 className="mt-3"
                 onClick={() => setMealPlanForm((current) => ({
                   ...current,
-                  meals: [...current.meals, { recipe_id: '', portions: 1 }]
+                  meals: [...current.meals, { recipe_id: '', meal_type: 'lunch', portions: 1, servings_per_attendee: 1 }]
                 }))}
               >
                 <UtensilsCrossed className="mr-2 h-4 w-4" />

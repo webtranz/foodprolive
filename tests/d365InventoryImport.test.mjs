@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { toBusinessDateOnly } from '../shared/businessDate.js';
+import { BUSINESS_TIME_ZONE, toBusinessDateOnly, toBusinessDateTimeParts, toBusinessTimeOnly } from '../shared/businessDate.js';
 
 import {
   buildD365RowIdempotencyKey,
@@ -242,6 +242,9 @@ const cases = [
         stock_date: '2026-08-20T22:30:00Z'
       }).stock_date, '2026-08-21', 'timestamps use the Riyadh stock date');
       assert.equal(toBusinessDateOnly('2026-08-20T22:30:00Z'), '2026-08-21');
+      assert.equal(BUSINESS_TIME_ZONE, 'Asia/Riyadh');
+      assert.deepEqual(toBusinessDateTimeParts('2026-08-20T22:30:00Z'), { date: '2026-08-21', time: '01:30' });
+      assert.equal(toBusinessTimeOnly('2026-08-20T22:30:00Z'), '01:30');
       assert.equal(toInventoryDateOnly('2026-08-20T22:30:00Z'), '2026-08-21');
       assert.equal(parseInventoryDate('2026-08-20T22:30:00Z', 'Stock date'), '2026-08-21');
       assert.match(normalized.batch_number, /^D365-20260820-WH-1-CORN-1-/);
@@ -511,6 +514,15 @@ const cases = [
     async run() {
       assert.equal(normalizeD365IngredientRow({ item_id: 'CORN-1' }).item_code, undefined);
       assert.equal(normalizeD365IngredientRow({ item_id: 'CORN-1' }).is_active, undefined);
+      assert.equal(
+        normalizeD365IngredientRow({
+          item_id: 'GR000042',
+          item_name: 'SHAN RED CHILLI POWDER 10/1KG',
+          unit: 'EA',
+          cost_per_unit: 19.002124
+        }).package_base_quantity,
+        1
+      );
       assert.throws(
         () => normalizeD365IngredientRow({ item_id: 'CORN-1', cost_per_unit: -1 }),
         /0 or greater/

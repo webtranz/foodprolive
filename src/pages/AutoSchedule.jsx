@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
-import { calculateYieldAdjustedQuantity } from '../../shared/ingredientYield.js';
+import { calculateYieldOutputQuantity } from '../../shared/ingredientYield.js';
 import { calculateIngredientCost, convertIngredientQuantity } from '../../shared/ingredientUnits.js';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Calendar, Zap, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { format, addDays, parseISO } from 'date-fns';
 import { getItemCodeFromRecords } from '../../shared/itemCode.js';
+import { resolveAutoScheduleMenuLink } from '../../shared/autoScheduleMenuLink.js';
 
 export default function AutoSchedule() {
   const [selectedSite, setSelectedSite] = useState('');
@@ -48,8 +49,13 @@ export default function AutoSchedule() {
   );
 
   const { data: menuPlans = [] } = useQuery({
-    queryKey: ['menuPlans'],
-    queryFn: () => base44.entities.MenuPlan.list('-plan_date', 50)
+    queryKey: ['menuPlans', 'autoSchedule', selectedSite],
+    queryFn: () => base44.entities.MenuPlan.filter(
+      { site_id: selectedSite },
+      '-plan_date',
+      500
+    ),
+    enabled: Boolean(selectedSite)
   });
 
   // Real-time inventory updates
@@ -255,10 +261,10 @@ Provide production schedule in JSON format:`;
           const productionIngredients = expanded.map((line) => {
             const ingredient = ingredients.find((candidate) => candidate.id === line.ingredient_id) || {};
             const unit = ingredient.unit || line.unit || 'unit';
-            const yieldAdjustment = calculateYieldAdjustedQuantity(line.quantity, ingredient);
-            const netQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
-            const rawQuantity = convertIngredientQuantity(
-              yieldAdjustment.required_raw_quantity,
+            const yieldOutput = calculateYieldOutputQuantity(line.quantity, ingredient);
+            const rawQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
+            const yieldedQuantity = convertIngredientQuantity(
+              yieldOutput.yielded_quantity,
               line.unit || unit,
               unit,
               ingredient
@@ -270,17 +276,20 @@ Provide production schedule in JSON format:`;
               item_code: getItemCodeFromRecords([ingredient, line]),
               ingredient_id: line.ingredient_id,
               ingredient_name: ingredient.name || line.ingredient_name,
-              net_quantity: Number(netQuantity.toFixed(4)),
+              quantity_basis: 'raw_recipe_v2',
+              raw_quantity: Number(rawQuantity.toFixed(4)),
+              net_quantity: Number(yieldedQuantity.toFixed(4)),
+              yielded_quantity: Number(yieldedQuantity.toFixed(4)),
               planned_quantity: Number(rawQuantity.toFixed(4)),
               required_quantity: Number(rawQuantity.toFixed(4)),
-              yield_adjusted_quantity: Number(rawQuantity.toFixed(4)),
-              yield_multiplier: Number(yieldAdjustment.yield_multiplier.toFixed(6)),
-              yield_percent: Number(yieldAdjustment.yield_percent.toFixed(2)),
-              yield_source: yieldAdjustment.yield_source,
+              yield_adjusted_quantity: Number(yieldedQuantity.toFixed(4)),
+              yield_multiplier: Number(yieldOutput.yield_multiplier.toFixed(6)),
+              yield_percent: Number(yieldOutput.yield_percent.toFixed(2)),
+              yield_source: yieldOutput.yield_source,
               unit,
               unit_cost: unitCost,
               estimated_cost: Number(calculateIngredientCost(
-                yieldAdjustment.required_raw_quantity,
+                line.quantity,
                 line.unit || unit,
                 ingredient,
                 unitCost
@@ -291,6 +300,13 @@ Provide production schedule in JSON format:`;
             (total, line) => total + Number(line.estimated_cost || 0),
             0
           );
+          const menuLink = resolveAutoScheduleMenuLink({
+            menuPlans,
+            siteId: selectedSite,
+            productionDate: day.date,
+            mealType: prod.meal_type,
+            recipeId: prod.recipe_id
+          });
           productionsToCreate.push({
             site_id: selectedSite,
             site_name: site.name,
@@ -298,6 +314,7 @@ Provide production schedule in JSON format:`;
             meal_type: prod.meal_type,
             recipe_id: prod.recipe_id,
             recipe_name: prod.recipe_name,
+            ...menuLink,
             target_servings: targetServings,
             kitchen_station: recipe?.kitchen_station || 'Unassigned',
             ingredients_used: productionIngredients,
@@ -305,6 +322,9 @@ Provide production schedule in JSON format:`;
             estimated_cost_per_serving: targetServings > 0
               ? Number((estimatedBatchCost / targetServings).toFixed(2))
               : 0,
+            yield_adjustment_applied: true,
+            yield_adjustment_version: 2,
+            quantity_semantics: 'raw_recipe_to_yielded_output_v2',
             status: 'planned',
             notes: `Auto-scheduled: ${prod.reasoning}`
           });

@@ -1,5 +1,24 @@
 export const BUSINESS_TIME_ZONE = 'Asia/Riyadh';
 
+export function toBusinessDateTimeParts(value = new Date()) {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(parsed);
+  const dateParts = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    date: `${dateParts.year}-${dateParts.month}-${dateParts.day}`,
+    time: `${dateParts.hour}:${dateParts.minute}`
+  };
+}
+
 export function toBusinessDateOnly(value = new Date()) {
   const raw = typeof value === 'string' ? value.trim() : '';
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
@@ -10,14 +29,9 @@ export function toBusinessDateOnly(value = new Date()) {
       : null;
   }
 
-  const parsed = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: BUSINESS_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(parsed);
-  const dateParts = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+  return toBusinessDateTimeParts(value)?.date || null;
+}
+
+export function toBusinessTimeOnly(value = new Date()) {
+  return toBusinessDateTimeParts(value)?.time || null;
 }

@@ -13,7 +13,6 @@ import {
   ImageOff,
   Layers3,
   LoaderCircle,
-  MapPin,
   Moon,
   PackageOpen,
   Plus,
@@ -106,8 +105,8 @@ function ProductionImage({ src, alt }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) {
     return (
-      <div className="flex h-20 w-20 flex-none items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-slate-400">
-        <ImageOff className="h-6 w-6" aria-hidden="true" />
+      <div className="flex h-16 w-16 flex-none items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-slate-400 sm:h-[72px] sm:w-[72px]">
+        <ImageOff className="h-5 w-5" aria-hidden="true" />
       </div>
     );
   }
@@ -116,7 +115,7 @@ function ProductionImage({ src, alt }) {
       src={src}
       alt={alt}
       onError={() => setFailed(true)}
-      className="h-20 w-20 flex-none rounded-lg border border-slate-200 object-cover"
+      className="h-16 w-16 flex-none rounded-lg border border-slate-200 object-cover sm:h-[72px] sm:w-[72px]"
     />
   );
 }
@@ -164,14 +163,37 @@ function ProductionInventoryState({ production }) {
   );
 }
 
+function getProductionOverrideCount(production = {}) {
+  if (Array.isArray(production.production_overrides)) {
+    return production.production_overrides.length;
+  }
+  return (Array.isArray(production.ingredients_used) ? production.ingredients_used : [])
+    .filter((line) => line.production_override_action)
+    .length;
+}
+
 function Metric({ icon: Icon, label, value, title }) {
   return (
-    <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2" title={title}>
+    <div className="min-w-0 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2" title={title}>
       <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
         <Icon className="h-3 w-3 flex-none" aria-hidden="true" />
         <span className="truncate">{label}</span>
       </div>
       <p className="mt-1 truncate text-sm font-semibold text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function ProductionDetailRow({ label, value, tone = 'slate' }) {
+  const tones = {
+    slate: 'border-slate-200 bg-slate-50 text-slate-700',
+    cyan: 'border-cyan-200 bg-cyan-50 text-cyan-800',
+    indigo: 'border-indigo-200 bg-indigo-50 text-indigo-800',
+    purple: 'border-purple-200 bg-purple-50 text-purple-800'
+  };
+  return (
+    <div className={`rounded-md border px-2.5 py-1.5 text-xs ${tones[tone] || tones.slate}`}>
+      <span className="font-medium">{label}:</span> <span className="break-words">{value}</span>
     </div>
   );
 }
@@ -187,6 +209,8 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
   const requiresLegacyAreaReview = item.workflow_status === 'approved'
     && requiresAreaProductionApproval(item.production);
   const reviewNotice = getProductionReviewNotice(item.production);
+  const productionOverrideCount = getProductionOverrideCount(item.production);
+  const isMenuIssueGroup = item.menu_issue_items.length > 0;
 
   return (
     <Card className={`overflow-hidden border shadow-none ${item.prep_status.key === 'at_risk' ? 'border-red-300' : 'border-slate-200'}`}>
@@ -194,47 +218,78 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
         <div className="flex gap-3">
           <ProductionImage src={item.image_url} alt={item.recipe_name} />
           <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <h3 className="truncate text-sm font-semibold text-slate-950" title={item.recipe_name}>{item.recipe_name}</h3>
-                <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
-                  <MapPin className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
-                  <span className={item.station === 'Unassigned' ? 'font-medium text-red-600' : ''}>{item.station}</span>
-                </div>
+            <div className="min-w-0">
+              <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-slate-950" title={item.recipe_name}>{item.recipe_name}</h3>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <PrepStatusBadge status={item.prep_status} />
+                <Badge variant="outline" className="max-w-full truncate text-[10px]">
+                  {requiresLegacyAreaReview
+                    ? 'Legacy approval - area review'
+                    : getProductionStatusLabel(item.workflow_status)}
+                </Badge>
               </div>
-              <PrepStatusBadge status={item.prep_status} />
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              <Badge variant="outline" className={requiresLegacyAreaReview ? 'border-purple-300 bg-purple-50 text-[10px] text-purple-800' : 'text-[10px]'}>
-                {requiresLegacyAreaReview
-                  ? 'Legacy approval · Area review required'
-                  : getProductionStatusLabel(item.workflow_status)}
-              </Badge>
-              {item.production.site_name ? (
-                <Badge variant="outline" className="text-[10px] text-slate-600">Project: {item.production.site_name}</Badge>
-              ) : null}
-              {item.production.fulfillment_store_name ? (
-                <Badge variant="outline" className="border-cyan-200 bg-cyan-50 text-[10px] text-cyan-800">
-                  Store: {item.production.fulfillment_store_name}
-                </Badge>
-              ) : null}
-              {materialRequest ? (
-                <Badge variant="outline" className="border-indigo-200 text-[10px] text-indigo-700">
-                  MR {materialRequest.request_number || ''} · {titleCase(materialRequest.status)}
-                </Badge>
-              ) : null}
             </div>
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2 2xl:grid-cols-3">
-          <Metric icon={Users} label="Portions" value={formatRecipeQuantity(item.required_portions, 'servings')} />
-          <Metric icon={Scale} label="Portion size" value={item.portion_size.label} title={portionTitle} />
-          <Metric icon={Layers3} label="Batch yield" value={`${formatRecipeQuantity(item.batch_yield, 'servings')} portions`} />
-          <Metric icon={Factory} label="Batches" value={item.batches_required.toLocaleString()} />
-          <Metric icon={WalletCards} label="Est. batch cost" value={formatCurrency(item.estimated_batch_cost)} />
-          <Metric icon={MapPin} label="Station" value={item.station} />
+        <div className="mt-3 grid gap-1.5">
+          <ProductionDetailRow label="Project" value={item.production.site_name || 'Not assigned'} />
+          <ProductionDetailRow label="Store" value={item.production.fulfillment_store_name || 'Not assigned'} tone="cyan" />
+          {materialRequest ? (
+            <ProductionDetailRow
+              label="Material request"
+              value={`${materialRequest.request_number || 'MR'} - ${titleCase(materialRequest.status)}`}
+              tone="indigo"
+            />
+          ) : null}
+          <ProductionDetailRow
+            label="Station"
+            value={item.station || 'Unassigned'}
+            tone={item.station === 'Unassigned' ? 'purple' : 'slate'}
+          />
+          {productionOverrideCount > 0 ? (
+            <ProductionDetailRow
+              label="Recipe snapshot"
+              value={`${productionOverrideCount} production-only change${productionOverrideCount === 1 ? '' : 's'}`}
+              tone="purple"
+            />
+          ) : null}
         </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2 min-[1500px]:grid-cols-3">
+          <Metric icon={Users} label="Portions" value={formatRecipeQuantity(item.required_portions, 'servings')} />
+          <Metric icon={Scale} label="Portion" value={item.portion_size.label} title={portionTitle} />
+          <Metric
+            icon={Layers3}
+            label={isMenuIssueGroup ? 'Dishes' : 'Yield'}
+            value={isMenuIssueGroup ? item.dish_count.toLocaleString() : `${formatRecipeQuantity(item.batch_yield, 'servings')} portions`}
+          />
+          <Metric
+            icon={Factory}
+            label={isMenuIssueGroup ? 'Meal review' : 'Batches'}
+            value={isMenuIssueGroup ? '1' : item.batches_required.toLocaleString()}
+          />
+          <Metric icon={WalletCards} label="Cost" value={formatCurrency(item.estimated_batch_cost)} />
+        </div>
+
+        {isMenuIssueGroup ? (
+          <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/70 px-2.5 py-2 text-xs">
+            <p className="font-semibold text-indigo-900">Planned dishes in this meal review</p>
+            <ul className="mt-1.5 space-y-1 text-slate-700">
+              {item.menu_issue_items.slice(0, 5).map((menuItem, index) => (
+                <li key={menuItem.key || `${menuItem.recipe_id || 'dish'}-${index}`} className="flex justify-between gap-3">
+                  <span className="min-w-0 truncate">{menuItem.recipe_name || 'Planned dish'}</span>
+                  <span className="whitespace-nowrap text-slate-500">
+                    {formatRecipeQuantity(menuItem.production_covers ?? menuItem.expected_servings, 'servings')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {item.menu_issue_items.length > 5 ? (
+              <p className="mt-1 text-slate-500">+{item.menu_issue_items.length - 5} more dishes</p>
+            ) : null}
+          </div>
+        ) : null}
 
         {item.shortages.length > 0 ? (
           <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-800">
@@ -716,15 +771,15 @@ export default function ProductionPlanningDashboard({
         ) : null}
 
         {isLoading ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="grid gap-4 md:grid-cols-2 min-[1700px]:grid-cols-3">
               {[0, 1, 2].map((index) => <Skeleton key={index} className="h-[520px] rounded-xl" />)}
             </div>
             <Skeleton className="h-[620px] rounded-xl" />
           </div>
         ) : (
-          <div className="production-plan-layout grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-            <main className={`production-meal-grid grid min-w-0 gap-4 ${dashboard.sections.length > 3 ? 'md:grid-cols-2' : 'md:grid-cols-2 lg:grid-cols-3'}`}>
+          <div className="production-plan-layout grid items-start gap-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
+            <main className={`production-meal-grid grid min-w-0 gap-4 ${dashboard.sections.length > 3 ? 'lg:grid-cols-2' : 'lg:grid-cols-2 min-[1700px]:grid-cols-3'}`}>
               {dashboard.sections.map((section) => (
                 <MealSection
                   key={section.key}

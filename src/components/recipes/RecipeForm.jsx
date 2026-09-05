@@ -24,6 +24,7 @@ import {
   validateRecipeImageReference
 } from '../../../shared/recipeImage.js';
 import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
+import { calculateYieldOutputQuantity } from '../../../shared/ingredientYield.js';
 import {
   calculateRecipeCostingSnapshot,
   calculateRecipeIngredientLineCost,
@@ -35,6 +36,29 @@ import {
   standardizeDecimalValue
 } from '../../../shared/recipeNumbers.js';
 import { getItemCode } from '../../../shared/itemCode.js';
+
+const RECIPE_CATEGORIES = [
+  { value: 'starter_salad_soup', label: 'Starter / Salad / Soup' },
+  { value: 'main_course', label: 'Main Course' },
+  { value: 'vegetable', label: 'Vegetable' },
+  { value: 'dessert', label: 'Dessert' },
+  { value: 'beverages', label: 'Beverages' },
+  { value: 'side_dish', label: 'Side Dish' }
+];
+
+const RECIPE_INGREDIENT_UNITS = Object.freeze([
+  { value: 'kg', label: 'kg' },
+  { value: 'g', label: 'g' },
+  { value: 'l', label: 'l' },
+  { value: 'ml', label: 'ml' },
+  { value: 'pieces', label: 'pcs' },
+  { value: 'ct', label: 'CT' },
+  { value: 'ea', label: 'EA' },
+  { value: 'bdl', label: 'BDL' },
+  { value: 'pak', label: 'PAK' },
+  { value: 'cs', label: 'CS' }
+]);
+const SUPPORTED_RECIPE_INGREDIENT_UNITS = new Set(RECIPE_INGREDIENT_UNITS.map((unit) => unit.value));
 
 const ALLERGEN_COLORS = {
   dairy: 'bg-sky-100 text-sky-700',
@@ -80,7 +104,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     name: '',
     recipe_code: '',
     recipe_type: 'full',
-    category: '',
+    category: 'main_course',
     cuisine_type: '',
     description: '',
     prep_time_minutes: '',
@@ -136,7 +160,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
         name: '',
         recipe_code: '',
         recipe_type: 'full',
-        category: '',
+        category: 'main_course',
         cuisine_type: '',
         description: '',
         prep_time_minutes: '',
@@ -291,6 +315,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     const costing = ingredient
       ? calculateRecipeIngredientLineCost(line, ingredient, formData.costing_method)
       : { normalized_quantity: Number(line.quantity) || 0, item_cost: null, line_cost: null };
+    const yieldOutput = ingredient
+      ? calculateYieldOutputQuantity(line.quantity, ingredient)
+      : null;
     const hasStock = ingredient && Object.prototype.hasOwnProperty.call(ingredient, 'current_stock');
     const currentStock = hasStock ? Number(ingredient.current_stock) || 0 : null;
     const normalizedUnit = normalizeIngredientUnit(line.unit || ingredient?.unit);
@@ -303,15 +330,19 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     const validationError = numericValidation[`ingredient-${index}`]?.error
       || (!line.ingredient_id ? 'Select an ingredient.' : '')
       || (!quantityValidation.valid ? quantityValidation.error : '')
-      || (!['kg', 'g', 'l', 'ml', 'pieces'].includes(normalizedUnit) ? 'Choose a supported unit.' : '')
+      || (!SUPPORTED_RECIPE_INGREDIENT_UNITS.has(normalizedUnit) ? 'Choose a supported unit.' : '')
+      || (costing.incompatible_unit ? 'Choose a unit compatible with this inventory item.' : '')
       || (costing.item_cost === null ? `${RECIPE_COSTING_METHODS[formData.costing_method]} is unavailable.` : '');
+    const quantityInBaseUnit = Number(costing.normalized_quantity);
     return {
       ingredient,
-      quantityInBaseUnit: costing.normalized_quantity,
+      quantityInBaseUnit: Number.isFinite(quantityInBaseUnit) ? quantityInBaseUnit : null,
       unitCost: costing.item_cost,
       amount: costing.line_cost,
+      yieldPercent: yieldOutput?.yield_percent ?? null,
+      yieldedQuantity: yieldOutput?.yielded_quantity ?? null,
       currentStock,
-      shortage: currentStock === null ? null : Math.max(0, costing.normalized_quantity - currentStock),
+      shortage: currentStock === null || !Number.isFinite(quantityInBaseUnit) ? null : Math.max(0, quantityInBaseUnit - currentStock),
       validationError
     };
   }), [formData.costing_method, formData.ingredients, ingredientCatalog, numericValidation]);
@@ -434,6 +465,10 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     setFormError(validationError);
   };
 
+  const resolveUploadedRecipeImageUrl = (uploadResult = {}) => (
+    uploadResult.file_url || uploadResult.public_file_url || ''
+  );
+
   const removeImage = () => {
     setImageFile(null);
     setImagePreview('');
@@ -469,7 +504,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       try {
         setImageUploading(true);
         const uploadResult = await base44.integrations.Core.UploadRecipeImage({ file: imageFile });
-        imageUrl = uploadResult.public_file_url || uploadResult.file_url || '';
+        imageUrl = resolveUploadedRecipeImageUrl(uploadResult);
+        setFormData((current) => ({ ...current, image_url: imageUrl }));
+        setImagePreview(imageUrl);
       } catch (error) {
         setFormError(error.message || 'Recipe picture upload failed.');
         setImageUploading(false);
@@ -500,7 +537,11 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       ingredients: normalizedForm.ingredients,
       sub_recipes: normalizedSubRecipes
     };
-    onSubmit(submitData);
+    try {
+      await onSubmit(submitData);
+    } catch (error) {
+      setFormError(error.message || 'Recipe could not be saved.');
+    }
   };
 
   return (
@@ -555,13 +596,19 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
             <div>
               <Label htmlFor="category">Category</Label>
-              <Input
-                id="category"
-                value={formData.category}
-                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                className="mt-1"
-                placeholder="e.g., lunch"
-              />
+              <Select value={formData.category || 'main_course'} onValueChange={(value) => setFormData({ ...formData, category: value })}>
+                <SelectTrigger id="category" className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RECIPE_CATEGORIES.map((category) => (
+                    <SelectItem key={category.value} value={category.value}>{category.label}</SelectItem>
+                  ))}
+                  {formData.category && !RECIPE_CATEGORIES.some((category) => category.value === formData.category) ? (
+                    <SelectItem value={formData.category}>{formData.category.replace(/_/g, ' ')}</SelectItem>
+                  ) : null}
+                </SelectContent>
+              </Select>
             </div>
 
             <div>
@@ -694,7 +741,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
               />
             </div>
             <div className="md:col-span-2 xl:col-span-4 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-              Quantities are stored as standardized decimal numbers. Costs recalculate immediately when an ingredient, quantity, unit, serving count, or costing method changes.
+              Ingredient quantities are raw inputs. Expected production output applies each ingredient's yield, while costing and inventory issue remain based on the raw quantity.
             </div>
           </div>
 
@@ -705,7 +752,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                   <ImagePlus className="h-5 w-5 text-emerald-600" />
                   <Label className="text-base font-semibold">Recipe Picture</Label>
                 </div>
-                <p className="mt-1 text-sm text-slate-500">Upload a file up to 1 MB, or enter a public HTTPS image path.</p>
+                <p className="mt-1 text-sm text-slate-500">Upload a recipe picture from this device. JPG, PNG, WebP, and GIF are supported up to 1 MB.</p>
               </div>
               {imagePreview ? (
                 <Button type="button" variant="ghost" size="sm" onClick={removeImage} className="text-red-600 hover:bg-red-50 hover:text-red-700">
@@ -736,8 +783,8 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                 <ImagePlus className="mr-2 h-5 w-5" /> Choose Recipe Picture
               </Button>
             )}
-            <div className="mt-4">
-              <Label htmlFor="recipe_image_url">Secure HTTPS image path</Label>
+            <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
+              <Label htmlFor="recipe_image_url">Optional HTTPS image path</Label>
               <Input
                 id="recipe_image_url"
                 type="text"
@@ -747,7 +794,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                 placeholder="https://images.example.com/recipes/shrimp-curry.jpg"
                 className="mt-1 bg-white"
               />
-              <p className="mt-1 text-xs text-slate-500">Only public HTTPS addresses are accepted. HTTP, local, private-network, and credential-bearing addresses are blocked.</p>
+              <p className="mt-1 text-xs text-slate-500">Direct upload is recommended. Public HTTPS links remain available for already hosted images.</p>
             </div>
           </div>
 
@@ -762,11 +809,13 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
             <div className="space-y-3">
               {formData.ingredients.length > 0 ? (
-                <div className="hidden grid-cols-[100px_minmax(230px,1.6fr)_100px_90px_120px_120px_130px_150px_42px] gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 xl:grid">
+                <div className="hidden grid-cols-[100px_minmax(210px,1.5fr)_100px_80px_72px_110px_110px_110px_120px_140px_42px] gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 xl:grid">
                   <span>Item Code</span>
                   <span>Item Name</span>
-                  <span>Quantity</span>
+                  <span>Raw Quantity</span>
                   <span>Unit</span>
+                  <span>Yield</span>
+                  <span>Expected Output</span>
                   <span>Item Cost</span>
                   <span>Line Cost</span>
                   <span>Stock Impact</span>
@@ -788,7 +837,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     : null
                 );
                 return (
-                  <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[100px_minmax(230px,1.6fr)_100px_90px_120px_120px_130px_150px_42px]">
+                  <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[100px_minmax(210px,1.5fr)_100px_80px_72px_110px_110px_110px_120px_140px_42px]">
                   <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Code</p>
                     <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-medium text-slate-700">
@@ -805,7 +854,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     />
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Quantity</p>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Raw Quantity</p>
                     <StandardDecimalInput
                       value={ingredientLine.quantity}
                       unit={ingredientLine.unit}
@@ -828,13 +877,25 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="kg">kg</SelectItem>
-                        <SelectItem value="g">g</SelectItem>
-                        <SelectItem value="l">l</SelectItem>
-                        <SelectItem value="ml">ml</SelectItem>
-                        <SelectItem value="pieces">pcs</SelectItem>
+                        {RECIPE_INGREDIENT_UNITS.map((unit) => (
+                          <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Yield</p>
+                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700">
+                      {costRow?.yieldPercent == null ? '—' : `${formatNumber(costRow.yieldPercent, 2)}%`}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Expected Output</p>
+                    <div className="flex h-10 items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 text-sm font-semibold text-emerald-800">
+                      {costRow?.yieldedQuantity == null
+                        ? '—'
+                        : `${formatRecipeQuantity(costRow.yieldedQuantity, ingredientLine.unit)} ${ingredientLine.unit || ''}`}
+                    </div>
                   </div>
                   <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Cost</p>
@@ -947,6 +1008,11 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                       ? `${stockShortageCount} stock shortage${stockShortageCount === 1 ? '' : 's'}`
                       : knownStockLineCount ? 'No known stock shortage' : 'Stock availability pending'}
                   </span>
+                </div>
+                <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+                  Raw recipe weight: {recipeCost.total_raw_recipe_weight_grams == null ? 'Not available' : `${formatRecipeQuantity(recipeCost.total_raw_recipe_weight_grams, 'g')} g`}
+                  {' → '}
+                  Expected yielded weight: {recipeCost.expected_yield_weight_grams == null ? 'Not available' : `${formatRecipeQuantity(recipeCost.expected_yield_weight_grams, 'g')} g`}
                 </div>
                 <div className="flex items-center gap-2">
                   <Flame className="h-5 w-5 text-orange-500" />

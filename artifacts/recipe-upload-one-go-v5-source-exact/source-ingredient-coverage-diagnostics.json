@@ -1,0 +1,1316 @@
+[
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\FW\\CLASSIC COFFEE & TANG .docx",
+    "recipe_name": "CLASSIC COFFEE & TANG",
+    "parsed_count": 6,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [],
+    "table_count": 2,
+    "table_shapes": [
+      "8x2",
+      "7x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\FW\\Classic Russian Olivier Salad scaled for 100 servings.docx",
+    "recipe_name": "Classic Russian Olivier Salad",
+    "parsed_count": 10,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 INGREDIENTS",
+      "Would you like help calculating a budget/cost estimate for these ingredients, or do you need to add instructions for a vegetarian alternative?"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\FW\\FRUIT SALAD.docx",
+    "recipe_name": "FRUIT SALAD",
+    "parsed_count": 8,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 INGREDIENTS"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\FW\\MIX MELON PORTION .docx",
+    "recipe_name": "MIX MELON PORTION",
+    "parsed_count": 2,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [],
+    "table_count": 1,
+    "table_shapes": [
+      "13x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\FW\\VIP FRUIT SALAD RECIPE .docx",
+    "recipe_name": "VIP FRUIT SALAD",
+    "parsed_count": 10,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 INGREDIENTS"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\DALL & BEANS\\Chana Masala.100 pax.docx",
+    "recipe_name": "Chana Masala",
+    "parsed_count": 18,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\DALL & BEANS\\Dal Chana Fry.100 pax.docx",
+    "recipe_name": "Dal Chana Fry",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "16x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\DALL & BEANS\\Dal Masoor.100 pax.docx",
+    "recipe_name": "Dal Masoor",
+    "parsed_count": 18,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Main Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\DALL & BEANS\\Dall Mong Recipe. 100 pax.docx",
+    "recipe_name": "Dall Mong",
+    "parsed_count": 13,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\DALL & BEANS\\Foul Medames.01 pax.docx",
+    "recipe_name": "Foul Medames",
+    "parsed_count": 4,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (per serving ~150 g)"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Boiled Eggs.docx",
+    "recipe_name": "Boiled Eggs",
+    "parsed_count": 3,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 INGREDIENTS"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Cheese Omelette.with onion tomato 01 pax.docx",
+    "recipe_name": "Cheese Omelette.with onion tomato",
+    "parsed_count": 7,
+    "inline_ingredient_names_without_quantities": [
+      "Chop onion, tomato, and herbs. Keep the cheese slice ready"
+    ],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (per serving)",
+      "Prepare ingredients:Chop onion, tomato, and herbs. Keep the cheese slice ready."
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "8x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Egg Shakshuka.01 pax.docx",
+    "recipe_name": "Egg Shakshuka",
+    "parsed_count": 9,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (for ~2 servings, adjust as needed)"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Egg with Potato Recipe.01 serving.docx",
+    "recipe_name": "Egg with Potato",
+    "parsed_count": 3,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients:"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Fried Eggs.2 pcs.docx",
+    "recipe_name": "Fried Eggs.2 pcs",
+    "parsed_count": 2,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (1 serving – 2 eggs)"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Omlette with onion and tomato 01 pax.docx",
+    "recipe_name": "Omlette with onion and tomato",
+    "parsed_count": 5,
+    "inline_ingredient_names_without_quantities": [
+      "Chop onion, tomato, and herbs (if using)"
+    ],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (per 120 g serving)",
+      "Prep the ingredients: Chop onion, tomato, and herbs (if using)."
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "7x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Pan omelette.docx",
+    "recipe_name": "Pan omelette",
+    "parsed_count": 5,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 INGREDIENTS"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Plan cheese omlette.docx",
+    "recipe_name": "Plan cheese omlette",
+    "parsed_count": 3,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients:"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Scrambled Eggs.01 pax.docx",
+    "recipe_name": "Scrambled Eggs",
+    "parsed_count": 3,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (per serving)"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\EGG\\Vegetable Omelette.01 serving.docx",
+    "recipe_name": "Vegetable Omelette",
+    "parsed_count": 6,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (1 serving)",
+      "Eggs – main ingredient"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\Egg_Curry_Recipe_100_Servings.docx",
+    "recipe_name": "Egg Curry",
+    "parsed_count": 16,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients Profile",
+      "Ingredient"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "17x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\French Toast Recipe.01 pax.docx",
+    "recipe_name": "French Toast",
+    "parsed_count": 7,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients:"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Breakfast Items\\Oatmeal_Recipe_100_Portions.docx",
+    "recipe_name": "Oatmeal",
+    "parsed_count": 7,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 INGREDIENTS & PREP METRICS"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Butter Chicken Recipe.100 pax.docx",
+    "recipe_name": "Butter Chicken",
+    "parsed_count": 19,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Biryani Recipe.100 pax.docx",
+    "recipe_name": "Chicken Biryani",
+    "parsed_count": 25,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Broasted Recipe.100 pax -.docx",
+    "recipe_name": "Chicken Broasted",
+    "parsed_count": 9,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "10x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Chilli Recipe.100 pax.docx",
+    "recipe_name": "Chicken Chilli",
+    "parsed_count": 22,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients:"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Curry Recipe.100 pax.docx",
+    "recipe_name": "Chicken Curry",
+    "parsed_count": 17,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients:"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Grilled with Lemon Sauce.100 pax.docx",
+    "recipe_name": "Chicken Grilled with Lemon Sauce",
+    "parsed_count": 13,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Haleem Recipe.100 pax.docx",
+    "recipe_name": "Chicken Haleem",
+    "parsed_count": 17,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "18x3",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Handi Recipe.100 pax.docx",
+    "recipe_name": "Chicken Handi",
+    "parsed_count": 23,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Jalfrezi Recipe.100 pax.docx",
+    "recipe_name": "Chicken Jalfrezi",
+    "parsed_count": 17,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "7x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Korma.100 PAX.docx",
+    "recipe_name": "Chicken Korma",
+    "parsed_count": 19,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Masala. 100 pax bone in chicken - Copy.docx",
+    "recipe_name": "Chicken Masala. bone in chicken",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "📋 Ingredients",
+      "🐔 Main Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Palak Recipe.100 PAX - Copy.docx",
+    "recipe_name": "Chicken Palak",
+    "parsed_count": 16,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Main Ingredients:"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Tandori Recipe 100 pax.docx",
+    "recipe_name": "Chicken Tandori",
+    "parsed_count": 19,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Chicken Tikka Recipe.100 pax.docx",
+    "recipe_name": "Chicken Tikka",
+    "parsed_count": 18,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Chicken\\Crispy_Chicken_Strips_100_Pax.docx",
+    "recipe_name": "Crispy Chicken Strips",
+    "parsed_count": 14,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients List"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "1x2",
+      "5x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Arabic Foul Medames.100 pax.docx",
+    "recipe_name": "Arabic Foul Medames",
+    "parsed_count": 10,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "11x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Chickpeas Masala.100 PAX.docx",
+    "recipe_name": "Chickpeas Masala",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "17x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Daal Lobia.100 PAX.docx",
+    "recipe_name": "Daal Lobia",
+    "parsed_count": 12,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "15x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Dal Chana Fry.100 pax.docx",
+    "recipe_name": "Dal Chana Fry",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "16x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Dal Makhni.100 pax.docx",
+    "recipe_name": "Dal Makhni",
+    "parsed_count": 18,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Dal Mash Fry.100 pax.docx",
+    "recipe_name": "Dal Mash Fry",
+    "parsed_count": 14,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 3,
+    "table_shapes": [
+      "15x2",
+      "5x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Dal Masoor.100 pax.docx",
+    "recipe_name": "Dal Masoor",
+    "parsed_count": 18,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Main Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Dall Chana100 pax .docx",
+    "recipe_name": "Dall Chana100 pax",
+    "parsed_count": 14,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 INGREDIENTS (QUANTITY FOR 100 PORTIONS)"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "9x2",
+      "8x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Dall Makhni Mix 100 pax .docx",
+    "recipe_name": "Dall Makhni Mix",
+    "parsed_count": 10,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 INGREDIENTS (QUANTITY FOR 100 PORTIONS)"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "9x2",
+      "8x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Dall Mash 100 pax .docx",
+    "recipe_name": "Dall Mash",
+    "parsed_count": 0,
+    "inline_ingredient_names_without_quantities": [
+      "Dall Mash",
+      "Cooking Oil",
+      "Onion Seeds",
+      "Fennel Seeds",
+      "Whole Cumin",
+      "Garlic",
+      "Ginger",
+      "Tomato",
+      "Chili Powder",
+      "Black Pepper Powder",
+      "Salt",
+      "Coriander Powder Turmeric Powder",
+      "Chili Powder",
+      "Fresh Coriander for Topping"
+    ],
+    "paragraphs_with_ingredient_word": [
+      "Ingredient: Dall Mash - Cooking Oil- Onion Seeds – Fennel Seeds- Whole Cumin-Garlic – Ginger- Tomato – Chili Powder – Black Pepper Powder – Salt - Coriander Powder Turmeric Powder – Chili Powder– Fresh Coriander for Topping"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "3x5"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Dall\\Dall Mongo Recipe. 100 pax.docx",
+    "recipe_name": "Dall Mongo",
+    "parsed_count": 13,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Fish\\Baked Lemon Butter fillet fish 100 pax.docx",
+    "recipe_name": "Baked Lemon Butter fillet fish",
+    "parsed_count": 10,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredient"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "11x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Fish\\Fish Curry 100 pax .docx",
+    "recipe_name": "Fish Curry",
+    "parsed_count": 17,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Fish\\Fried Finger Fish.100 pax.docx",
+    "recipe_name": "Fried Finger Fish",
+    "parsed_count": 16,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Fish\\Grilled Fish Fillet. 100 pax.docx",
+    "recipe_name": "Grilled Fish Fillet",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Meat\\Allo Gosht.100 pax.docx",
+    "recipe_name": "Allo Gosht",
+    "parsed_count": 20,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Meat\\Mutton Biryani. 100 pax.docx",
+    "recipe_name": "Mutton Biryani",
+    "parsed_count": 25,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 Ingredients",
+      "🍲 Cooking Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Meat\\Mutton Curry Recipe.100 pax.docx",
+    "recipe_name": "Mutton Curry",
+    "parsed_count": 22,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Meat\\Mutton Korma Recipe. 100 pax.docx",
+    "recipe_name": "Mutton Korma",
+    "parsed_count": 17,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "18x2",
+      "5x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Meat\\Mutton_Kadai_100_Pax.docx",
+    "recipe_name": "Mutton Kadai",
+    "parsed_count": 16,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "5x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Pasta\\Pasta ala normah Ingredients.100 pax.docx",
+    "recipe_name": "Pasta ala normah",
+    "parsed_count": 11,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Pasta ala normah Ingredients (for 100 servings)"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Pasta\\Pasta with Tomato Sauce.100 pax.docx",
+    "recipe_name": "Pasta with Tomato Sauce",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Pasta\\Penne pasta Ingredients.100 pax.docx",
+    "recipe_name": "Penne pasta",
+    "parsed_count": 14,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (for 100 servings)"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Pasta\\Vegetable Noodles.100 pax.docx",
+    "recipe_name": "Vegetable Noodles",
+    "parsed_count": 14,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "15x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\arabic Mandi Rice.100 pax.docx",
+    "recipe_name": "arabic Mandi Rice",
+    "parsed_count": 19,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Biryani Rice Recipe. 100 pax.docx",
+    "recipe_name": "Biryani Rice",
+    "parsed_count": 25,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Bukhari Rice.100 pax.docx",
+    "recipe_name": "Bukhari Rice",
+    "parsed_count": 21,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Optional ingredients:"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Chickpea Rice 100 PAX.docx",
+    "recipe_name": "Chickpea Rice",
+    "parsed_count": 21,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (Bulk Quantity)"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Chinese Egg Fried Rice Recipe.100 pax.docx",
+    "recipe_name": "Chinese Egg Fried Rice",
+    "parsed_count": 11,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Ingredient",
+      "Combine Ingredients:"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "12x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Cumin Rice 100 PAX.docx",
+    "recipe_name": "Cumin Rice",
+    "parsed_count": 14,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (Bulk Quantity)"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Green Peas Rice 100 PAX.docx",
+    "recipe_name": "Green Peas Rice",
+    "parsed_count": 17,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (Bulk Quantity)"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Plain Kabsa Rice Recipe.100 pax.docx",
+    "recipe_name": "Plain Kabsa Rice",
+    "parsed_count": 16,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 3,
+    "table_shapes": [
+      "17x2",
+      "5x2",
+      "1x1"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Plain Pulao Rice 100 PAX.docx",
+    "recipe_name": "Plain Pulao Rice",
+    "parsed_count": 18,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (Bulk Quantity)"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Pulao Rice. 100 pax.docx",
+    "recipe_name": "Pulao Rice",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "16x2",
+      "5x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Sayadiyah Rice.100 pax.docx",
+    "recipe_name": "Sayadiyah Rice",
+    "parsed_count": 21,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Vegetable Rice.100 pax.docx",
+    "recipe_name": "Vegetable Rice",
+    "parsed_count": 14,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "15x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Vermicelli Rice.docx",
+    "recipe_name": "Vermicelli Rice",
+    "parsed_count": 5,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredient"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "8x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\White Rice Recipe.100 pax.docx",
+    "recipe_name": "White Rice",
+    "parsed_count": 4,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Yellow Rice .docx",
+    "recipe_name": "Yellow Rice",
+    "parsed_count": 23,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 INGREDIENTS"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Rice\\Zarda Rice Recipe.100 PAX.docx",
+    "recipe_name": "Zarda Rice",
+    "parsed_count": 14,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "15x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Salad\\Chana Chat 100 pax .docx",
+    "recipe_name": "Chana Chat",
+    "parsed_count": 18,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 IngredientsThe Legume & Potato Base"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "6x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Salad\\Green Chutney.100 pax.docx",
+    "recipe_name": "Green Chutney",
+    "parsed_count": 10,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "📝 Ingredients:",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "11x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Salad\\Green Salad Mix.100 pax.docx",
+    "recipe_name": "Green Salad Mix",
+    "parsed_count": 9,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient",
+      "Ingredient"
+    ],
+    "table_count": 3,
+    "table_shapes": [
+      "6x2",
+      "5x2",
+      "7x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Salad\\Hummus for 100 pax .docx",
+    "recipe_name": "Hummus for",
+    "parsed_count": 11,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 IngredientsThe Base"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "6x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Salad\\Raita 100 pax .docx",
+    "recipe_name": "Raita",
+    "parsed_count": 11,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 IngredientsThe Dairy Base"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "5x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Salad\\Yogurt Cucumber Salad.100 pax.docx",
+    "recipe_name": "Yogurt Cucumber Salad",
+    "parsed_count": 8,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "9x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Sweet\\Lab. a shreen 100 pax.docx",
+    "recipe_name": "Lab. a shreen",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients:",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "16x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Sweet\\Mahalabia Recipe.100 pax.docx",
+    "recipe_name": "Mahalabia",
+    "parsed_count": 8,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 3,
+    "table_shapes": [
+      "9x2",
+      "6x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Sweet\\omali 100 pax.docx",
+    "recipe_name": "omali",
+    "parsed_count": 13,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 IngredientsThe Pastry Base"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "7x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Sweet\\Rice pudding.docx",
+    "recipe_name": "Rice pudding",
+    "parsed_count": 11,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 IngredientsThe Rice Base"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "7x3"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Sweet\\Shahi Tukra Recipe.100 pax.docx",
+    "recipe_name": "Shahi Tukra",
+    "parsed_count": 12,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Sweet\\Standard Catering Sweet 100 pax  .docx",
+    "recipe_name": "Standard Catering Sweet",
+    "parsed_count": 18,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "🧾 IngredientsThe Caramel Base (For the cups)",
+      "🧾 Ingredients"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "4x6"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Sweet\\Vermicelli with Milk Recipe.100 pax.docx",
+    "recipe_name": "Vermicelli with Milk",
+    "parsed_count": 10,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "11x2",
+      "5x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\Achari Okra.100 pax.docx",
+    "recipe_name": "Achari Okra",
+    "parsed_count": 13,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\allo bujiya Ingredients for 100 Servings..docx",
+    "recipe_name": "allo bujiya for",
+    "parsed_count": 9,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Allo Bhujiya Ingredients For 100 Servings (150 G Each)",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "10x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\ALOO GOBI.100 pax.docx",
+    "recipe_name": "ALOO GOBI",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "📋 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "16x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\Bitter Gourd POTATO 100 PAX.docx",
+    "recipe_name": "Bitter Gourd POTATO",
+    "parsed_count": 16,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients for 100 servings (150 g each)",
+      "Ingredient"
+    ],
+    "table_count": 1,
+    "table_shapes": [
+      "17x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\carrot potato green peas mix 100 pax.docx",
+    "recipe_name": "carrot potato green peas mix",
+    "parsed_count": 16,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (for 100 servings, approx. 15 kg total)",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "17x2",
+      "7x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\Cauliflower Potato Curry.100 pax.docx",
+    "recipe_name": "Cauliflower Potato Curry",
+    "parsed_count": 18,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "19x3",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\Dahi Kari with Pakora.100 pax.docx",
+    "recipe_name": "Dahi Kari with Pakora",
+    "parsed_count": 23,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🛒 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\Green Beans. 100 pax.docx",
+    "recipe_name": "Green Beans",
+    "parsed_count": 15,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients"
+    ],
+    "table_count": 0,
+    "table_shapes": []
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\LONE MARROW POTATO SWEET PEPPER 100 PAX.docx",
+    "recipe_name": "LONE MARROW POTATO SWEET PEPPER",
+    "parsed_count": 16,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "Ingredients (for 100 servings, ~15 kg total)",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "17x3",
+      "7x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\Mix Vegetable Curry. 100 pax.docx",
+    "recipe_name": "Mix Vegetable Curry",
+    "parsed_count": 16,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "17x2",
+      "6x2"
+    ]
+  },
+  {
+    "file": "C:\\Users\\HP\\Documents\\ChatGPT\\sbox food pro\\artifacts\\recipe-upload-source\\MENU\\MENU\\Vegetable\\Roast Potatoes.100 pax.docx",
+    "recipe_name": "Roast Potatoes",
+    "parsed_count": 7,
+    "inline_ingredient_names_without_quantities": [],
+    "paragraphs_with_ingredient_word": [
+      "🧾 Ingredients",
+      "Ingredient"
+    ],
+    "table_count": 2,
+    "table_shapes": [
+      "8x2",
+      "6x2"
+    ]
+  }
+]

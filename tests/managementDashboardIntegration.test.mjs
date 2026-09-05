@@ -48,7 +48,7 @@ assert.match(managementUi, /Range Budget/);
 assert.match(managementUi, /Range Spent/);
 assert.match(managementUi, /aria-labelledby=\{scopeLabelId\}/);
 assert.match(managementUi, /Reset to last 7 days/);
-assert.match(managementUi, /Operational metrics, tables and trends use the selected date range; current stock and unresolved approvals show current state/);
+assert.match(managementUi, /Operational metrics, tables and trends use the selected date range; budgets are informational and do not stop production/);
 assert.doesNotMatch(managementUi, /Reporting date/);
 assert.doesNotMatch(managementUi, /Daily operational control/);
 assert.match(managementUi, /normalizedView === 'agm' \? locationRef : chartRef/);

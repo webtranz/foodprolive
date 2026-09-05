@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
@@ -10,6 +10,7 @@ import InventoryAlerts from '@/components/inventory/InventoryAlerts';
 import InventoryTransactionDialog from '@/components/inventory/InventoryTransactionDialog';
 import InventoryEditDialog from '@/components/inventory/InventoryEditDialog';
 import InventoryHistory from '@/components/inventory/InventoryHistory';
+import StockChangeLog from '@/components/inventory/StockChangeLog';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,24 +32,7 @@ import { formatCurrency } from '@/lib/currency';
 import { getItemCode, getItemCodeFromRecords, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 import { getInventoryQuantities } from '@/lib/inventoryAvailability';
-
-const CATEGORIES = [
-  { value: 'all', label: 'All Categories' },
-  { value: 'proteins_meat', label: 'Proteins (Meat)' },
-  { value: 'proteins_poultry', label: 'Proteins (Poultry)' },
-  { value: 'proteins_seafood', label: 'Proteins (Seafood)' },
-  { value: 'proteins_plant', label: 'Proteins (Plant)' },
-  { value: 'vegetables', label: 'Vegetables' },
-  { value: 'fruits', label: 'Fruits' },
-  { value: 'grains_cereals', label: 'Grains & Cereals' },
-  { value: 'dairy', label: 'Dairy' },
-  { value: 'oils_fats', label: 'Oils & Fats' },
-  { value: 'herbs_spices', label: 'Herbs & Spices' },
-  { value: 'sauces_condiments', label: 'Sauces & Condiments' },
-  { value: 'sweeteners', label: 'Sweeteners' },
-  { value: 'beverages', label: 'Beverages' },
-  { value: 'other', label: 'Other' }
-];
+import { DEFAULT_SOURCE_NAME, SOURCE_NAME_OPTIONS, normalizeSourceName } from '../../shared/sourceNames.js';
 
 const CATEGORY_COLORS = {
   proteins_meat: 'bg-red-100 text-red-700',
@@ -74,6 +58,20 @@ const STATUS_COLORS = {
   expired: 'bg-purple-100 text-purple-700'
 };
 
+const formatQuantity = (value) => Number(value || 0).toLocaleString(undefined, {
+  maximumFractionDigits: 3
+});
+
+const normalizeCategoryKey = (value) => String(value || 'other')
+  .trim()
+  .toLowerCase()
+  .replace(/&/g, ' and ')
+  .replace(/[^a-z0-9]+/g, '_')
+  .replace(/^_+|_+$/g, '') || 'other';
+
+const formatCategoryLabel = (value) => String(value || 'Other')
+  .replace(/_/g, ' ');
+
 export default function Ingredients() {
   const { can } = usePermissions();
   const canManageIngredients = can('manage_ingredients');
@@ -83,6 +81,7 @@ export default function Ingredients() {
   // Ingredients state
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedSourceName, setSelectedSourceName] = useState('all');
   const [viewMode, setViewMode] = useState('list');
   const [formOpen, setFormOpen] = useState(false);
   const [editingIngredient, setEditingIngredient] = useState(null);
@@ -92,6 +91,7 @@ export default function Ingredients() {
   // Inventory state
   const [invSearch, setInvSearch] = useState('');
   const [selectedSite, setSelectedSite] = useState('all');
+  const [selectedInventorySourceName, setSelectedInventorySourceName] = useState('all');
   const [stockFormOpen, setStockFormOpen] = useState(false);
   const [transactionDialog, setTransactionDialog] = useState({ open: false, item: null, type: 'addition' });
   const [editDialog, setEditDialog] = useState({ open: false, item: null });
@@ -106,7 +106,8 @@ export default function Ingredients() {
     expiry_date: '',
     min_stock_level: '',
     max_stock_level: '',
-    valuation_method: 'fifo'
+    valuation_method: 'fifo',
+    source_name: DEFAULT_SOURCE_NAME
   });
   const [selectedStockIngredient, setSelectedStockIngredient] = useState(null);
 
@@ -134,6 +135,7 @@ export default function Ingredients() {
   useEffect(() => {
     const unsub = base44.entities.Inventory.subscribe(() => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['ingredients'] });
     });
     return unsub;
   }, [queryClient]);
@@ -169,18 +171,87 @@ export default function Ingredients() {
       expiry_date: '',
       min_stock_level: '',
       max_stock_level: '',
-      valuation_method: 'fifo'
+      valuation_method: 'fifo',
+      source_name: DEFAULT_SOURCE_NAME
     });
     setSelectedStockIngredient(null);
   };
 
+  const stockSummaryByIngredient = inventory.reduce((summary, item) => {
+    const ingredientId = String(item.ingredient_id || '');
+    if (!ingredientId) return summary;
+    const quantities = getInventoryQuantities(item);
+    const existing = summary[ingredientId] || {
+      on_hand_quantity: 0,
+      reserved_quantity: 0,
+      available_quantity: 0,
+      total_value: 0,
+      site_count: 0,
+      sites: new Set(),
+      unit: item.unit || ''
+    };
+    existing.on_hand_quantity += Number(quantities.on_hand_quantity || 0);
+    existing.reserved_quantity += Number(quantities.reserved_quantity || 0);
+    existing.available_quantity += Number(quantities.available_quantity || 0);
+    existing.total_value += Number(item.total_value || 0);
+    existing.unit = existing.unit || item.unit || '';
+    if (item.site_id) existing.sites.add(String(item.site_id));
+    existing.site_count = existing.sites.size;
+    summary[ingredientId] = existing;
+    return summary;
+  }, {});
+
+  const ingredientsWithStock = ingredients.map((ingredient) => {
+    const stock = stockSummaryByIngredient[String(ingredient.id)] || null;
+    return {
+      ...ingredient,
+      stock_summary: stock ? {
+        ...stock,
+        on_hand_quantity: Number(stock.on_hand_quantity.toFixed(6)),
+        reserved_quantity: Number(stock.reserved_quantity.toFixed(6)),
+        available_quantity: Number(stock.available_quantity.toFixed(6)),
+        total_value: Number(stock.total_value.toFixed(2)),
+        sites: undefined
+      } : {
+        on_hand_quantity: 0,
+        reserved_quantity: 0,
+        available_quantity: 0,
+        total_value: 0,
+        site_count: 0,
+        unit: ingredient.unit || ''
+      }
+    };
+  });
+
+  const categoryOptions = useMemo(() => {
+    const options = new Map();
+    ingredients.forEach((ingredient) => {
+      const value = ingredient.category;
+      const key = normalizeCategoryKey(value);
+      if (key && value) options.set(key, formatCategoryLabel(value));
+    });
+    inventory.forEach((item) => {
+      const ingredient = ingredients.find((candidate) => String(candidate.id) === String(item.ingredient_id));
+      const value = ingredient?.category || item.category;
+      const key = normalizeCategoryKey(value);
+      if (key && value) options.set(key, formatCategoryLabel(value));
+    });
+    return [
+      { value: 'all', label: 'All Categories' },
+      ...Array.from(options.entries())
+        .map(([value, label]) => ({ value, label }))
+        .sort((left, right) => left.label.localeCompare(right.label))
+    ];
+  }, [ingredients, inventory]);
+
   // Filtered data
-  const filteredIngredients = ingredients.filter(ing => {
+  const filteredIngredients = ingredientsWithStock.filter(ing => {
     const normalizedSearch = searchQuery.toLowerCase();
     const matchesSearch = ing.name?.toLowerCase().includes(normalizedSearch) ||
       getItemCode(ing, '').toLowerCase().includes(normalizedSearch);
-    const matchesCategory = selectedCategory === 'all' || ing.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+    const matchesCategory = selectedCategory === 'all' || normalizeCategoryKey(ing.category) === selectedCategory;
+    const matchesSource = selectedSourceName === 'all' || normalizeSourceName(ing.source_name) === selectedSourceName;
+    return matchesSearch && matchesCategory && matchesSource;
   });
 
   // Inventory enriched with ingredient nutritional data
@@ -191,15 +262,19 @@ export default function Ingredients() {
         ...item,
         ...getInventoryQuantities(item),
         _ing: ing,
-        item_code: getItemCodeFromRecords([ing, item])
+        item_code: getItemCodeFromRecords([ing, item]),
+        category: ing?.category || item.category || 'other',
+        ingredient_item_code: getItemCode(ing, ''),
+        inventory_item_code: getItemCode(item, '')
       };
     })
     .filter(item => {
       const matchesSite = selectedSite === 'all' || item.site_id === selectedSite;
+      const matchesSource = selectedInventorySourceName === 'all' || normalizeSourceName(item.source_name) === selectedInventorySourceName;
       const normalizedSearch = invSearch.toLowerCase();
       const matchesSearch = item.ingredient_name?.toLowerCase().includes(normalizedSearch) ||
         item.item_code.toLowerCase().includes(normalizedSearch);
-      return matchesSite && matchesSearch;
+      return matchesSite && matchesSearch && matchesSource;
     });
 
   const lowStock = enrichedInventory.filter(i => i.status === 'low_stock').length;
@@ -228,6 +303,7 @@ export default function Ingredients() {
       quantity: qty,
       unit: ing?.unit || 'kg',
       unit_cost: parseFloat(stockForm.unit_cost) || 0,
+      source_name: stockForm.source_name,
       batch_number: stockForm.batch_number,
       stock_date: stockForm.stock_date,
       received_date: stockForm.stock_date,
@@ -263,7 +339,7 @@ export default function Ingredients() {
                 </Button>
               ) : null}
             </>
-          ) : (
+          ) : activeTab === 'inventory' ? (
             <>
               <Button variant="outline" onClick={() => downloadCSV(
                 enrichedInventory.map((item) => putItemCodeAndNameFirst(item, {
@@ -281,7 +357,7 @@ export default function Ingredients() {
                 </Button>
               ) : null}
             </>
-          )}
+          ) : null}
         </PageHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
@@ -291,6 +367,9 @@ export default function Ingredients() {
             </TabsTrigger>
             <TabsTrigger value="inventory">
               <AlertTriangle className="w-4 h-4 mr-2" /> Inventory ({inventory.length})
+            </TabsTrigger>
+            <TabsTrigger value="stock-change-log">
+              <History className="w-4 h-4 mr-2" /> Stock Change Log
             </TabsTrigger>
           </TabsList>
 
@@ -313,8 +392,19 @@ export default function Ingredients() {
                     <SelectValue placeholder="Category" />
                   </SelectTrigger>
                   <SelectContent>
-                    {CATEGORIES.map(cat => (
+                    {categoryOptions.map(cat => (
                       <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={selectedSourceName} onValueChange={setSelectedSourceName}>
+                  <SelectTrigger className="w-full sm:w-[160px]">
+                    <SelectValue placeholder="Source Name" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Sources</SelectItem>
+                    {SOURCE_NAME_OPTIONS.map((source) => (
+                      <SelectItem key={source} value={source}>{source}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -359,7 +449,10 @@ export default function Ingredients() {
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
                         <TableHead>Category</TableHead>
+                        <TableHead>Source Name</TableHead>
                         <TableHead>Unit</TableHead>
+                        <TableHead className="text-right">On Hand</TableHead>
+                        <TableHead className="text-right">Available</TableHead>
                         <TableHead>Conversion Unit</TableHead>
                         <TableHead className="text-center">Cal/100g</TableHead>
                         <TableHead className="text-center">Protein</TableHead>
@@ -382,8 +475,25 @@ export default function Ingredients() {
                             <Badge className={CATEGORY_COLORS[ing.category] || 'bg-slate-100 text-slate-700'}>
                               {ing.category?.replace(/_/g, ' ') || '-'}
                             </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                                {normalizeSourceName(ing.source_name)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{ing.unit}</TableCell>
+                          <TableCell className="text-right">
+                            <span className="font-semibold text-slate-900">
+                              {formatQuantity(ing.stock_summary?.on_hand_quantity)}
+                            </span>
+                            <span className="ml-1 text-xs text-slate-500">{ing.stock_summary?.unit || ing.unit || ''}</span>
                           </TableCell>
-                          <TableCell>{ing.unit}</TableCell>
+                          <TableCell className="text-right">
+                            <span className="font-semibold text-cyan-800">
+                              {formatQuantity(ing.stock_summary?.available_quantity)}
+                            </span>
+                            <span className="ml-1 text-xs text-slate-500">{ing.stock_summary?.unit || ing.unit || ''}</span>
+                          </TableCell>
                           <TableCell>{ing.conversion_unit || '-'}</TableCell>
                           <TableCell className="text-center">
                             <span className="inline-flex items-center gap-1 text-orange-600 font-medium">
@@ -474,6 +584,17 @@ export default function Ingredients() {
                     {sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
+                <Select value={selectedInventorySourceName} onValueChange={setSelectedInventorySourceName}>
+                  <SelectTrigger className="w-full sm:w-[160px]">
+                    <SelectValue placeholder="Source Name" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Sources</SelectItem>
+                    {SOURCE_NAME_OPTIONS.map((source) => (
+                      <SelectItem key={source} value={source}>{source}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -494,7 +615,9 @@ export default function Ingredients() {
                       <TableRow>
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
+                        <TableHead>Category</TableHead>
                         <TableHead>Site</TableHead>
+                        <TableHead>Source Name</TableHead>
                         <TableHead>On Hand</TableHead>
                         <TableHead>Reserved</TableHead>
                         <TableHead>Available</TableHead>
@@ -520,7 +643,17 @@ export default function Ingredients() {
                           <TableRow key={item.id}>
                             <TableCell className="text-sm font-medium text-slate-600">{item.item_code}</TableCell>
                             <TableCell className="font-medium">{item.ingredient_name}</TableCell>
+                            <TableCell>
+                              <Badge className={CATEGORY_COLORS[normalizeCategoryKey(item.category)] || 'bg-slate-100 text-slate-700'}>
+                                {formatCategoryLabel(item.category)}
+                              </Badge>
+                            </TableCell>
                             <TableCell className="text-slate-500 text-sm">{item.site_name}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                                {normalizeSourceName(item.source_name)}
+                              </Badge>
+                            </TableCell>
                             <TableCell>
                               <span className="font-semibold">{item.on_hand_quantity}</span> <span className="text-slate-500 text-xs">{item.unit}</span>
                             </TableCell>
@@ -582,6 +715,15 @@ export default function Ingredients() {
               </Card>
             )}
           </TabsContent>
+
+          <TabsContent value="stock-change-log">
+            <StockChangeLog
+              title="Ingredient Stock Change Log"
+              description="Review stock changes for linked ingredients, including bulk uploads, manual receipts, production use, corrections, and transfers."
+              sites={stockSites}
+              ingredients={ingredients}
+            />
+          </TabsContent>
         </Tabs>
 
         {/* Ingredient Form */}
@@ -639,6 +781,17 @@ export default function Ingredients() {
                   />
                 </div>
               <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label>Source Name *</Label>
+                  <Select value={stockForm.source_name} onValueChange={(value) => setStockForm({ ...stockForm, source_name: value })}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder="Select source" /></SelectTrigger>
+                    <SelectContent>
+                      {SOURCE_NAME_OPTIONS.map((source) => (
+                        <SelectItem key={source} value={source}>{source}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div>
                   <Label>Quantity *</Label>
                   <Input type="number" min="0.001" step="0.001" value={stockForm.quantity} onChange={(e) => setStockForm({ ...stockForm, quantity: e.target.value })} className="mt-1" required />

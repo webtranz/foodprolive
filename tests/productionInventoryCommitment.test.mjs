@@ -348,6 +348,9 @@ test('approval reserves without a physical transaction and start consumes exactl
   assert.match(reserveBlock, /quantity_before: remaining,[\s\S]*quantity_after: remaining/);
   assert.doesNotMatch(reserveBlock, /postInventoryTransaction|deductStockWithExecutor/);
   assert.doesNotMatch(releaseBlock, /postInventoryTransaction|returnStockToCommittedLotsWithExecutor/);
+  assert.match(inventorySource, /function sanitizeProductionAllocationLayers/);
+  assert.match(inventorySource, /const \{ production_id: _productionId, \.\.\.safeLayer \}/);
+  assert.match(inventorySource, /sanitizeProductionAllocationLayers\(issued\.movement_layers\)/);
 
   assert.match(consumeBlock, /if \(\['consumed', 'partially_consumed'\]\.includes\(currentStatus\)\)[\s\S]*mutated: false/);
   assert.match(consumeBlock, /remaining_quantity: remainingAfter,[\s\S]*reserved_quantity: reservedAfter/);

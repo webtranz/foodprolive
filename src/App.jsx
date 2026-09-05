@@ -7,6 +7,8 @@ import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-d
 import PageNotFound from './lib/PageNotFound';
 import CategoryQRScan from './pages/CategoryQRScan';
 import AttendanceScan from './pages/AttendanceScan';
+import EmployeeMealQRScan from './pages/EmployeeMealQRScan';
+import EmployeeMealQRScanner from './pages/EmployeeMealQRScanner';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { canAccessPage } from '@/lib/pageAccess';
@@ -76,6 +78,7 @@ const AuthenticatedApp = () => {
       ))}
       <Route path="/CategoryQRScan" element={<CategoryQRScan />} />
       <Route path="/AttendanceScan" element={<AttendanceScan />} />
+      <Route path="/EmployeeMealQRScanner" element={<EmployeeMealQRScanner />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
@@ -90,6 +93,7 @@ function App() {
           <NavigationTracker />
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/EmployeeMealQRScan" element={<EmployeeMealQRScan />} />
             <Route path="*" element={<AuthenticatedApp />} />
           </Routes>
         </Router>

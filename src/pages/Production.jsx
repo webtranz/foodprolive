@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useLocation, useNavigate } from 'react-router-dom';
 import ProductionPlanningDashboard from '@/components/production/ProductionPlanningDashboard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,26 +11,40 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertCircle, CheckCircle2, XCircle, Brain, FileText, History } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Brain, CheckCircle2, ClipboardList, Factory, FileText, History, PackagePlus, Sparkles, Trash2, Wand2, XCircle } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
 import { format } from 'date-fns';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { formatCurrency } from '@/lib/currency';
 import StandardDecimalInput from '@/components/recipes/StandardDecimalInput';
+import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import { buildProductionPlanExportRows } from '@/lib/productionPlanning';
 import {
   getInventoryQuantities,
   getProductionInventoryState
 } from '@/lib/inventoryAvailability';
-import {
-  calculateIngredientCost,
-  convertIngredientQuantity
-} from '../../shared/ingredientUnits.js';
-import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
-import { calculateYieldAdjustedQuantity } from '../../shared/ingredientYield.js';
+import { convertIngredientQuantity } from '../../shared/ingredientUnits.js';
+import { buildAutomaticProductionYieldSummary } from '../../shared/productionReconciliation.js';
 import { formatRecipeQuantity, getRecipeQuantityPrecision, roundStandardDecimal } from '../../shared/recipeNumbers.js';
 import { getItemCode } from '../../shared/itemCode.js';
+import {
+  aggregateProductionIngredientLines,
+  buildInventoryReplacementSuggestions,
+  buildMenuIssueMealGroups,
+  buildMenuPlanIssueItems,
+  buildProductionIngredientLine,
+  buildProductionIngredientSnapshot,
+  buildProductionIngredientsForSubmit,
+  buildProductionOverrideAudit,
+  finiteProductionNumber,
+  getMenuIssueMealGroupKey,
+  getProductionIngredientLineKey,
+  normalizeIssueMealView,
+  PRODUCTION_ISSUE_MEAL_LABELS,
+  PRODUCTION_ISSUE_MEAL_TYPES,
+  recalculateProductionIngredientSnapshot
+} from '@/lib/productionIssue';
 import {
   canStartApprovedProduction,
   getPendingAreaApprovalProductions,
@@ -40,6 +55,12 @@ import {
   requiresAreaProductionApproval
 } from '../../shared/productionWorkflow.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
+import {
+  getMenuCategoryOptions,
+  MENU_CUISINE_OPTIONS,
+  normalizeMenuCategory,
+  normalizeMenuCuisine
+} from '../../shared/menuCategories.js';
 
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -101,7 +122,415 @@ function ApprovalHistoryList({ production, emptyMessage = 'No approval actions h
   );
 }
 
+function formatOverrideAction(action) {
+  const labels = {
+    added: 'Added for production',
+    replaced: 'Replaced for production',
+    zeroed: 'Zeroed for production',
+    quantity_changed: 'Quantity changed'
+  };
+  return labels[action] || String(action || '').replace(/_/g, ' ');
+}
+
+function productionOverrideTone(action) {
+  const tones = {
+    added: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    replaced: 'border-indigo-200 bg-indigo-50 text-indigo-700',
+    zeroed: 'border-red-200 bg-red-50 text-red-700',
+    quantity_changed: 'border-amber-200 bg-amber-50 text-amber-700'
+  };
+  return tones[action] || 'border-slate-200 bg-slate-50 text-slate-700';
+}
+
+function ProductionOverrideSummary({ production }) {
+  const overrides = Array.isArray(production?.production_overrides)
+    ? production.production_overrides
+    : (Array.isArray(production?.ingredients_used) ? production.ingredients_used : [])
+      .filter((line) => line.production_override_action)
+      .map((line, index) => ({
+        id: line.line_id || `${line.ingredient_id}-${index}`,
+        action: line.production_override_action,
+        original_ingredient_name: line.original_ingredient_name,
+        original_quantity: line.original_raw_quantity,
+        original_unit: line.original_unit,
+        final_ingredient_name: line.ingredient_name,
+        final_quantity: line.raw_quantity ?? line.required_quantity ?? line.planned_quantity,
+        final_unit: line.unit,
+        reason: line.production_override_reason || line.ai_suggestion_reason || ''
+      }));
+
+  if (overrides.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-4">
+      <div className="flex items-start gap-2">
+        <ClipboardList className="mt-0.5 h-4 w-4 flex-shrink-0 text-indigo-700" />
+        <div>
+          <p className="font-medium text-indigo-950">Production-only recipe changes</p>
+          <p className="mt-1 text-sm text-indigo-800">
+            These changes are stored on this production request only. The master recipe is unchanged.
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 grid gap-2">
+        {overrides.map((override) => (
+          <div key={override.id} className="rounded-lg border border-white/80 bg-white px-3 py-2 text-sm text-slate-700">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className={productionOverrideTone(override.action)}>
+                {formatOverrideAction(override.action)}
+              </Badge>
+              <span className="font-medium text-slate-900">
+                {override.original_ingredient_name || 'New item'} → {override.final_ingredient_name || 'No item'}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              {formatRecipeQuantity(override.original_quantity, override.original_unit || '')} {override.original_unit || ''}
+              {' '}→{' '}
+              {formatRecipeQuantity(override.final_quantity, override.final_unit || '')} {override.final_unit || ''}
+              {override.reason ? ` · ${override.reason}` : ''}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProductionIngredientSnapshotEditor({
+  title = 'Production recipe snapshot',
+  description = 'Editable for this production only. Master recipe quantities remain unchanged.',
+  lines = [],
+  ingredients = [],
+  inventorySiteId = '',
+  suggestionsByLine = {},
+  suggestionLoadingLine = '',
+  estimatedBatchCost = 0,
+  estimatedCostPerServing = 0,
+  aggregateShortageLines = [],
+  onLineQuantityChange,
+  onLineIngredientChange,
+  onZeroLine,
+  onAddIngredient,
+  onRemoveLine,
+  onRequestSuggestions,
+  onApplySuggestion
+}) {
+  const [addIngredientId, setAddIngredientId] = useState('');
+  const [addIngredient, setAddIngredient] = useState(null);
+  const [addQuantity, setAddQuantity] = useState('');
+  const selectedAddIngredient = addIngredient || ingredients.find((ingredient) => String(ingredient.id) === String(addIngredientId));
+  const shortageCount = lines.filter((line) => !line.sufficient).length;
+  const overrideCount = lines.filter((line) => line.production_override_action).length;
+
+  const handleAddIngredient = () => {
+    if (!selectedAddIngredient || !(Number(addQuantity) > 0)) return;
+    onAddIngredient?.({
+      ingredient_id: selectedAddIngredient.id,
+      ingredient_name: selectedAddIngredient.name || 'Ingredient',
+      ingredient: selectedAddIngredient,
+      quantity: Number(addQuantity),
+      unit: selectedAddIngredient.unit || 'unit'
+    });
+    setAddIngredientId('');
+    setAddIngredient(null);
+    setAddQuantity('');
+  };
+
+  return (
+    <div className="rounded-2xl border border-blue-100 bg-blue-50/80 p-4">
+      <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-blue-600" />
+            <div>
+              <h4 className="font-medium text-blue-950">{title}</h4>
+              <p className="mt-1 text-sm text-blue-800">{description}</p>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4 2xl:min-w-[560px]">
+          <div className="rounded-xl border border-blue-100 bg-white px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Batch cost</p>
+            <p className="mt-1 text-lg font-bold text-emerald-700">{formatCurrency(estimatedBatchCost)}</p>
+          </div>
+          <div className="rounded-xl border border-blue-100 bg-white px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Cost / serving</p>
+            <p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(estimatedCostPerServing)}</p>
+          </div>
+          <div className="rounded-xl border border-blue-100 bg-white px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Short lines</p>
+            <p className={`mt-1 text-lg font-bold ${shortageCount > 0 ? 'text-red-700' : 'text-emerald-700'}`}>{shortageCount}</p>
+          </div>
+          <div className="rounded-xl border border-blue-100 bg-white px-3 py-2">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Overrides</p>
+            <p className="mt-1 text-lg font-bold text-indigo-700">{overrideCount}</p>
+          </div>
+        </div>
+      </div>
+
+      {aggregateShortageLines.length > 0 ? (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-900">
+          <p className="font-semibold">Short after selected meal demand</p>
+          <p className="mt-1 text-xs text-red-800">
+            These ingredient lines are short after all selected dishes are combined. Use the highlighted lines below to zero out, replace, or adjust quantities for production only.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {aggregateShortageLines.map((line) => (
+              <Badge key={`${line.ingredient_id}-${line.unit}`} className="bg-red-600">
+                {line.ingredient_name}: short {formatRecipeQuantity(line.shortage, line.inventory_unit || line.unit)} {line.inventory_unit || line.unit}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-3">
+        {lines.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-sm text-slate-500">
+            No ingredient lines are available for this recipe yet. Add a production-only ingredient below if stock should still be reserved or recorded for this run.
+          </div>
+        ) : null}
+        {lines.map((line, index) => {
+          const lineKey = getProductionIngredientLineKey(line, index);
+          const lineSuggestions = suggestionsByLine[lineKey] || [];
+          const isSuggestionLoading = suggestionLoadingLine === lineKey;
+          const isAddedLine = line.production_override_action === 'added';
+          return (
+            <div
+              key={lineKey}
+              className={`rounded-xl border bg-white p-4 shadow-sm ${
+                line.aggregate_shortage ? 'border-red-300 ring-2 ring-red-100' : 'border-slate-200'
+              }`}
+            >
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {line.item_code && line.item_code !== '—' ? (
+                      <Badge variant="outline" className="font-mono text-[11px] text-slate-600">{line.item_code}</Badge>
+                    ) : null}
+                    {line.production_override_action ? (
+                      <Badge variant="outline" className={productionOverrideTone(line.production_override_action)}>
+                        {formatOverrideAction(line.production_override_action)}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">Master recipe line</Badge>
+                    )}
+                  </div>
+                  <p className="mt-2 break-words text-sm font-semibold text-slate-950">{line.ingredient_name}</p>
+                  {line.production_override_action === 'replaced' ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Original: {line.original_ingredient_name} · {formatRecipeQuantity(line.original_raw_quantity, line.original_unit)} {line.original_unit}
+                    </p>
+                  ) : null}
+                </div>
+                <Badge className={line.sufficient ? 'bg-emerald-600' : 'bg-red-600'}>
+                  {line.sufficient
+                    ? 'Sufficient'
+                    : `${line.aggregate_shortage ? 'Meal short' : 'Short'} ${formatRecipeQuantity(line.shortage, line.inventory_unit)} ${line.inventory_unit}`}
+                </Badge>
+              </div>
+
+              <div className="mt-4 grid gap-3 2xl:grid-cols-[minmax(0,1fr)_minmax(260px,0.45fr)]">
+                <div className="grid gap-3 lg:grid-cols-3">
+                  <div>
+                    <Label className="text-xs text-slate-500">Ingredient used for this production</Label>
+                    <IngredientSearchCombobox
+                      value={line.ingredient_id || ''}
+                      selectedIngredient={ingredients.find((ingredient) => String(ingredient.id) === String(line.ingredient_id)) || null}
+                      siteId={inventorySiteId}
+                      placeholder="Search replacement ingredient..."
+                      className="mt-1"
+                      onValueChange={(value, ingredient) => onLineIngredientChange?.(lineKey, value, ingredient)}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-slate-500">Production quantity</Label>
+                    <StandardDecimalInput
+                      value={line.raw_quantity}
+                      unit={line.unit}
+                      precision={getRecipeQuantityPrecision(line.unit)}
+                      min={0}
+                      allowZero
+                      allowEmpty={false}
+                      label={`${line.ingredient_name} quantity`}
+                      onValueChange={(value) => onLineQuantityChange?.(lineKey, value)}
+                      className="mt-1 bg-white"
+                    />
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Store availability</p>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <p className="text-slate-500">On hand</p>
+                        <p className="font-semibold text-slate-900">{formatRecipeQuantity(line.on_hand_stock, line.inventory_unit)}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500">Reserved</p>
+                        <p className="font-semibold text-slate-900">{formatRecipeQuantity(line.reserved_stock, line.inventory_unit)}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500">Available</p>
+                        <p className="font-semibold text-slate-900">{formatRecipeQuantity(line.available_stock, line.inventory_unit)}</p>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">{line.inventory_unit}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <p className="text-slate-500">Yield</p>
+                      <p className="font-semibold text-slate-900">{finiteProductionNumber(line.yield_percent, 100).toFixed(2)}%</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Yielded output</p>
+                      <p className="font-semibold text-emerald-700">
+                        {formatRecipeQuantity(line.yielded_quantity, line.unit)} {line.unit}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Unit cost</p>
+                      <p className="font-semibold text-slate-900">{formatCurrency(line.unit_cost)} / {line.cost_unit}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Line cost</p>
+                      <p className="font-semibold text-slate-900">{formatCurrency(line.estimated_cost)}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-red-200 text-red-700 hover:bg-red-50"
+                  onClick={() => onZeroLine?.(lineKey)}
+                >
+                  Zero out
+                </Button>
+                {isAddedLine ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onRemoveLine?.(lineKey)}
+                  >
+                    <Trash2 className="mr-1.5 h-4 w-4" />
+                    Remove added line
+                  </Button>
+                ) : null}
+                {!line.sufficient ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                    disabled={isSuggestionLoading}
+                    onClick={() => onRequestSuggestions?.(lineKey, line)}
+                  >
+                    {isSuggestionLoading ? (
+                      <Sparkles className="mr-1.5 h-4 w-4 animate-pulse" />
+                    ) : (
+                      <Wand2 className="mr-1.5 h-4 w-4" />
+                    )}
+                    {isSuggestionLoading ? 'Finding replacements...' : 'AI replacement suggestions'}
+                  </Button>
+                ) : null}
+              </div>
+
+              {lineSuggestions.length > 0 ? (
+                <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                  {lineSuggestions.map((suggestion) => (
+                    <div key={`${lineKey}-${suggestion.ingredient_id}`} className="rounded-lg border border-indigo-100 bg-indigo-50/70 p-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-semibold text-indigo-950">{suggestion.ingredient_name}</p>
+                          <p className="mt-1 text-xs text-indigo-800">
+                            Available {formatRecipeQuantity(suggestion.available_quantity, suggestion.unit)} {suggestion.unit}
+                            {' · '}
+                            suggested {formatRecipeQuantity(suggestion.suggested_quantity, suggestion.unit)} {suggestion.unit}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-600">{suggestion.reason}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="bg-indigo-700 hover:bg-indigo-800"
+                          onClick={() => onApplySuggestion?.(lineKey, suggestion)}
+                        >
+                          Apply
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      {onAddIngredient ? (
+        <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <PackagePlus className="h-4 w-4 text-slate-600" />
+            <p className="font-medium text-slate-900">Add production-only ingredient</p>
+          </div>
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_180px_auto] xl:items-end">
+            <div>
+              <Label className="text-xs text-slate-500">Ingredient</Label>
+              <IngredientSearchCombobox
+                value={addIngredientId}
+                selectedIngredient={selectedAddIngredient}
+                siteId={inventorySiteId}
+                placeholder="Search ingredient to add..."
+                className="mt-1"
+                allowClear
+                clearLabel="No additional ingredient"
+                onValueChange={(value, ingredient) => {
+                  setAddIngredientId(value);
+                  setAddIngredient(ingredient);
+                }}
+              />
+            </div>
+            <div>
+              <Label className="text-xs text-slate-500">Quantity</Label>
+              <StandardDecimalInput
+                value={addQuantity}
+                unit={selectedAddIngredient?.unit || 'unit'}
+                precision={getRecipeQuantityPrecision(selectedAddIngredient?.unit || 'unit')}
+                min={0}
+                allowZero={false}
+                allowEmpty
+                label="Additional ingredient quantity"
+                onValueChange={setAddQuantity}
+                className="mt-1 bg-white"
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleAddIngredient}
+              disabled={!selectedAddIngredient || !(Number(addQuantity) > 0)}
+            >
+              <PackagePlus className="mr-2 h-4 w-4" />
+              Add ingredient
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Production() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { can, role: currentRole } = usePermissions();
   const { allowedSiteIds, isAdmin, siteId: assignedSiteId } = useSiteContext();
   const canReviewAreaApprovals = can('approve_production')
@@ -115,6 +544,8 @@ export default function Production() {
     fulfillment_store_id: '',
     production_date: format(new Date(), 'yyyy-MM-dd'),
     meal_type: 'lunch',
+    menu_type: 'general',
+    menu_category: 'senior',
     recipe_id: '',
     target_servings: null,
     kitchen_station: '',
@@ -126,6 +557,7 @@ export default function Production() {
   const [selectedProduction, setSelectedProduction] = useState(null);
   const [editingProduction, setEditingProduction] = useState(null);
   const [actionError, setActionError] = useState('');
+  const [actionMessage, setActionMessage] = useState('');
   const [estimatedBatchCost, setEstimatedBatchCost] = useState(0);
   const [estimatedCostPerServing, setEstimatedCostPerServing] = useState(0);
   const [reviewNotes, setReviewNotes] = useState('');
@@ -133,7 +565,6 @@ export default function Production() {
   const [reviewFulfillmentStoreId, setReviewFulfillmentStoreId] = useState('');
   const [completionOpen, setCompletionOpen] = useState(false);
   const [completionProduction, setCompletionProduction] = useState(null);
-  const [completionQuantities, setCompletionQuantities] = useState([]);
   const [completionFulfillmentStoreId, setCompletionFulfillmentStoreId] = useState('');
   const [selectedConsumptionReport, setSelectedConsumptionReport] = useState(null);
   const [reportLoadingId, setReportLoadingId] = useState('');
@@ -142,6 +573,18 @@ export default function Production() {
   const [inventoryActionMode, setInventoryActionMode] = useState('adjust');
   const [inventoryActionServings, setInventoryActionServings] = useState(null);
   const [inventoryActionReason, setInventoryActionReason] = useState('');
+  const [singleRecipeSuggestions, setSingleRecipeSuggestions] = useState({});
+  const [singleRecipeSuggestionLoadingLine, setSingleRecipeSuggestionLoadingLine] = useState('');
+  const [issueDialogOpen, setIssueDialogOpen] = useState(false);
+  const [issueSource, setIssueSource] = useState(null);
+  const [issueMealView, setIssueMealView] = useState('all');
+  const [issueItems, setIssueItems] = useState([]);
+  const [activeIssueItemKey, setActiveIssueItemKey] = useState('');
+  const [issueFulfillmentStoreId, setIssueFulfillmentStoreId] = useState('');
+  const [issueNotes, setIssueNotes] = useState('');
+  const [issueSnapshots, setIssueSnapshots] = useState({});
+  const [issueSuggestions, setIssueSuggestions] = useState({});
+  const [issueSuggestionLoadingKey, setIssueSuggestionLoadingKey] = useState('');
 
   const queryClient = useQueryClient();
 
@@ -225,10 +668,76 @@ export default function Production() {
     }
   });
 
+  const issueProductionMutation = useMutation({
+    mutationFn: async ({ status }) => {
+      const selectedItems = issueItems.filter((item) => (
+        item.selected
+        && !isIssueItemAlreadyIssued(item)
+        && Number(item.production_covers) > 0
+      ));
+      if (selectedItems.length === 0) {
+        throw new Error('Select at least one menu item that has not already been issued.');
+      }
+      const mealGroups = buildMenuIssueMealGroups(selectedItems, {
+        snapshotsByItemKey: issueSnapshots,
+        ingredients,
+        inventory,
+        siteId: issueFulfillmentStoreId
+      });
+      if (mealGroups.length === 0) {
+        throw new Error('Select at least one meal group before issuing production.');
+      }
+      const created = [];
+      for (const group of mealGroups) {
+        created.push(await base44.entities.Production.create(buildMenuIssueSubmitData(group, status)));
+      }
+      return created;
+    },
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      setIssueDialogOpen(false);
+      setIssueSource(null);
+      setIssueItems([]);
+      setIssueSnapshots({});
+      setIssueSuggestions({});
+      setIssueNotes('');
+      setActionError('');
+      setActionMessage(`${created.length} meal production request${created.length === 1 ? '' : 's'} issued from the menu plan.`);
+    },
+    onError: (error) => {
+      setActionError(error.message || 'Unable to issue production from the menu plan.');
+    }
+  });
+
   const { data: inventory = [], error: inventoryError } = useQuery({
     queryKey: ['inventory'],
     queryFn: () => base44.inventory.getStockOnHand(),
     refetchInterval: 300000
+  });
+
+  const {
+    data: issuePlanResponse,
+    isLoading: issuePlanLoading,
+    error: issuePlanError
+  } = useQuery({
+    queryKey: [
+      'issueMenuPlan',
+      issueSource?.site_id || '',
+      issueSource?.plan_date || '',
+      issueSource?.menu_type || '',
+      issueSource?.menu_category || ''
+    ],
+    queryFn: () => base44.menuPlanning.getByDate(issueSource.site_id, issueSource.plan_date, {
+      cuisine_type: issueSource.menu_type,
+      menu_category: issueSource.menu_category
+    }),
+    enabled: Boolean(
+      issueDialogOpen
+      && issueSource?.site_id
+      && issueSource?.plan_date
+    )
   });
 
   useEffect(() => {
@@ -276,6 +785,140 @@ export default function Production() {
     'assistant_general_manager',
     'area_manager'
   ].includes(currentRole);
+  const issuePlan = issuePlanResponse?.plan || issueSource?.plan || null;
+  const issueSite = sites.find((site) => String(site.id) === String(issueSource?.site_id || issuePlan?.site_id || '')) || null;
+  const issueFulfillmentStoreOptions = useMemo(() => {
+    const siteId = issueSite?.id || issueSource?.site_id || '';
+    if (!siteId) return [];
+    return visibleSites.filter((site) => (
+      site.is_active !== false
+      && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
+      && String(site.parent_site_id || '') === String(siteId)
+    ));
+  }, [issueSite?.id, issueSource?.site_id, visibleSites]);
+  const issueAlreadyCreatedKeys = useMemo(() => {
+    const planId = String(issuePlan?.id || issueSource?.menu_plan_id || '');
+    const keys = new Set();
+    productions
+      .filter((production) => (
+        planId
+        && production.source_menu_plan_id
+        && String(production.source_menu_plan_id) === planId
+        && !['cancelled', 'rejected'].includes(String(production.status || '').toLowerCase())
+      ))
+      .forEach((production) => {
+        if (production.source_menu_plan_item_key) {
+          keys.add(production.source_menu_plan_item_key);
+        }
+        if (production.production_issue_group_key) {
+          keys.add(production.production_issue_group_key);
+        }
+        if (production.source_menu_plan_meal_type) {
+          keys.add(`${planId}::${production.source_menu_plan_meal_type}`);
+        }
+        (Array.isArray(production.source_menu_plan_item_keys)
+          ? production.source_menu_plan_item_keys
+          : []).filter(Boolean).forEach((key) => keys.add(key));
+      });
+    return keys;
+  }, [issuePlan?.id, issueSource?.menu_plan_id, productions]);
+  const activeIssueItem = issueItems.find((item) => item.key === activeIssueItemKey) || issueItems[0] || null;
+  const activeIssueSnapshot = activeIssueItem ? issueSnapshots[activeIssueItem.key] || [] : [];
+  const activeIssueSuggestions = activeIssueItem ? issueSuggestions[activeIssueItem.key] || {} : {};
+  const activeIssueSuggestionPrefix = activeIssueItem ? `${activeIssueItem.key}|||` : '';
+  const activeIssueSuggestionLoadingLine = activeIssueSuggestionPrefix && issueSuggestionLoadingKey.startsWith(activeIssueSuggestionPrefix)
+    ? issueSuggestionLoadingKey.slice(activeIssueSuggestionPrefix.length)
+    : '';
+
+  const isIssueItemAlreadyIssued = (item) => (
+    issueAlreadyCreatedKeys.has(item.key)
+    || issueAlreadyCreatedKeys.has(getMenuIssueMealGroupKey(item))
+  );
+
+  useEffect(() => {
+    const routeIssueRequest = location.state?.issueProduction;
+    if (!routeIssueRequest || routeIssueRequest.source !== 'menu_planning') {
+      return;
+    }
+
+    setIssueSource(routeIssueRequest);
+    setIssueMealView(normalizeIssueMealView(routeIssueRequest.meal_view));
+    setIssueDialogOpen(true);
+    setIssueFulfillmentStoreId('');
+    setIssueNotes('');
+    setIssueItems([]);
+    setIssueSnapshots({});
+    setIssueSuggestions({});
+    setActionError('');
+    setActionMessage('');
+    if (routeIssueRequest.plan_date) {
+      setSelectedDate(routeIssueRequest.plan_date);
+    }
+    if (routeIssueRequest.site_id) {
+      setSelectedSite(routeIssueRequest.site_id);
+    }
+    navigate('/Production', { replace: true, state: {} });
+  }, [location.state, navigate]);
+
+  useEffect(() => {
+    if (!issueDialogOpen) {
+      return;
+    }
+    const currentStoreIsValid = issueFulfillmentStoreOptions.some(
+      (store) => String(store.id) === String(issueFulfillmentStoreId || '')
+    );
+    if (currentStoreIsValid) {
+      return;
+    }
+    setIssueFulfillmentStoreId(issueFulfillmentStoreOptions.length === 1 ? issueFulfillmentStoreOptions[0].id : '');
+  }, [issueDialogOpen, issueFulfillmentStoreId, issueFulfillmentStoreOptions]);
+
+  useEffect(() => {
+    if (!issueDialogOpen || !issuePlan) {
+      return;
+    }
+    const items = buildMenuPlanIssueItems(issuePlan, { mealView: issueMealView, recipes });
+    setIssueItems((currentItems) => {
+      const currentByKey = new Map(currentItems.map((item) => [item.key, item]));
+      return items.map((item) => ({
+        ...item,
+        selected: currentByKey.has(item.key) ? currentByKey.get(item.key).selected : true,
+        production_covers: currentByKey.get(item.key)?.production_covers ?? item.production_covers
+      }));
+    });
+    setActiveIssueItemKey((current) => (items.some((item) => item.key === current) ? current : items[0]?.key || ''));
+  }, [issueDialogOpen, issueMealView, issuePlan, recipes]);
+
+  useEffect(() => {
+    if (!issueDialogOpen || issueItems.length === 0 || !issueFulfillmentStoreId) {
+      return;
+    }
+    setIssueSnapshots((currentSnapshots) => {
+      const nextSnapshots = {};
+      issueItems.forEach((item) => {
+        const existingLines = currentSnapshots[item.key];
+        if (Array.isArray(existingLines) && existingLines.length > 0) {
+          nextSnapshots[item.key] = recalculateProductionIngredientSnapshot(existingLines, {
+            ingredients,
+            inventory,
+            siteId: issueFulfillmentStoreId
+          }).lines;
+          return;
+        }
+
+        const recipe = recipes.find((entry) => String(entry.id) === String(item.recipe_id));
+        nextSnapshots[item.key] = buildProductionIngredientSnapshot({
+          recipe,
+          recipes,
+          ingredients,
+          inventory,
+          siteId: issueFulfillmentStoreId,
+          targetServings: item.production_covers
+        }).lines;
+      });
+      return nextSnapshots;
+    });
+  }, [ingredients, inventory, issueDialogOpen, issueFulfillmentStoreId, issueItems, recipes]);
 
   useEffect(() => {
     if (canViewAllAccessibleSites) {
@@ -309,10 +952,9 @@ export default function Production() {
   }, [formData.fulfillment_store_id, formData.site_id, fulfillmentStoreOptions]);
 
   const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status, ingredientQuantities = [], fulfillmentStoreId = '' }) => {
+    mutationFn: async ({ id, status, fulfillmentStoreId = '' }) => {
       if (status === 'completed') {
         await base44.inventory.completeProduction(id, {
-          ingredient_quantities: ingredientQuantities,
           fulfillment_store_id: fulfillmentStoreId || undefined
         });
         return;
@@ -333,9 +975,9 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
       queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
+      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
       setCompletionOpen(false);
       setCompletionProduction(null);
-      setCompletionQuantities([]);
       setCompletionFulfillmentStoreId('');
       setActionError('');
     },
@@ -383,6 +1025,8 @@ export default function Production() {
       fulfillment_store_id: '',
       production_date: format(new Date(), 'yyyy-MM-dd'),
       meal_type: 'lunch',
+      menu_type: 'general',
+      menu_category: 'senior',
       recipe_id: '',
       target_servings: null,
       kitchen_station: '',
@@ -395,6 +1039,8 @@ export default function Production() {
     setEstimatedCostPerServing(0);
     setReviewFulfillmentStoreId('');
     setCompletionFulfillmentStoreId('');
+    setSingleRecipeSuggestions({});
+    setSingleRecipeSuggestionLoadingLine('');
   };
 
   // Calculate required ingredients and check inventory when recipe or servings change
@@ -406,81 +1052,31 @@ export default function Production() {
       && formData.fulfillment_store_id
     ) {
       const recipe = recipes.find(r => r.id === formData.recipe_id);
-      const hasRecipeComponents = recipe
-        && ((Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0)
-          || (Array.isArray(recipe.sub_recipes) && recipe.sub_recipes.length > 0));
-      if (hasRecipeComponents) {
-        const multiplier = recipe.servings > 0
-          ? Number(formData.target_servings) / recipe.servings
-          : Number(formData.target_servings) || 1;
-        const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
-        const siteInventory = inventory.filter(i => i.site_id === inventorySiteId);
-        const expandedRecipe = expandRecipeIngredients(
+      const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
+      const editingFromSameSnapshot = editingProduction
+        && String(editingProduction.recipe_id || '') === String(formData.recipe_id)
+        && Number(editingProduction.target_servings || 0) === Number(formData.target_servings || 0)
+        && Array.isArray(editingProduction.ingredients_used)
+        && editingProduction.ingredients_used.length > 0;
+      const snapshot = editingFromSameSnapshot
+        ? recalculateProductionIngredientSnapshot(editingProduction.ingredients_used, {
+          ingredients,
+          inventory,
+          siteId: inventorySiteId
+        })
+        : buildProductionIngredientSnapshot({
           recipe,
           recipes,
           ingredients,
-          { multiplier, aggregate: true }
-        );
-        
-        const calculated = expandedRecipe.ingredients.map(ing => {
-          const ingredientData = ingredients.find(i => i.id === ing.ingredient_id);
-          const plannedQty = ing.quantity || 0;
-          const yieldAdjustment = calculateYieldAdjustedQuantity(plannedQty, ingredientData);
-          const adjustedQty = yieldAdjustment.required_raw_quantity;
-          
-          const invItem = siteInventory.find(i => i.ingredient_id === ing.ingredient_id);
-          const inventoryUnit = invItem?.unit || ingredientData?.unit || ing.unit;
-          const costUnit = ingredientData?.unit || inventoryUnit;
-          const requiredInventoryQty = convertIngredientQuantity(
-            adjustedQty,
-            ing.unit,
-            inventoryUnit,
-            ingredientData
-          );
-          const costQuantity = convertIngredientQuantity(
-            adjustedQty,
-            ing.unit,
-            costUnit,
-            ingredientData
-          );
-          const stockQuantities = getInventoryQuantities(invItem);
-          const availableStock = stockQuantities.available_quantity;
-          const shortage = Math.max(0, requiredInventoryQty - availableStock);
-          const unitCost = toNumber(ingredientData?.cost_per_unit, 0);
-          const estimatedCost = calculateIngredientCost(adjustedQty, ing.unit, ingredientData, unitCost);
-          
-          return {
-            item_code: getItemCode(ingredientData, getItemCode(ing)),
-            ingredient_id: ing.ingredient_id,
-            ingredient_name: ing.ingredient_name,
-            source_recipe_names: ing.source_recipe_names || [],
-            planned_quantity: roundStandardDecimal(plannedQty, getRecipeQuantityPrecision(ing.unit)),
-            adjusted_quantity: roundStandardDecimal(adjustedQty, getRecipeQuantityPrecision(ing.unit)),
-            on_hand_stock: roundStandardDecimal(stockQuantities.on_hand_quantity, getRecipeQuantityPrecision(inventoryUnit)),
-            reserved_stock: roundStandardDecimal(stockQuantities.reserved_quantity, getRecipeQuantityPrecision(inventoryUnit)),
-            available_stock: roundStandardDecimal(availableStock, getRecipeQuantityPrecision(inventoryUnit)),
-            current_stock: roundStandardDecimal(availableStock, getRecipeQuantityPrecision(inventoryUnit)),
-            shortage: roundStandardDecimal(shortage, getRecipeQuantityPrecision(inventoryUnit)),
-            unit: ing.unit,
-            inventory_unit: inventoryUnit,
-            cost_quantity: Number(costQuantity.toFixed(4)),
-            cost_unit: costUnit,
-            yield_multiplier: Number(yieldAdjustment.yield_multiplier.toFixed(6)),
-            yield_percent: Number(yieldAdjustment.yield_percent.toFixed(2)),
-            yield_source: yieldAdjustment.yield_source,
-            shrinkage_percent: toNumber(ingredientData?.shrinkage_percent, 0),
-            sufficient: availableStock >= requiredInventoryQty,
-            unit_cost: Number(unitCost.toFixed(2)),
-            estimated_cost: Number(estimatedCost.toFixed(2))
-          };
+          inventory,
+          siteId: inventorySiteId,
+          targetServings: formData.target_servings
         });
-        setCalculatedIngredients(calculated);
-        setInventoryCheck(calculated);
-        const totalCost = calculated.reduce((sum, ingredient) => sum + toNumber(ingredient.estimated_cost, 0), 0);
-        const servings = Math.max(1, toNumber(formData.target_servings, 0));
-        setEstimatedBatchCost(Number(totalCost.toFixed(2)));
-        setEstimatedCostPerServing(Number((totalCost / servings).toFixed(2)));
-      }
+      const servingCount = Math.max(1, finiteProductionNumber(formData.target_servings, 0));
+      setCalculatedIngredients(snapshot.lines);
+      setInventoryCheck(snapshot.lines);
+      setEstimatedBatchCost(snapshot.estimatedBatchCost || 0);
+      setEstimatedCostPerServing(snapshot.estimatedCostPerServing ?? Number(((snapshot.estimatedBatchCost || 0) / servingCount).toFixed(2)));
     } else {
       setCalculatedIngredients([]);
       setInventoryCheck([]);
@@ -492,6 +1088,7 @@ export default function Production() {
     formData.recipe_id,
     formData.target_servings,
     formData.site_id,
+    editingProduction,
     recipes,
     ingredients,
     inventory
@@ -614,33 +1211,31 @@ export default function Production() {
     const site = visibleSites.find((s) => s.id === formData.site_id) || sites.find((s) => s.id === formData.site_id);
     const fulfillmentStore = sites.find((s) => s.id === formData.fulfillment_store_id);
     const recipe = recipes.find(r => r.id === formData.recipe_id);
+    const productionOverrides = buildProductionOverrideAudit(calculatedIngredients);
 
     return {
       ...formData,
+      cuisine_type: formData.menu_type,
       site_name: site?.name || '',
       fulfillment_store_id: fulfillmentStore?.id || '',
       fulfillment_store_name: fulfillmentStore?.name || '',
       recipe_name: recipe?.name || '',
       target_servings: Number(formData.target_servings) || 0,
-      ingredients_used: calculatedIngredients.map(ing => ({
-        item_code: ing.item_code === '—' ? '' : ing.item_code,
-        ingredient_id: ing.ingredient_id,
-        ingredient_name: ing.ingredient_name,
-        source_recipe_names: ing.source_recipe_names,
-        net_quantity: ing.planned_quantity,
-        planned_quantity: ing.adjusted_quantity,
-        required_quantity: ing.adjusted_quantity,
-        yield_adjusted_quantity: ing.adjusted_quantity,
-        yield_multiplier: ing.yield_multiplier,
-        yield_percent: ing.yield_percent,
-        yield_source: ing.yield_source,
-        actual_quantity: null,
-        unit: ing.unit,
-        cost_quantity: ing.cost_quantity,
-        cost_unit: ing.cost_unit,
-        unit_cost: ing.unit_cost,
-        estimated_cost: ing.estimated_cost
-      })),
+      recipe_snapshot_mode: 'production_only_override',
+      recipe_snapshot_locked: true,
+      original_recipe_snapshot: calculatedIngredients.map((line, index) => {
+        const isAdded = line.production_override_action === 'added';
+        return {
+          line_id: getProductionIngredientLineKey(line, index),
+          ingredient_id: isAdded ? null : (line.original_ingredient_id || line.ingredient_id),
+          ingredient_name: isAdded ? null : (line.original_ingredient_name || line.ingredient_name),
+          quantity: isAdded ? 0 : (line.original_raw_quantity ?? line.raw_quantity),
+          unit: isAdded ? null : (line.original_unit || line.unit)
+        };
+      }),
+      ingredients_used: buildProductionIngredientsForSubmit(calculatedIngredients),
+      production_overrides: productionOverrides,
+      production_override_count: productionOverrides.length,
       total_calories: recipe?.calories_per_serving 
         ? recipe.calories_per_serving * Number(formData.target_servings)
         : 0,
@@ -662,9 +1257,8 @@ export default function Production() {
       || !formData.fulfillment_store_id
       || !formData.production_date
       || !formData.recipe_id
-      || !formData.kitchen_station.trim()
     ) {
-      setActionError('Complete the project/site, fulfillment store, production date, recipe, servings, and kitchen station before saving.');
+      setActionError('Complete the project/site, fulfillment store, production date, recipe, and servings before saving.');
       return;
     }
     if (normalizeSiteType(selectedProductionSite?.type) !== SITE_HIERARCHY_TYPES.PROJECT) {
@@ -801,6 +1395,473 @@ export default function Production() {
     });
   };
 
+  const updateSingleRecipeLines = (updater) => {
+    const nextLines = typeof updater === 'function' ? updater(calculatedIngredients) : updater;
+    const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
+    const snapshot = recalculateProductionIngredientSnapshot(nextLines, {
+      ingredients,
+      inventory,
+      siteId: inventorySiteId
+    });
+    const servingCount = Math.max(1, finiteProductionNumber(formData.target_servings, 0));
+    setCalculatedIngredients(snapshot.lines);
+    setInventoryCheck(snapshot.lines);
+    setEstimatedBatchCost(snapshot.estimatedBatchCost || 0);
+    setEstimatedCostPerServing(Number(((snapshot.estimatedBatchCost || 0) / servingCount).toFixed(2)));
+  };
+
+  const updateSingleLineQuantity = (lineKey, value) => {
+    updateSingleRecipeLines((currentLines) => currentLines.map((line, index) => (
+      getProductionIngredientLineKey(line, index) === lineKey
+        ? {
+          ...line,
+          raw_quantity: finiteProductionNumber(value, 0),
+          production_override_source: 'chef',
+          production_override_reason: 'Chef adjusted quantity for this production.'
+        }
+        : line
+    )));
+  };
+
+  const updateSingleLineIngredient = (lineKey, ingredientId, ingredientRecord = null) => {
+    const selectedIngredient = ingredientRecord || ingredients.find((ingredient) => String(ingredient.id) === String(ingredientId));
+    if (!selectedIngredient) return;
+    updateSingleRecipeLines((currentLines) => currentLines.map((line, index) => (
+      getProductionIngredientLineKey(line, index) === lineKey
+        ? {
+          ...line,
+          ingredient_id: selectedIngredient.id,
+          ingredient_name: selectedIngredient.name || line.ingredient_name,
+          unit: selectedIngredient.unit || line.unit,
+          inventory_unit: selectedIngredient.unit || line.inventory_unit,
+          production_override_source: 'chef',
+          production_override_reason: 'Chef selected replacement ingredient for this production.'
+        }
+        : line
+    )));
+    setSingleRecipeSuggestions((current) => ({ ...current, [lineKey]: [] }));
+  };
+
+  const zeroSingleLine = (lineKey) => {
+    updateSingleRecipeLines((currentLines) => currentLines.map((line, index) => (
+      getProductionIngredientLineKey(line, index) === lineKey
+        ? {
+          ...line,
+          raw_quantity: 0,
+          production_override_action: 'zeroed',
+          production_override_source: 'chef',
+          production_override_reason: 'Chef zeroed this ingredient for this production.'
+        }
+        : line
+    )));
+    setSingleRecipeSuggestions((current) => ({ ...current, [lineKey]: [] }));
+  };
+
+  const addSingleIngredientLine = ({ ingredient_id: ingredientId, ingredient: ingredientRecord = null, quantity, unit }) => {
+    const selectedIngredient = ingredientRecord || ingredients.find((ingredient) => String(ingredient.id) === String(ingredientId));
+    if (!selectedIngredient) return;
+    const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
+    const addedLine = buildProductionIngredientLine({
+      sourceLine: {
+        line_id: `added-${selectedIngredient.id}-${Date.now()}`,
+        ingredient_id: selectedIngredient.id,
+        ingredient_name: selectedIngredient.name || 'Ingredient',
+        raw_quantity: quantity,
+        unit: unit || selectedIngredient.unit || 'unit',
+        original_ingredient_id: null,
+        original_ingredient_name: '',
+        original_raw_quantity: 0,
+        original_unit: unit || selectedIngredient.unit || 'unit',
+        production_override_action: 'added',
+        production_override_source: 'chef',
+        production_override_reason: 'Chef added this ingredient for this production.'
+      },
+      ingredient: selectedIngredient,
+      inventory,
+      siteId: inventorySiteId
+    });
+    updateSingleRecipeLines((currentLines) => [...currentLines, addedLine]);
+  };
+
+  const removeSingleIngredientLine = (lineKey) => {
+    updateSingleRecipeLines((currentLines) => currentLines.filter((line, index) => (
+      getProductionIngredientLineKey(line, index) !== lineKey || line.production_override_action !== 'added'
+    )));
+  };
+
+  const normalizeReplacementSuggestions = (rawSuggestions, fallbackSuggestions) => {
+    const fallbackById = new Map(fallbackSuggestions.map((suggestion) => [String(suggestion.ingredient_id), suggestion]));
+    const fallbackByName = new Map(fallbackSuggestions.map((suggestion) => [String(suggestion.ingredient_name || '').trim().toLowerCase(), suggestion]));
+    const normalized = (Array.isArray(rawSuggestions) ? rawSuggestions : [])
+      .map((suggestion) => {
+        const matched = fallbackById.get(String(suggestion.ingredient_id || ''))
+          || fallbackByName.get(String(suggestion.ingredient_name || '').trim().toLowerCase());
+        if (!matched) return null;
+        return {
+          ...matched,
+          suggested_quantity: finiteProductionNumber(suggestion.suggested_quantity, matched.suggested_quantity),
+          confidence: finiteProductionNumber(suggestion.confidence, matched.confidence),
+          reason: suggestion.reason || matched.reason,
+          warning: suggestion.warning || '',
+          source: 'ai'
+        };
+      })
+      .filter(Boolean);
+    return normalized.length > 0 ? normalized : fallbackSuggestions;
+  };
+
+  const loadReplacementSuggestions = async (line, siteId) => {
+    const fallbackSuggestions = buildInventoryReplacementSuggestions({
+      line,
+      ingredients,
+      inventory,
+      siteId,
+      limit: 4
+    });
+    if (fallbackSuggestions.length === 0) {
+      return [];
+    }
+
+    try {
+      const result = await base44.integrations.Core.InvokeLLM({
+        prompt: [
+          'Suggest replacement ingredients for a production-only recipe snapshot in a food production system.',
+          'Only choose from the available inventory candidates. Do not invent ingredients.',
+          'Prefer culinary similarity, compatible units, and enough available stock. Mention allergy/dietary concerns when likely.',
+          `Short ingredient: ${line.ingredient_name}, required ${formatRecipeQuantity(line.raw_quantity, line.unit)} ${line.unit}, shortage ${formatRecipeQuantity(line.shortage, line.inventory_unit)} ${line.inventory_unit}.`,
+          `Available candidates: ${fallbackSuggestions.map((candidate) => `${candidate.ingredient_id} | ${candidate.ingredient_name} | ${formatRecipeQuantity(candidate.available_quantity, candidate.unit)} ${candidate.unit} available`).join('; ')}`
+        ].join('\n'),
+        response_json_schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            suggestions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  ingredient_id: { type: 'string' },
+                  ingredient_name: { type: 'string' },
+                  suggested_quantity: { type: 'number' },
+                  confidence: { type: 'number' },
+                  reason: { type: 'string' },
+                  warning: { type: 'string' }
+                },
+                required: ['ingredient_id', 'ingredient_name', 'suggested_quantity', 'confidence', 'reason', 'warning']
+              }
+            }
+          },
+          required: ['suggestions']
+        }
+      });
+      return normalizeReplacementSuggestions(result?.suggestions, fallbackSuggestions);
+    } catch (_error) {
+      return fallbackSuggestions.map((suggestion) => ({
+        ...suggestion,
+        reason: `${suggestion.reason} AI service is unavailable, so this fallback uses local inventory similarity.`
+      }));
+    }
+  };
+
+  const requestSingleRecipeSuggestions = async (lineKey) => {
+    const line = calculatedIngredients.find((entry, index) => getProductionIngredientLineKey(entry, index) === lineKey);
+    const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
+    if (!line || !inventorySiteId) return;
+    setSingleRecipeSuggestionLoadingLine(lineKey);
+    const suggestions = await loadReplacementSuggestions(line, inventorySiteId);
+    setSingleRecipeSuggestions((current) => ({ ...current, [lineKey]: suggestions }));
+    setSingleRecipeSuggestionLoadingLine('');
+  };
+
+  const applySingleRecipeSuggestion = (lineKey, suggestion) => {
+    updateSingleRecipeLines((currentLines) => currentLines.map((line, index) => (
+      getProductionIngredientLineKey(line, index) === lineKey
+        ? {
+          ...line,
+          ingredient_id: suggestion.ingredient_id,
+          ingredient_name: suggestion.ingredient_name,
+          raw_quantity: finiteProductionNumber(suggestion.suggested_quantity, line.raw_quantity),
+          unit: suggestion.unit || line.unit,
+          inventory_unit: suggestion.unit || line.inventory_unit,
+          production_override_source: suggestion.source === 'ai' ? 'ai_suggestion' : 'inventory_similarity',
+          production_override_reason: suggestion.reason || 'Replacement selected for this production.',
+          ai_suggestion_reason: suggestion.reason || ''
+        }
+        : line
+    )));
+    setSingleRecipeSuggestions((current) => ({ ...current, [lineKey]: [] }));
+  };
+
+  const recalculateIssueItemSnapshot = (itemKey, nextLines) => {
+    const snapshot = recalculateProductionIngredientSnapshot(nextLines, {
+      ingredients,
+      inventory,
+      siteId: issueFulfillmentStoreId
+    });
+    setIssueSnapshots((current) => ({ ...current, [itemKey]: snapshot.lines }));
+  };
+
+  const updateIssueItemSnapshot = (itemKey, updater) => {
+    const currentLines = issueSnapshots[itemKey] || [];
+    const nextLines = typeof updater === 'function' ? updater(currentLines) : updater;
+    recalculateIssueItemSnapshot(itemKey, nextLines);
+  };
+
+  const updateIssueLineQuantity = (itemKey, lineKey, value) => {
+    updateIssueItemSnapshot(itemKey, (currentLines) => currentLines.map((line, index) => (
+      getProductionIngredientLineKey(line, index) === lineKey
+        ? {
+          ...line,
+          raw_quantity: finiteProductionNumber(value, 0),
+          production_override_source: 'chef',
+          production_override_reason: 'Chef adjusted quantity for this production.'
+        }
+        : line
+    )));
+  };
+
+  const updateIssueLineIngredient = (itemKey, lineKey, ingredientId, ingredientRecord = null) => {
+    const selectedIngredient = ingredientRecord || ingredients.find((ingredient) => String(ingredient.id) === String(ingredientId));
+    if (!selectedIngredient) return;
+    updateIssueItemSnapshot(itemKey, (currentLines) => currentLines.map((line, index) => (
+      getProductionIngredientLineKey(line, index) === lineKey
+        ? {
+          ...line,
+          ingredient_id: selectedIngredient.id,
+          ingredient_name: selectedIngredient.name || line.ingredient_name,
+          unit: selectedIngredient.unit || line.unit,
+          inventory_unit: selectedIngredient.unit || line.inventory_unit,
+          production_override_source: 'chef',
+          production_override_reason: 'Chef selected replacement ingredient for this production.'
+        }
+        : line
+    )));
+    setIssueSuggestions((current) => ({
+      ...current,
+      [itemKey]: { ...(current[itemKey] || {}), [lineKey]: [] }
+    }));
+  };
+
+  const zeroIssueLine = (itemKey, lineKey) => {
+    updateIssueItemSnapshot(itemKey, (currentLines) => currentLines.map((line, index) => (
+      getProductionIngredientLineKey(line, index) === lineKey
+        ? {
+          ...line,
+          raw_quantity: 0,
+          production_override_action: 'zeroed',
+          production_override_source: 'chef',
+          production_override_reason: 'Chef zeroed this ingredient for this production.'
+        }
+        : line
+    )));
+    setIssueSuggestions((current) => ({
+      ...current,
+      [itemKey]: { ...(current[itemKey] || {}), [lineKey]: [] }
+    }));
+  };
+
+  const addIssueIngredientLine = (itemKey, { ingredient_id: ingredientId, ingredient: ingredientRecord = null, quantity, unit }) => {
+    const selectedIngredient = ingredientRecord || ingredients.find((ingredient) => String(ingredient.id) === String(ingredientId));
+    if (!selectedIngredient) return;
+    const addedLine = buildProductionIngredientLine({
+      sourceLine: {
+        line_id: `added-${itemKey}-${selectedIngredient.id}-${Date.now()}`,
+        ingredient_id: selectedIngredient.id,
+        ingredient_name: selectedIngredient.name || 'Ingredient',
+        raw_quantity: quantity,
+        unit: unit || selectedIngredient.unit || 'unit',
+        original_ingredient_id: null,
+        original_ingredient_name: '',
+        original_raw_quantity: 0,
+        original_unit: unit || selectedIngredient.unit || 'unit',
+        production_override_action: 'added',
+        production_override_source: 'chef',
+        production_override_reason: 'Chef added this ingredient for this production.'
+      },
+      ingredient: selectedIngredient,
+      inventory,
+      siteId: issueFulfillmentStoreId
+    });
+    updateIssueItemSnapshot(itemKey, (currentLines) => [...currentLines, addedLine]);
+  };
+
+  const removeIssueIngredientLine = (itemKey, lineKey) => {
+    updateIssueItemSnapshot(itemKey, (currentLines) => currentLines.filter((line, index) => (
+      getProductionIngredientLineKey(line, index) !== lineKey || line.production_override_action !== 'added'
+    )));
+  };
+
+  const requestIssueSuggestions = async (itemKey, lineKey, lineOverride = null) => {
+    const line = lineOverride || (issueSnapshots[itemKey] || []).find((entry, index) => getProductionIngredientLineKey(entry, index) === lineKey);
+    if (!line || !issueFulfillmentStoreId) return;
+    setIssueSuggestionLoadingKey(`${itemKey}|||${lineKey}`);
+    const suggestions = await loadReplacementSuggestions(line, issueFulfillmentStoreId);
+    setIssueSuggestions((current) => ({
+      ...current,
+      [itemKey]: {
+        ...(current[itemKey] || {}),
+        [lineKey]: suggestions
+      }
+    }));
+    setIssueSuggestionLoadingKey('');
+  };
+
+  const applyIssueSuggestion = (itemKey, lineKey, suggestion) => {
+    updateIssueItemSnapshot(itemKey, (currentLines) => currentLines.map((line, index) => (
+      getProductionIngredientLineKey(line, index) === lineKey
+        ? {
+          ...line,
+          ingredient_id: suggestion.ingredient_id,
+          ingredient_name: suggestion.ingredient_name,
+          raw_quantity: finiteProductionNumber(suggestion.suggested_quantity, line.raw_quantity),
+          unit: suggestion.unit || line.unit,
+          inventory_unit: suggestion.unit || line.inventory_unit,
+          production_override_source: suggestion.source === 'ai' ? 'ai_suggestion' : 'inventory_similarity',
+          production_override_reason: suggestion.reason || 'Replacement selected for this production.',
+          ai_suggestion_reason: suggestion.reason || ''
+        }
+        : line
+    )));
+    setIssueSuggestions((current) => ({
+      ...current,
+      [itemKey]: { ...(current[itemKey] || {}), [lineKey]: [] }
+    }));
+  };
+
+  const handleIssueMealViewChange = (nextMealView) => {
+    const normalizedMealView = normalizeIssueMealView(nextMealView);
+    setIssueMealView(normalizedMealView);
+    setIssueSnapshots({});
+    setIssueSuggestions({});
+  };
+
+  const updateIssueCovers = (itemKey, value) => {
+    const productionCovers = finiteProductionNumber(value, 0);
+    setIssueItems((currentItems) => currentItems.map((item) => (
+      item.key === itemKey ? { ...item, production_covers: productionCovers } : item
+    )));
+    const item = issueItems.find((entry) => entry.key === itemKey);
+    const recipe = recipes.find((entry) => String(entry.id) === String(item?.recipe_id || ''));
+    const snapshot = buildProductionIngredientSnapshot({
+      recipe,
+      recipes,
+      ingredients,
+      inventory,
+      siteId: issueFulfillmentStoreId,
+      targetServings: productionCovers
+    });
+    setIssueSnapshots((current) => ({ ...current, [itemKey]: snapshot.lines }));
+    setIssueSuggestions((current) => ({ ...current, [itemKey]: {} }));
+  };
+
+  const toggleIssueItem = (itemKey, selected) => {
+    setIssueItems((currentItems) => currentItems.map((item) => (
+      item.key === itemKey ? { ...item, selected } : item
+    )));
+  };
+
+  const getIssueItemSnapshotCost = (itemKey) => (
+    (issueSnapshots[itemKey] || []).reduce((sum, line) => sum + finiteProductionNumber(line.estimated_cost, 0), 0)
+  );
+
+  const buildOriginalSnapshot = (lines = []) => lines.map((line, index) => {
+    const isAdded = line.production_override_action === 'added';
+    return {
+      line_id: getProductionIngredientLineKey(line, index),
+      ingredient_id: isAdded ? null : (line.original_ingredient_id || line.ingredient_id),
+      ingredient_name: isAdded ? null : (line.original_ingredient_name || line.ingredient_name),
+      quantity: isAdded ? 0 : (line.original_raw_quantity ?? line.raw_quantity),
+      unit: isAdded ? null : (line.original_unit || line.unit)
+    };
+  });
+
+  const buildMenuIssueSubmitData = (group, status) => {
+    const firstItem = group.items[0] || {};
+    const recipe = recipes.find((entry) => String(entry.id) === String(firstItem.recipe_id)) || {};
+    const site = issueSite || visibleSites.find((entry) => String(entry.id) === String(group.site_id || firstItem.site_id));
+    const fulfillmentStore = sites.find((entry) => String(entry.id) === String(issueFulfillmentStoreId));
+    const lines = group.snapshot_lines || [];
+    const estimatedBatchCost = Number((group.estimatedBatchCost || 0).toFixed(2));
+    const servingCount = Math.max(1, finiteProductionNumber(group.production_covers, 0));
+    const dishNames = group.items.map((item) => item.recipe_name).filter(Boolean);
+    const menuIssueItems = group.items.map((item) => {
+      const itemLines = issueSnapshots[item.key] || [];
+      const itemBatchCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
+      const itemServingCount = Math.max(1, finiteProductionNumber(item.production_covers, 0));
+      return {
+        key: item.key,
+        source_menu_plan_item_index: item.source_menu_plan_item_index,
+        recipe_id: item.recipe_id,
+        recipe_name: item.recipe_name,
+        meal_type: item.meal_type,
+        expected_servings: item.expected_servings,
+        production_covers: finiteProductionNumber(item.production_covers, 0),
+        planned_total_cost: item.planned_total_cost,
+        estimated_batch_cost: itemBatchCost,
+        estimated_cost_per_serving: Number((itemBatchCost / itemServingCount).toFixed(2)),
+        original_recipe_snapshot: buildOriginalSnapshot(itemLines),
+        ingredients_used: buildProductionIngredientsForSubmit(itemLines),
+        production_overrides: buildProductionOverrideAudit(itemLines).map((entry) => ({
+          ...entry,
+          id: `${item.key}-${entry.id}`,
+          recipe_id: item.recipe_id,
+          recipe_name: item.recipe_name,
+          source_menu_plan_item_key: item.key
+        }))
+      };
+    });
+    const productionOverrides = menuIssueItems.flatMap((item) => item.production_overrides || []);
+
+    return {
+      site_id: site?.id || group.site_id || firstItem.site_id || '',
+      site_name: site?.name || group.site_name || firstItem.site_name || '',
+      fulfillment_store_id: fulfillmentStore?.id || '',
+      fulfillment_store_name: fulfillmentStore?.name || '',
+      production_date: group.plan_date || firstItem.plan_date || issueSource?.plan_date || format(new Date(), 'yyyy-MM-dd'),
+      meal_type: group.meal_type,
+      menu_type: group.menu_type || issueSource?.menu_type || 'general',
+      cuisine_type: group.menu_type || issueSource?.menu_type || 'general',
+      menu_category: group.menu_category || issueSource?.menu_category || 'senior',
+      recipe_id: firstItem.recipe_id,
+      recipe_name: `${group.meal_label} Menu Production (${group.items.length} dish${group.items.length === 1 ? '' : 'es'})`,
+      target_servings: finiteProductionNumber(group.production_covers, 0),
+      kitchen_station: recipe.kitchen_station || recipe.station || '',
+      notes: [
+        `Issued from menu plan ${issuePlan?.plan_date || group.plan_date || ''} ${group.meal_label}.`,
+        dishNames.length ? `Dishes: ${dishNames.join(', ')}` : '',
+        issueNotes
+      ].filter(Boolean).join('\n'),
+      source_type: 'menu_plan',
+      source_menu_plan_id: issuePlan?.id || group.source_menu_plan_id || issueSource?.menu_plan_id || '',
+      source_menu_plan_item_key: group.key,
+      source_menu_plan_item_keys: group.items.map((item) => item.key),
+      source_menu_plan_item_index: firstItem.source_menu_plan_item_index,
+      source_menu_plan_meal_type: group.meal_type,
+      source_menu_plan_expected_servings: group.expected_servings,
+      production_issue_grouped: true,
+      production_issue_group_key: group.key,
+      production_issue_scope: issueMealView,
+      production_issue_dish_count: group.items.length,
+      menu_issue_items: menuIssueItems,
+      recipe_snapshot_mode: 'production_only_override',
+      recipe_snapshot_locked: true,
+      original_recipe_snapshot: buildOriginalSnapshot(lines),
+      ingredients_used: buildProductionIngredientsForSubmit(lines),
+      production_overrides: productionOverrides,
+      production_override_count: productionOverrides.length,
+      total_calories: group.items.reduce((sum, item) => {
+        const itemRecipe = recipes.find((entry) => String(entry.id) === String(item.recipe_id)) || {};
+        return sum + (itemRecipe?.calories_per_serving
+          ? itemRecipe.calories_per_serving * finiteProductionNumber(item.production_covers, 0)
+          : 0);
+      }, 0),
+      estimated_batch_cost: estimatedBatchCost,
+      estimated_cost_per_serving: Number((estimatedBatchCost / servingCount).toFixed(2)),
+      status
+    };
+  };
+
   const handleReview = async (action) => {
     if (!selectedProduction || reviewAction) return;
 
@@ -815,23 +1876,45 @@ export default function Production() {
 
     setReviewAction(action);
     try {
-      const areaReview = isAreaApprovalReview(selectedProduction);
-      if (action === 'approve' && areaReview) {
-        await base44.productionWorkflow.approveForArea(selectedProduction.id, {
-          notes: reviewNotes || null,
-          fulfillment_store_id: reviewFulfillmentStoreId
-        });
-      } else {
+      const reviewTargets = selectedProduction.is_menu_review_group
+        && Array.isArray(selectedProduction.grouped_productions)
+        && selectedProduction.grouped_productions.length > 0
+        ? selectedProduction.grouped_productions
+        : [selectedProduction];
+
+      const reviewOperations = reviewTargets.map((production) => {
+        const areaReview = isAreaApprovalReview(production);
+        if (action === 'approve' && areaReview) {
+          return {
+            type: 'area_approval',
+            production
+          };
+        }
         const status = action === 'approve'
           ? 'pending_procurement'
           : action === 'request_changes'
             ? 'changes_requested'
-            : getProductionRejectionReturnStatus(selectedProduction.status);
+            : getProductionRejectionReturnStatus(production.status);
         if (!status) {
           throw new Error('This production request cannot be returned from its current stage.');
         }
-        await base44.entities.Production.update(selectedProduction.id, {
-          status,
+        return {
+          type: 'status_update',
+          production,
+          status
+        };
+      });
+
+      for (const operation of reviewOperations) {
+        if (operation.type === 'area_approval') {
+          await base44.productionWorkflow.approveForArea(operation.production.id, {
+            notes: reviewNotes || null,
+            fulfillment_store_id: reviewFulfillmentStoreId
+          });
+          continue;
+        }
+        await base44.entities.Production.update(operation.production.id, {
+          status: operation.status,
           review_notes: reviewNotes || null,
           review_action: action === 'approve'
             ? 'approved'
@@ -882,6 +1965,9 @@ export default function Production() {
   };
 
   const openEditDialog = (production) => {
+    const menuType = normalizeMenuCuisine(production.menu_type || production.cuisine_type, 'general');
+    const menuCategories = getMenuCategoryOptions(menuType);
+    const persistedMenuCategory = normalizeMenuCategory(production.menu_category, 'senior');
     setActionError('');
     setEditingProduction(production);
     setFormData({
@@ -889,6 +1975,10 @@ export default function Production() {
       fulfillment_store_id: production.fulfillment_store_id || '',
       production_date: production.production_date || format(new Date(), 'yyyy-MM-dd'),
       meal_type: production.meal_type || 'lunch',
+      menu_type: menuType,
+      menu_category: menuCategories.some((option) => option.value === persistedMenuCategory)
+        ? persistedMenuCategory
+        : menuCategories[0]?.value || 'senior',
       recipe_id: production.recipe_id || '',
       target_servings: Number(production.target_servings) || null,
       kitchen_station: production.kitchen_station || production.assigned_station || production.station || '',
@@ -908,14 +1998,6 @@ export default function Production() {
         : '';
     setCompletionProduction(production);
     setCompletionFulfillmentStoreId(fulfillmentStoreId);
-    setCompletionQuantities((production.ingredients_used || []).map((line) => ({
-      ingredient_id: line.ingredient_id,
-      item_code: line.item_code || getItemCode(ingredients.find((item) => item.id === line.ingredient_id), ''),
-      ingredient_name: line.ingredient_name,
-      actual_quantity: Number(line.actual_quantity ?? line.planned_quantity ?? line.adjusted_quantity ?? 0),
-      planned_quantity: Number(line.planned_quantity ?? line.adjusted_quantity ?? 0),
-      unit: line.unit || 'unit'
-    })));
     setActionError('');
     setCompletionOpen(true);
   };
@@ -959,22 +2041,22 @@ export default function Production() {
         ? 'Start Production & Consume Reserved Stock'
         : 'Start Production & Consume Stock';
     return (
-      <div className="flex flex-wrap gap-2">
+      <div className="grid gap-2 sm:grid-cols-2">
       {['draft', 'planned', 'changes_requested'].includes(production.status) && can('edit_production_request') ? (
-        <Button size="sm" variant="outline" onClick={() => openEditDialog(production)}>
+        <Button size="sm" variant="outline" className="justify-center whitespace-normal text-xs leading-snug" onClick={() => openEditDialog(production)}>
           Edit Request
         </Button>
       ) : null}
       {['draft', 'planned', 'changes_requested'].includes(production.status) && can('submit_production_request') ? (
         <Button
           size="sm"
-          className="bg-amber-600 hover:bg-amber-700"
           onClick={() => updateStatusMutation.mutate({
             id: production.id,
             status: 'pending_approval',
             production
           })}
           disabled={updateStatusMutation.isPending}
+          className="justify-center whitespace-normal bg-amber-600 text-xs leading-snug hover:bg-amber-700"
         >
           Submit to Project Manager
         </Button>
@@ -982,17 +2064,17 @@ export default function Production() {
       {production.status === 'pending_approval'
         && can('review_production_request')
         && (can('approve_production_request') || can('request_changes_production') || can('reject_production_request')) ? (
-        <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => openApprovalDialog(production)}>
+        <Button size="sm" className="justify-center whitespace-normal bg-green-600 text-xs leading-snug hover:bg-green-700" onClick={() => openApprovalDialog(production)}>
           Review Request
         </Button>
       ) : null}
       {isAreaApprovalReview(production) && canReviewAreaApprovals ? (
-        <Button size="sm" className="bg-purple-700 hover:bg-purple-800" onClick={() => openApprovalDialog(production)}>
+        <Button size="sm" className="justify-center whitespace-normal bg-purple-700 text-xs leading-snug hover:bg-purple-800" onClick={() => openApprovalDialog(production)}>
           Area Manager Review
         </Button>
       ) : null}
       {production.status === 'pending_production' && can('start_production') ? (
-        <Button size="sm" variant="outline" disabled title={startBlockReason}>
+        <Button size="sm" variant="outline" className="justify-center whitespace-normal text-xs leading-snug" disabled title={startBlockReason}>
           Area Approval Required
         </Button>
       ) : null}
@@ -1007,12 +2089,13 @@ export default function Production() {
           })}
           disabled={!canStartApprovedProduction(production) || isStatusActionPending(production, 'in_progress')}
           title={!canStartApprovedProduction(production) ? startBlockReason : undefined}
+          className="justify-center whitespace-normal text-xs leading-snug"
         >
           {isStatusActionPending(production, 'in_progress') ? 'Starting & Consuming...' : startActionLabel}
         </Button>
       ) : null}
       {production.status === 'approved' && (can('adjust_approved_production') || can('approve_production')) ? (
-        <Button size="sm" variant="outline" onClick={() => openInventoryAction(production, 'adjust')}>
+        <Button size="sm" variant="outline" className="justify-center whitespace-normal text-xs leading-snug" onClick={() => openInventoryAction(production, 'adjust')}>
           Adjust Approved Quantity
         </Button>
       ) : null}
@@ -1020,7 +2103,7 @@ export default function Production() {
         <Button
           size="sm"
           variant="outline"
-          className="border-red-200 text-red-700 hover:bg-red-50"
+          className="justify-center whitespace-normal border-red-200 text-xs leading-snug text-red-700 hover:bg-red-50"
           onClick={() => openInventoryAction(production, 'cancel')}
         >
           Cancel & Release Reservation
@@ -1029,9 +2112,9 @@ export default function Production() {
       {production.status === 'in_progress' && can('complete_production') ? (
         <Button
           size="sm"
-          className="bg-emerald-600 hover:bg-emerald-700"
           onClick={() => openCompletionDialog(production)}
           disabled={isStatusActionPending(production, 'completed')}
+          className="justify-center whitespace-normal bg-emerald-600 text-xs leading-snug hover:bg-emerald-700"
         >
           {isStatusActionPending(production, 'completed') ? 'Completing...' : 'Reconcile & Complete'}
         </Button>
@@ -1042,13 +2125,14 @@ export default function Production() {
           variant="outline"
           onClick={() => openConsumptionReport(production)}
           disabled={Boolean(reportLoadingId)}
+          className="justify-center whitespace-normal text-xs leading-snug"
         >
           <FileText className="mr-1.5 h-4 w-4" />
           {reportLoadingId === String(production.id) ? 'Loading Report...' : 'Consumption Report'}
         </Button>
       ) : null}
       {approvalHistory.length > 0 ? (
-        <Button size="sm" variant="ghost" onClick={() => setHistoryProduction(production)}>
+        <Button size="sm" variant="ghost" className="justify-center whitespace-normal text-xs leading-snug" onClick={() => setHistoryProduction(production)}>
           <History className="mr-1.5 h-4 w-4" />
           Approval History
         </Button>
@@ -1064,6 +2148,7 @@ export default function Production() {
     || ingredientsError?.message
     || inventoryError?.message
     || materialRequestsError?.message
+    || issuePlanError?.message
     || '';
   const selectedIsAreaReview = isAreaApprovalReview(selectedProduction);
   const inventoryActionState = getProductionInventoryState(inventoryAction || {});
@@ -1080,6 +2165,50 @@ export default function Production() {
   const completionStoreOptions = completionProduction
     ? getProductionStoreOptions(completionProduction)
     : [];
+  const completionRecipe = recipes.find(
+    (recipe) => String(recipe.id) === String(completionProduction?.recipe_id || '')
+  ) || {};
+  const completionYieldSummary = buildAutomaticProductionYieldSummary({
+    production: completionProduction || {},
+    recipe: completionRecipe,
+    ingredients
+  });
+  const completionPortionSizeGrams = Number(completionYieldSummary.portion_size_grams);
+  const completionExpectedWeightGrams = Number(completionYieldSummary.expected_finished_weight_grams);
+  const summarizedYieldServings = Number(completionYieldSummary.expected_yield_servings);
+  const completionDerivedServings = Number.isFinite(summarizedYieldServings)
+    && summarizedYieldServings > 0
+    ? summarizedYieldServings
+    : null;
+  const completionRawReconciliation = (Array.isArray(completionProduction?.ingredients_used)
+    ? completionProduction.ingredients_used
+    : []).map((line, index) => ({
+    ingredient_id: line.ingredient_id,
+    item_code: line.item_code || getItemCode(
+      ingredients.find((item) => String(item.id) === String(line.ingredient_id)),
+      ''
+    ),
+    ingredient_name: line.ingredient_name || ingredients.find(
+      (item) => String(item.id) === String(line.ingredient_id)
+    )?.name || 'Ingredient',
+    planned_quantity: Number(
+      line.planned_quantity
+        ?? line.required_quantity
+        ?? line.raw_quantity
+        ?? line.adjusted_quantity
+        ?? line.cost_quantity
+        ?? line.quantity
+        ?? 0
+    ),
+    unit: line.unit || 'unit',
+    yield_percent: Number(
+      completionYieldSummary.line_weights[index]?.yield_percent
+        ?? line.yield_percent
+        ?? 100
+    ),
+    yielded_weight_grams: completionYieldSummary.line_weights[index]?.yielded_weight_grams ?? null,
+    reconciliation_source: completionYieldSummary.line_weights[index]?.source || 'automatic_yield_plan'
+  }));
   const canRequestSelectedChanges = selectedIsAreaReview
     ? can('request_changes_area_production')
     : can('review_production_request') && can('request_changes_production');
@@ -1092,9 +2221,80 @@ export default function Production() {
   const siteOptions = canViewAllAccessibleSites
     ? [{ id: 'all', name: 'All Sites' }, ...productionSiteOptions]
     : productionSiteOptions;
+  const selectedIssueSubmitItems = issueItems.filter((item) => (
+    item.selected
+    && !isIssueItemAlreadyIssued(item)
+    && Number(item.production_covers) > 0
+  ));
+  const selectedIssueMealGroups = buildMenuIssueMealGroups(selectedIssueSubmitItems, {
+    snapshotsByItemKey: issueSnapshots,
+    ingredients,
+    inventory,
+    siteId: issueFulfillmentStoreId
+  });
+  const selectedIssueDailyLines = aggregateProductionIngredientLines(
+    selectedIssueMealGroups.flatMap((group) => group.snapshot_lines || []),
+    {
+      ingredients,
+      inventory,
+      siteId: issueFulfillmentStoreId
+    }
+  );
+  const selectedIssueDailyShortages = selectedIssueDailyLines.filter((line) => !line.sufficient);
+  const selectedIssueItemKeys = new Set(selectedIssueSubmitItems.map((item) => item.key));
+  const selectedIssueShortagesByItemKey = selectedIssueDailyShortages.reduce((accumulator, line) => {
+    const sourceItemKeys = (Array.isArray(line.source_menu_plan_item_keys)
+      ? line.source_menu_plan_item_keys
+      : []
+    ).filter((itemKey) => selectedIssueItemKeys.has(itemKey));
+    sourceItemKeys.forEach((itemKey) => {
+      accumulator[itemKey] = [...(accumulator[itemKey] || []), line];
+    });
+    return accumulator;
+  }, {});
+  const activeIssueAggregateShortageLines = activeIssueItem
+    ? selectedIssueShortagesByItemKey[activeIssueItem.key] || []
+    : [];
+  const activeIssueAggregateShortageByIngredientId = new Map(activeIssueAggregateShortageLines.map((line) => [
+    String(line.ingredient_id || ''),
+    line
+  ]));
+  const activeIssueSnapshotForEditor = activeIssueSnapshot.map((line) => {
+    const aggregateShortage = activeIssueAggregateShortageByIngredientId.get(String(line.ingredient_id || ''));
+    if (!aggregateShortage) return line;
+    return {
+      ...line,
+      sufficient: false,
+      shortage: aggregateShortage.shortage ?? line.shortage,
+      inventory_unit: aggregateShortage.inventory_unit || aggregateShortage.unit || line.inventory_unit || line.unit,
+      on_hand_stock: aggregateShortage.on_hand_stock ?? line.on_hand_stock,
+      reserved_stock: aggregateShortage.reserved_stock ?? line.reserved_stock,
+      available_stock: aggregateShortage.available_stock ?? line.available_stock,
+      current_stock: aggregateShortage.current_stock ?? aggregateShortage.available_stock ?? line.current_stock,
+      aggregate_shortage: true,
+      aggregate_required_quantity: aggregateShortage.raw_quantity ?? aggregateShortage.required_quantity,
+      aggregate_source_recipe_names: aggregateShortage.source_recipe_names || []
+    };
+  });
+  const activeIssueBatchCost = activeIssueItem ? Number(getIssueItemSnapshotCost(activeIssueItem.key).toFixed(2)) : 0;
+  const activeIssueCostPerServing = activeIssueItem
+    ? Number((activeIssueBatchCost / Math.max(1, finiteProductionNumber(activeIssueItem.production_covers, 0))).toFixed(2))
+    : 0;
+  const issueSubmitDisabledReason = !can('create_production_request')
+    ? 'You need production creation permission to issue production.'
+    : !issueFulfillmentStoreId
+      ? 'Select the fulfillment Store before issuing production.'
+      : selectedIssueMealGroups.length === 0
+        ? 'Select at least one planned meal item that has not already been issued.'
+        : '';
 
   return (
     <>
+      {actionMessage ? (
+        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {actionMessage}
+        </div>
+      ) : null}
       <ProductionPlanningDashboard
         productions={filteredProductions}
         recipes={recipes}
@@ -1219,7 +2419,7 @@ export default function Production() {
                 </div>
 
                 <div>
-                  <Label htmlFor="meal_type">Meal Type *</Label>
+                  <Label htmlFor="meal_type">Meal Period *</Label>
                   <Select
                     value={formData.meal_type}
                     onValueChange={(value) => setFormData({ ...formData, meal_type: value })}
@@ -1230,6 +2430,49 @@ export default function Production() {
                     <SelectContent>
                       {MEAL_TYPES.map(type => (
                         <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="menu_type">Menu Type *</Label>
+                  <Select
+                    value={formData.menu_type}
+                    onValueChange={(value) => {
+                      const categories = getMenuCategoryOptions(value);
+                      setFormData((current) => ({
+                        ...current,
+                        menu_type: value,
+                        menu_category: categories.some((option) => option.value === current.menu_category)
+                          ? current.menu_category
+                          : categories[0]?.value || 'senior'
+                      }));
+                    }}
+                  >
+                    <SelectTrigger id="menu_type" className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MENU_CUISINE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="menu_category">Menu Category *</Label>
+                  <Select
+                    value={formData.menu_category}
+                    onValueChange={(value) => setFormData({ ...formData, menu_category: value })}
+                  >
+                    <SelectTrigger id="menu_category" className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getMenuCategoryOptions(formData.menu_type).map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1283,14 +2526,13 @@ export default function Production() {
                 </div>
 
                 <div>
-                  <Label htmlFor="kitchen_station">Kitchen Station *</Label>
+                  <Label htmlFor="kitchen_station">Kitchen Station</Label>
                   <Input
                     id="kitchen_station"
                     value={formData.kitchen_station}
                     onChange={(event) => setFormData({ ...formData, kitchen_station: event.target.value })}
-                    placeholder="e.g. Hot Line, Grill, Cold Prep"
+                    placeholder="Optional, e.g. Hot Line, Grill, Cold Prep"
                     className="mt-1"
-                    required
                   />
                 </div>
               </div>
@@ -1321,61 +2563,25 @@ export default function Production() {
 
               {/* Calculated Ingredients with Inventory Check */}
               {calculatedIngredients.length > 0 && (
-                <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
-                  <div className="flex items-center gap-2 mb-3">
-                    <AlertCircle className="w-5 h-5 text-blue-600" />
-                    <h4 className="font-medium text-blue-900">Required Ingredients & Inventory Check</h4>
-                  </div>
-                  <div className="mb-4 grid gap-3 md:grid-cols-2">
-                    <div className="rounded-lg bg-white px-4 py-3 border border-blue-100">
-                      <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Batch Cost</p>
-                      <p className="mt-1 text-2xl font-bold text-emerald-700">{formatCurrency(estimatedBatchCost)}</p>
-                    </div>
-                    <div className="rounded-lg bg-white px-4 py-3 border border-blue-100">
-                      <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Cost / Serving</p>
-                      <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(estimatedCostPerServing)}</p>
-                    </div>
-                  </div>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Item Code</TableHead>
-                        <TableHead>Item Name</TableHead>
-                        <TableHead>Net Recipe Qty</TableHead>
-                        <TableHead>Yield</TableHead>
-                        <TableHead>Raw Required</TableHead>
-                        <TableHead>Unit Cost</TableHead>
-                        <TableHead>Est. Cost</TableHead>
-                        <TableHead>On Hand</TableHead>
-                        <TableHead>Reserved</TableHead>
-                        <TableHead>Available</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {calculatedIngredients.map((ing, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell className="font-mono text-xs text-slate-600">{ing.item_code}</TableCell>
-                          <TableCell>{ing.ingredient_name}</TableCell>
-                          <TableCell>{formatRecipeQuantity(ing.planned_quantity, ing.unit)} {ing.unit}</TableCell>
-                          <TableCell>{ing.yield_percent.toFixed(2)}%</TableCell>
-                          <TableCell className="font-medium">{formatRecipeQuantity(ing.adjusted_quantity, ing.unit)} {ing.unit}</TableCell>
-                          <TableCell>{formatCurrency(toNumber(ing.unit_cost, 0))} / {ing.cost_unit}</TableCell>
-                          <TableCell>{formatCurrency(toNumber(ing.estimated_cost, 0))}</TableCell>
-                          <TableCell>{formatRecipeQuantity(ing.on_hand_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
-                          <TableCell>{formatRecipeQuantity(ing.reserved_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
-                          <TableCell>{formatRecipeQuantity(ing.available_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
-                          <TableCell>
-                            {ing.sufficient ? (
-                              <Badge className="bg-green-600">Sufficient</Badge>
-                            ) : (
-                              <Badge className="bg-red-600">Short {formatRecipeQuantity(ing.shortage, ing.inventory_unit)} {ing.inventory_unit}</Badge>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <ProductionIngredientSnapshotEditor
+                  lines={calculatedIngredients}
+                  ingredients={ingredients}
+                  inventorySiteId={formData.fulfillment_store_id || formData.site_id}
+                  suggestionsByLine={singleRecipeSuggestions}
+                  suggestionLoadingLine={singleRecipeSuggestionLoadingLine}
+                  estimatedBatchCost={estimatedBatchCost}
+                  estimatedCostPerServing={estimatedCostPerServing}
+                  onLineQuantityChange={updateSingleLineQuantity}
+                  onLineIngredientChange={updateSingleLineIngredient}
+                  onZeroLine={zeroSingleLine}
+                  onAddIngredient={addSingleIngredientLine}
+                  onRemoveLine={removeSingleIngredientLine}
+                  onRequestSuggestions={requestSingleRecipeSuggestions}
+                  onApplySuggestion={applySingleRecipeSuggestion}
+                />
+              )}
+              {calculatedIngredients.length > 0 && (
+                <>
                   {calculatedIngredients.some(ing => !ing.sufficient) && (
                     <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
                       <p className="text-sm text-amber-800">
@@ -1383,7 +2589,7 @@ export default function Production() {
                       </p>
                     </div>
                   )}
-                </div>
+                </>
               )}
 
               <div>
@@ -1424,6 +2630,386 @@ export default function Production() {
           </DialogContent>
         </Dialog>
 
+        {/* Menu Planning Issue Dialog */}
+        <Dialog
+          open={issueDialogOpen}
+          onOpenChange={(open) => {
+            setIssueDialogOpen(open);
+            if (!open) {
+              setIssueSource(null);
+              setIssueItems([]);
+              setIssueSnapshots({});
+              setIssueSuggestions({});
+              setIssueNotes('');
+              setActionError('');
+            }
+          }}
+        >
+          <DialogContent className="max-h-[92vh] w-[96vw] max-w-[1500px] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex flex-col gap-2 text-xl sm:flex-row sm:items-center sm:justify-between">
+                <span>Issue Menu Production</span>
+                <Badge variant="outline" className="w-fit border-indigo-200 bg-indigo-50 text-indigo-700">
+                  Production-only recipe snapshots
+                </Badge>
+              </DialogTitle>
+            </DialogHeader>
+
+            {actionError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {actionError}
+              </div>
+            ) : null}
+
+            {issuePlanLoading ? (
+              <div className="flex items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 px-6 py-14 text-slate-600">
+                <Sparkles className="mr-2 h-5 w-5 animate-pulse text-indigo-600" />
+                Loading saved menu plan...
+              </div>
+            ) : !issuePlan ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+                The saved menu plan could not be loaded. Return to Menu Planning, save the plan, then issue production again.
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
+                  <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-3">
+                    <div className="rounded-xl bg-white px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Project / site</p>
+                      <p className="mt-1 break-words font-semibold text-slate-900">{issueSite?.name || issuePlan.site_name || issueSource?.site_name || 'Selected project'}</p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Production date</p>
+                      <p className="mt-1 font-semibold text-slate-900">{issuePlan.plan_date || issueSource?.plan_date || selectedDate}</p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Selected scope</p>
+                      <p className="mt-1 font-semibold text-slate-900">
+                        {issueMealView === 'all' ? 'Breakfast, Lunch, Dinner' : PRODUCTION_ISSUE_MEAL_LABELS[issueMealView]}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <Label htmlFor="issue-fulfillment-store">Fulfillment Store *</Label>
+                    <Select
+                      value={issueFulfillmentStoreId}
+                      onValueChange={(value) => {
+                        setIssueFulfillmentStoreId(value);
+                        setIssueSnapshots({});
+                        setIssueSuggestions({});
+                      }}
+                      disabled={issueFulfillmentStoreOptions.length === 0}
+                    >
+                      <SelectTrigger id="issue-fulfillment-store" className="mt-2 bg-white">
+                        <SelectValue placeholder={
+                          issueFulfillmentStoreOptions.length === 0
+                            ? 'No store configured'
+                            : 'Select fulfillment store'
+                        } />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {issueFulfillmentStoreOptions.map((store) => (
+                          <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {issueFulfillmentStoreOptions.length === 0 ? (
+                      <p className="mt-2 text-xs text-red-600">Configure an active Store under this Project before issuing production.</p>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                    <div>
+                      <p className="font-semibold text-slate-900">Meal scope</p>
+                      <p className="mt-1 text-sm text-slate-500">Choose all three meals or focus the issue run on one meal period.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant={issueMealView === 'all' ? 'default' : 'outline'}
+                        onClick={() => handleIssueMealViewChange('all')}
+                      >
+                        All meals
+                      </Button>
+                      {PRODUCTION_ISSUE_MEAL_TYPES.map((mealType) => (
+                        <Button
+                          key={mealType}
+                          type="button"
+                          variant={issueMealView === mealType ? 'default' : 'outline'}
+                          onClick={() => handleIssueMealViewChange(mealType)}
+                        >
+                          {PRODUCTION_ISSUE_MEAL_LABELS[mealType]}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="font-semibold text-indigo-950">Meal review requests to create</p>
+                      <p className="mt-1 text-sm text-indigo-800">
+                        One review is created per meal type for this production day. Shortage checks below use the same aggregate demand that will appear on the dashboard.
+                      </p>
+                    </div>
+                  <Badge variant="outline" className="w-fit border-indigo-200 bg-white text-indigo-700">
+                    {selectedIssueMealGroups.length} review{selectedIssueMealGroups.length === 1 ? '' : 's'}
+                  </Badge>
+                </div>
+                  {selectedIssueMealGroups.length > 0 ? (
+                    <div className={`mt-3 rounded-xl border px-3 py-2.5 ${
+                      selectedIssueDailyShortages.length > 0
+                        ? 'border-red-200 bg-red-50 text-red-900'
+                        : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                    }`}>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold">Selected-day store check</p>
+                          <p className="mt-1 text-xs">
+                            Aggregates all selected Breakfast, Lunch, and Dinner ingredient demand against the selected fulfillment Store before creating the meal review requests.
+                          </p>
+                        </div>
+                        <Badge className={selectedIssueDailyShortages.length > 0 ? 'bg-red-600' : 'bg-emerald-600'}>
+                          {selectedIssueDailyShortages.length > 0
+                            ? `${selectedIssueDailyShortages.length} shortage${selectedIssueDailyShortages.length === 1 ? '' : 's'}`
+                            : 'No shortages'}
+                        </Badge>
+                      </div>
+                      {selectedIssueDailyShortages.length > 0 ? (
+                        <div className="mt-2 grid gap-2 md:grid-cols-2">
+                          {selectedIssueDailyShortages.slice(0, 4).map((line) => {
+                            const sourceItemKeys = (Array.isArray(line.source_menu_plan_item_keys)
+                              ? line.source_menu_plan_item_keys
+                              : []
+                            ).filter((itemKey) => selectedIssueItemKeys.has(itemKey));
+                            const targetItemKey = sourceItemKeys[0] || '';
+                            return (
+                              <button
+                                key={line.line_id || line.ingredient_id}
+                                type="button"
+                                disabled={!targetItemKey}
+                                onClick={() => setActiveIssueItemKey(targetItemKey)}
+                                className="rounded-lg border border-red-100 bg-white/90 px-2.5 py-2 text-left text-xs text-slate-700 transition hover:border-red-300 hover:bg-white disabled:cursor-default disabled:hover:border-red-100"
+                              >
+                                <p className="font-medium text-slate-900">{line.ingredient_name || 'Ingredient'}</p>
+                                <p className="mt-0.5 text-red-700">
+                                  Short {formatRecipeQuantity(line.shortage, line.inventory_unit || line.unit)} {line.inventory_unit || line.unit}
+                                </p>
+                                {Array.isArray(line.source_recipe_names) && line.source_recipe_names.length > 0 ? (
+                                  <p className="mt-0.5 truncate text-slate-500">
+                                    Dishes: {line.source_recipe_names.join(', ')}
+                                  </p>
+                                ) : null}
+                                {targetItemKey ? (
+                                  <p className="mt-1 font-medium text-indigo-700">Click to edit this ingredient</p>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                          {selectedIssueDailyShortages.length > 4 ? (
+                            <p className="self-center text-xs font-medium text-red-700">
+                              +{selectedIssueDailyShortages.length - 4} more shortage line{selectedIssueDailyShortages.length - 4 === 1 ? '' : 's'}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {selectedIssueMealGroups.length > 0 ? (
+                    <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {selectedIssueMealGroups.map((group) => (
+                        <div key={group.key} className="rounded-xl border border-indigo-100 bg-white px-3 py-2.5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-slate-950">{group.meal_label}</p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {group.items.length} dish{group.items.length === 1 ? '' : 'es'} · {formatRecipeQuantity(group.production_covers, 'servings')} covers
+                              </p>
+                            </div>
+                            <Badge className={group.shortageCount > 0 ? 'bg-red-600' : 'bg-emerald-600'}>
+                              {group.shortageCount > 0 ? `${group.shortageCount} short` : 'No shortages'}
+                            </Badge>
+                          </div>
+                          <p className="mt-2 text-xs text-slate-500">
+                            Est. cost {formatCurrency(group.estimatedBatchCost)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 rounded-lg border border-dashed border-indigo-200 bg-white/80 px-3 py-3 text-sm text-indigo-800">
+                      Select planned dishes below to prepare meal-level review requests.
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid gap-4 2xl:grid-cols-[minmax(300px,380px)_minmax(0,1fr)]">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:block 2xl:space-y-3">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-slate-900">Planned dishes</p>
+                          <p className="mt-1 text-sm text-slate-500">
+                            {selectedIssueSubmitItems.length} dishes selected · {selectedIssueMealGroups.length} meal review{selectedIssueMealGroups.length === 1 ? '' : 's'}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                          {issueMealView === 'all' ? 'All' : PRODUCTION_ISSUE_MEAL_LABELS[issueMealView]}
+                        </Badge>
+                      </div>
+                    </div>
+
+                    {issueItems.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                        No saved menu items with servings were found for this meal scope.
+                      </div>
+                    ) : issueItems.map((item) => {
+                      const alreadyIssued = isIssueItemAlreadyIssued(item);
+                      const itemCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
+                      const isActive = activeIssueItem?.key === item.key;
+                      const itemShortageCount = (selectedIssueShortagesByItemKey[item.key] || []).length;
+                      return (
+                        <div
+                          key={item.key}
+                          className={`rounded-2xl border bg-white p-4 transition ${
+                            isActive ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              className="mt-1 h-4 w-4 rounded border-slate-300"
+                              checked={Boolean(item.selected) && !alreadyIssued}
+                              disabled={alreadyIssued}
+                              onChange={(event) => toggleIssueItem(item.key, event.target.checked)}
+                              aria-label={`Select ${item.recipe_name} for production issue`}
+                            />
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 text-left"
+                              onClick={() => setActiveIssueItemKey(item.key)}
+                            >
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge variant="outline">{item.meal_label}</Badge>
+                                {alreadyIssued ? (
+                                  <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">Already issued</Badge>
+                                ) : null}
+                                {itemShortageCount > 0 ? (
+                                  <Badge className="bg-red-600">{itemShortageCount} short</Badge>
+                                ) : null}
+                              </div>
+                              <p className="mt-2 break-words font-semibold text-slate-950">{item.recipe_name}</p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Planned {formatRecipeQuantity(item.expected_servings, 'servings')} servings · Est. cost {formatCurrency(itemCost || item.planned_total_cost)}
+                              </p>
+                            </button>
+                          </div>
+                          <div className="mt-3">
+                            <Label className="text-xs text-slate-500">Production covers</Label>
+                            <StandardDecimalInput
+                              value={item.production_covers}
+                              unit="servings"
+                              precision={0}
+                              min={0}
+                              allowZero={false}
+                              allowEmpty={false}
+                              label={`${item.recipe_name} production covers`}
+                              disabled={alreadyIssued}
+                              onValueChange={(value) => updateIssueCovers(item.key, value)}
+                              className="mt-1 bg-white"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="min-w-0 2xl:sticky 2xl:top-2 2xl:self-start">
+                    {activeIssueItem ? (
+                      <ProductionIngredientSnapshotEditor
+                        title={`${activeIssueItem.meal_label}: ${activeIssueItem.recipe_name}`}
+                        description="Chef changes here are production-only. The original recipe remains untouched."
+                        lines={activeIssueSnapshotForEditor}
+                        ingredients={ingredients}
+                        inventorySiteId={issueFulfillmentStoreId}
+                        suggestionsByLine={activeIssueSuggestions}
+                        suggestionLoadingLine={activeIssueSuggestionLoadingLine}
+                        estimatedBatchCost={activeIssueBatchCost}
+                        estimatedCostPerServing={activeIssueCostPerServing}
+                        aggregateShortageLines={activeIssueAggregateShortageLines}
+                        onLineQuantityChange={(lineKey, value) => updateIssueLineQuantity(activeIssueItem.key, lineKey, value)}
+                        onLineIngredientChange={(lineKey, value, ingredient) => updateIssueLineIngredient(activeIssueItem.key, lineKey, value, ingredient)}
+                        onZeroLine={(lineKey) => zeroIssueLine(activeIssueItem.key, lineKey)}
+                        onAddIngredient={(line) => addIssueIngredientLine(activeIssueItem.key, line)}
+                        onRemoveLine={(lineKey) => removeIssueIngredientLine(activeIssueItem.key, lineKey)}
+                        onRequestSuggestions={(lineKey, line) => requestIssueSuggestions(activeIssueItem.key, lineKey, line)}
+                        onApplySuggestion={(lineKey, suggestion) => applyIssueSuggestion(activeIssueItem.key, lineKey, suggestion)}
+                      />
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-14 text-center text-sm text-slate-500">
+                        Select a planned dish to review its production recipe snapshot.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <Label htmlFor="issue-notes">Issue notes</Label>
+                  <Textarea
+                    id="issue-notes"
+                    value={issueNotes}
+                    onChange={(event) => setIssueNotes(event.target.value)}
+                    placeholder="Optional notes for all production requests created from this menu plan..."
+                    className="mt-2"
+                    rows={3}
+                  />
+                </div>
+
+                {issueSubmitDisabledReason ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    {issueSubmitDisabledReason}
+                  </div>
+                ) : null}
+
+                <DialogFooter className="gap-2 sm:justify-between">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => navigate('/MenuPlanning')}
+                  >
+                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    Back to Menu Planning
+                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={issueProductionMutation.isPending || Boolean(issueSubmitDisabledReason)}
+                      onClick={() => issueProductionMutation.mutate({ status: 'draft' })}
+                    >
+                      {issueProductionMutation.isPending ? 'Saving...' : 'Save Meal Drafts'}
+                    </Button>
+                    <Button
+                      type="button"
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                      disabled={issueProductionMutation.isPending || Boolean(issueSubmitDisabledReason)}
+                      onClick={() => issueProductionMutation.mutate({ status: 'pending_approval' })}
+                    >
+                      <Factory className="mr-2 h-4 w-4" />
+                      {issueProductionMutation.isPending
+                        ? 'Issuing...'
+                        : `Issue & Submit ${selectedIssueMealGroups.length || ''} Meal Review${selectedIssueMealGroups.length === 1 ? '' : 's'}`}
+                    </Button>
+                  </div>
+                </DialogFooter>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         {/* Approval Dialog */}
         <Dialog
           open={showApprovalDialog}
@@ -1433,7 +3019,7 @@ export default function Production() {
             if (!open) setActionError('');
           }}
         >
-          <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {isAreaApprovalReview(selectedProduction)
@@ -1457,6 +3043,24 @@ export default function Production() {
                   <p>Stage: {getProductionStatusLabel(selectedProduction?.status)}</p>
                 </div>
               </div>
+
+              {Array.isArray(selectedProduction?.menu_issue_items) && selectedProduction.menu_issue_items.length > 0 ? (
+                <div className="rounded-lg border border-indigo-100 bg-indigo-50/70 p-4">
+                  <p className="text-sm font-medium text-indigo-950">Planned dishes in this meal review</p>
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    {selectedProduction.menu_issue_items.map((item, index) => (
+                      <div key={item.key || `${item.recipe_id || 'dish'}-${index}`} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-sm">
+                        <p className="font-medium text-slate-900">{item.recipe_name || 'Planned dish'}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Covers {formatRecipeQuantity(item.production_covers ?? item.expected_servings, 'servings')} · Est. cost {formatCurrency(item.estimated_batch_cost || 0)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <ProductionOverrideSummary production={selectedProduction} />
 
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
                 <h4 className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-900">
@@ -1493,38 +3097,40 @@ export default function Production() {
 
               <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
                 <h4 className="font-medium text-blue-900 mb-3">Inventory Check</h4>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Item Code</TableHead>
-                      <TableHead>Item Name</TableHead>
-                      <TableHead>Required</TableHead>
-                      <TableHead>On Hand</TableHead>
-                      <TableHead>Reserved</TableHead>
-                      <TableHead>Available to Reserve</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {inventoryCheck.map((ing, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="font-mono text-xs text-slate-600">{ing.item_code}</TableCell>
-                        <TableCell>{ing.ingredient_name}</TableCell>
-                        <TableCell>{formatRecipeQuantity(ing.adjusted_quantity, ing.unit)} {ing.unit}</TableCell>
-                        <TableCell>{formatRecipeQuantity(ing.on_hand_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
-                        <TableCell>{formatRecipeQuantity(ing.reserved_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
-                        <TableCell>{formatRecipeQuantity(ing.available_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
-                        <TableCell>
-                          {ing.sufficient ? (
-                            <Badge className="bg-green-600">✓ OK</Badge>
-                          ) : (
-                            <Badge className="bg-red-600">Short {formatRecipeQuantity(ing.shortage, ing.inventory_unit)} {ing.inventory_unit}</Badge>
-                          )}
-                        </TableCell>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
+                        <TableHead>Required</TableHead>
+                        <TableHead>On Hand</TableHead>
+                        <TableHead>Reserved</TableHead>
+                        <TableHead>Available to Reserve</TableHead>
+                        <TableHead>Status</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {inventoryCheck.map((ing, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell className="font-mono text-xs text-slate-600">{ing.item_code}</TableCell>
+                          <TableCell>{ing.ingredient_name}</TableCell>
+                          <TableCell>{formatRecipeQuantity(ing.adjusted_quantity, ing.unit)} {ing.unit}</TableCell>
+                          <TableCell>{formatRecipeQuantity(ing.on_hand_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
+                          <TableCell>{formatRecipeQuantity(ing.reserved_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
+                          <TableCell>{formatRecipeQuantity(ing.available_stock, ing.inventory_unit)} {ing.inventory_unit}</TableCell>
+                          <TableCell>
+                            {ing.sufficient ? (
+                              <Badge className="bg-green-600">✓ OK</Badge>
+                            ) : (
+                              <Badge className="bg-red-600">Short {formatRecipeQuantity(ing.shortage, ing.inventory_unit)} {ing.inventory_unit}</Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
 
               {inventoryCheck.some(ing => !ing.sufficient) && (
@@ -1789,7 +3395,6 @@ export default function Production() {
             setCompletionOpen(open);
             if (!open) {
               setCompletionProduction(null);
-              setCompletionQuantities([]);
               setCompletionFulfillmentStoreId('');
               setActionError('');
             }
@@ -1797,13 +3402,67 @@ export default function Production() {
         >
           <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Complete Production & Reconcile Consumption</DialogTitle>
+              <DialogTitle>Complete Production Automatically</DialogTitle>
             </DialogHeader>
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-              Reserved inventory was physically deducted when production started. Confirm the actual raw quantity consumed for each ingredient; completion reconciles only the difference and creates one immutable Production Consumption Report without deducting the start quantity twice.
+              Completion is fully automatic. The approved raw ingredient snapshot is reconciled without manual quantities, and its frozen yield-adjusted weight becomes the finished production balance without deducting inventory twice.
             </div>
             {actionError ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
+            ) : null}
+            <div className="grid gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Calculated Yielded Weight</p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {Number.isFinite(completionExpectedWeightGrams) && completionExpectedWeightGrams > 0
+                    ? `${formatRecipeQuantity(completionExpectedWeightGrams, 'g')} g`
+                    : 'Not available'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Automatic Finished Production</p>
+                <p className="mt-1 text-lg font-semibold text-emerald-800">
+                  {Number.isFinite(completionExpectedWeightGrams) && completionExpectedWeightGrams > 0
+                    ? `${formatRecipeQuantity(completionExpectedWeightGrams, 'g')} g`
+                    : 'Not available'}
+                </p>
+                <p className="text-xs text-slate-500">Set by the approved recipe yield</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Calculated Portion Size</p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {Number.isFinite(completionPortionSizeGrams) && completionPortionSizeGrams > 0
+                    ? `${formatRecipeQuantity(completionPortionSizeGrams, 'g')} g`
+                    : 'Not available'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Produced Servings</p>
+                <p className="mt-1 text-lg font-semibold text-emerald-800">
+                  {completionDerivedServings == null
+                    ? 'Not available'
+                    : formatRecipeQuantity(completionDerivedServings, 'servings')}
+                </p>
+                <p className="text-xs text-slate-500">Yield-adjusted weight ÷ portion size</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500">
+              Output source: {String(completionYieldSummary.output_calculation_source || 'automatic yield plan').replaceAll('_', ' ')} · Portion source: {String(completionYieldSummary.portion_size_source || 'automatic yield plan').replaceAll('_', ' ')}. The server independently recalculates these values before posting completion.
+            </p>
+            {completionYieldSummary.warnings.length > 0 ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <p className="font-medium">Automatic calculation notes:</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {completionYieldSummary.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {completionDerivedServings == null ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                Automatic completion is unavailable because this approved production snapshot does not contain both a valid yielded weight and portion size. Update the recipe and create a new production request.
+              </div>
             ) : null}
             <div>
               <Label htmlFor="completion_fulfillment_store">Inventory Fulfillment Store *</Label>
@@ -1834,33 +3493,46 @@ export default function Production() {
                   <TableRow>
                     <TableHead>Item Code</TableHead>
                     <TableHead>Item Name</TableHead>
-                    <TableHead>Yield-Adjusted Plan</TableHead>
-                    <TableHead>Actual Consumed</TableHead>
-                    <TableHead>Unit</TableHead>
+                    <TableHead>Approved Raw Issue</TableHead>
+                    <TableHead>Yield</TableHead>
+                    <TableHead>Yielded Weight</TableHead>
+                    <TableHead>Reconciliation</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {completionQuantities.map((line, index) => (
+                  {completionRawReconciliation.map((line, index) => (
                     <TableRow key={line.ingredient_id || index}>
                       <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
                       <TableCell className="font-medium">{line.ingredient_name}</TableCell>
                       <TableCell>{formatRecipeQuantity(line.planned_quantity, line.unit)} {line.unit}</TableCell>
-                      <TableCell className="w-48">
-                        <StandardDecimalInput
-                          value={line.actual_quantity}
-                          unit={line.unit}
-                          min={0}
-                          allowZero
-                          allowEmpty={false}
-                          label={`Actual consumption for ${line.ingredient_name}`}
-                          onValueChange={(value) => setCompletionQuantities((current) => current.map((entry, entryIndex) => (
-                            entryIndex === index ? { ...entry, actual_quantity: value } : entry
-                          )))}
-                        />
+                      <TableCell>{formatRecipeQuantity(line.yield_percent, '%')}%</TableCell>
+                      <TableCell>
+                        {line.yielded_weight_grams !== null && Number.isFinite(Number(line.yielded_weight_grams))
+                          ? `${formatRecipeQuantity(line.yielded_weight_grams, 'g')} g`
+                          : 'Unavailable'}
                       </TableCell>
-                      <TableCell>{line.unit}</TableCell>
+                      <TableCell>
+                        {line.yielded_weight_grams !== null ? (
+                          <div className="flex items-center gap-2 text-emerald-700">
+                            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                            <span className="font-medium">Automatic</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-amber-700">
+                            <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                            <span className="font-medium">Yield data required</span>
+                          </div>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
+                  {completionRawReconciliation.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">
+                        No approved raw ingredient snapshot is available for reconciliation.
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
                 </TableBody>
               </Table>
             </div>
@@ -1868,19 +3540,17 @@ export default function Production() {
               <Button variant="outline" onClick={() => setCompletionOpen(false)}>Cancel</Button>
               <Button
                 className="bg-emerald-700 hover:bg-emerald-800"
-                disabled={updateStatusMutation.isPending || !completionFulfillmentStoreId || completionQuantities.some((line) => !Number.isFinite(Number(line.actual_quantity)) || Number(line.actual_quantity) < 0)}
+                disabled={updateStatusMutation.isPending
+                  || !completionFulfillmentStoreId
+                  || completionDerivedServings == null
+                  || completionRawReconciliation.length === 0}
                 onClick={() => updateStatusMutation.mutate({
                   id: completionProduction.id,
                   status: 'completed',
-                  fulfillmentStoreId: completionFulfillmentStoreId,
-                  ingredientQuantities: completionQuantities.map((line) => ({
-                    ingredient_id: line.ingredient_id,
-                    actual_quantity: Number(line.actual_quantity),
-                    unit: line.unit
-                  }))
+                  fulfillmentStoreId: completionFulfillmentStoreId
                 })}
               >
-                {updateStatusMutation.isPending ? 'Posting...' : 'Post Consumption & Complete'}
+                {updateStatusMutation.isPending ? 'Completing...' : 'Complete Automatically'}
               </Button>
             </DialogFooter>
           </DialogContent>

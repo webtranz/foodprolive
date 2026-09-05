@@ -6,6 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MoreVertical, Pencil, Trash2, Flame, Scale, TrendingDown, Droplets, Candy, ShieldAlert } from 'lucide-react';
 import { getItemCode } from '../../../shared/itemCode.js';
 import { formatCurrency } from '@/lib/currency';
+import { normalizeSourceName } from '../../../shared/sourceNames.js';
 
 const CATEGORY_COLORS = {
   proteins: 'bg-red-100 text-red-700',
@@ -20,8 +21,13 @@ const CATEGORY_COLORS = {
   other: 'bg-slate-100 text-slate-700'
 };
 
+const formatQuantity = (value) => Number(value || 0).toLocaleString(undefined, {
+  maximumFractionDigits: 3
+});
+
 export default function IngredientCard({ ingredient, onEdit, onDelete }) {
   const allergens = Array.isArray(ingredient.allergens) ? ingredient.allergens : [];
+  const stock = ingredient.stock_summary || {};
 
   return (
     <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 group">
@@ -36,6 +42,9 @@ export default function IngredientCard({ ingredient, onEdit, onDelete }) {
             </h3>
             <Badge className={`${CATEGORY_COLORS[ingredient.category]} text-xs mt-1`}>
               {ingredient.category?.replace(/_/g, ' ')}
+            </Badge>
+            <Badge variant="outline" className="ml-2 mt-1 border-slate-200 bg-white text-xs text-slate-700">
+              {normalizeSourceName(ingredient.source_name)}
             </Badge>
           </div>
           {typeof onEdit === 'function' || typeof onDelete === 'function' ? (
@@ -88,6 +97,17 @@ export default function IngredientCard({ ingredient, onEdit, onDelete }) {
               <span className="text-slate-400">per {ingredient.unit}</span>
             </div>
           )}
+
+          <div className="grid grid-cols-2 gap-2 rounded-md bg-slate-50 p-2 text-xs">
+            <div>
+              <p className="font-medium text-slate-900">{formatQuantity(stock.on_hand_quantity)}</p>
+              <p className="text-slate-500">on hand {stock.unit || ingredient.unit || ''}</p>
+            </div>
+            <div>
+              <p className="font-medium text-cyan-800">{formatQuantity(stock.available_quantity)}</p>
+              <p className="text-slate-500">available {stock.unit || ingredient.unit || ''}</p>
+            </div>
+          </div>
 
           {(ingredient.sodium_per_100g || ingredient.sugar_per_100g) && (
             <div className="grid grid-cols-2 gap-2 text-sm">

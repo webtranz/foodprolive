@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/currency';
 import { calculateIngredientCost } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
-import { calculateYieldAdjustedQuantity } from '../../shared/ingredientYield.js';
+import { calculateYieldOutputQuantity } from '../../shared/ingredientYield.js';
 import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
 import { getItemCode } from '../../shared/itemCode.js';
 
@@ -55,18 +55,18 @@ export default function ProductionCalculator() {
     }
 
     let multiplier = 0;
+    const recipeWeight = calculateRecipeServingWeight(recipeData, recipes, ingredients);
 
     if (calculationMode === 'servings' && targetServings) {
       multiplier = parseFloat(targetServings) / (recipeData.servings || 1);
     } else if (calculationMode === 'weight' && targetWeight) {
-      const recipeWeight = calculateRecipeServingWeight(recipeData, recipes, ingredients);
-      const totalRecipeWeight = recipeWeight.raw_total_grams || 0;
+      const totalRecipeWeight = recipeWeight.yielded_total_grams || recipeWeight.cooked_total_grams || 0;
       if (totalRecipeWeight > 0) {
         multiplier = (parseFloat(targetWeight) * 1000) / totalRecipeWeight;
       }
     }
 
-    if (multiplier === 0) {
+    if (!Number.isFinite(multiplier) || multiplier <= 0) {
       setCalculations(null);
       return;
     }
@@ -74,20 +74,19 @@ export default function ProductionCalculator() {
     const calculatedIngredients = recipeIngredients.map(ing => {
       const ingredientData = ingredients.find(i => i.id === ing.ingredient_id);
       const ingData = ingredientData?.data || ingredientData;
-      const netQuantity = (ing.quantity || 0) * multiplier;
-      const yieldAdjustment = calculateYieldAdjustedQuantity(netQuantity, ingData);
-      const rawRequiredQuantity = yieldAdjustment.required_raw_quantity;
-      const estimatedCost = calculateIngredientCost(rawRequiredQuantity, ing.unit, ingData);
+      const rawQuantity = (ing.quantity || 0) * multiplier;
+      const yieldOutput = calculateYieldOutputQuantity(rawQuantity, ingData);
+      const estimatedCost = calculateIngredientCost(rawQuantity, ing.unit, ingData);
       
       return {
         id: ing.ingredient_id,
         itemCode: getItemCode(ingData, getItemCode(ing)),
         name: ing.ingredient_name,
-        netQuantity: Number(netQuantity.toFixed(4)),
-        rawRequiredQuantity: Number(rawRequiredQuantity.toFixed(4)),
+        rawQuantity: Number(rawQuantity.toFixed(4)),
+        yieldedQuantity: Number(yieldOutput.yielded_quantity.toFixed(4)),
         unit: ing.unit,
-        yieldPercent: Number(yieldAdjustment.yield_percent.toFixed(2)),
-        yieldSource: yieldAdjustment.yield_source,
+        yieldPercent: Number(yieldOutput.yield_percent.toFixed(2)),
+        yieldSource: yieldOutput.yield_source,
         estimatedCost: Math.round(estimatedCost * 100) / 100,
         category: ingData?.category,
         sourceRecipeNames: ing.source_recipe_names || []
@@ -106,7 +105,10 @@ export default function ProductionCalculator() {
       totalCost: Math.round(totalCost * 100) / 100,
       totalCalories: Math.round((recipeData.calories_per_serving || 0) * estimatedServings),
       estimatedServings,
-      costPerServing: estimatedServings > 0 ? Math.round((totalCost / estimatedServings) * 100) / 100 : 0
+      costPerServing: estimatedServings > 0 ? Math.round((totalCost / estimatedServings) * 100) / 100 : 0,
+      expectedFinishedWeightKg: recipeWeight.cooked_total_grams > 0
+        ? Math.round(((recipeWeight.cooked_total_grams * multiplier) / 1000) * 1000) / 1000
+        : null
     });
   }, [selectedRecipe, targetServings, targetWeight, calculationMode, recipes, ingredients]);
 
@@ -202,7 +204,7 @@ export default function ProductionCalculator() {
                 <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
                   <p className="text-sm text-blue-700 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4" />
-                    Raw issue quantities are calculated from each ingredient's cooking yield
+                    Recipe quantities are raw inventory inputs; finished production weight is calculated after applying each ingredient's yield.
                   </p>
                 </div>
               )}
@@ -260,9 +262,9 @@ export default function ProductionCalculator() {
                             <TableHead>Item Code</TableHead>
                             <TableHead>Item Name</TableHead>
                             <TableHead>Category</TableHead>
-                            <TableHead>Net Recipe Qty</TableHead>
+                            <TableHead>Raw Recipe Qty</TableHead>
                             <TableHead>Yield</TableHead>
-                            <TableHead>Raw Required</TableHead>
+                            <TableHead>Expected Yielded Output</TableHead>
                             <TableHead>Est. Cost</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -276,10 +278,10 @@ export default function ProductionCalculator() {
                                   {ing.category || 'other'}
                                 </Badge>
                               </TableCell>
-                              <TableCell>{ing.netQuantity} {ing.unit}</TableCell>
+                              <TableCell>{ing.rawQuantity} {ing.unit}</TableCell>
                               <TableCell>{ing.yieldPercent}%</TableCell>
                               <TableCell className="font-semibold text-emerald-600">
-                                {ing.rawRequiredQuantity} {ing.unit}
+                                {ing.yieldedQuantity} {ing.unit}
                               </TableCell>
                               <TableCell>{formatCurrency(ing.estimatedCost)}</TableCell>
                             </TableRow>
@@ -292,6 +294,12 @@ export default function ProductionCalculator() {
                       <span className="text-slate-600">Cost per serving:</span>
                       <span className="text-lg font-bold text-slate-900">{formatCurrency(calculations.costPerServing)}</span>
                     </div>
+                    <div className="mt-2 flex justify-between items-center text-sm">
+                      <span className="text-slate-600">Expected finished yield:</span>
+                      <span className="font-semibold text-emerald-700">
+                        {calculations.expectedFinishedWeightKg == null ? 'Not available' : `${calculations.expectedFinishedWeightKg} kg`}
+                      </span>
+                    </div>
                   </CardContent>
                 </Card>
 
@@ -300,7 +308,7 @@ export default function ProductionCalculator() {
                   <CardContent className="p-6">
                     <h3 className="font-semibold text-emerald-900 mb-3">Production Tips</h3>
                     <ul className="space-y-2 text-sm text-emerald-800">
-                      <li>• Raw requirements use net recipe quantity ÷ ingredient cooking yield</li>
+                      <li>• Recipe quantities are raw inputs; expected output equals raw quantity × cooking yield</li>
                       <li>• Verify inventory levels before starting production</li>
                       <li>• Track actual usage vs. planned for waste analysis</li>
                       <li>• Prep time: {calculations.recipe.prep_time_minutes || 0} min, Cook time: {calculations.recipe.cook_time_minutes || 0} min</li>

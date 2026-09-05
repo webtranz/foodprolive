@@ -2,15 +2,20 @@
 
 import * as React from "react"
 import * as SelectPrimitive from "@radix-ui/react-select"
-import { Check, ChevronDown, ChevronUp } from "lucide-react"
+import { Check, ChevronDown, ChevronUp, Search } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Input } from "@/components/ui/input"
 
 const Select = SelectPrimitive.Root
 
 const SelectGroup = SelectPrimitive.Group
 
 const SelectValue = SelectPrimitive.Value
+const SEARCHABLE_SELECT_ITEM_THRESHOLD = 10
+const SEARCH_DEBOUNCE_MS = 250
+const INITIAL_VISIBLE_ITEM_COUNT = 120
+const VISIBLE_ITEM_BATCH_SIZE = 120
 
 const SelectTrigger = React.forwardRef(({ className, children, ...props }, ref) => (
   <SelectPrimitive.Trigger
@@ -49,30 +54,6 @@ const SelectScrollDownButton = React.forwardRef(({ className, ...props }, ref) =
 SelectScrollDownButton.displayName =
   SelectPrimitive.ScrollDownButton.displayName
 
-const SelectContent = React.forwardRef(({ className, children, position = "popper", ...props }, ref) => (
-  <SelectPrimitive.Portal>
-    <SelectPrimitive.Content
-      ref={ref}
-      className={cn(
-        "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        position === "popper" &&
-          "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
-        className
-      )}
-      position={position}
-      {...props}>
-      <SelectScrollUpButton />
-      <SelectPrimitive.Viewport
-        className={cn("p-1", position === "popper" &&
-          "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]")}>
-        {children}
-      </SelectPrimitive.Viewport>
-      <SelectScrollDownButton />
-    </SelectPrimitive.Content>
-  </SelectPrimitive.Portal>
-))
-SelectContent.displayName = SelectPrimitive.Content.displayName
-
 const SelectLabel = React.forwardRef(({ className, ...props }, ref) => (
   <SelectPrimitive.Label
     ref={ref}
@@ -98,6 +79,179 @@ const SelectItem = React.forwardRef(({ className, children, ...props }, ref) => 
   </SelectPrimitive.Item>
 ))
 SelectItem.displayName = SelectPrimitive.Item.displayName
+
+function getNodeText(node) {
+  if (node === null || node === undefined || typeof node === "boolean") {
+    return ""
+  }
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node)
+  }
+  if (Array.isArray(node)) {
+    return node.map(getNodeText).join("")
+  }
+  if (React.isValidElement(node)) {
+    return getNodeText(node.props?.children)
+  }
+  return ""
+}
+
+function isItemNode(node) {
+  return (
+    React.isValidElement(node)
+    && (
+      node.type === SelectItem
+      || node.type?.displayName === SelectItem.displayName
+    )
+  )
+}
+
+function normalizeChildren(children) {
+  return React.Children.toArray(children)
+}
+
+const SelectContent = React.forwardRef(({ className, children, position = "popper", ...props }, ref) => {
+  const normalized = React.useMemo(() => normalizeChildren(children), [children])
+  const searchableNodes = React.useMemo(() => {
+    return normalized.map((child) => ({
+      node: child,
+      isItem: isItemNode(child),
+      itemLabel: isItemNode(child)
+        ? getNodeText(child.props?.children)
+          .trim()
+          .toLowerCase()
+        : "",
+      itemValue: isItemNode(child)
+        ? String(child.props?.value || "").toLowerCase()
+        : "",
+    }))
+  }, [normalized])
+  const itemCount = React.useMemo(
+    () => searchableNodes.filter((entry) => entry.isItem).length,
+    [searchableNodes]
+  )
+  const searchable = itemCount > SEARCHABLE_SELECT_ITEM_THRESHOLD
+  const [searchTerm, setSearchTerm] = React.useState("")
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = React.useState("")
+  const [visibleLimit, setVisibleLimit] = React.useState(INITIAL_VISIBLE_ITEM_COUNT)
+
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm.trim().toLowerCase())
+    }, SEARCH_DEBOUNCE_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [searchTerm])
+
+  React.useEffect(() => {
+    if (!searchable) {
+      setSearchTerm("")
+    }
+    setVisibleLimit(INITIAL_VISIBLE_ITEM_COUNT)
+  }, [searchable])
+
+  React.useEffect(() => {
+    setVisibleLimit(INITIAL_VISIBLE_ITEM_COUNT)
+  }, [debouncedSearchTerm])
+
+  const filteredNodes = React.useMemo(() => {
+    if (!searchable || !debouncedSearchTerm) {
+      return searchableNodes
+    }
+
+    return searchableNodes.filter((entry) => {
+      if (!entry.isItem) return false
+      return (
+        entry.itemLabel.includes(debouncedSearchTerm)
+        || entry.itemValue.includes(debouncedSearchTerm)
+      )
+    })
+  }, [debouncedSearchTerm, searchable, searchableNodes])
+
+  const itemMatches = React.useMemo(
+    () => filteredNodes.filter((entry) => entry.isItem),
+    [filteredNodes]
+  )
+  const visibleNodes = React.useMemo(
+    () => (searchable ? filteredNodes.slice(0, visibleLimit) : filteredNodes),
+    [searchable, filteredNodes, visibleLimit]
+  )
+
+  const showLoadMore = React.useMemo(
+    () => searchable ? itemMatches.length > visibleLimit : false,
+    [searchable, itemMatches.length, visibleLimit]
+  )
+
+  const noResults = React.useMemo(
+    () => searchable && debouncedSearchTerm && filteredNodes.length === 0,
+    [searchable, debouncedSearchTerm, filteredNodes.length]
+  )
+
+  const onLoadMore = React.useCallback(() => {
+    setVisibleLimit((current) => current + VISIBLE_ITEM_BATCH_SIZE)
+  }, [])
+
+  return (
+    <SelectPrimitive.Portal>
+      <SelectPrimitive.Content
+        ref={ref}
+        className={cn(
+          "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+          position === "popper" &&
+            "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
+          className
+        )}
+        position={position}
+        {...props}>
+        <SelectScrollUpButton />
+        <SelectPrimitive.Viewport
+          className={cn("p-1", position === "popper" &&
+            "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]")}>
+          {searchable ? (
+            <div className="sticky top-0 z-10 bg-popover px-2 py-1">
+              <div className="relative">
+                <Search className="absolute left-2 top-2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                  placeholder="Search..."
+                  className="pl-7 h-8"
+                />
+              </div>
+            </div>
+          ) : null}
+          {noResults ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">No matching items</div>
+          ) : (
+            <>
+              {visibleNodes.map((entry, index) => (
+                <React.Fragment
+                  key={entry.node.key ?? `${entry.isItem ? "item" : "node"}-${index}-${entry.itemLabel || "entry"}`}>
+                  {entry.node}
+                </React.Fragment>
+                ))}
+              {showLoadMore ? (
+                <div className="px-2 py-1.5">
+                  <button
+                    type="button"
+                    className="w-full rounded-md border px-2 py-1.5 text-sm"
+                    onClick={onLoadMore}>
+                    Load more
+                  </button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </SelectPrimitive.Viewport>
+        <SelectScrollDownButton />
+      </SelectPrimitive.Content>
+    </SelectPrimitive.Portal>
+  )
+})
+SelectContent.displayName = SelectPrimitive.Content.displayName
 
 const SelectSeparator = React.forwardRef(({ className, ...props }, ref) => (
   <SelectPrimitive.Separator

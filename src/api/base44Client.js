@@ -279,6 +279,14 @@ export const base44 = {
       })}`);
     }
   },
+  budgets: {
+    getPlanningContext(filters = {}) {
+      return apiRequest(`/api/budgets/planning-context${buildQueryString({
+        month: filters.month,
+        date: filters.date
+      })}`);
+    }
+  },
   ingredients: {
     search(filters = {}) {
       return apiRequest(`/api/ingredients/search${buildQueryString(filters)}`);
@@ -551,11 +559,21 @@ export const base44 = {
     }
   },
   menuPlanning: {
-    getWeek(siteId, weekStart) {
-      return apiRequest(`/api/menu-plans/week${buildQueryString({ site_id: siteId, week_start: weekStart })}`);
+    getWeek(siteId, weekStart, options = {}) {
+      return apiRequest(`/api/menu-plans/week${buildQueryString({
+        site_id: siteId,
+        week_start: weekStart,
+        cuisine_type: options.cuisine_type,
+        menu_category: options.menu_category
+      })}`);
     },
-    getByDate(siteId, planDate) {
-      return apiRequest(`/api/menu-plans/by-date${buildQueryString({ site_id: siteId, plan_date: planDate })}`);
+    getByDate(siteId, planDate, options = {}) {
+      return apiRequest(`/api/menu-plans/by-date${buildQueryString({
+        site_id: siteId,
+        plan_date: planDate,
+        cuisine_type: options.cuisine_type,
+        menu_category: options.menu_category
+      })}`);
     },
     previewCost(data) {
       return apiRequest('/api/menu-plans/cost-preview', {
@@ -676,18 +694,6 @@ export const base44 = {
     list(filters = {}) {
       return apiRequest(`/api/food-waste${buildQueryString(filters)}`);
     },
-    listQRCodes(siteId = '') {
-      return apiRequest(`/api/food-waste/qr-codes${buildQueryString({ site_id: siteId })}`);
-    },
-    createQRCode(data) {
-      return apiRequest('/api/food-waste/qr-codes', {
-        method: 'POST',
-        body: JSON.stringify(data)
-      });
-    },
-    resolveQRCode(token) {
-      return apiRequest(`/api/food-waste/qr-resolve${buildQueryString({ token })}`);
-    },
     getContext(siteId, wasteDate, mealType) {
       return apiRequest(`/api/food-waste/context${buildQueryString({
         site_id: siteId,
@@ -699,12 +705,117 @@ export const base44 = {
       return apiRequest('/api/food-waste', {
         method: 'POST',
         body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('FoodWaste', { action: 'create', result });
+        if (data?.source_type === 'batch_overproduction' || data?.waste_category === 'batch_overproduction') {
+          emitEntityChange('ProducedItemBatch', { action: 'food-waste', result });
+        }
+        return result;
       });
     },
     update(id, data) {
       return apiRequest(`/api/food-waste/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data)
+      });
+    }
+  },
+  mealService: {
+    availability(filters = {}) {
+      return apiRequest(`/api/meal-service/availability${buildQueryString(filters)}`);
+    },
+    updatePortionSize(data = {}) {
+      return apiRequest('/api/meal-service/portion-size', {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('ProducedItemBatch', { action: 'meal-service-portion-size', result });
+        return result;
+      });
+    },
+    preview(data = {}) {
+      return apiRequest('/api/meal-service/preview', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    confirm(data = {}) {
+      return apiRequest('/api/meal-service/attendance', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('ProducedItemBatch', { action: 'meal-service', result });
+        emitEntityChange('MealServiceAttendance', { action: 'create', result });
+        emitEntityChange('MealServiceConsumption', { action: 'create', result });
+        emitEntityChange('FoodWaste', { action: 'meal-service-leftover', result });
+        return result;
+      });
+    },
+    recordAttendance(data = {}) {
+      return apiRequest('/api/meal-service/attendance', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('ProducedItemBatch', { action: 'meal-service', result });
+        emitEntityChange('MealServiceAttendance', { action: 'create', result });
+        emitEntityChange('MealServiceConsumption', { action: 'create', result });
+        return result;
+      });
+    },
+    reverseAttendance(id, data = {}) {
+      return apiRequest(`/api/meal-service/attendance/${encodeURIComponent(id)}/reverse`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('ProducedItemBatch', { action: 'meal-service-reversal', result });
+        emitEntityChange('MealServiceAttendance', { action: 'reverse', result, id });
+        emitEntityChange('MealServiceConsumption', { action: 'reverse', result });
+        emitEntityChange('FoodWaste', { action: 'meal-service-leftover-reversal', result });
+        return result;
+      });
+    },
+    report(filters = {}) {
+      return apiRequest(`/api/meal-service/report${buildQueryString(filters)}`);
+    }
+  },
+  staffMealQr: {
+    list() {
+      return apiRequest('/api/staff-meal-qr');
+    },
+    create(data = {}) {
+      return apiRequest('/api/staff-meal-qr', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('QRCode', { action: 'staff-meal-qr-create', result });
+        return result;
+      });
+    },
+    update(id, data = {}) {
+      return apiRequest(`/api/staff-meal-qr/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('QRCode', { action: 'staff-meal-qr-update', result, id });
+        return result;
+      });
+    },
+    delete(id) {
+      return apiRequest(`/api/staff-meal-qr/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      }).then((result) => {
+        emitEntityChange('QRCode', { action: 'staff-meal-qr-delete', result, id });
+        return result;
+      });
+    },
+    scan(data = {}) {
+      return apiRequest('/api/staff-meal-qr/scan', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('QRCode', { action: 'staff-meal-qr-scan', result });
+        emitEntityChange('AttendanceRecord', { action: 'staff-meal-qr-scan', result });
+        return result;
       });
     }
   },
@@ -731,6 +842,10 @@ export const base44 = {
       return apiRequest(`/api/inventory/production/${id}/complete`, {
         method: 'POST',
         body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('Production', { action: 'complete', result, id });
+        emitEntityChange('ProducedItemBatch', { action: 'create', result: result?.produced_item_batch });
+        return result;
       });
     },
     listLots(filters = {}) {
@@ -811,13 +926,17 @@ export const base44 = {
     downloadTemplate(moduleKey) {
       return apiBlobRequest(`/api/utilities/templates/${encodeURIComponent(moduleKey)}`);
     },
-    submitBulkUpload({ module, import_mode, file, site_id, site_name }) {
+    submitBulkUpload({ module, import_mode, file, site_id, site_name, source_name, recipe_type, menu_cuisine, menu_category }) {
       const formData = new FormData();
       formData.append('module', module);
       formData.append('import_mode', import_mode || 'keep_existing');
       if (file) formData.append('file', file);
       if (site_id) formData.append('site_id', site_id);
       if (site_name) formData.append('site_name', site_name);
+      if (source_name) formData.append('source_name', source_name);
+      if (recipe_type) formData.append('recipe_type', recipe_type);
+      if (menu_cuisine) formData.append('menu_cuisine', menu_cuisine);
+      if (menu_category) formData.append('menu_category', menu_category);
       return apiRequest('/api/utilities/bulk-upload', {
         method: 'POST',
         body: formData,
@@ -829,6 +948,9 @@ export const base44 = {
     }
   },
   activity: {
+    listNotifications(limit = 50) {
+      return apiRequest(`/api/activity/notifications${buildQueryString({ limit })}`);
+    },
     listBulkUploadJobs(limit = 100) {
       return apiRequest(`/api/activity/bulk-upload-jobs${buildQueryString({ limit })}`);
     },
@@ -854,6 +976,15 @@ export const base44 = {
         const formData = new FormData();
         formData.append('file', file);
         return apiRequest('/api/integrations/recipe-image', {
+          method: 'POST',
+          body: formData,
+          headers: {}
+        });
+      },
+      UploadWasteImage({ file }) {
+        const formData = new FormData();
+        formData.append('file', file);
+        return apiRequest('/api/integrations/waste-image', {
           method: 'POST',
           body: formData,
           headers: {}

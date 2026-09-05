@@ -7,6 +7,7 @@ import { QrCode } from 'lucide-react';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
+import { getDinerScanHeadcount } from '@/lib/mealServiceAttendance';
 
 export default function LiveDinersPanel() {
   const today = format(new Date(), 'yyyy-MM-dd');
@@ -38,6 +39,7 @@ export default function LiveDinersPanel() {
   }, [queryClient]);
 
   const todayEvents = allEvents.filter(e => e.event_name && e.plan_date === today && e.service_style === 'dining_hall');
+  const totalDiners = getDinerScanHeadcount(allScans);
 
   if (todayEvents.length === 0) return null;
 
@@ -49,16 +51,19 @@ export default function LiveDinersPanel() {
             <QrCode className="w-4 h-4 text-emerald-600" />
             Live Dining Hall Tracker
           </CardTitle>
-          <Link to={createPageUrl('DiningScanner')}>
-            <button className="text-xs text-emerald-600 hover:text-emerald-700 font-medium">Open Scanner →</button>
-          </Link>
+          <div className="flex items-center gap-3">
+            <Badge className="bg-emerald-100 text-emerald-700">{totalDiners} diners today</Badge>
+            <Link to={createPageUrl('DiningScanner')}>
+              <button className="text-xs text-emerald-600 hover:text-emerald-700 font-medium">Open Scanner →</button>
+            </Link>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {todayEvents.map(event => {
           const eventScans = allScans.filter(s => s.event_id === event.id);
           const planned = event.total_expected_servings || 0;
-          const actual = eventScans.length;
+          const actual = getDinerScanHeadcount(eventScans);
           const rate = planned > 0 ? Math.round((actual / planned) * 100) : 0;
           const noShows = Math.max(0, planned - actual);
           const wasteKg = ((noShows * (event.consumption_per_person_g || 550)) / 1000).toFixed(1);

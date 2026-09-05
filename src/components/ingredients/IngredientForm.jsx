@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DEFAULT_SOURCE_NAME, SOURCE_NAME_OPTIONS, normalizeSourceName } from '../../../shared/sourceNames.js';
 
 const CATEGORIES = [
   { value: 'proteins', label: 'Proteins' },
@@ -44,6 +45,7 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
     sku: '',
     aliases: '',
     supplier_item_name: '',
+    source_name: DEFAULT_SOURCE_NAME,
     category: 'other',
     unit: 'kg',
     conversion_unit: '',
@@ -73,6 +75,7 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
         sku: ingredient.sku || '',
         aliases: Array.isArray(ingredient.aliases) ? ingredient.aliases.join(', ') : ingredient.aliases || '',
         supplier_item_name: ingredient.supplier_item_name || '',
+        source_name: normalizeSourceName(ingredient.source_name),
         category: ingredient.category || 'other',
         unit: ingredient.unit || 'kg',
         conversion_unit: ingredient.conversion_unit || '',
@@ -100,6 +103,7 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
         sku: '',
         aliases: '',
         supplier_item_name: '',
+        source_name: DEFAULT_SOURCE_NAME,
         category: 'other',
         unit: 'kg',
         conversion_unit: '',
@@ -182,6 +186,24 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
 
             <TabsContent value="basic" className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="source_name">Source Name *</Label>
+                  <Select
+                    value={formData.source_name}
+                    onValueChange={(value) => setFormData({ ...formData, source_name: value })}
+                    required
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Select source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SOURCE_NAME_OPTIONS.map((source) => (
+                        <SelectItem key={source} value={source}>{source}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div>
                   <Label htmlFor="item_code">Item Code</Label>
                   <Input

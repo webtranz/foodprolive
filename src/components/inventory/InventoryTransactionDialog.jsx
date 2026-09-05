@@ -6,10 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PlusCircle, MinusCircle, SlidersHorizontal } from 'lucide-react';
 import { getItemCode } from '../../../shared/itemCode.js';
 import { format } from 'date-fns';
 import { getInventoryQuantities } from '@/lib/inventoryAvailability';
+import { DEFAULT_SOURCE_NAME, SOURCE_NAME_OPTIONS, normalizeSourceName } from '../../../shared/sourceNames.js';
 
 export default function InventoryTransactionDialog({ 
   open, 
@@ -25,7 +27,8 @@ export default function InventoryTransactionDialog({
     reason_code: '',
     unit_cost: '',
     batch_number: '',
-    expiry_date: ''
+    expiry_date: '',
+    source_name: DEFAULT_SOURCE_NAME
   });
 
   const queryClient = useQueryClient();
@@ -49,7 +52,8 @@ export default function InventoryTransactionDialog({
           reference_id: inventoryItem.id,
           reference_type: 'manual',
           notes: data.notes,
-          reason_code: data.reason_code || 'manual_receipt'
+          reason_code: data.reason_code || 'manual_receipt',
+          source_name: data.source_name
         });
       }
 
@@ -75,7 +79,8 @@ export default function InventoryTransactionDialog({
         reason_code: '',
         unit_cost: '',
         batch_number: '',
-        expiry_date: ''
+        expiry_date: '',
+        source_name: DEFAULT_SOURCE_NAME
       });
     }
   });
@@ -94,7 +99,8 @@ export default function InventoryTransactionDialog({
       reason_code: formData.reason_code,
       unit_cost: parseFloat(formData.unit_cost) || 0,
       batch_number: formData.batch_number,
-      expiry_date: formData.expiry_date || null
+      expiry_date: formData.expiry_date || null,
+      source_name: normalizeSourceName(formData.source_name)
     });
   };
 
@@ -151,6 +157,22 @@ export default function InventoryTransactionDialog({
 
           {isAddition ? (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <Label>Source Name *</Label>
+                <Select
+                  value={formData.source_name}
+                  onValueChange={(value) => setFormData({ ...formData, source_name: value })}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Select source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SOURCE_NAME_OPTIONS.map((source) => (
+                      <SelectItem key={source} value={source}>{source}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <Label>Unit Cost</Label>
                 <Input

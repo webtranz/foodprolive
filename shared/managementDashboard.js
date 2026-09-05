@@ -17,6 +17,7 @@ const PENDING_APPROVAL_STATUSES = new Set([
 const CLOSED_ORDER_STATUSES = new Set(['received', 'completed', 'cancelled', 'canceled', 'closed']);
 const COMPLETED_ORDER_STATUSES = new Set(['received', 'completed', 'closed']);
 const HIGH_WASTE_COST_THRESHOLD = 500;
+const BUDGET_PLANNING_SOURCE_MODULE = 'budget_planning';
 
 const DATE_FIELDS = Object.freeze({
   production: ['production_date', 'planned_date', 'date'],
@@ -166,7 +167,10 @@ function productionCost(production = {}) {
 
 function producedServings(production = {}) {
   const status = normalizeStatus(production.status);
-  const actualValue = firstFiniteValue([production.actual_servings]);
+  const actualValue = firstFiniteValue([
+    production.produced_servings,
+    production.actual_servings
+  ]);
   const actual = actualValue === undefined ? Number.NaN : safeNumber(actualValue, Number.NaN);
   if (Number.isFinite(actual)) return Math.max(0, actual);
   if (CLOSED_PRODUCTION_STATUSES.has(status)) return Math.max(0, safeNumber(production.target_servings));
@@ -189,6 +193,14 @@ function budgetCoversDate(budget = {}, targetDate) {
   const start = dateOnly(budget.start_date || budget.budget_date || targetDate);
   const end = dateOnly(budget.end_date || budget.budget_date || start);
   return Boolean(start && end && targetDate >= start && targetDate <= end);
+}
+
+function budgetOverlapsRange(budget = {}, rangeStart, rangeEnd) {
+  const status = normalizeStatus(budget.status || 'active');
+  if (['inactive', 'cancelled', 'canceled', 'closed'].includes(status)) return false;
+  const start = dateOnly(budget.start_date || budget.budget_date || rangeStart);
+  const end = dateOnly(budget.end_date || budget.budget_date || start);
+  return Boolean(start && end && start <= rangeEnd && end >= rangeStart);
 }
 
 function dailyBudgetAmount(budget = {}, targetDate) {
@@ -493,6 +505,58 @@ function budgetGroupKey(records, record) {
   const siteId = records.siteIdForRecord(record);
   const anchor = records.helpers.operationalAnchor(siteId);
   return String(anchor?.id || siteId || 'global');
+}
+
+function isBudgetPlanningRecord(record = {}) {
+  return String(record.source_module || '').trim().toLowerCase() === BUDGET_PLANNING_SOURCE_MODULE;
+}
+
+function budgetRecordLevel(records, record = {}) {
+  const declaredLevel = normalizeStatus(record.budget_level);
+  if ([SITE_HIERARCHY_TYPES.AREA, SITE_HIERARCHY_TYPES.PROJECT].includes(declaredLevel)) {
+    return declaredLevel;
+  }
+  const site = records.helpers.byId.get(records.siteIdForRecord(record));
+  const siteType = normalizeSiteType(site?.type, '');
+  return [SITE_HIERARCHY_TYPES.AREA, SITE_HIERARCHY_TYPES.PROJECT].includes(siteType) ? siteType : '';
+}
+
+function budgetAreaId(records, record = {}) {
+  let current = records.helpers.byId.get(records.siteIdForRecord(record)) || null;
+  const visited = new Set();
+  while (current && !visited.has(String(current.id))) {
+    visited.add(String(current.id));
+    if (normalizeSiteType(current.type, '') === SITE_HIERARCHY_TYPES.AREA) return String(current.id);
+    current = current.parent_site_id ? records.helpers.byId.get(String(current.parent_site_id)) || null : null;
+  }
+  return '';
+}
+
+function preferAreaPlanningBudgetsForRollups(records, rangeStart, rangeEnd, selectedSiteId = null) {
+  const selectedSite = selectedSiteId ? records.helpers.byId.get(String(selectedSiteId)) : null;
+  const selectedSiteType = normalizeSiteType(selectedSite?.type, '');
+  if ([SITE_HIERARCHY_TYPES.PROJECT, SITE_HIERARCHY_TYPES.STORE].includes(selectedSiteType)) {
+    return records;
+  }
+
+  const areaBudgetIds = new Set();
+  records.budgets.forEach((budget) => {
+    if (!isBudgetPlanningRecord(budget)) return;
+    if (budgetRecordLevel(records, budget) !== SITE_HIERARCHY_TYPES.AREA) return;
+    if (!budgetOverlapsRange(budget, rangeStart, rangeEnd)) return;
+    const areaId = budgetAreaId(records, budget);
+    if (areaId) areaBudgetIds.add(areaId);
+  });
+  if (areaBudgetIds.size === 0) return records;
+
+  return {
+    ...records,
+    budgets: records.budgets.filter((budget) => {
+      if (!isBudgetPlanningRecord(budget)) return true;
+      if (budgetRecordLevel(records, budget) !== SITE_HIERARCHY_TYPES.PROJECT) return true;
+      return !areaBudgetIds.has(budgetAreaId(records, budget));
+    })
+  };
 }
 
 function emptyBudgetGroupTotals() {
@@ -1005,7 +1069,7 @@ function buildActions(view, metrics, records, rangeStart, rangeEnd, period = nul
     waste: { key: 'waste', label: view === DASHBOARD_VIEWS.GENERAL_MANAGER ? 'Waste Approvals' : 'Waste Review', count: metrics.approvals.waste, href: '/FoodWaste', tone: 'amber' },
     inventory: { key: 'inventory', label: view === DASHBOARD_VIEWS.PROJECT_MANAGER ? 'Inventory Shortage' : 'Low Stock', count: metrics.stock_risk, href: '/Inventory', tone: 'amber' },
     supplier: { key: 'supplier', label: view === DASHBOARD_VIEWS.AREA_MANAGER ? 'Late Supplier' : 'Supplier Exceptions', count: metrics.supplier_exceptions, href: '/ProcurementModule', tone: 'violet' },
-    attendance: { key: 'attendance', label: view === DASHBOARD_VIEWS.AREA_MANAGER ? 'Attendance Gap' : 'Attendance Gaps', count: metrics.attendance_gaps, href: '/Attendance', tone: 'rose' },
+    attendance: { key: 'attendance', label: view === DASHBOARD_VIEWS.AREA_MANAGER ? 'Attendance Gap' : 'Attendance Gaps', count: metrics.attendance_gaps, href: '/MealService', tone: 'rose' },
     highWaste: { key: 'high_waste', label: 'High Waste', count: highWaste, href: '/FoodWaste', tone: 'rose' }
   };
 
@@ -1058,7 +1122,12 @@ export function buildManagementDashboardSnapshot(input = {}) {
   const helpers = createSiteHelpers(data.sites);
   const selectedSiteId = input.selectedSiteId || input.siteId || null;
   const selectedIds = selectedSiteId ? helpers.descendantIds(selectedSiteId) : null;
-  const records = recordsForSiteIds(data, selectedIds, helpers);
+  const records = preferAreaPlanningBudgetsForRollups(
+    recordsForSiteIds(data, selectedIds, helpers),
+    rangeStart,
+    rangeEnd,
+    selectedSiteId
+  );
 
   const operationalSites = data.sites.filter((site) => {
     if (selectedIds && !selectedIds.has(String(site.id))) return false;

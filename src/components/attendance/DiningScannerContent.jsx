@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CheckCircle2, XCircle, QrCode, AlertTriangle } from 'lucide-react';
-import { format } from 'date-fns';
 import jsQR from 'jsqr';
+import { getDinerScanHeadcount } from '@/lib/mealServiceAttendance';
 
 export default function DiningScannerContent() {
   const [selectedEventId, setSelectedEventId] = useState('');
@@ -19,8 +19,6 @@ export default function DiningScannerContent() {
   const streamRef = useRef(null);
   const scanIntervalRef = useRef(null);
   const queryClient = useQueryClient();
-  const today = format(new Date(), 'yyyy-MM-dd');
-
   const { data: allEvents = [] } = useQuery({
     queryKey: ['eventPlans'],
     queryFn: () => base44.entities.MenuPlan.list('-plan_date', 100)
@@ -108,7 +106,7 @@ export default function DiningScannerContent() {
   useEffect(() => () => stopCamera(), []);
 
   const planned = selectedEvent ? (selectedEvent.total_expected_servings || 0) : 0;
-  const actual = scans.length;
+  const actual = getDinerScanHeadcount(scans);
   const rate = planned > 0 ? Math.round((actual / planned) * 100) : 0;
   const noShows = Math.max(0, planned - actual);
   const wasteKg = ((noShows * (selectedEvent?.consumption_per_person_g || 550)) / 1000).toFixed(1);

@@ -53,6 +53,7 @@ import Attendance from './pages/Attendance';
 import AutoSchedule from './pages/AutoSchedule';
 import BatchTracking from './pages/BatchTracking';
 import BranchOrders from './pages/BranchOrders';
+import Budget from './pages/Budget';
 import CaloriesCalculator from './pages/CaloriesCalculator';
 import CostControl from './pages/CostControl';
 import D365Integration from './pages/D365Integration';
@@ -63,13 +64,14 @@ import EventDiningCheckin from './pages/EventDiningCheckin';
 import EventInquiry from './pages/EventInquiry';
 import EventPlanning from './pages/EventPlanning';
 import FoodWaste from './pages/FoodWaste';
-import FoodWasteQR from './pages/FoodWasteQR';
 import FoodCost from './pages/FoodCost';
 import FoodCategories from './pages/FoodCategories';
 import Forecasting from './pages/Forecasting';
 import Ingredients from './pages/Ingredients';
 import Inventory from './pages/Inventory';
 import MaterialRequests from './pages/MaterialRequests';
+import MealQRGenerator from './pages/MealQRGenerator';
+import MealService from './pages/MealService';
 import Menu from './pages/Menu';
 import MenuBuilder from './pages/MenuBuilder';
 import MenuPlanning from './pages/MenuPlanning';
@@ -105,6 +107,7 @@ export const PAGES = {
     "AutoSchedule": AutoSchedule,
     "BatchTracking": BatchTracking,
     "BranchOrders": BranchOrders,
+    "Budget": Budget,
     "CaloriesCalculator": CaloriesCalculator,
     "CostControl": CostControl,
     "D365Integration": D365Integration,
@@ -115,13 +118,14 @@ export const PAGES = {
     "EventInquiry": EventInquiry,
     "EventPlanning": EventPlanning,
     "FoodWaste": FoodWaste,
-    "FoodWasteQR": FoodWasteQR,
     "FoodCost": FoodCost,
     "FoodCategories": FoodCategories,
     "Forecasting": Forecasting,
     "Ingredients": Ingredients,
     "Inventory": Inventory,
     "MaterialRequests": MaterialRequests,
+    "MealQRGenerator": MealQRGenerator,
+    "MealService": MealService,
     "Menu": Menu,
     "MenuBuilder": MenuBuilder,
     "MenuPlanning": MenuPlanning,

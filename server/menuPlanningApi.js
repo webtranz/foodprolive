@@ -1,5 +1,5 @@
-import { expandRecipeIngredients } from '../shared/recipeComposition.js';
-import { quantityInIngredientBaseUnit } from '../shared/ingredientUnits.js';
+import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
+import { normalizeMenuCategory, normalizeMenuCuisine } from '../shared/menuCategories.js';
 
 const CORE_MENU_MEAL_TYPES = new Set(['breakfast', 'lunch', 'dinner']);
 
@@ -37,9 +37,11 @@ function buildMenuPlanWeekRange(weekStart) {
   };
 }
 
-function filterMenuPlansForWeek(records = [], siteId, weekStart) {
+function filterMenuPlansForWeek(records = [], siteId, weekStart, options = {}) {
   const range = buildMenuPlanWeekRange(weekStart);
   const normalizedSiteId = normalizeText(siteId);
+  const cuisineType = normalizeMenuCuisine(options.cuisine_type || options.cuisineType, 'general');
+  const menuCategory = normalizeMenuCategory(options.menu_category || options.menuCategory, 'senior');
   if (!range || !normalizedSiteId) return [];
 
   return (Array.isArray(records) ? records : []).filter((record) => (
@@ -47,12 +49,38 @@ function filterMenuPlansForWeek(records = [], siteId, weekStart) {
       && !normalizeText(record?.event_name)
       && normalizeDateOnly(record?.plan_date) >= range.start_date
       && normalizeDateOnly(record?.plan_date) <= range.end_date
+      && normalizeMenuCuisine(record?.cuisine_type, 'general') === cuisineType
+      && normalizeMenuCategory(record?.menu_category, 'senior') === menuCategory
   ));
 }
 
 function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
-  const directCostPerServing = toNumber(recipe?.cost_per_serving, NaN);
+  const hasRecipeLines = (Array.isArray(recipe?.ingredients) && recipe.ingredients.length > 0)
+    || (Array.isArray(recipe?.sub_recipes) && recipe.sub_recipes.length > 0);
   const servings = Math.max(0, toNumber(recipe?.servings, 0));
+  const ingredientCost = calculateRecipeCostingSnapshot(recipe, ingredients, recipes);
+  if (ingredientCost.has_cost) {
+    const totalCost = toNumber(ingredientCost.total_cost, 0);
+    return {
+      has_cost: true,
+      source: 'ingredients',
+      cost_per_serving: servings > 0 ? totalCost / servings : totalCost,
+      total_cost: totalCost,
+      costing_method: ingredientCost.costing_method
+    };
+  }
+
+  if (hasRecipeLines) {
+    return {
+      has_cost: false,
+      source: 'missing',
+      cost_per_serving: 0,
+      total_cost: 0,
+      missing_cost_count: ingredientCost.missing_cost_count || 0
+    };
+  }
+
+  const directCostPerServing = toNumber(recipe?.cost_per_serving, NaN);
 
   if (Number.isFinite(directCostPerServing) && directCostPerServing >= 0) {
     return {
@@ -73,47 +101,7 @@ function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
     };
   }
 
-  const recipeIngredients = expandRecipeIngredients(
-    recipe,
-    recipes,
-    ingredients,
-    { aggregate: true }
-  ).ingredients;
-  if (!recipeIngredients.length) {
-    return { has_cost: false, source: 'missing', cost_per_serving: 0, total_cost: 0 };
-  }
-
-  let totalCost = 0;
-  let hasAllCosts = true;
-
-  recipeIngredients.forEach((recipeIngredient) => {
-    const ingredient = ingredients.find((entry) => entry.id === recipeIngredient.ingredient_id);
-    const ingredientCost = toNumber(ingredient?.cost_per_unit, NaN);
-
-    if (!Number.isFinite(ingredientCost) || ingredientCost < 0) {
-      hasAllCosts = false;
-      return;
-    }
-
-    const quantityInCostUnits = quantityInIngredientBaseUnit(
-      recipeIngredient.quantity,
-      recipeIngredient.unit || ingredient?.unit,
-      ingredient
-    );
-
-    totalCost += quantityInCostUnits * ingredientCost;
-  });
-
-  if (!hasAllCosts) {
-    return { has_cost: false, source: 'missing', cost_per_serving: 0, total_cost: 0 };
-  }
-
-  return {
-    has_cost: true,
-    source: 'ingredients',
-    cost_per_serving: servings > 0 ? totalCost / servings : totalCost,
-    total_cost: totalCost
-  };
+  return { has_cost: false, source: 'missing', cost_per_serving: 0, total_cost: 0 };
 }
 
 function summarizeMenuPlanCostPreview(meals = [], recipes = [], ingredients = []) {
@@ -193,9 +181,14 @@ function validateMenuPlanPayload(payload = {}) {
 
   const meals = Array.isArray(payload.meals) ? payload.meals : [];
   const operationalMeals = meals.filter((meal) => CORE_MENU_MEAL_TYPES.has(normalizeText(meal?.meal_type).toLowerCase()));
+  const cuisineType = normalizeMenuCuisine(payload.cuisine_type, 'general');
+  const menuCategory = normalizeMenuCategory(payload.menu_category, 'senior');
 
   if (!operationalMeals.length) {
     errors.push('At least one breakfast, lunch, or dinner menu item is required.');
+  }
+  if (cuisineType === 'philippines' && menuCategory === 'management_menu') {
+    errors.push('Philippines menus support Senior, Junior, or Labor categories.');
   }
 
   operationalMeals.forEach((meal, index) => {

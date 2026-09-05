@@ -18,6 +18,45 @@ const EMPTY_FORM = {
   status: 'active'
 };
 
+const STANDARD_FOOD_CATEGORIES = [
+  {
+    name: 'Starter / Salad / Soup',
+    code: 'STARTER',
+    description: 'Opening courses including starters, salads, and soups.',
+    color: '#22c55e'
+  },
+  {
+    name: 'Main Course',
+    code: 'MAIN',
+    description: 'Primary meal dishes and main production items.',
+    color: '#ef4444'
+  },
+  {
+    name: 'Vegetable',
+    code: 'VEG',
+    description: 'Vegetable dishes and vegetable-based menu items.',
+    color: '#10b981'
+  },
+  {
+    name: 'Dessert',
+    code: 'DESSERT',
+    description: 'Sweet dishes, desserts, and pastry items.',
+    color: '#ec4899'
+  },
+  {
+    name: 'Beverages',
+    code: 'BEV',
+    description: 'Hot and cold drinks.',
+    color: '#0ea5e9'
+  },
+  {
+    name: 'Side Dish',
+    code: 'SIDE',
+    description: 'Side dishes, accompaniments, rice, breads, and starches.',
+    color: '#f59e0b'
+  }
+];
+
 function normalizeCategoryName(value) {
   return String(value || '').trim().toLowerCase();
 }
@@ -101,9 +140,21 @@ export default function FoodCategories() {
       normalizedName: normalizeCategoryName(category.name)
     }));
     const existingKeys = new Set(explicit.map((category) => category.normalizedName));
+    const standard = STANDARD_FOOD_CATEGORIES
+      .filter((category) => !existingKeys.has(normalizeCategoryName(category.name)))
+      .map((category) => ({
+        ...category,
+        id: `standard-${normalizeCategoryName(category.name).replace(/[^a-z0-9]+/g, '-')}`,
+        status: 'standard',
+        normalizedName: normalizeCategoryName(category.name)
+      }));
+    const reservedKeys = new Set([
+      ...existingKeys,
+      ...standard.map((category) => category.normalizedName)
+    ]);
 
     const inferred = Array.from(usageMap.entries())
-      .filter(([key]) => key && !existingKeys.has(key))
+      .filter(([key]) => key && !reservedKeys.has(key))
       .map(([key]) => ({
         id: `derived-${key}`,
         name: key.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()),
@@ -114,7 +165,7 @@ export default function FoodCategories() {
         normalizedName: key
       }));
 
-    return [...explicit, ...inferred].map((category) => {
+    return [...explicit, ...standard, ...inferred].map((category) => {
       const usage = usageMap.get(category.normalizedName) || { ingredientCount: 0, recipeCount: 0 };
       return {
         ...category,
@@ -125,6 +176,11 @@ export default function FoodCategories() {
   }, [categories, usageMap]);
 
   const handleEdit = (category) => {
+    if (String(category.id).startsWith('standard-')) {
+      setMessage('Standard food categories are built in. Create a matching category record only if you need to customize it.');
+      return;
+    }
+
     if (String(category.id).startsWith('derived-')) {
       setMessage('Derived categories can be formalized by creating a new food category with the same name.');
       return;
@@ -297,7 +353,7 @@ export default function FoodCategories() {
                             </Badge>
                           </div>
                         </div>
-                        {!String(category.id).startsWith('derived-') ? (
+                        {!String(category.id).startsWith('derived-') && !String(category.id).startsWith('standard-') ? (
                           <div className="flex gap-1">
                             <Button type="button" variant="ghost" size="icon" onClick={() => handleEdit(category)}>
                               <Pencil className="h-4 w-4" />

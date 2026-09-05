@@ -12,16 +12,33 @@ export function usePermissions() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      base44.auth.me(),
-      base44.entities.RoleProfile.list().catch(() => [])
-    ])
-      .then(([user, profiles]) => {
+    let cancelled = false;
+
+    async function loadPermissions() {
+      try {
+        const user = await base44.auth.me();
+        const userPermissions = Array.isArray(user?.role_permissions) ? user.role_permissions : [];
+        const canReadRoleProfiles = userPermissions.includes('manage_roles');
+        const profiles = canReadRoleProfiles
+          ? await base44.entities.RoleProfile.list().catch(() => [])
+          : [];
+
+        if (cancelled) return;
         setCurrentUser(user);
         setRoleProfiles(Array.isArray(profiles) ? profiles : []);
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      } catch {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadPermissions();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const role = currentUser?.role || 'user';

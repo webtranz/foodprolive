@@ -76,6 +76,7 @@ export function expandRecipeIngredients(
       expanded.push({
         ...line,
         quantity: finiteNumber(line.quantity, 0) * currentMultiplier,
+        quantity_basis: 'raw',
         source_recipe_id: currentRecipe?.id || null,
         source_recipe_name: currentRecipe?.name || null,
         source_recipe_path: nextPath
@@ -117,6 +118,7 @@ export function expandRecipeIngredients(
       ingredient_name: ingredient?.name || line.ingredient_name || 'Unnamed ingredient',
       quantity: 0,
       unit: targetUnit,
+      quantity_basis: 'raw',
       source_recipe_ids: new Set(),
       source_recipe_names: new Set()
     };

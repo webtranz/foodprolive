@@ -1,10 +1,11 @@
 import {
+  canAccessGranularPage,
   GRANULAR_PAGE_ACCESS_PERMISSION,
-  PAGE_ACCESS_PERMISSION_MAP
 } from './rolePermissions.js';
 import { isAdminOnlyBulkUploadPage } from '../../shared/bulkUploadAccess.js';
 
 export const pagePermissionMap = {
+  Budget: ['view_budget', 'manage_budget'],
   Menu: 'manage_menu_planning',
   MenuPlanning: 'manage_menu_planning',
   MenuBuilder: 'manage_menu_planning',
@@ -21,7 +22,17 @@ export const pagePermissionMap = {
   ],
   FoodCategories: 'manage_food_categories',
   FoodWaste: 'manage_waste',
-  FoodWasteQR: 'manage_waste',
+  Attendance: [
+    'view_customer_meal_service',
+    'record_customer_meal_service',
+    'generate_staff_meal_qr'
+  ],
+  MealService: [
+    'view_customer_meal_service',
+    'record_customer_meal_service',
+    'generate_staff_meal_qr'
+  ],
+  MealQRGenerator: 'create_employee_meal_qr',
   BulkUploadCenter: 'manage_bulk_uploads',
   BulkUploadTemplates: ['manage_bulk_uploads', 'export_data'],
   DataExports: 'export_data',
@@ -44,8 +55,7 @@ export function canAccessPage(pageName, can, { isAdmin = false } = {}) {
   }
 
   if (can(GRANULAR_PAGE_ACCESS_PERMISSION)) {
-    const granularPermission = PAGE_ACCESS_PERMISSION_MAP[pageName];
-    return granularPermission ? Boolean(can(granularPermission)) : false;
+    return canAccessGranularPage(pageName, can);
   }
 
   const requiredPermission = getRequiredPagePermission(pageName);

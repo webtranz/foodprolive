@@ -1,6 +1,6 @@
-import { normalizeIngredientUnit } from './ingredientUnits.js';
+import { convertIngredientQuantity, normalizeIngredientUnit } from './ingredientUnits.js';
 import { expandRecipeIngredients } from './recipeComposition.js';
-import { resolveIngredientYieldMultiplier } from './ingredientYield.js';
+import { calculateYieldOutputQuantity } from './ingredientYield.js';
 
 const WEIGHT_IN_GRAMS = Object.freeze({ kg: 1000, g: 1 });
 const VOLUME_IN_MILLILITRES = Object.freeze({ l: 1000, ml: 1 });
@@ -18,25 +18,8 @@ function quantityInBaseUnit(quantity, fromUnit, ingredient = {}) {
   const sourceUnit = normalizeIngredientUnit(fromUnit || ingredient.unit);
   const baseUnit = normalizeIngredientUnit(ingredient.unit || sourceUnit);
   if (!sourceUnit || !baseUnit) return null;
-  if (sourceUnit === baseUnit) return quantity;
-
-  const conversionUnit = normalizeIngredientUnit(ingredient.conversion_unit);
-  const conversionFactor = finiteNumber(ingredient.conversion_factor, 0);
-  if (conversionUnit && conversionFactor > 0) {
-    if (sourceUnit === conversionUnit && baseUnit === normalizeIngredientUnit(ingredient.unit)) {
-      return quantity / conversionFactor;
-    }
-  }
-
-  if (sourceUnit in WEIGHT_IN_GRAMS && baseUnit in WEIGHT_IN_GRAMS) {
-    return (quantity * WEIGHT_IN_GRAMS[sourceUnit]) / WEIGHT_IN_GRAMS[baseUnit];
-  }
-
-  if (sourceUnit in VOLUME_IN_MILLILITRES && baseUnit in VOLUME_IN_MILLILITRES) {
-    return (quantity * VOLUME_IN_MILLILITRES[sourceUnit]) / VOLUME_IN_MILLILITRES[baseUnit];
-  }
-
-  return null;
+  const converted = convertIngredientQuantity(quantity, sourceUnit, baseUnit, ingredient);
+  return Number.isFinite(converted) ? converted : null;
 }
 
 function calculateIngredientLineWeight(line = {}, ingredient = {}) {
@@ -52,7 +35,7 @@ function calculateIngredientLineWeight(line = {}, ingredient = {}) {
     const rawGrams = baseQuantity * rawWeightPerUnit;
     const cookedGrams = cookedWeightPerUnit !== null && cookedWeightPerUnit >= 0
       ? baseQuantity * cookedWeightPerUnit
-      : rawGrams * resolveIngredientYieldMultiplier(ingredient);
+      : calculateYieldOutputQuantity(rawGrams, ingredient).yielded_quantity;
     return { rawGrams, cookedGrams };
   }
 
@@ -74,7 +57,7 @@ function calculateIngredientLineWeight(line = {}, ingredient = {}) {
   if (rawGrams === null) return null;
   return {
     rawGrams,
-    cookedGrams: rawGrams * resolveIngredientYieldMultiplier(ingredient)
+    cookedGrams: calculateYieldOutputQuantity(rawGrams, ingredient).yielded_quantity
   };
 }
 
@@ -122,15 +105,18 @@ export function calculateRecipeServingWeight(recipe, recipes = [], ingredients =
     && warnings.length === 0;
 
   return {
+    quantity_semantics: 'raw_recipe_to_yielded_output_v2',
     servings,
     raw_total_grams: isComplete && rawCalculatedLines === expansion.ingredients.length
       ? roundWeight(rawTotal)
       : null,
     cooked_total_grams: isComplete ? roundWeight(cookedTotal) : null,
+    yielded_total_grams: isComplete ? roundWeight(cookedTotal) : null,
     raw_grams_per_serving: isComplete && rawCalculatedLines === expansion.ingredients.length
       ? roundWeight(rawTotal / servings)
       : null,
     grams_per_serving: isComplete ? roundWeight(cookedTotal / servings) : null,
+    yielded_grams_per_serving: isComplete ? roundWeight(cookedTotal / servings) : null,
     is_complete: isComplete,
     warnings
   };

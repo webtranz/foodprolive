@@ -218,12 +218,22 @@ CREATE TABLE IF NOT EXISTS bulk_upload_jobs (
   role TEXT,
   site_id TEXT,
   site_name TEXT,
+  source_name TEXT,
   actor_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
   started_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE bulk_upload_jobs
+  ADD COLUMN IF NOT EXISTS source_name TEXT;
+
+UPDATE entity_records
+SET data = data || jsonb_build_object('source_name', 'D365'),
+    updated_at = NOW()
+WHERE entity_name IN ('Ingredient', 'Inventory')
+  AND COALESCE(data->>'source_name', '') = '';
 
 CREATE OR REPLACE FUNCTION notify_foodpro_bulk_job_change()
 RETURNS TRIGGER AS $$
@@ -1104,3 +1114,168 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_qrcode_token_unique
 CREATE INDEX IF NOT EXISTS idx_entity_records_qrcode_site_category_status
   ON entity_records ((data->>'site_id'), (data->>'category'), (data->>'status'))
   WHERE entity_name = 'QRCode';
+
+-- Finished-food output is intentionally separate from raw Inventory and
+-- InventoryLot. Production completion creates one immutable-identity output
+-- batch, while meal service changes only its served/remaining balance.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_produced_item_production_unique
+  ON entity_records ((data->>'production_id'))
+  WHERE entity_name = 'ProducedItemBatch'
+    AND COALESCE(data->>'production_id', '') <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_produced_item_batch_number_unique
+  ON entity_records ((data->>'batch_number'))
+  WHERE entity_name = 'ProducedItemBatch'
+    AND COALESCE(data->>'batch_number', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_fifo
+  ON entity_records (
+    (data->>'site_id'),
+    (data->>'production_date'),
+    (data->>'meal_type'),
+    (data->>'recipe_id'),
+    (data->>'completed_at'),
+    id
+  )
+  WHERE entity_name = 'ProducedItemBatch'
+    AND COALESCE(data->>'status', '') IN ('available', 'partial');
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_menu_fifo
+  ON entity_records (
+    (data->>'site_id'),
+    (data->>'production_date'),
+    (data->>'meal_type'),
+    (data->>'menu_type'),
+    (data->>'menu_category'),
+    (data->>'recipe_id'),
+    (data->>'completed_at'),
+    id
+  )
+  WHERE entity_name = 'ProducedItemBatch'
+    AND COALESCE(data->>'status', '') IN ('available', 'partial');
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_menu_plan_report
+  ON entity_records (
+    (data->>'menu_plan_id'),
+    (data->>'production_date'),
+    (data->>'site_id'),
+    (data->>'meal_type'),
+    (data->>'recipe_id'),
+    id
+  )
+  WHERE entity_name = 'ProducedItemBatch'
+    AND COALESCE(data->>'menu_plan_id', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_meal_service_lookup
+  ON entity_records (
+    (data->>'site_id'),
+    (data->>'plan_date'),
+    (data->>'cuisine_type'),
+    (data->>'menu_category'),
+    (data->>'status'),
+    id
+  )
+  WHERE entity_name = 'MenuPlan'
+    AND COALESCE(data->>'event_name', '') = '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_report_date
+  ON entity_records (
+    (data->>'production_date'),
+    (data->>'site_id'),
+    (data->>'meal_type'),
+    (data->>'recipe_id'),
+    id
+  )
+  WHERE entity_name = 'ProducedItemBatch';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_idempotency_unique
+  ON entity_records ((data->>'idempotency_key'))
+  WHERE entity_name = 'MealServiceAttendance'
+    AND COALESCE(data->>'idempotency_key', '') <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_reference_unique
+  ON entity_records ((data->>'service_reference'))
+  WHERE entity_name = 'MealServiceAttendance'
+    AND COALESCE(data->>'service_reference', '') <> '';
+
+DROP INDEX IF EXISTS idx_entity_records_meal_attendance_scope_unique;
+CREATE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_scope
+  ON entity_records ((data->>'scope_key'))
+  WHERE entity_name = 'MealServiceAttendance'
+    AND COALESCE(data->>'scope_key', '') <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_reversal_unique
+  ON entity_records ((data->>'reversal_idempotency_key'))
+  WHERE entity_name = 'MealServiceAttendance'
+    AND COALESCE(data->>'reversal_idempotency_key', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_report
+  ON entity_records (
+    (data->>'site_id'),
+    (data->>'service_date'),
+    (data->>'meal_type'),
+    (data->>'status')
+  )
+  WHERE entity_name = 'MealServiceAttendance';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_report_date
+  ON entity_records (
+    (data->>'service_date'),
+    (data->>'site_id'),
+    (data->>'meal_type'),
+    id
+  )
+  WHERE entity_name = 'MealServiceAttendance';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_menu_report
+  ON entity_records (
+    (data->>'service_date'),
+    (data->>'site_id'),
+    (data->>'meal_type'),
+    (data->>'menu_type'),
+    (data->>'menu_category'),
+    id
+  )
+  WHERE entity_name = 'MealServiceAttendance';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_idempotency_unique
+  ON entity_records ((data->>'idempotency_key'))
+  WHERE entity_name = 'MealServiceConsumption'
+    AND COALESCE(data->>'idempotency_key', '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_attendance
+  ON entity_records (
+    (data->>'meal_service_attendance_id'),
+    (data->>'movement_type'),
+    (data->>'recipe_id')
+  )
+  WHERE entity_name = 'MealServiceConsumption';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_history
+  ON entity_records (
+    (data->>'meal_service_attendance_id'),
+    (data->>'movement_type'),
+    (data->>'performed_at')
+  )
+  WHERE entity_name = 'MealServiceConsumption';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_report_date
+  ON entity_records (
+    (data->>'service_date'),
+    (data->>'site_id'),
+    (data->>'meal_type'),
+    (data->>'recipe_id'),
+    id
+  )
+  WHERE entity_name = 'MealServiceConsumption';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_menu_report
+  ON entity_records (
+    (data->>'service_date'),
+    (data->>'site_id'),
+    (data->>'meal_type'),
+    (data->>'menu_type'),
+    (data->>'menu_category'),
+    id
+  )
+  WHERE entity_name = 'MealServiceConsumption';

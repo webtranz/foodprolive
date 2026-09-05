@@ -111,8 +111,10 @@ const cases = [
       assert.equal(result.items.length, 3);
       assert.equal(eggs.requested_quantity, 40);
       assert.equal(bread.requested_quantity, 20);
-      assert.equal(rice.net_requested_quantity, 9);
-      assert.equal(rice.requested_quantity, 12);
+      assert.equal(rice.raw_requested_quantity, 9);
+      assert.equal(rice.net_requested_quantity, 6.75);
+      assert.equal(rice.requested_quantity, 9);
+      assert.equal(rice.quantity_semantics, 'raw_recipe_to_yielded_output_v2');
       assert.equal(rice.yield_percent, 75);
       assert.equal(rice.estimated_unit_price, 8);
       assert.equal(rice.item_code, 'ITEM-RICE-001');

@@ -7,7 +7,6 @@ import {
   entityRegistry,
   validateEntityPayload
 } from '../server/entities.js';
-import { buildReportedProductionActuals } from '../server/inventory.js';
 
 function source(relativePath) {
   return fs.readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
@@ -121,39 +120,17 @@ test('generic production mutations cannot bypass completion posting or rewrite c
   );
 });
 
-test('completion accepts a server-planned fallback or one complete exact reconciliation set', () => {
-  const productionIngredients = [
-    { ingredient_id: 'rice', ingredient_name: 'Rice' },
-    { ingredient_id: 'chicken', ingredient_name: 'Chicken' }
-  ];
-
-  assert.equal(buildReportedProductionActuals(productionIngredients).size, 0);
-  assert.equal(buildReportedProductionActuals(productionIngredients, []).size, 0);
-  assert.equal(buildReportedProductionActuals(productionIngredients, [
-    { ingredient_id: 'rice', actual_quantity: 4.5, unit: 'kg' },
-    { ingredient_id: 'chicken', actual_quantity: 8, unit: 'kg' }
-  ]).size, 2);
-
-  assertHttpError(
-    () => buildReportedProductionActuals(productionIngredients, [
-      { ingredient_id: 'rice', actual_quantity: 0, unit: 'kg' }
-    ]),
-    { status: 400, message: /must include every production ingredient/ }
-  );
-  assertHttpError(
-    () => buildReportedProductionActuals(productionIngredients, [
-      { ingredient_id: 'rice', actual_quantity: 4.5, unit: 'kg' },
-      { ingredient_id: 'unknown', actual_quantity: 1, unit: 'kg' }
-    ]),
-    { status: 400, message: /not part of this production plan/ }
-  );
-  assertHttpError(
-    () => buildReportedProductionActuals(productionIngredients, [
-      { ingredient_id: 'rice', actual_quantity: -1, unit: 'kg' },
-      { ingredient_id: 'chicken', actual_quantity: 8, unit: 'kg' }
-    ]),
-    { status: 400, message: /must be zero or greater/ }
-  );
+test('completion accepts only the server-owned automatic reconciliation plan', () => {
+  const inventorySource = source('server/inventory.js');
+  const completionStart = inventorySource.indexOf('async function completeProductionWithExecutor(');
+  const completionEnd = inventorySource.indexOf('\nasync function completeProduction(', completionStart);
+  const completionBlock = inventorySource.slice(completionStart, completionEnd);
+  assert.ok(completionStart >= 0 && completionEnd > completionStart);
+  assert.match(completionBlock, /buildAutomaticProductionCompletionPlan\(/);
+  assert.match(completionBlock, /quantity_basis: plannedQuantityBasis/);
+  assert.match(completionBlock, /reconciliation_mode: 'automatic_yield_plan'/);
+  assert.doesNotMatch(completionBlock, /options\?\.ingredient_quantities/);
+  assert.doesNotMatch(completionBlock, /options\?\.actual_finished_weight_grams/);
 });
 
 test('completion reporting preserves item-code-first reconciliation fields and named report sections', () => {

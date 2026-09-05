@@ -49,6 +49,7 @@ import { formatCurrency } from '@/lib/currency';
 import { getItemCode, getItemCodeFromRecords, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
 import { convertIngredientQuantity } from '../../shared/ingredientUnits.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
+import { DEFAULT_SOURCE_NAME, SOURCE_NAME_OPTIONS, normalizeSourceName } from '../../shared/sourceNames.js';
 import {
   getAvailableInventoryQuantity,
   getInventoryQuantities,
@@ -98,6 +99,23 @@ function formatUnitQuantities(summary = {}) {
   if (entries.length === 0) return '0';
   const visible = entries.slice(0, 4).map(([unit, quantity]) => `${formatQuantity(quantity)} ${unit}`);
   return `${visible.join(' · ')}${entries.length > 4 ? ` · +${entries.length - 4} units` : ''}`;
+}
+
+function formatPercent(value) {
+  return `${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}%`;
+}
+
+function formatDisplayDate(value) {
+  if (!value) return '-';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function normalizeLookup(value) {
@@ -152,66 +170,12 @@ function getMovementSource(record) {
   return record?.source_label || record?.source || record?.movement_source || record?.reference_type || record?.reason_code || record?.transaction_type || '-';
 }
 
-function getMovementTypeLabel(record) {
-  const type = String(record?.transaction_type || '').trim().toLowerCase();
-  if (type === 'production_use') return 'Production start consumption';
-  if (type === 'production_commitment') return 'Legacy approval consumption';
-  if (['production_release', 'production_return'].includes(type)) return 'Production stock return';
-  return type.replace(/_/g, ' ');
-}
-
-function getMovementLayers(record) {
-  return Array.isArray(record?.movement_layers)
-    ? record.movement_layers.filter((layer) => Number(layer?.quantity || 0) > 0)
-    : [];
-}
-
-function describeMovementLayers(record) {
-  return getMovementLayers(record).map((layer) => (
-    `${layer.batch_number || 'Unnumbered batch'}: ${formatQuantity(layer.quantity)} ${record.unit || ''}`
-    + ` (stock ${layer.stock_date || layer.received_date || '-'}, expiry ${layer.expiry_date || '-'})`
-  )).join(' | ');
-}
-
-function getMovementLayerDates(record, field) {
-  const layers = getMovementLayers(record);
-  if (layers.length > 0) {
-    return layers.map((layer, index) => ({
-      key: `${layer.inventory_lot_id || layer.batch_number || 'lot'}-${field}-${index}`,
-      batch: layer.batch_number || 'Unnumbered batch',
-      value: field === 'stock_date'
-        ? (layer.stock_date || layer.received_date || '-')
-        : (layer.expiry_date || '-')
-    }));
-  }
-  return [{
-    key: `${record?.id || record?.batch_number || 'movement'}-${field}`,
-    batch: record?.batch_number || '',
-    value: field === 'stock_date' ? (getStockDate(record) || '-') : (record?.expiry_date || '-')
-  }];
-}
-
-function describeMovementLayerDates(record, field) {
-  return getMovementLayerDates(record, field)
-    .map((entry) => `${entry.batch ? `${entry.batch}: ` : ''}${entry.value}`)
-    .join(' | ');
-}
-
-function MovementLayerDates({ movement, field }) {
-  return (
-    <div className="space-y-1 text-xs">
-      {getMovementLayerDates(movement, field).map((entry) => (
-        <p key={entry.key} className="whitespace-nowrap">
-          {entry.batch ? <span className="font-medium">{entry.batch} · </span> : null}
-          {entry.value}
-        </p>
-      ))}
-    </div>
-  );
-}
-
 function getReference(record) {
   return record?.reference_name || record?.reference_number || record?.reference_id || record?.external_reference || '-';
+}
+
+function getPostedDate(record) {
+  return record?.created_date || record?.created_at || record?.updated_date || record?.transaction_date || '';
 }
 
 function getOpeningQuantity(record) {
@@ -234,6 +198,14 @@ function getConsumptionQuantity(record) {
   if (record?.consumption_quantity !== null && typeof record?.consumption_quantity !== 'undefined') return Math.abs(Number(record.consumption_quantity));
   const quantity = Number(record?.quantity || 0);
   return quantity < 0 ? Math.abs(quantity) : 0;
+}
+
+function getStockChangeQuantity(record) {
+  const addition = getAdditionQuantity(record);
+  if (addition > 0) return addition;
+  const consumption = getConsumptionQuantity(record);
+  if (consumption > 0) return -consumption;
+  return Number(record?.quantity || 0);
 }
 
 function normalizeReportRows(result) {
@@ -635,6 +607,7 @@ export default function Inventory() {
   const canManageInventory = can('manage_inventory');
   const canTransferInventory = can('transfer_inventory');
   const [selectedSite, setSelectedSite] = useState('all');
+  const [selectedSourceName, setSelectedSourceName] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -647,6 +620,7 @@ export default function Inventory() {
   const [editDialog, setEditDialog] = useState({ open: false, item: null });
   const [historyDialog, setHistoryDialog] = useState({ open: false, item: null });
   const [bulkSiteId, setBulkSiteId] = useState('');
+  const [bulkSourceName, setBulkSourceName] = useState('');
   const [bulkRows, setBulkRows] = useState([]);
   const [bulkFileName, setBulkFileName] = useState('');
   const [bulkError, setBulkError] = useState('');
@@ -662,6 +636,7 @@ export default function Inventory() {
     min_stock_level: '',
     max_stock_level: '',
     valuation_method: 'fifo',
+    source_name: DEFAULT_SOURCE_NAME,
     notes: ''
   });
   const [selectedStockIngredient, setSelectedStockIngredient] = useState(null);
@@ -744,6 +719,7 @@ export default function Inventory() {
   const codedStockOnHand = useMemo(
     () => stockOnHand.map((record) => ({
       ...withResolvedItemCode(record, ingredientById),
+      source_name: normalizeSourceName(record.source_name),
       ...getInventoryQuantities(record)
     })),
     [ingredientById, stockOnHand]
@@ -867,10 +843,11 @@ export default function Inventory() {
   const filteredInventory = useMemo(() => {
     return codedStockOnHand.filter((item) => {
       const matchesSite = selectedSite === 'all' || item.site_id === selectedSite;
+      const matchesSource = selectedSourceName === 'all' || normalizeSourceName(item.source_name) === selectedSourceName;
       const matchesSearch = !searchQuery || `${item.item_code} ${item.ingredient_name} ${item.site_name}`.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesSite && matchesSearch;
+      return matchesSite && matchesSource && matchesSearch;
     });
-  }, [codedStockOnHand, searchQuery, selectedSite]);
+  }, [codedStockOnHand, searchQuery, selectedSite, selectedSourceName]);
 
   const filteredExpiry = useMemo(() => {
     return codedExpiryReport.filter((item) => {
@@ -978,22 +955,15 @@ export default function Inventory() {
   }), [filteredLotValueReport]);
 
   const inventorySummary = useMemo(() => {
-    const onHandByUnit = filteredInventory.reduce(
-      (summary, item) => addUnitQuantity(summary, item.unit, item.on_hand_quantity),
-      {}
-    );
     const reservedByUnit = filteredInventory.reduce(
       (summary, item) => addUnitQuantity(summary, item.unit, item.reserved_quantity),
-      {}
-    );
-    const availableByUnit = filteredInventory.reduce(
-      (summary, item) => addUnitQuantity(summary, item.unit, item.available_quantity),
       {}
     );
     const totalValue = filteredInventory.reduce((sum, item) => sum + Number(item.total_value || 0), 0);
     const lowStockItems = filteredInventory.filter((item) => item.status === 'low_stock' || item.status === 'out_of_stock').length;
     const expiredLots = filteredInventory.reduce((sum, item) => sum + Number(item.expired_lot_count || 0), 0);
     const nearExpiryLots = filteredInventory.reduce((sum, item) => sum + Number(item.near_expiry_count || 0), 0);
+    const reservedItems = filteredInventory.filter((item) => Number(item.reserved_quantity || 0) > 0).length;
     const totalBatches = filteredInventory.reduce((sum, item) => sum + Number(
       item.batch_count
         ?? item.total_batch_count
@@ -1001,16 +971,55 @@ export default function Inventory() {
         ?? 0
     ), 0);
     return {
-      onHandByUnit,
       reservedByUnit,
-      availableByUnit,
       totalValue,
       lowStockItems,
       expiredLots,
       nearExpiryLots,
+      reservedItems,
       totalBatches
     };
   }, [filteredInventory]);
+
+  const productionAvailabilitySummary = useMemo(() => {
+    const demandByKey = new Map();
+    upcomingNeeds
+      .filter((need) => selectedSite === 'all' || need.site_id === selectedSite)
+      .forEach((need) => {
+        const key = `${need.site_id || ''}:${need.ingredient_id || ''}`;
+        const current = demandByKey.get(key) || {
+          site_id: need.site_id,
+          ingredient_id: need.ingredient_id,
+          ingredient_name: need.ingredient_name,
+          required_quantity: 0,
+          unit: need.unit
+        };
+        current.required_quantity += Number(need.required_quantity || 0);
+        demandByKey.set(key, current);
+      });
+
+    const availableByKey = new Map();
+    filteredInventory.forEach((item) => {
+      const key = `${item.site_id || ''}:${item.ingredient_id || ''}`;
+      availableByKey.set(key, Number(item.available_quantity || 0));
+    });
+
+    const demandLines = Array.from(demandByKey.values()).filter((need) => need.required_quantity > 0);
+    const coveredLines = demandLines.filter((need) => (availableByKey.get(`${need.site_id || ''}:${need.ingredient_id || ''}`) || 0) + 0.000001 >= need.required_quantity).length;
+    const requiredQuantity = demandLines.reduce((sum, need) => sum + need.required_quantity, 0);
+    const coveredQuantity = demandLines.reduce((sum, need) => {
+      const available = availableByKey.get(`${need.site_id || ''}:${need.ingredient_id || ''}`) || 0;
+      return sum + Math.min(available, need.required_quantity);
+    }, 0);
+    const percent = requiredQuantity > 0 ? Math.min(100, (coveredQuantity / requiredQuantity) * 100) : 100;
+
+    return {
+      percent,
+      demandLines: demandLines.length,
+      coveredLines,
+      shortageLines: Math.max(0, demandLines.length - coveredLines)
+    };
+  }, [filteredInventory, selectedSite, upcomingNeeds]);
 
   const receiveStockMutation = useMutation({
     mutationFn: (payload) => base44.inventory.receive(payload),
@@ -1028,6 +1037,7 @@ export default function Inventory() {
         min_stock_level: '',
         max_stock_level: '',
         valuation_method: 'fifo',
+        source_name: DEFAULT_SOURCE_NAME,
         notes: ''
       });
       setSelectedStockIngredient(null);
@@ -1051,7 +1061,8 @@ export default function Inventory() {
         import_mode: 'keep_existing',
         file: uploadFile,
         site_id: bulkSiteId || '',
-        site_name: stockSites.find((site) => site.id === bulkSiteId)?.name || ''
+        site_name: stockSites.find((site) => site.id === bulkSiteId)?.name || '',
+        source_name: bulkSourceName
       });
     },
     onSuccess: (result) => {
@@ -1095,6 +1106,7 @@ export default function Inventory() {
       quantity: Number(stockForm.quantity || 0),
       unit: ingredient.unit || 'kg',
       unit_cost: Number(stockForm.unit_cost || 0),
+      source_name: stockForm.source_name,
       batch_number: stockForm.batch_number,
       stock_date: stockForm.stock_date,
       received_date: stockForm.stock_date,
@@ -1168,6 +1180,10 @@ export default function Inventory() {
       setBulkError('Upload a valid CSV/Excel file before importing');
       return;
     }
+    if (!bulkSourceName) {
+      setBulkError('Select Source Name before importing inventory.');
+      return;
+    }
     bulkReceiveMutation.mutate(parsedBulkImport.items);
   };
 
@@ -1183,6 +1199,10 @@ export default function Inventory() {
 
     if (!targetSite) {
       setBulkError('Create a project or location before populating starter stock');
+      return;
+    }
+    if (!bulkSourceName) {
+      setBulkError('Select Source Name before populating starter stock.');
       return;
     }
 
@@ -1266,16 +1286,25 @@ export default function Inventory() {
           ) : null}
         </PageHeader>
 
-        <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-9">
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard title="Projects / Locations" value={stockSites.length} icon={Boxes} iconBg="bg-slate-100" iconColor="text-slate-700" />
-          <StatCard title="Stock On Hand" value={`${filteredInventory.length} items`} subtitle={formatUnitQuantities(inventorySummary.onHandByUnit)} icon={Boxes} iconBg="bg-blue-50" iconColor="text-blue-600" />
-          <StatCard title="Reserved for Production" value={formatUnitQuantities(inventorySummary.reservedByUnit)} subtitle="Held until production starts" icon={LockKeyhole} iconBg="bg-violet-50" iconColor="text-violet-600" />
-          <StatCard title="Available Stock" value={formatUnitQuantities(inventorySummary.availableByUnit)} subtitle="Free for new demand" icon={PackageCheck} iconBg="bg-cyan-50" iconColor="text-cyan-700" />
-          <StatCard title="Inventory Value" value={formatCurrency(inventorySummary.totalValue)} icon={Wallet} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+          <StatCard title="Stock On Hand" value={filteredInventory.length} subtitle="inventory item records" icon={Boxes} iconBg="bg-blue-50" iconColor="text-blue-600" />
+          <StatCard
+            title="Available for Production"
+            value={formatPercent(productionAvailabilitySummary.percent)}
+            subtitle={productionAvailabilitySummary.demandLines > 0
+              ? `${productionAvailabilitySummary.coveredLines}/${productionAvailabilitySummary.demandLines} upcoming needs covered`
+              : 'No upcoming production demand'}
+            icon={PackageCheck}
+            iconBg="bg-cyan-50"
+            iconColor="text-cyan-700"
+          />
+          <StatCard title="Reserved Items" value={inventorySummary.reservedItems} subtitle={formatUnitQuantities(inventorySummary.reservedByUnit)} icon={LockKeyhole} iconBg="bg-violet-50" iconColor="text-violet-600" />
+          <StatCard title="Inventory Value" value={formatCurrency(inventorySummary.totalValue)} subtitle={`${inventorySummary.totalBatches} active batches`} icon={Wallet} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
           <StatCard title="Low Stock Items" value={inventorySummary.lowStockItems} icon={TrendingDown} iconBg="bg-amber-50" iconColor="text-amber-600" />
           <StatCard title="Expired Lots" value={inventorySummary.expiredLots} icon={AlertTriangle} iconBg="bg-rose-50" iconColor="text-rose-600" />
           <StatCard title="Near Expiry" value={inventorySummary.nearExpiryLots} icon={CalendarClock} iconBg="bg-orange-50" iconColor="text-orange-600" />
-          <StatCard title="Active Batches" value={inventorySummary.totalBatches} icon={Package} iconBg="bg-violet-50" iconColor="text-violet-600" />
+          <StatCard title="Production Gaps" value={productionAvailabilitySummary.shortageLines} subtitle="upcoming unmet item needs" icon={Package} iconBg="bg-violet-50" iconColor="text-violet-600" />
         </div>
 
         <div className="mb-6">
@@ -1284,7 +1313,7 @@ export default function Inventory() {
 
         <Card className="mb-6 border-slate-200 shadow-sm">
           <CardContent className="p-4">
-            <div className="grid gap-4 lg:grid-cols-[1fr_260px_180px_180px]">
+            <div className="grid gap-4 lg:grid-cols-[1fr_240px_160px_180px_180px]">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
@@ -1302,6 +1331,17 @@ export default function Inventory() {
                   <SelectItem value="all">All Projects / Locations</SelectItem>
                   {stockSites.map((site) => (
                     <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={selectedSourceName} onValueChange={setSelectedSourceName}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Sources</SelectItem>
+                  {SOURCE_NAME_OPTIONS.map((source) => (
+                    <SelectItem key={source} value={source}>{source}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1329,7 +1369,7 @@ export default function Inventory() {
           <Tabs defaultValue="stock" className="space-y-4">
             <TabsList className="h-auto w-full flex-wrap justify-start gap-2 bg-transparent p-0">
               <TabsTrigger value="stock">Stock On Hand</TabsTrigger>
-              <TabsTrigger value="movements">Movement Ledger</TabsTrigger>
+              <TabsTrigger value="movements">Stock Change Log</TabsTrigger>
               <TabsTrigger value="expiry">Expiry & Lots</TabsTrigger>
               <TabsTrigger value="valuation">Valuation</TabsTrigger>
               <TabsTrigger value="velocity">Velocity</TabsTrigger>
@@ -1347,6 +1387,7 @@ export default function Inventory() {
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
                         <TableHead>Location</TableHead>
+                        <TableHead>Source Name</TableHead>
                         <TableHead>On Hand</TableHead>
                         <TableHead>Reserved</TableHead>
                         <TableHead>Available</TableHead>
@@ -1376,6 +1417,11 @@ export default function Inventory() {
                               </div>
                             </TableCell>
                             <TableCell>{item.site_name}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                                {normalizeSourceName(item.source_name)}
+                              </Badge>
+                            </TableCell>
                             <TableCell>
                               <p className="font-semibold">{formatQuantity(item.on_hand_quantity)} {item.unit}</p>
                             </TableCell>
@@ -1460,7 +1506,7 @@ export default function Inventory() {
               <Card className="border-slate-200 shadow-sm">
                 <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-slate-100">
                   <div>
-                    <CardTitle className="text-lg">Stock Movement Ledger</CardTitle>
+                    <CardTitle className="text-lg">Stock Change Log</CardTitle>
                     <p className="mt-1 text-xs text-slate-500">Trace every receipt, production consumption, return, correction, transfer, and upload.</p>
                   </div>
                   <Button
@@ -1470,24 +1516,12 @@ export default function Inventory() {
                     onClick={() => downloadCSV(codedMovementReport.map((movement) => ({
                       item_code: movement.item_code,
                       ingredient_name: movement.ingredient_name,
-                      transaction_date: movement.transaction_date,
-                      location: movement.site_name,
-                      source: getMovementSource(movement),
-                      transaction_type: movement.transaction_type,
-                      batch_number: movement.batch_number,
-                      batch_allocations: describeMovementLayers(movement),
-                      stock_date: getStockDate(movement),
-                      expiry_date: movement.expiry_date,
-                      stock_dates_by_batch: describeMovementLayerDates(movement, 'stock_date'),
-                      expiry_dates_by_batch: describeMovementLayerDates(movement, 'expiry_date'),
-                      opening_quantity: getOpeningQuantity(movement),
-                      addition_quantity: getAdditionQuantity(movement),
-                      consumption_quantity: getConsumptionQuantity(movement),
-                      closing_quantity: getClosingQuantity(movement),
+                      on_hand_stock: getOpeningQuantity(movement),
+                      addition: getStockChangeQuantity(movement) > 0 ? getStockChangeQuantity(movement) : 0,
+                      consumption: getStockChangeQuantity(movement) < 0 ? Math.abs(getStockChangeQuantity(movement)) : 0,
+                      date_of_update: getPostedDate(movement),
+                      total_now: getClosingQuantity(movement),
                       unit: movement.unit,
-                      value: movement.total_cost,
-                      reference: getReference(movement),
-                      reason: movement.notes || movement.reason_code
                     })), 'inventory-movement-ledger')}
                   >
                     <Download className="mr-2 h-4 w-4" />
@@ -1495,70 +1529,40 @@ export default function Inventory() {
                   </Button>
                 </CardHeader>
                 <CardContent className="overflow-x-auto p-0">
-                  <Table className="min-w-[1700px]">
+                  <Table className="min-w-[950px]">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Location</TableHead>
-                        <TableHead>Source</TableHead>
-                        <TableHead>Batch</TableHead>
-                        <TableHead>Stock Date</TableHead>
-                        <TableHead>Expiry</TableHead>
-                        <TableHead>Opening</TableHead>
+                        <TableHead>On Hand Stock</TableHead>
                         <TableHead>Addition</TableHead>
                         <TableHead>Consumption</TableHead>
-                        <TableHead>Closing</TableHead>
-                        <TableHead>Value</TableHead>
-                        <TableHead>Reference</TableHead>
-                        <TableHead>Details</TableHead>
+                        <TableHead>Date of Update</TableHead>
+                        <TableHead>Total Now</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {movementReport.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={15} className="py-8 text-center text-slate-500">
+                          <TableCell colSpan={7} className="py-8 text-center text-slate-500">
                             No stock movements in the selected period.
                           </TableCell>
                         </TableRow>
                       ) : codedMovementReport.map((movement) => (
                         <TableRow key={movement.id}>
-                          <TableCell className="text-sm font-medium text-slate-600">{movement.item_code}</TableCell>
-                          <TableCell>{movement.ingredient_name}</TableCell>
-                          <TableCell>{movement.transaction_date || '-'}</TableCell>
-                          <TableCell>{movement.site_name}</TableCell>
-                          <TableCell>
-                            <p className="capitalize">{String(getMovementSource(movement)).replace(/_/g, ' ')}</p>
-                            <p className="text-xs capitalize text-slate-500">{getMovementTypeLabel(movement)}</p>
-                          </TableCell>
-                          <TableCell>
-                            {getMovementLayers(movement).length > 0 ? (
-                              <div className="space-y-1 text-xs">
-                                {getMovementLayers(movement).map((layer, index) => (
-                                  <p key={`${layer.inventory_lot_id || layer.batch_number || 'lot'}-${index}`} className="whitespace-nowrap">
-                                    <span className="font-medium">{layer.batch_number || 'Unnumbered batch'}</span>
-                                    {' · '}{formatQuantity(layer.quantity)} {movement.unit || ''}
-                                  </p>
-                                ))}
-                              </div>
-                            ) : movement.batch_number || '-'}
-                          </TableCell>
-                          <TableCell><MovementLayerDates movement={movement} field="stock_date" /></TableCell>
-                          <TableCell><MovementLayerDates movement={movement} field="expiry_date" /></TableCell>
+                          <TableCell className="font-mono text-xs text-slate-600">{movement.item_code || '-'}</TableCell>
+                          <TableCell className="font-medium">{movement.ingredient_name || '-'}</TableCell>
                           <TableCell>{getOpeningQuantity(movement) === null ? '-' : `${formatQuantity(getOpeningQuantity(movement))} ${movement.unit || ''}`}</TableCell>
-                          <TableCell className="text-emerald-700">
-                            {getAdditionQuantity(movement) > 0 ? `+${formatQuantity(getAdditionQuantity(movement))} ${movement.unit || ''}` : '-'}
+                          <TableCell className="font-semibold text-emerald-700">
+                            {getStockChangeQuantity(movement) > 0 ? `+${formatQuantity(getStockChangeQuantity(movement))} ${movement.unit || ''}` : '-'}
                           </TableCell>
-                          <TableCell className="text-rose-700">
-                            {getConsumptionQuantity(movement) > 0 ? `-${formatQuantity(getConsumptionQuantity(movement))} ${movement.unit || ''}` : '-'}
+                          <TableCell className="font-semibold text-rose-700">
+                            {getStockChangeQuantity(movement) < 0 ? `-${formatQuantity(Math.abs(getStockChangeQuantity(movement)))} ${movement.unit || ''}` : '-'}
                           </TableCell>
-                          <TableCell className="font-medium">
+                          <TableCell>{formatDisplayDate(getPostedDate(movement))}</TableCell>
+                          <TableCell className="font-semibold text-slate-900">
                             {getClosingQuantity(movement) === null ? '-' : `${formatQuantity(getClosingQuantity(movement))} ${movement.unit || ''}`}
                           </TableCell>
-                          <TableCell>{formatCurrency(Number(movement.total_cost || 0))}</TableCell>
-                          <TableCell className="max-w-[180px] truncate">{getReference(movement)}</TableCell>
-                          <TableCell className="max-w-xs truncate">{movement.notes || movement.reason_code || '-'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -2036,6 +2040,19 @@ export default function Inventory() {
 
               <div className="grid gap-4 md:grid-cols-4">
                 <div>
+                  <Label>Source Name *</Label>
+                  <Select value={stockForm.source_name} onValueChange={(value) => setStockForm((current) => ({ ...current, source_name: value }))}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Select source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SOURCE_NAME_OPTIONS.map((source) => (
+                        <SelectItem key={source} value={source}>{source}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
                   <Label>Quantity</Label>
                   <Input type="number" step="0.01" min="0" className="mt-1" value={stockForm.quantity} onChange={(event) => setStockForm((current) => ({ ...current, quantity: event.target.value }))} />
                 </div>
@@ -2139,6 +2156,19 @@ export default function Inventory() {
                           <SelectItem value="none">Use project from uploaded rows</SelectItem>
                           {stockSites.map((site) => (
                             <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Source Name *</Label>
+                      <Select value={bulkSourceName} onValueChange={setBulkSourceName}>
+                        <SelectTrigger className="mt-1">
+                          <SelectValue placeholder="Select source before upload" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SOURCE_NAME_OPTIONS.map((source) => (
+                            <SelectItem key={source} value={source}>{source}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>

@@ -1,7 +1,7 @@
 import { convertIngredientQuantity } from './ingredientUnits.js';
 import { expandRecipeIngredients } from './recipeComposition.js';
 import { calculateRecipeCostingSnapshot } from './recipeCosting.js';
-import { calculateYieldAdjustedQuantity } from './ingredientYield.js';
+import { calculateYieldOutputQuantity } from './ingredientYield.js';
 import { getItemCode } from './itemCode.js';
 
 function number(value, fallback = 0) {
@@ -64,10 +64,10 @@ export function calculateEventPlanningSnapshot(event = {}, recipes = [], ingredi
     expanded.ingredients.forEach((line) => {
       const ingredient = ingredientMap.get(String(line.ingredient_id)) || {};
       const unit = ingredient.unit || line.unit || 'unit';
-      const yieldAdjustment = calculateYieldAdjustedQuantity(line.quantity, ingredient);
-      const netRequiredQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
-      const requiredQuantity = convertIngredientQuantity(
-        yieldAdjustment.required_raw_quantity,
+      const yieldOutput = calculateYieldOutputQuantity(line.quantity, ingredient);
+      const requiredQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
+      const netRequiredQuantity = convertIngredientQuantity(
+        yieldOutput.yielded_quantity,
         line.unit || unit,
         unit,
         ingredient
@@ -80,9 +80,10 @@ export function calculateEventPlanningSnapshot(event = {}, recipes = [], ingredi
         net_required_quantity: 0,
         required_quantity: 0,
         unit,
-        yield_multiplier: yieldAdjustment.yield_multiplier,
-        yield_percent: yieldAdjustment.yield_percent,
-        yield_source: yieldAdjustment.yield_source,
+        yield_multiplier: yieldOutput.yield_multiplier,
+        yield_percent: yieldOutput.yield_percent,
+        yield_source: yieldOutput.yield_source,
+        quantity_semantics: 'raw_recipe_to_yielded_output_v2',
         estimated_unit_cost: number(ingredient.last_cost ?? ingredient.cost_per_unit ?? ingredient.average_cost),
         linked_recipe_ids: new Set()
       };
@@ -213,10 +214,10 @@ export function buildEventProductionPlanPayloads(event = {}, snapshot = {}, reci
         const ingredient = ingredientMap.get(String(line.ingredient_id)) || {};
         const requirement = requirementMap.get(String(line.ingredient_id));
         const unit = ingredient.unit || line.unit || 'unit';
-        const yieldAdjustment = calculateYieldAdjustedQuantity(line.quantity, ingredient);
-        const netQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
-        const rawQuantity = convertIngredientQuantity(
-          yieldAdjustment.required_raw_quantity,
+        const yieldOutput = calculateYieldOutputQuantity(line.quantity, ingredient);
+        const rawQuantity = convertIngredientQuantity(line.quantity, line.unit || unit, unit, ingredient);
+        const netQuantity = convertIngredientQuantity(
+          yieldOutput.yielded_quantity,
           line.unit || unit,
           unit,
           ingredient
@@ -225,13 +226,16 @@ export function buildEventProductionPlanPayloads(event = {}, snapshot = {}, reci
           ingredient_id: line.ingredient_id,
           item_code: getItemCode(ingredient, getItemCode(line, null)),
           ingredient_name: ingredient.name || line.ingredient_name,
+          quantity_basis: 'raw_recipe_v2',
+          raw_quantity: rounded(rawQuantity, 4),
           net_quantity: rounded(netQuantity, 4),
+          yielded_quantity: rounded(netQuantity, 4),
           planned_quantity: rounded(rawQuantity, 4),
           required_quantity: rounded(rawQuantity, 4),
-          yield_adjusted_quantity: rounded(rawQuantity, 4),
-          yield_multiplier: rounded(yieldAdjustment.yield_multiplier, 6),
-          yield_percent: rounded(yieldAdjustment.yield_percent, 2),
-          yield_source: yieldAdjustment.yield_source,
+          yield_adjusted_quantity: rounded(netQuantity, 4),
+          yield_multiplier: rounded(yieldOutput.yield_multiplier, 6),
+          yield_percent: rounded(yieldOutput.yield_percent, 2),
+          yield_source: yieldOutput.yield_source,
           unit,
           unit_cost: number(requirement?.estimated_unit_cost ?? ingredient.last_cost ?? ingredient.cost_per_unit ?? ingredient.average_cost)
         };
@@ -240,6 +244,9 @@ export function buildEventProductionPlanPayloads(event = {}, snapshot = {}, reci
       source_event_id: event.id,
       source_event_name: event.event_name,
       source_event_recipe_id: recipe.id,
+      yield_adjustment_applied: true,
+      yield_adjustment_version: 2,
+      quantity_semantics: 'raw_recipe_to_yielded_output_v2',
       notes: `Generated from event ${event.event_name}`
     }];
   });

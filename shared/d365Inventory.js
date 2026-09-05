@@ -1,7 +1,9 @@
 import {
   convertIngredientQuantity,
+  isIngredientUnitCompatible,
   normalizeIngredientUnit
 } from './ingredientUnits.js';
+import { inferPackageFields } from './packageUnits.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from './siteHierarchy.js';
 import { toBusinessDateOnly } from './businessDate.js';
 
@@ -174,6 +176,7 @@ export function areD365UnitsCompatible(sourceUnit, targetUnit, ingredient = {}) 
   if (!source || !target || source === target) return true;
   if (WEIGHT_UNITS.has(source) && WEIGHT_UNITS.has(target)) return true;
   if (VOLUME_UNITS.has(source) && VOLUME_UNITS.has(target)) return true;
+  if (isIngredientUnitCompatible(source, target, ingredient)) return true;
 
   const base = normalizeIngredientUnit(ingredient?.unit);
   const conversionUnit = normalizeIngredientUnit(ingredient?.conversion_unit);
@@ -304,7 +307,7 @@ export function normalizeD365IngredientRow(input = {}) {
   const cost = pickValue(input, ['cost_per_unit', 'unit_cost', 'last_cost']);
   const hasActiveState = Object.prototype.hasOwnProperty.call(input, 'is_active');
 
-  return {
+  const normalized = {
     item_id: itemId,
     item_name: itemName === undefined ? undefined : normalizeText(itemName),
     item_code: itemCode === undefined ? undefined : normalizeText(itemCode),
@@ -321,6 +324,14 @@ export function normalizeD365IngredientRow(input = {}) {
     external_version: normalizeText(pickValue(input, [
       'external_version', 'source_version', 'row_version', 'modified_at', 'ModifiedDateTime'
     ]))
+  };
+  return {
+    ...normalized,
+    ...inferPackageFields({
+      ...normalized,
+      name: normalized.item_name,
+      supplier_item_name: normalized.supplier_item_name || normalized.item_name
+    })
   };
 }
 

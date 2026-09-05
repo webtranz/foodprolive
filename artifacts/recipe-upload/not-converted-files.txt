@@ -1,0 +1,3 @@
+artifacts\recipe-upload-source\MENU\MENU\Breakfast Items\DALL & BEANS\desktop.ini
+artifacts\recipe-upload-source\MENU\MENU\Breakfast Items\desktop.ini
+artifacts\recipe-upload-source\MENU\MENU\Senior Junior Menu.xlsx

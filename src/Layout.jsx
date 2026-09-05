@@ -1,19 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
 import { cn } from '@/lib/utils';
+import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { toast } from '@/components/ui/use-toast';
 import {
+  Bell,
   LayoutDashboard,
   Package,
   Building2,
   Utensils,
   Factory,
-  Trash2,
-  Flame,
-  TrendingUp,
   BarChart3,
   Calendar,
   Boxes,
@@ -22,13 +24,11 @@ import {
   DollarSign,
   FileText,
   FolderTree,
-  Sparkles,
   Zap,
   Database,
-  ArrowRight,
-  CheckCircle2,
   ShoppingCart,
   QrCode,
+  Trash2,
   Shield,
   ChefHat,
   MapPin,
@@ -36,17 +36,53 @@ import {
   Cable,
   ShieldAlert,
   Upload,
-  Activity
+  Activity,
+  CheckCircle2,
+  ArrowRight
 } from 'lucide-react';
 import { useSiteContext } from '@/components/auth/useSiteContext';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { LanguageProvider, useLanguage } from '@/components/i18n/LanguageContext';
 import { useAuth } from '@/lib/AuthContext';
 import {
+  canAccessGranularPage,
   GRANULAR_PAGE_ACCESS_PERMISSION,
-  PAGE_ACCESS_PERMISSION_MAP
 } from '@/lib/rolePermissions';
+import {
+  buildWorkflowNotificationDedupeKey,
+  WORKFLOW_NOTIFICATION_DURATION_MS
+} from '@/lib/notificationToast';
 import tamimiGlobalLogo from '@/assets/tamimi-global-logo.png';
+
+const NOTIFICATION_LAST_SEEN_KEY = 'foodpro_notifications_last_seen_at';
+
+function formatNotificationAction(value) {
+  return String(value || 'Activity')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatNotificationTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? String(value)
+    : date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+}
+
+function isWorkflowNotification(item = {}) {
+  if (item.notification_type === 'workflow') return true;
+  if (item.notification_type === 'user_action') return false;
+  const action = String(item.action || '').toLowerCase();
+  const entity = String(item.entity || '').toLowerCase();
+  return /workflow|approval|approved|reject|submitted|acknowledged|production|procurement|bulk_upload|status/.test(action)
+    || ['production', 'materialrequest', 'purchaseorder', 'goodsreceipt'].includes(entity);
+}
 
 function filterNavigationItems(items = [], can = () => true, { isAdmin = false } = {}) {
   const usesGranularPageAccess = can(GRANULAR_PAGE_ACCESS_PERMISSION);
@@ -56,32 +92,37 @@ function filterNavigationItems(items = [], can = () => true, { isAdmin = false }
       return visibleItems;
     }
 
+    let itemAllowed = true;
     if (usesGranularPageAccess) {
       if (item.href) {
-        const pagePermission = PAGE_ACCESS_PERMISSION_MAP[item.href];
-        if (!pagePermission || !can(pagePermission)) {
-          return visibleItems;
+        if (!canAccessGranularPage(item.href, can)) {
+          itemAllowed = false;
         }
       }
     } else {
       if (item.permission && !can(item.permission)) {
-        return visibleItems;
+        itemAllowed = false;
       }
 
       if (item.permissions && !item.permissions.some((permission) => can(permission))) {
-        return visibleItems;
+        itemAllowed = false;
       }
     }
 
     if (item.children) {
       const visibleChildren = filterNavigationItems(item.children, can, { isAdmin });
-      if (!visibleChildren.length) {
+      if (!visibleChildren.length && (!item.href || !itemAllowed)) {
         return visibleItems;
       }
       visibleItems.push({
         ...item,
+        href: itemAllowed ? item.href : undefined,
         children: visibleChildren
       });
+      return visibleItems;
+    }
+
+    if (!itemAllowed) {
       return visibleItems;
     }
 
@@ -90,19 +131,21 @@ function filterNavigationItems(items = [], can = () => true, { isAdmin = false }
   }, []);
 }
 
+function hasActiveDescendant(item, currentPath) {
+  if (!item?.children?.length) return false;
+  return item.children.some((child) => child.href === currentPath || hasActiveDescendant(child, currentPath));
+}
+
 function buildNavigation(t, can = () => true, isAdmin = false) {
   const n = t.nav;
   return filterNavigationItems([
     { name: n.dashboard, href: 'Dashboard', icon: LayoutDashboard },
     { name: n.sites, href: 'Sites', icon: Building2 },
-    { name: n.production, href: 'Production', icon: Factory },
-    { name: n.foodCost || 'Food Cost', href: 'FoodCost', icon: DollarSign, permission: 'manage_menu_planning' },
+    { name: n.budget || 'Budget', href: 'Budget', icon: DollarSign, permissions: ['view_budget', 'manage_budget'] },
+    { name: n.inventory, href: 'Inventory', icon: Boxes },
     { name: n.ingredients, href: 'Ingredients', icon: Package },
     { name: n.foodCategories || 'Food Categories', href: 'FoodCategories', icon: FolderTree, permission: 'manage_food_categories' },
-    { name: n.inventory, href: 'Inventory', icon: Boxes },
     { name: n.recipes, href: 'Recipes', icon: Utensils },
-    { name: n.nutritionAllergens, href: 'NutritionAllergen', icon: ShieldAlert },
-    { name: n.attendance, href: 'Attendance', icon: QrCode },
     {
       name: n.menuPlanning,
       icon: Calendar,
@@ -136,21 +179,48 @@ function buildNavigation(t, can = () => true, isAdmin = false) {
         { name: n.autoSchedule, href: 'AutoSchedule', icon: Zap, permission: 'manage_menu_planning' },
       ]
     },
-    { name: n.materialRequests, href: 'MaterialRequests', icon: FileText },
-    { name: n.foodWaste, href: 'FoodWaste', icon: Trash2, permission: 'manage_waste' },
+    { name: n.nutritionAllergens, href: 'NutritionAllergen', icon: ShieldAlert },
     { name: n.yieldCost, href: 'YieldCost', icon: DollarSign },
+    { name: n.production, href: 'Production', icon: Factory },
+    { name: n.foodCost, href: 'FoodCost', icon: DollarSign },
     {
-      name: n.reportsAnalytics,
-      icon: BarChart3,
+      name: n.attendance,
+      icon: QrCode,
+      permissions: [
+        'view_customer_meal_service',
+        'record_customer_meal_service',
+        'generate_staff_meal_qr',
+        'create_employee_meal_qr'
+      ],
       children: [
-        { name: n.reports, href: 'Reports', icon: BarChart3 },
-        { name: n.advancedReports, href: 'AdvancedReports', icon: FileText },
-        { name: n.forecasting, href: 'Forecasting', icon: TrendingUp },
-        { name: n.productionCalculator, href: 'ProductionCalculator', icon: Factory },
-        { name: n.caloriesCalculator, href: 'CaloriesCalculator', icon: Flame }
+        {
+          name: n.mealService || 'Meal Service',
+          href: 'MealService',
+          icon: CheckCircle2,
+          permissions: [
+            'view_customer_meal_service',
+            'record_customer_meal_service',
+            'generate_staff_meal_qr'
+          ]
+        },
+        {
+          name: n.mealQrGenerator || 'Meal QR Generator',
+          href: 'MealQRGenerator',
+          icon: QrCode,
+          permission: 'create_employee_meal_qr'
+        }
       ]
     },
-    { name: n.aiRecipeGenerator, href: 'AIRecipes', icon: Sparkles },
+    { name: n.foodWaste, href: 'FoodWaste', icon: Trash2 },
+    {
+      name: n.procurement,
+      href: 'ProcurementModule',
+      icon: ShoppingCart,
+      children: [
+        { name: n.materialRequests, href: 'MaterialRequests', icon: FileText },
+        { name: n.supplierPortal, href: 'SupplierPortal', icon: Building2 }
+      ]
+    },
     {
       name: n.cpuManagement,
       icon: Factory,
@@ -161,13 +231,17 @@ function buildNavigation(t, can = () => true, isAdmin = false) {
         { name: n.productionTransfer, href: 'ProductionTransfer', icon: ArrowRight }
       ]
     },
-    { name: n.d365Integration, href: 'D365Integration', icon: Database },
-    { name: n.procurement, href: 'ProcurementModule', icon: ShoppingCart },
-    { name: n.posIntegration, href: 'POSIntegration', icon: Cable },
-    { name: n.supplierPortal, href: 'SupplierPortal', icon: Building2 },
+    {
+      name: n.integrations || 'Integrations',
+      icon: Cable,
+      children: [
+        { name: n.d365Integration, href: 'D365Integration', icon: Database },
+        { name: n.posIntegration, href: 'POSIntegration', icon: Cable }
+      ]
+    },
     { name: n.userRoles, href: 'UserRoleManagement', icon: Shield },
     {
-      name: n.utilities || 'Utilities',
+      name: n.utilities || 'Utility Functions',
       icon: Upload,
       children: [
         { name: n.bulkUploadCenter || 'Bulk Upload Center', href: 'BulkUploadCenter', icon: Upload, permission: 'manage_bulk_uploads', adminOnly: true },
@@ -205,40 +279,231 @@ function LanguageSwitcher() {
   );
 }
 
-function NavItem({ item, isActive, onClick }) {
-  const [expanded, setExpanded] = useState(false);
+function NotificationBell() {
+  const [open, setOpen] = useState(false);
+  const [lastSeenAt, setLastSeenAt] = useState(() => localStorage.getItem(NOTIFICATION_LAST_SEEN_KEY) || '');
+  const popupReadyRef = useRef(false);
+  const lastPopupKeyRef = useRef('');
+  const { can } = usePermissions();
+  const canViewAuditLogs = can('view_audit_logs');
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['activity-notifications'],
+    queryFn: () => base44.activity.listNotifications(50),
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true
+  });
+  const notifications = data?.notifications || [];
+  const lastSeenTime = lastSeenAt ? new Date(lastSeenAt).getTime() : 0;
+  const unreadCount = notifications.filter((item) => {
+    const createdTime = new Date(item.created_at).getTime();
+    return Number.isFinite(createdTime) && createdTime > lastSeenTime;
+  }).length;
+  const badgeCount = Math.min(unreadCount, 99);
+  const workflowNotifications = notifications.filter(isWorkflowNotification);
+  const userActionNotifications = notifications.filter((item) => !isWorkflowNotification(item));
+  const orderedSections = [
+    { title: 'Workflow Notifications', items: workflowNotifications, tone: 'emerald' },
+    { title: 'User Actions', items: userActionNotifications, tone: 'slate' }
+  ].filter((section) => section.items.length > 0);
+  const groupedCounts = useMemo(() => notifications.reduce((summary, item) => {
+    const key = item.entity || 'System';
+    summary[key] = (summary[key] || 0) + 1;
+    return summary;
+  }, {}), [notifications]);
+
+  useEffect(() => {
+    const unsubscribe = base44.entities.AuditLog.subscribe(() => {
+      refetch();
+    });
+    return unsubscribe;
+  }, [refetch]);
+
+  useEffect(() => {
+    const newest = notifications[0];
+    if (!newest?.id || !newest?.created_at) return;
+    const popupKey = `${newest.id}:${newest.created_at}`;
+    if (!popupReadyRef.current) {
+      popupReadyRef.current = true;
+      lastPopupKeyRef.current = popupKey;
+      return;
+    }
+    if (popupKey === lastPopupKeyRef.current) return;
+    lastPopupKeyRef.current = popupKey;
+    const createdTime = new Date(newest.created_at).getTime();
+    if (!Number.isFinite(createdTime) || createdTime <= lastSeenTime) return;
+    const workflow = isWorkflowNotification(newest);
+    toast({
+      title: workflow ? 'Workflow notification' : 'User action',
+      description: newest.message || `${newest.title || formatNotificationAction(newest.action)} · ${newest.site_name || newest.entity || 'Food Pro'}`,
+      duration: WORKFLOW_NOTIFICATION_DURATION_MS,
+      dedupeKey: workflow ? buildWorkflowNotificationDedupeKey(newest) : `user-action:${newest.id}`
+    });
+  }, [lastSeenTime, notifications]);
+
+  const handleOpenChange = (nextOpen) => {
+    setOpen(nextOpen);
+    if (!nextOpen || notifications.length === 0) return;
+    const newest = notifications[0]?.created_at || new Date().toISOString();
+    localStorage.setItem(NOTIFICATION_LAST_SEEN_KEY, newest);
+    setLastSeenAt(newest);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="relative rounded-full text-slate-700 hover:bg-slate-100"
+          aria-label="Notifications"
+          title="Notifications"
+        >
+          <Bell className="h-5 w-5" />
+          {badgeCount > 0 ? (
+            <span className="absolute -right-0.5 -top-0.5 min-w-5 rounded-full bg-red-600 px-1.5 text-[11px] font-semibold leading-5 text-white">
+              {badgeCount}
+            </span>
+          ) : null}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[min(92vw,420px)] rounded-xl p-0">
+        <div className="border-b border-slate-100 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-900">Notifications</h2>
+              <p className="text-xs text-slate-500">Workflow and user activity</p>
+            </div>
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+              {notifications.length} recent
+            </span>
+          </div>
+          {notifications.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {Object.entries(groupedCounts).slice(0, 4).map(([entity, count]) => (
+                <span key={entity} className="rounded-full border border-slate-200 px-2 py-1 text-[11px] text-slate-600">
+                  {entity}: {count}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="max-h-[420px] overflow-y-auto">
+          {isLoading ? (
+            <div className="p-4 text-sm text-slate-500">Loading notifications...</div>
+          ) : error ? (
+            <div className="p-4 text-sm text-red-700">{error.message || 'Could not load notifications.'}</div>
+          ) : notifications.length === 0 ? (
+            <div className="p-6 text-center text-sm text-slate-500">No notifications yet.</div>
+          ) : orderedSections.map((section) => (
+            <div key={section.title}>
+              <div className={cn(
+                "sticky top-0 z-10 border-b px-4 py-2 text-xs font-semibold uppercase",
+                section.tone === 'emerald'
+                  ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+                  : "border-slate-100 bg-slate-50 text-slate-600"
+              )}>
+                {section.title}
+              </div>
+              {section.items.map((item) => (
+                <div key={item.id} className="border-b border-slate-100 px-4 py-3 last:border-b-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-900">
+                        {item.title || formatNotificationAction(item.action)}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-600">
+                        {item.workflow_step || item.entity || 'System'}{item.site_name || item.site_id ? ` · ${item.site_name || item.site_id}` : ''}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {item.message || `By ${item.actor_name || item.actor_email || 'System'}`}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-right text-[11px] text-slate-500">
+                      {formatNotificationTime(item.created_at)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+        {canViewAuditLogs ? (
+          <div className="border-t border-slate-100 p-3">
+            <Link
+              to={createPageUrl('AuditLogs')}
+              className="block rounded-lg px-3 py-2 text-center text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+              onClick={() => setOpen(false)}
+            >
+              View all activity
+            </Link>
+          </div>
+        ) : null}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function NavItem({ item, isActive, currentPath, onClick }) {
+  const hasActiveChild = hasActiveDescendant(item, currentPath);
+  const [expanded, setExpanded] = useState(Boolean(hasActiveChild));
+
+  useEffect(() => {
+    if (hasActiveChild) {
+      setExpanded(true);
+    }
+  }, [hasActiveChild]);
   
   if (item.children) {
     return (
       <div>
-        <button
-          onClick={() => setExpanded(!expanded)}
+        <div
           className={cn(
-            "flex items-center justify-between w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200",
-            "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            "flex items-center gap-1 rounded-xl transition-all duration-200",
+            (isActive || hasActiveChild) ? "bg-emerald-50 text-emerald-700 shadow-sm" : "text-slate-600 hover:bg-slate-100"
           )}
         >
-          <div className="flex items-center gap-3">
-            <item.icon className="w-5 h-5" />
-            <span>{item.name}</span>
-          </div>
-          <ChevronRight className={cn("w-4 h-4 transition-transform", expanded && "rotate-90")} />
-        </button>
+          {item.href ? (
+            <Link
+              to={createPageUrl(item.href)}
+              onClick={onClick}
+              className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-sm font-medium hover:text-slate-900"
+            >
+              <item.icon className={cn("w-5 h-5", (isActive || hasActiveChild) && "text-emerald-600")} />
+              <span className="truncate">{item.name}</span>
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setExpanded(!expanded)}
+              className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left text-sm font-medium hover:text-slate-900"
+            >
+              <item.icon className={cn("w-5 h-5", (isActive || hasActiveChild) && "text-emerald-600")} />
+              <span className="truncate">{item.name}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="flex h-10 w-9 shrink-0 items-center justify-center rounded-r-xl hover:bg-slate-100"
+            aria-label={`${expanded ? 'Collapse' : 'Expand'} ${item.name}`}
+          >
+            <ChevronRight className={cn("w-4 h-4 transition-transform", expanded && "rotate-90")} />
+          </button>
+        </div>
         {expanded && (
-          <div className="ml-8 mt-1 space-y-1">
-            {item.children.map(child => (
-              <Link
-                key={child.href}
-                to={createPageUrl(child.href)}
+          <div className={cn(
+            "mt-1 space-y-1",
+            "ml-8"
+          )}>
+            {item.children.map((child, index) => (
+              <NavItem
+                key={child.href || `${child.name}-${index}`}
+                item={child}
+                isActive={currentPath === child.href}
+                currentPath={currentPath}
                 onClick={onClick}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
-                  "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-                )}
-              >
-                <child.icon className="w-4 h-4" />
-                <span>{child.name}</span>
-              </Link>
+              />
             ))}
           </div>
         )}
@@ -308,6 +573,7 @@ function Sidebar({ onNavigate }) {
               key={item.name}
               item={item}
               isActive={currentPath === item.href}
+              currentPath={currentPath}
               onClick={onNavigate}
             />
           ))}
@@ -355,6 +621,11 @@ export default function Layout({ children }) {
         <Sidebar />
       </aside>
 
+      {/* Desktop Header */}
+      <header className="hidden lg:fixed lg:left-72 lg:right-0 lg:top-0 lg:z-40 lg:flex lg:h-14 lg:items-center lg:justify-end lg:border-b lg:border-slate-100 lg:bg-white/95 lg:px-8 lg:backdrop-blur">
+        <NotificationBell />
+      </header>
+
       {/* Mobile Header */}
       <header className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b border-slate-100 px-4 h-16 flex items-center justify-between">
         <Link to={createPageUrl('Dashboard')} className="flex items-center gap-2">
@@ -368,6 +639,7 @@ export default function Layout({ children }) {
         </Link>
 
         <div className="flex items-center gap-2">
+          <NotificationBell />
           <Button
             type="button"
             variant="ghost"
@@ -392,7 +664,7 @@ export default function Layout({ children }) {
       </header>
 
       {/* Main Content */}
-      <main className="lg:pl-72 pt-16 lg:pt-0">
+      <main className="lg:pl-72 pt-16 lg:pt-14">
         {children}
       </main>
     </div>

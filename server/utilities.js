@@ -1,7 +1,9 @@
 import { validateEntityPayload } from './entities.js';
 import { validateRecipeImageReference } from '../shared/recipeImage.js';
-import { normalizeIngredientUnit } from '../shared/ingredientUnits.js';
+import { isIngredientUnitCompatible, normalizeIngredientUnit } from '../shared/ingredientUnits.js';
+import { inferPackageFields } from '../shared/packageUnits.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../shared/siteHierarchy.js';
+import { normalizeProductionMenuScope } from '../shared/menuCategories.js';
 
 const commonSiteFields = ['site_id', 'site_name'];
 
@@ -22,13 +24,13 @@ export const utilityModules = Object.freeze({
     label: 'Ingredients',
     entity: 'Ingredient',
     required: ['name'],
-    headers: ['item_code', 'name', 'ingredient_code', 'sku', 'alias', 'supplier_item_name', 'unit', 'category', 'cuisine_type', 'cost_per_unit', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'sodium_per_100g', 'sugar_per_100g', 'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'allergens', 'is_active']
+    headers: ['item_code', 'name', 'ingredient_code', 'sku', 'alias', 'supplier_item_name', 'unit', 'category', 'cuisine_type', 'cost_per_unit', 'package_base_quantity', 'package_base_unit', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'sodium_per_100g', 'sugar_per_100g', 'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'allergens', 'is_active']
   },
   recipes: {
     label: 'Recipes',
     entity: 'Recipe',
     required: ['name'],
-    headers: ['name', 'recipe_code', 'description', 'cuisine_type', 'category', 'servings', 'ingredients', 'sub_recipes', 'instructions', 'prep_time_minutes', 'cook_time_minutes', 'allergens', 'site_scope', 'site_ids', 'site_names', 'image_url', 'is_active']
+    headers: ['name', 'recipe_code', 'description', 'recipe_type', 'cuisine_type', 'category', 'servings', 'portion_size_grams', 'ingredients', 'sub_recipes', 'instructions', 'prep_time_minutes', 'cook_time_minutes', 'allergens', 'site_scope', 'site_ids', 'site_names', 'image_url', 'is_active']
   },
   inventory: {
     label: 'Inventory',
@@ -56,13 +58,13 @@ export const utilityModules = Object.freeze({
     label: 'Menu Plans',
     entity: 'MenuPlan',
     required: ['plan_date'],
-    headers: [...commonSiteFields, 'plan_date', 'status', 'event_name', 'event_date', 'expected_participants', 'budget_amount', 'meals', 'notes']
+    headers: [...commonSiteFields, 'plan_date', 'cuisine_type', 'menu_category', 'status', 'event_name', 'event_date', 'expected_participants', 'budget_amount', 'meals', 'notes']
   },
   production: {
     label: 'Production',
     entity: 'Production',
-    required: ['production_date'],
-    headers: [...commonSiteFields, 'fulfillment_store_id', 'fulfillment_store_name', 'production_date', 'recipe_id', 'recipe_name', 'meal_type', 'target_servings', 'actual_servings', 'status', 'estimated_cost', 'actual_cost', 'ingredients_used', 'notes']
+    required: ['production_date', 'menu_type', 'menu_category'],
+    headers: [...commonSiteFields, 'fulfillment_store_id', 'fulfillment_store_name', 'production_date', 'recipe_id', 'recipe_name', 'meal_type', 'menu_type', 'menu_category', 'target_servings', 'actual_servings', 'status', 'estimated_cost', 'actual_cost', 'ingredients_used', 'notes']
   },
   'material-requests': {
     label: 'Material Requests',
@@ -102,15 +104,74 @@ const JSON_FIELDS = new Set([
 ]);
 const BOOLEAN_FIELDS = new Set(['is_active', 'preventable', 'high_value']);
 const NUMBER_FIELDS = new Set([
-  'capacity', 'cost_per_unit', 'calories_per_100g', 'protein_per_100g',
+  'capacity', 'cost_per_unit', 'package_base_quantity', 'package_pack_count',
+  'package_inner_count', 'package_size_quantity', 'calories_per_100g', 'protein_per_100g',
   'carbs_per_100g', 'fat_per_100g', 'sodium_per_100g', 'sugar_per_100g',
   'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit',
-  'cooked_weight_per_unit', 'servings', 'prep_time_minutes', 'cook_time_minutes',
+  'cooked_weight_per_unit', 'servings', 'portion_size_grams', 'prep_time_minutes', 'cook_time_minutes',
   'quantity', 'unit_cost', 'average_unit_cost', 'reorder_level',
   'min_stock_level', 'max_stock_level', 'expected_participants',
   'budget_amount', 'target_servings', 'actual_servings', 'estimated_cost',
-  'actual_cost', 'score', 'temperature'
+  'actual_cost', 'score', 'temperature', 'source_amount', 'source_quantity'
 ]);
+
+const HEADER_ALIASES = Object.freeze({
+  recipes: {
+    type: 'recipe_type',
+    cuisine: 'cuisine_type'
+  },
+  ingredients: {
+    ingredient_name: 'name',
+    product_name: 'name',
+    item: 'item_code',
+    item_duplicate: 'ingredient_code',
+    item_group: 'category',
+    unit_price: 'cost_per_unit',
+    price: 'cost_per_unit',
+    cal: 'calories_per_100g',
+    'cal.': 'calories_per_100g',
+    'cal/100g': 'calories_per_100g',
+    calories: 'calories_per_100g',
+    yield: 'cooking_yield_percent',
+    'yield_%': 'cooking_yield_percent',
+    protein: 'protein_per_100g',
+    protien: 'protein_per_100g',
+    car: 'carbs_per_100g',
+    carb: 'carbs_per_100g',
+    carbs: 'carbs_per_100g',
+    fat: 'fat_per_100g',
+    sodium: 'sodium_per_100g',
+    sugar: 'sugar_per_100g',
+    quantity: 'quantity',
+    qty: 'quantity',
+    stock: 'quantity',
+    stock_on_hand: 'quantity',
+    on_hand: 'quantity',
+    site_id: 'site_id',
+    site_name: 'site_name',
+    warehouse: 'site_name',
+    store: 'site_name',
+    location: 'site_name'
+  },
+  production: {
+    cuisine_type: 'menu_type',
+    menu_cuisine: 'menu_type',
+    cuisine: 'menu_type'
+  },
+  inventory: {
+    item: 'item_code',
+    item_duplicate: 'source_item_duplicate',
+    product_name: 'ingredient_name',
+    qty: 'quantity',
+    qty_duplicate: 'source_quantity',
+    unit_price: 'unit_cost',
+    price: 'unit_cost',
+    amount: 'source_amount',
+    warehouse: 'source_warehouse',
+    site: 'source_site',
+    item_group: 'source_item_group'
+  }
+});
 
 export function getUtilityModule(moduleKey) {
   return utilityModules[moduleKey] || null;
@@ -163,6 +224,15 @@ function normalizeHeader(value) {
 function parseCell(field, value) {
   const trimmed = String(value ?? '').trim();
   if (!trimmed) return undefined;
+  if (field === 'allergens') {
+    if (/^(none|no|n\/a|na|null)$/i.test(trimmed)) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed : [parsed].filter(Boolean);
+    } catch {
+      return trimmed.split(/[|,]/).map((item) => item.trim()).filter(Boolean);
+    }
+  }
   if (JSON_FIELDS.has(field)) {
     try {
       return JSON.parse(trimmed);
@@ -181,10 +251,41 @@ function parseCell(field, value) {
   return trimmed;
 }
 
+function buildHeaderMap(moduleKey, definition) {
+  const entries = definition.headers.map((header) => [normalizeHeader(header), header]);
+  const aliases = HEADER_ALIASES[moduleKey] || {};
+  Object.entries(aliases).forEach(([alias, field]) => {
+    entries.push([normalizeHeader(alias), field]);
+  });
+  return new Map(entries);
+}
+
+function normalizeMappedPayload(moduleKey, payload) {
+  if (moduleKey === 'recipes' && payload.recipe_type && !payload.cuisine_type) {
+    payload.cuisine_type = payload.recipe_type;
+  }
+  if (moduleKey === 'recipes' && payload.recipe_type) {
+    delete payload.recipe_type;
+  }
+  if (moduleKey === 'ingredients' && !payload.item_code) {
+    payload.item_code = payload.ingredient_code || payload.sku || undefined;
+  }
+  if (moduleKey === 'ingredients') {
+    Object.assign(payload, inferPackageFields(payload));
+  }
+  if (moduleKey === 'inventory' && !payload.unit_cost && payload.unit_price) {
+    payload.unit_cost = payload.unit_price;
+  }
+  if (moduleKey === 'production') {
+    return normalizeProductionMenuScope(payload, { required: true });
+  }
+  return payload;
+}
+
 export function mapCsvRow(moduleKey, headers, values) {
   const definition = getUtilityModule(moduleKey);
   if (!definition) throw new Error('Unknown bulk upload module.');
-  const canonicalHeaders = new Map(definition.headers.map((header) => [normalizeHeader(header), header]));
+  const canonicalHeaders = buildHeaderMap(moduleKey, definition);
   const payload = {};
   headers.forEach((header, index) => {
     const field = canonicalHeaders.get(normalizeHeader(header));
@@ -200,28 +301,53 @@ export function mapCsvRow(moduleKey, headers, values) {
   if (moduleKey === 'inventory' && !payload.item_code && !payload.ingredient_id) {
     throw new Error('item_code or ingredient_id is required');
   }
-  if (definition.entity === 'Recipe' && payload.image_url) {
-    const imageError = validateRecipeImageReference(payload.image_url);
+  const normalizedPayload = normalizeMappedPayload(moduleKey, payload);
+  if (definition.entity === 'Recipe' && normalizedPayload.image_url) {
+    const imageError = validateRecipeImageReference(normalizedPayload.image_url);
     if (imageError) throw new Error(imageError);
   }
-  return validateEntityPayload(definition.entity, payload);
+  return validateEntityPayload(definition.entity, normalizedPayload);
 }
 
 export function validateCsvHeaders(moduleKey, headers) {
   const definition = getUtilityModule(moduleKey);
   if (!definition) return ['Unknown bulk upload module.'];
   const incoming = new Set(headers.map(normalizeHeader));
+  const aliases = HEADER_ALIASES[moduleKey] || {};
+  const hasIncomingField = (field) => incoming.has(normalizeHeader(field))
+    || Object.entries(aliases).some(([alias, target]) => (
+      target === field && incoming.has(normalizeHeader(alias))
+    ));
   const errors = definition.required
-    .filter((field) => !incoming.has(normalizeHeader(field)))
+    .filter((field) => !hasIncomingField(field))
     .map((field) => `Missing required column: ${field}`);
   if (
     moduleKey === 'inventory'
-    && !incoming.has(normalizeHeader('item_code'))
-    && !incoming.has(normalizeHeader('ingredient_id'))
+    && !hasIncomingField('item_code')
+    && !hasIncomingField('ingredient_id')
   ) {
     errors.unshift('Missing required column: item_code or ingredient_id');
   }
   return errors;
+}
+
+export function buildIngredientPayloadFromInventoryUpload(payload = {}) {
+  const itemCode = String(payload.item_code || '').trim();
+  const name = String(payload.ingredient_name || '').trim();
+  const unit = String(payload.unit || '').trim();
+  if (!itemCode || !name || !unit) return null;
+  return validateEntityPayload('Ingredient', {
+    item_code: itemCode,
+    ingredient_code: payload.source_item_duplicate || itemCode,
+    sku: itemCode,
+    name,
+    unit,
+    category: payload.source_item_group || null,
+    cost_per_unit: payload.unit_cost ?? 0,
+    ...inferPackageFields({ ...payload, name, supplier_item_name: name, unit }),
+    is_active: true,
+    allergens: []
+  });
 }
 
 function normalizeLookup(value) {
@@ -362,7 +488,7 @@ export function resolveBulkInventoryUnit(ingredient = {}, suppliedUnit = '') {
   const requestedUnit = String(suppliedUnit || '').trim();
   if (
     requestedUnit
-    && normalizeIngredientUnit(requestedUnit) !== normalizeIngredientUnit(masterUnit)
+    && !isIngredientUnitCompatible(requestedUnit, masterUnit, ingredient)
   ) {
     const error = new Error(`Inventory quantity must use the ingredient's canonical unit (${masterUnit}).`);
     error.status = 409;

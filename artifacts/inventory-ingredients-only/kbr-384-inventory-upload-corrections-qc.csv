@@ -1,0 +1,44 @@
+row,item_code,ingredient_name,issue,detail
+5,BK000001,SLICED BREAD WHITE,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+6,BK000002,SLICED BREAD BROWN,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+7,BK000003,LUSINE BURGER BUN PLAIN,removed,Zero or negative quantity cannot be uploaded as a receipt.
+8,BK000004,ARABIC BREAD WHITE,removed,Zero or negative quantity cannot be uploaded as a receipt.
+9,BK000005,ARABIC BREAD BROWN,removed,Zero or negative quantity cannot be uploaded as a receipt.
+21,BR000280,NESTLE WATER 42/330ML,removed,Zero or negative quantity cannot be uploaded as a receipt.
+28,140165,ROZZET HAND LIQUID SOAP PINK 4/5LTR,removed,Zero or negative quantity cannot be uploaded as a receipt.
+48,DR000003,AL MARAI YOGURT/ZABADI FF 1/170G,removed,Zero or negative quantity cannot be uploaded as a receipt.
+50,DR000017,AL MARAI LABAN LF VIT 1/180ML,removed,Zero or negative quantity cannot be uploaded as a receipt.
+51,DR000034,NADA MILK FF UHT 12/1 LTR,removed,Zero or negative quantity cannot be uploaded as a receipt.
+55,100782,TAFGA MAKATI SOY SAUCE 12/750ML,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+68,139287,MELLOW PULSE LENTIL BROWN WHOLE 1/15KG,removed,Zero or negative quantity cannot be uploaded as a receipt.
+70,139374,TAFGA PARMEL RICE 1/40KG,removed,Zero or negative quantity cannot be uploaded as a receipt.
+71,139415,A-KARAM PULSE BEANS DRY WHITE 1/15KG,removed,Zero or negative quantity cannot be uploaded as a receipt.
+75,139799,VEG FROGEL CAULIFLOWER 1/10KG,removed,Zero or negative quantity cannot be uploaded as a receipt.
+141,367989,TAFGA TOMEX FROZEN CAULIFLOWER 4/2.5KG,removed,Zero or negative quantity cannot be uploaded as a receipt.
+163,403715,A-HB ORANGE JAM 12/400G,removed,Zero or negative quantity cannot be uploaded as a receipt.
+257,275415,TAMIMI DOUBLE WALL CUP 10Z DES-3 1/500CT,removed,Zero or negative quantity cannot be uploaded as a receipt.
+266,395608,A-TAFGA LOGO SHOPPING BAG BIODEGRADEABLE MED 1/20KG,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+282,OP003035,PLASTIC CONTENER WHITE 250 1/1000CT,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+288,134696,DOUX CHICKEN FROZEN 10/900G,removed,Zero or negative quantity cannot be uploaded as a receipt.
+297,398635,ZAMIL CHICKEN FRANKS  24/340G,removed,Zero or negative quantity cannot be uploaded as a receipt.
+313,PR000031,GREEN BEANS,removed,Zero or negative quantity cannot be uploaded as a receipt.
+315,PR000041,PAPPAYA,removed,Zero or negative quantity cannot be uploaded as a receipt.
+317,PR000048,OKRA (LOCAL),warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+319,PR000058,PARSELY (BDL),removed,Zero or negative quantity cannot be uploaded as a receipt.
+322,PR000061,SPINACH (BDL),warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+324,PR000065,GREEN ONION (BDL),removed,Zero or negative quantity cannot be uploaded as a receipt.
+325,PR000070,APPLE (GREEN),removed,Zero or negative quantity cannot be uploaded as a receipt.
+329,PR000077,PEACHES,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+330,PR000078,KIWI FRUIT,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+331,PR000081,GRAPES BLACK (AFRICAN),removed,Zero or negative quantity cannot be uploaded as a receipt.
+333,PR000084,WATERMELONS,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+334,PR000085,SWEETMELONS,removed,Zero or negative quantity cannot be uploaded as a receipt.
+337,PR000093,MANDRINE MOROCCO,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+338,PR000095,STRAWBERRIES (USA),removed,Zero or negative quantity cannot be uploaded as a receipt.
+339,PR000097,GUAVA,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+340,PR000099,POMEGRANATE,removed,Zero or negative quantity cannot be uploaded as a receipt.
+343,PR000107,GRAPES WHITE (AFRICAN),removed,Zero or negative quantity cannot be uploaded as a receipt.
+344,PR000113,DRISCOLL'S BLUE BERRY 1/170G,removed,Zero or negative quantity cannot be uploaded as a receipt.
+345,PR000114,DRISCOLL'S RAS BERRY 1/170G,removed,Zero or negative quantity cannot be uploaded as a receipt.
+352,306998,RUHI FISH 1/2.5KG,warning,Item code is not in the ingredient file; include missing ingredient file first if deployed app does not auto-create from inventory.
+353,SF000030,FRESH HAMOUR FISH 1/1 KG,removed,Zero or negative quantity cannot be uploaded as a receipt.

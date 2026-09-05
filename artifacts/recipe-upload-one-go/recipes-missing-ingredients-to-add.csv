@@ -1,0 +1,24 @@
+﻿item_code,name,ingredient_code,sku,alias,supplier_item_name,unit,category,cuisine_type,cost_per_unit,calories_per_100g,protein_per_100g,carbs_per_100g,fat_per_100g,sodium_per_100g,sugar_per_100g,cooking_yield_percent,shrinkage_percent,raw_weight_per_unit,cooked_weight_per_unit,allergens,is_active
+RCPMIS-001-FRESHDIL,Fresh Dill,RCPMIS-001-FRESHDIL,RCPMIS-001-FRESHDIL,,Fresh Dill,ml,FW,,0,,,,,,,100,0,,,none,true
+RCPMIS-002-STRAWBER,Strawberries,RCPMIS-002-STRAWBER,RCPMIS-002-STRAWBER,,Strawberries,kg,FW,,0,,,,,,,100,0,,,none,true
+RCPMIS-003-FRESHBLU,Fresh Blueberries,RCPMIS-003-FRESHBLU,RCPMIS-003-FRESHBLU,,Fresh Blueberries,kg,FW,,0,,,,,,,100,0,,,none,true
+RCPMIS-004-CHANAMAS,Chana masala spice mix,RCPMIS-004-CHANAMAS,RCPMIS-004-CHANAMAS,,Chana masala spice mix,g,Breakfast Items,,0,,,,,,,100,0,,,none,true
+RCPMIS-005-FRESHPAR,Fresh parsley,RCPMIS-005-FRESHPAR,RCPMIS-005-FRESHPAR,,Fresh parsley,ml,Breakfast Items,,0,,,,,,,100,0,,,none,true
+RCPMIS-006-SAFFRON,Saffron,RCPMIS-006-SAFFRON,RCPMIS-006-SAFFRON,,Saffron,g,Chicken,,0,,,,,,,100,0,,,none,true
+RCPMIS-007-WHOLESPI,Whole spices,RCPMIS-007-WHOLESPI,RCPMIS-007-WHOLESPI,,Whole spices,g,Chicken,,0,,,,,,,100,0,,,none,true
+RCPMIS-008-FINELYCH,Finely chopped fresh dill or parsley,RCPMIS-008-FINELYCH,RCPMIS-008-FINELYCH,,Finely chopped fresh dill or parsley,g,Fish,,0,,,,,,,100,0,,,none,true
+RCPMIS-009-MEATMASA,Meat masala powder,RCPMIS-009-MEATMASA,RCPMIS-009-MEATMASA,,Meat masala powder,g,Meat,,0,,,,,,,100,0,,,none,true
+RCPMIS-010-CHARCOAL,Charcoal,RCPMIS-010-CHARCOAL,RCPMIS-010-CHARCOAL,,Charcoal,pieces,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-011-SAFFRONT,Saffron Threads,RCPMIS-011-SAFFRONT,RCPMIS-011-SAFFRONT,,Saffron Threads,ml,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-012-KHOYA,Khoya,RCPMIS-012-KHOYA,RCPMIS-012-KHOYA,,Khoya,kg,Rice,,0,,,,,,,100,0,,,none,true
+RCPMIS-013-TAMARIND,Tamarind chutney,RCPMIS-013-TAMARIND,RCPMIS-013-TAMARIND,,Tamarind chutney,l,Salad,,0,,,,,,,100,0,,,none,true
+RCPMIS-014-FINESEV,Fine Sev,RCPMIS-014-FINESEV,RCPMIS-014-FINESEV,,Fine Sev,g,Salad,,0,,,,,,,100,0,,,none,true
+RCPMIS-015-PAPDI,Papdi,RCPMIS-015-PAPDI,RCPMIS-015-PAPDI,,Papdi,kg,Salad,,0,,,,,,,100,0,,,none,true
+RCPMIS-016-ROSESYRU,Rose syrup,RCPMIS-016-ROSESYRU,RCPMIS-016-ROSESYRU,,Rose syrup,ml,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-017-CHIASEED,Chia seeds / Tukmaria,RCPMIS-017-CHIASEED,RCPMIS-017-CHIASEED,,Chia seeds / Tukmaria,g,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-018-FLAVORED,Flavored Gelatin Powder,RCPMIS-018-FLAVORED,RCPMIS-018-FLAVORED,,Flavored Gelatin Powder,kg,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-019-UNFLAVOR,Unflavored gelatin powder,RCPMIS-019-UNFLAVOR,RCPMIS-019-UNFLAVOR,,Unflavored gelatin powder,g,Sweet,,0,,,,,,,100,0,,,none,true
+RCPMIS-020-ACHARIMA,Achari Masala,RCPMIS-020-ACHARIMA,RCPMIS-020-ACHARIMA,,Achari Masala,g,Vegetable,,0,,,,,,,100,0,,,none,true
+RCPMIS-021-ASAFOETI,Asafoetida,RCPMIS-021-ASAFOETI,RCPMIS-021-ASAFOETI,,Asafoetida,g,Vegetable,,0,,,,,,,100,0,,,none,true
+RCPMIS-022-CURRYLEA,Curry leaves,RCPMIS-022-CURRYLEA,RCPMIS-022-CURRYLEA,,Curry leaves,g,Vegetable,,0,,,,,,,100,0,,,none,true
+RCPMIS-023-FRESHROS,Fresh rosemary / thyme,RCPMIS-023-FRESHROS,RCPMIS-023-FRESHROS,,Fresh rosemary / thyme,g,Vegetable,,0,,,,,,,100,0,,,none,true

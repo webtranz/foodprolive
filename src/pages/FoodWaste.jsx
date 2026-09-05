@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { format, subDays } from 'date-fns';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { QRCodeSVG } from 'qrcode.react';
 import {
   Area,
   AreaChart,
@@ -36,19 +35,17 @@ import { formatCurrency } from '@/lib/currency';
 import { calculateIngredientCost } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 import { getItemCodeFromRecords } from '../../shared/itemCode.js';
-import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import {
   AlertTriangle,
   Brain,
   CheckCircle2,
   Clock3,
-  Copy,
   CircleDollarSign,
   Download,
+  ImagePlus,
   PackageCheck,
   Pencil,
   Plus,
-  QrCode,
   RefreshCw,
   Target,
   Trash2,
@@ -81,6 +78,7 @@ const WASTE_REASONS = [
 
 const APPROVAL_THRESHOLD = 100;
 const MEAL_TYPE_OPTIONS = ['breakfast', 'lunch', 'dinner'];
+const BATCH_OVERPRODUCTION_CATEGORY = 'batch_overproduction';
 
 const CATEGORY_BADGES = Object.fromEntries(
   WASTE_CATEGORIES.map((item) => [item.value, `bg-white text-slate-700 border border-slate-200`])
@@ -110,6 +108,44 @@ function getCategoryMeta(categoryCode) {
   return WASTE_CATEGORIES.find((item) => item.value === categoryCode) || null;
 }
 
+function isMealServiceLeftover(item = {}) {
+  return item.auto_generated === true && item.source_type === 'meal_service_leftover';
+}
+
+function isBatchOverproductionWasteRecord(item = {}) {
+  return item.source_type === 'batch_overproduction'
+    || item.waste_category === BATCH_OVERPRODUCTION_CATEGORY;
+}
+
+function getWasteSourceLabel(item = {}) {
+  if (isMealServiceLeftover(item)) return 'Meal Service Leftover';
+  return titleCase(item.source_type || 'manual_entry');
+}
+
+function formatWasteQuantity(item = {}) {
+  if (isMealServiceLeftover(item)) {
+    const exactWeightGrams = Number(item.wasted_weight_grams);
+    if (Number.isFinite(exactWeightGrams) && exactWeightGrams >= 0) {
+      if (exactWeightGrams >= 1000) return `${Number((exactWeightGrams / 1000).toFixed(3))} kg`;
+      return `${Number(exactWeightGrams.toFixed(3))} g`;
+    }
+  }
+  return `${safeNumber(item.quantity).toFixed(2)} ${item.unit}`;
+}
+
+function formatWeightGrams(value) {
+  const grams = safeNumber(value);
+  if (grams >= 1000) return `${Number((grams / 1000).toFixed(3))} kg`;
+  return `${Number(grams.toFixed(3))} g`;
+}
+
+function normalizeGramEntry(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (!/^\d+(\.\d{0,3})?$/.test(text)) return null;
+  return text;
+}
+
 function sumRecipeIngredientCost(recipe, recipeMap, ingredientMap) {
   const expandedIngredients = expandRecipeIngredients(
     recipe,
@@ -136,7 +172,7 @@ function createDefaultWasteForm() {
     meal_type: 'breakfast',
     waste_category: 'plate_waste',
     reason_code: 'overproduction',
-    waste_scope: 'ingredient',
+    waste_scope: 'recipe',
     ingredient_id: 'none',
     recipe_id: 'none',
     production_id: 'none',
@@ -144,16 +180,17 @@ function createDefaultWasteForm() {
     quantity: '',
     unit: 'kg',
     preventable: true,
+    evidence_image_url: '',
     notes: ''
   };
 }
 
-export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
+export default function FoodWaste() {
   const queryClient = useQueryClient();
   const { can } = usePermissions();
+  const wasteImageInputRef = useRef(null);
   const [formOpen, setFormOpen] = useState(false);
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
-  const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [filters, setFilters] = useState({
     startDate: format(subDays(new Date(), 29), 'yyyy-MM-dd'),
@@ -166,7 +203,10 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
   });
   const [editingWasteId, setEditingWasteId] = useState(null);
   const [formData, setFormData] = useState(createDefaultWasteForm);
-  const [selectedQrSiteId, setSelectedQrSiteId] = useState('');
+  const [dishWasteGramsByRecipe, setDishWasteGramsByRecipe] = useState({});
+  const [wasteImageFile, setWasteImageFile] = useState(null);
+  const [wasteImagePreview, setWasteImagePreview] = useState('');
+  const [wasteImageUploading, setWasteImageUploading] = useState(false);
   const [targetForm, setTargetForm] = useState({
     site_id: '',
     target_percentage: '',
@@ -220,22 +260,11 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
     queryFn: () => base44.foodWaste.list()
   });
 
-  const { data: foodWasteQRCodes = [] } = useQuery({
-    queryKey: ['foodWasteQRCodes'],
-    enabled: can('manage_waste'),
-    queryFn: () => base44.foodWaste.listQRCodes()
-  });
-
   const {
-    data: qrResolvedContext = null,
-    error: qrResolvedError
+    data: wasteContext = null,
+    isLoading: wasteContextLoading,
+    error: wasteContextError
   } = useQuery({
-    queryKey: ['foodWasteQrResolve', qrToken],
-    enabled: Boolean(qrToken && can('manage_waste')),
-    queryFn: () => base44.foodWaste.resolveQRCode(qrToken)
-  });
-
-  const { data: wasteContext = null } = useQuery({
     queryKey: ['foodWasteContext', formData.site_id, formData.waste_date, formData.meal_type],
     enabled: Boolean(formData.site_id && formData.waste_date && formData.meal_type),
     queryFn: () => base44.foodWaste.getContext(formData.site_id, formData.waste_date, formData.meal_type)
@@ -254,8 +283,21 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
   const recipeMap = useMemo(() => new Map(recipes.map((item) => [item.id, item])), [recipes]);
   const productionMap = useMemo(() => new Map(productions.map((item) => [item.id, item])), [productions]);
   const siteMap = useMemo(() => new Map(sites.map((item) => [item.id, item])), [sites]);
+  const isBatchOverproduction = formData.waste_category === BATCH_OVERPRODUCTION_CATEGORY;
+  const batchOverproductionDishes = useMemo(() => (
+    wasteContext?.batch_overproduction_dishes
+    || wasteContext?.produced_dishes
+    || []
+  ), [wasteContext]);
+  const batchWasteRows = useMemo(() => (
+    batchOverproductionDishes.map((dish) => ({
+      ...dish,
+      waste_grams: safeNumber(dishWasteGramsByRecipe[dish.recipe_id])
+    }))
+  ), [batchOverproductionDishes, dishWasteGramsByRecipe]);
+  const batchWasteTotalGrams = batchWasteRows.reduce((sum, row) => sum + row.waste_grams, 0);
   const bootstrapLoading = sitesLoading || ingredientsLoading || recipesLoading || productionsLoading || foodWasteLoading || wasteTargetsLoading;
-  const bootstrapError = sitesError || ingredientsError || recipesError || productionsError || foodWasteError || wasteTargetsError || qrResolvedError;
+  const bootstrapError = sitesError || ingredientsError || recipesError || productionsError || foodWasteError || wasteTargetsError;
 
   useEffect(() => {
     if (formData.production_id === 'none') {
@@ -278,37 +320,69 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
   }, [formData.production_id, productionMap]);
 
   useEffect(() => {
-    if (!qrResolvedContext?.site?.id) {
+    if (!isBatchOverproduction) {
       return;
     }
-
-    setEditingWasteId(null);
-    setSelectedQrSiteId(qrResolvedContext.site.id);
-    setFormData((current) => ({
-      ...createDefaultWasteForm(),
-      ...current,
-      site_id: qrResolvedContext.site.id,
-      waste_date: qrResolvedContext.default_waste_date || current.waste_date || format(new Date(), 'yyyy-MM-dd')
-    }));
-    setMessage(`QR access ready for ${qrResolvedContext.site.name}. Select meal details and record waste within the allowed window.`);
-    setFormOpen(true);
-  }, [qrResolvedContext]);
+    setDishWasteGramsByRecipe((current) => {
+      const next = Object.fromEntries(
+        batchOverproductionDishes.map((dish) => [
+          dish.recipe_id,
+          Object.prototype.hasOwnProperty.call(current, dish.recipe_id) ? current[dish.recipe_id] : ''
+        ])
+      );
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+  }, [batchOverproductionDishes, isBatchOverproduction]);
 
   useEffect(() => {
-    if (!qrResolvedError) {
+    if (!isBatchOverproduction) {
       return;
     }
-    setMessage(qrResolvedError.message || 'Unable to resolve Food Waste QR code.');
-  }, [qrResolvedError]);
+    const nextQuantity = batchWasteTotalGrams > 0 ? String(Number(batchWasteTotalGrams.toFixed(3))) : '';
+    setFormData((current) => {
+      if (
+        current.waste_scope === 'batch'
+        && current.unit === 'g'
+        && current.ingredient_id === 'none'
+        && current.recipe_id === 'none'
+        && current.quantity === nextQuantity
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        waste_scope: 'batch',
+        ingredient_id: 'none',
+        recipe_id: 'none',
+        unit: 'g',
+        quantity: nextQuantity
+      };
+    });
+  }, [batchWasteTotalGrams, isBatchOverproduction]);
 
   const createWasteMutation = useMutation({
-    mutationFn: (payload) => base44.foodWaste.create(payload),
+    mutationFn: async (payload) => {
+      if (!Array.isArray(payload)) {
+        return base44.foodWaste.create(payload);
+      }
+      const results = [];
+      for (const entry of payload) {
+        results.push(await base44.foodWaste.create(entry));
+      }
+      return results;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['foodWasteContext'] });
+      queryClient.invalidateQueries({ queryKey: ['mealServiceAvailability'] });
       setFormOpen(false);
       setEditingWasteId(null);
       setMessage('Waste record saved.');
       setFormData(createDefaultWasteForm());
+      setDishWasteGramsByRecipe({});
+      setWasteImageFile(null);
+      setWasteImagePreview('');
     },
     onError: (error) => setMessage(error.message || 'Failed to save waste record')
   });
@@ -321,6 +395,9 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       setEditingWasteId(null);
       setMessage('Waste record updated.');
       setFormData(createDefaultWasteForm());
+      setDishWasteGramsByRecipe({});
+      setWasteImageFile(null);
+      setWasteImagePreview('');
     },
     onError: (error) => setMessage(error.message || 'Failed to update waste record')
   });
@@ -363,16 +440,6 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
     onError: (error) => setMessage(error.message || 'Failed to save target')
   });
 
-  const generateQrMutation = useMutation({
-    mutationFn: ({ site_id, refresh = false }) => base44.foodWaste.createQRCode({ site_id, refresh }),
-    onSuccess: (qrCode) => {
-      queryClient.invalidateQueries({ queryKey: ['foodWasteQRCodes'] });
-      setSelectedQrSiteId(qrCode.site_id || '');
-      setMessage(`Food Waste QR ready for ${qrCode.site_name || 'the selected unit'}.`);
-    },
-    onError: (error) => setMessage(error.message || 'Failed to generate Food Waste QR code')
-  });
-
   const filteredWaste = useMemo(() => (
     foodWaste.filter((item) => {
       if (!matchesDate(item.waste_date, filters.startDate, filters.endDate)) return false;
@@ -384,18 +451,11 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       return true;
     })
   ), [foodWaste, filters]);
-
-  const selectedQrCode = useMemo(() => (
-    foodWasteQRCodes.find((item) => item.site_id === selectedQrSiteId && String(item.status || '').toLowerCase() === 'active')
-    || foodWasteQRCodes.find((item) => item.site_id === selectedQrSiteId)
-    || null
-  ), [foodWasteQRCodes, selectedQrSiteId]);
-
-  const selectedQrScanUrl = selectedQrCode?.scan_url || '';
-
-  const linkedProductionIds = new Set(
-    filteredWaste.map((item) => item.production_id).filter(Boolean)
+  const analyticsWaste = useMemo(
+    () => filteredWaste.filter((item) => String(item.status || '').toLowerCase() !== 'reversed'),
+    [filteredWaste]
   );
+
   const filteredProductions = productions.filter((item) => {
     if (!matchesDate(item.production_date, filters.startDate, filters.endDate)) return false;
     if (filters.locationId !== 'all' && item.site_id !== filters.locationId) return false;
@@ -403,12 +463,12 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
   });
   const totalProductionOutput = filteredProductions.reduce((sum, item) => sum + safeNumber(item.actual_servings || item.target_servings), 0);
 
-  const totalWasteQuantity = filteredWaste.reduce((sum, item) => sum + safeNumber(item.quantity), 0);
-  const totalWasteCost = filteredWaste.reduce((sum, item) => sum + safeNumber(item.estimated_cost), 0);
-  const avoidableCost = filteredWaste
+  const totalWasteQuantity = analyticsWaste.reduce((sum, item) => sum + safeNumber(item.quantity), 0);
+  const totalWasteCost = analyticsWaste.reduce((sum, item) => sum + safeNumber(item.estimated_cost), 0);
+  const avoidableCost = analyticsWaste
     .filter((item) => item.avoidable_type === 'avoidable' || item.preventable)
     .reduce((sum, item) => sum + safeNumber(item.estimated_cost), 0);
-  const unavoidableCost = filteredWaste
+  const unavoidableCost = analyticsWaste
     .filter((item) => item.avoidable_type === 'unavoidable' && !item.preventable)
     .reduce((sum, item) => sum + safeNumber(item.estimated_cost), 0);
   const wastePercentVsProduction = totalProductionOutput > 0
@@ -417,7 +477,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
 
   const wasteTrendByLocation = useMemo(() => {
     const grouped = new Map();
-    filteredWaste.forEach((item) => {
+    analyticsWaste.forEach((item) => {
       const key = `${item.waste_date}-${item.site_id || 'unknown'}`;
       if (!grouped.has(key)) {
         grouped.set(key, {
@@ -432,11 +492,11 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       row.total_cost += safeNumber(item.estimated_cost);
     });
     return [...grouped.values()].sort((left, right) => `${left.waste_date}-${left.site_name}`.localeCompare(`${right.waste_date}-${right.site_name}`));
-  }, [filteredWaste]);
+  }, [analyticsWaste]);
 
   const topWastedIngredients = useMemo(() => {
     const grouped = new Map();
-    filteredWaste.forEach((item) => {
+    analyticsWaste.forEach((item) => {
       const key = item.ingredient_name || item.recipe_name || item.batch_reference || 'Unknown';
       if (!grouped.has(key)) {
         grouped.set(key, {
@@ -455,11 +515,11 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       .map((item) => ({ ...item, estimated_cost: Number(item.estimated_cost.toFixed(2)), quantity: Number(item.quantity.toFixed(2)) }))
       .sort((left, right) => right.estimated_cost - left.estimated_cost)
       .slice(0, 8);
-  }, [filteredWaste]);
+  }, [analyticsWaste]);
 
   const wasteByReason = useMemo(() => {
     const grouped = new Map();
-    filteredWaste.forEach((item) => {
+    analyticsWaste.forEach((item) => {
       const key = item.reason_code || 'unspecified';
       if (!grouped.has(key)) {
         grouped.set(key, {
@@ -475,11 +535,11 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       row.estimated_cost += safeNumber(item.estimated_cost);
     });
     return [...grouped.values()].sort((left, right) => right.estimated_cost - left.estimated_cost);
-  }, [filteredWaste]);
+  }, [analyticsWaste]);
 
   const wasteByLocation = useMemo(() => {
     const grouped = new Map();
-    filteredWaste.forEach((item) => {
+    analyticsWaste.forEach((item) => {
       const key = item.site_id || 'unknown';
       if (!grouped.has(key)) {
         grouped.set(key, {
@@ -507,11 +567,11 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       avoidable_cost: Number(row.avoidable_cost.toFixed(2)),
       unavoidable_cost: Number(row.unavoidable_cost.toFixed(2))
     })).sort((left, right) => right.total_cost - left.total_cost);
-  }, [filteredWaste]);
+  }, [analyticsWaste]);
 
   const dailyWasteReport = useMemo(() => {
     const grouped = new Map();
-    filteredWaste.forEach((item) => {
+    analyticsWaste.forEach((item) => {
       const key = item.waste_date;
       if (!grouped.has(key)) {
         grouped.set(key, {
@@ -531,7 +591,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       total_quantity: Number(row.total_quantity.toFixed(2)),
       total_cost: Number(row.total_cost.toFixed(2))
     })).sort((left, right) => right.waste_date.localeCompare(left.waste_date));
-  }, [filteredWaste]);
+  }, [analyticsWaste]);
 
   const monthlyTargets = useMemo(() => (
     wasteTargets.filter((item) => {
@@ -545,7 +605,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
     { name: 'Unavoidable', value: Number(unavoidableCost.toFixed(2)), color: '#22c55e' }
   ].filter((item) => item.value > 0);
 
-  const pendingApprovalWaste = filteredWaste.filter((item) => item.approval_status === 'pending');
+  const pendingApprovalWaste = analyticsWaste.filter((item) => item.approval_status === 'pending');
 
   const wasteReductionInsights = useMemo(() => {
     const productionRecipeStats = new Map();
@@ -575,7 +635,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       row.production_cost += safeNumber(production.total_cost || production.estimated_total_cost);
     });
 
-    filteredWaste.forEach((entry) => {
+    analyticsWaste.forEach((entry) => {
       const linkedProduction = entry.production_id ? productionMap.get(entry.production_id) : null;
       const recipeId = entry.recipe_id || linkedProduction?.recipe_id;
       const recipeName = entry.recipe_name || linkedProduction?.recipe_name || recipeMap.get(recipeId)?.name || 'Unknown recipe';
@@ -679,7 +739,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       accumulator[key].production_cost += safeNumber(production.total_cost || production.estimated_total_cost);
       return accumulator;
     }, {})).map((entry) => {
-      const relatedWasteCost = filteredWaste.reduce((sum, wasteRow) => {
+      const relatedWasteCost = analyticsWaste.reduce((sum, wasteRow) => {
         const linkedProduction = wasteRow.production_id ? productionMap.get(wasteRow.production_id) : null;
         return (linkedProduction?.meal_type || wasteRow.meal_type) === entry.meal_type ? sum + safeNumber(wasteRow.estimated_cost) : sum;
       }, 0);
@@ -696,9 +756,15 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       materialRequestActions,
       mealTypeCostRows
     };
-  }, [filteredProductions, filteredWaste, productionMap, recipeMap, siteMap, topWastedIngredients]);
+  }, [filteredProductions, analyticsWaste, productionMap, recipeMap, siteMap, topWastedIngredients]);
 
   const handleAutoCostPreview = () => {
+    if (isBatchOverproduction) {
+      return Number(batchWasteRows.reduce((sum, row) => (
+        sum + (row.waste_grams * safeNumber(row.estimated_cost_per_gram))
+      ), 0).toFixed(2));
+    }
+
     const quantity = safeNumber(formData.quantity);
     if (!quantity) return 0;
 
@@ -725,6 +791,41 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
     return 0;
   };
 
+  const handleWasteCategoryChange = (value) => {
+    if (value === BATCH_OVERPRODUCTION_CATEGORY) {
+      setFormData((current) => ({
+        ...current,
+        waste_category: value,
+        reason_code: 'overproduction',
+        preventable: true,
+        waste_scope: 'batch',
+        ingredient_id: 'none',
+        recipe_id: 'none',
+        production_id: 'none',
+        unit: 'g'
+      }));
+      return;
+    }
+
+    setDishWasteGramsByRecipe({});
+    setFormData((current) => ({
+      ...current,
+      waste_category: value,
+      quantity: current.waste_category === BATCH_OVERPRODUCTION_CATEGORY ? '' : current.quantity,
+      waste_scope: current.production_id !== 'none' ? 'batch' : 'recipe',
+      unit: current.unit === 'g' && current.waste_category === BATCH_OVERPRODUCTION_CATEGORY ? 'kg' : current.unit
+    }));
+  };
+
+  const handleDishWasteGramsChange = (recipeId, value) => {
+    const normalizedValue = normalizeGramEntry(value);
+    if (normalizedValue === null) return;
+    setDishWasteGramsByRecipe((current) => ({
+      ...current,
+      [recipeId]: normalizedValue
+    }));
+  };
+
   const handleWasteSubmit = (event) => {
     event.preventDefault();
     const site = siteMap.get(formData.site_id);
@@ -732,56 +833,138 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
     const recipe = formData.recipe_id !== 'none' ? recipeMap.get(formData.recipe_id) : null;
     const production = formData.production_id !== 'none' ? productionMap.get(formData.production_id) : null;
     const reason = getReasonMeta(formData.reason_code);
-    const estimatedCost = handleAutoCostPreview();
-    const approvalStatus = estimatedCost >= APPROVAL_THRESHOLD ? 'pending' : 'approved';
-
-    const payload = {
-      site_id: formData.site_id,
-      site_name: site?.name || '',
-      waste_date: formData.waste_date,
-      meal_type: formData.meal_type,
-      waste_category: formData.waste_category,
-      reason_code: formData.reason_code,
-      reason: reason?.label || formData.reason_code,
-      avoidable_type: reason?.avoidableType || (formData.preventable ? 'avoidable' : 'unavoidable'),
-      preventable: formData.preventable,
-      waste_scope: formData.waste_scope,
-      ingredient_id: ingredient?.id || null,
-      ingredient_name: ingredient?.name || null,
-      recipe_id: recipe?.id || production?.recipe_id || null,
-      recipe_name: recipe?.name || production?.recipe_name || null,
-      production_id: production?.id || null,
-      production_name: production ? `${production.recipe_name} - ${production.production_date}` : null,
-      batch_reference: formData.batch_reference || production?.id || null,
-      quantity: safeNumber(formData.quantity),
-      unit: formData.unit,
-      estimated_cost: estimatedCost,
-      approval_status: approvalStatus,
-      status: approvalStatus === 'pending' ? 'pending_review' : 'logged',
-      high_value: estimatedCost >= APPROVAL_THRESHOLD,
-      notes: formData.notes
-    };
-
-    if (editingWasteId) {
-      updateWasteMutation.mutate({ id: editingWasteId, payload });
+    const selectedBatchWasteRows = batchWasteRows.filter((row) => row.waste_grams > 0);
+    if (!formData.site_id) {
+      setMessage('Select the location for this waste record.');
+      return;
+    }
+    if (isBatchOverproduction) {
+      if (editingWasteId) {
+        setMessage('Batch Overproduction waste should be corrected by recording a new dish-wise entry.');
+        return;
+      }
+      if (!formData.waste_date || !formData.meal_type) {
+        setMessage('Select the waste date and meal type before recording batch overproduction waste.');
+        return;
+      }
+      if (wasteContextLoading) {
+        setMessage('Production summary is still loading. Wait a moment and try again.');
+        return;
+      }
+      if (!batchOverproductionDishes.length) {
+        setMessage('No completed production output was found for this date, location, and meal type.');
+        return;
+      }
+      if (!selectedBatchWasteRows.length) {
+        setMessage('Enter recorded food waste in grams for at least one produced dish.');
+        return;
+      }
+      const excessiveRow = selectedBatchWasteRows.find((row) => row.waste_grams > safeNumber(row.available_weight_grams));
+      if (excessiveRow) {
+        setMessage(`${excessiveRow.recipe_name} has only ${formatWeightGrams(excessiveRow.available_weight_grams)} available to record as waste.`);
+        return;
+      }
+    }
+    if (!wasteImageFile && !formData.evidence_image_url) {
+      setMessage('Add a waste picture before saving this record.');
       return;
     }
 
-    createWasteMutation.mutate(payload);
+    const saveWasteRecord = async () => {
+      let evidenceImageUrl = String(formData.evidence_image_url || '').trim();
+      if (wasteImageFile) {
+        setWasteImageUploading(true);
+        const uploadResult = await base44.integrations.Core.UploadWasteImage({ file: wasteImageFile });
+        evidenceImageUrl = uploadResult.public_file_url || uploadResult.file_url || '';
+        setWasteImageUploading(false);
+      }
+
+      const buildPayload = ({ row = null, estimatedCost = handleAutoCostPreview() } = {}) => {
+        const approvalStatus = estimatedCost >= APPROVAL_THRESHOLD ? 'pending' : 'approved';
+        const rowBatches = row?.batches || [];
+        const rowProductionId = rowBatches[0]?.production_id || null;
+        const rowBatchReference = rowBatches.map((batch) => batch.batch_number).filter(Boolean).join(', ');
+        return {
+          site_id: formData.site_id,
+          site_name: site?.name || '',
+          waste_date: formData.waste_date,
+          meal_type: formData.meal_type,
+          waste_category: formData.waste_category,
+          reason_code: formData.reason_code,
+          reason: reason?.label || formData.reason_code,
+          avoidable_type: reason?.avoidableType || (formData.preventable ? 'avoidable' : 'unavoidable'),
+          preventable: formData.preventable,
+          waste_scope: row ? 'batch' : (production?.id ? 'batch' : 'recipe'),
+          ingredient_id: row ? null : ingredient?.id || null,
+          ingredient_name: row ? null : ingredient?.name || null,
+          recipe_id: row?.recipe_id || recipe?.id || production?.recipe_id || null,
+          recipe_name: row?.recipe_name || recipe?.name || production?.recipe_name || null,
+          production_id: rowProductionId || production?.id || null,
+          production_name: row
+            ? row.recipe_name
+            : production ? `${production.recipe_name} - ${production.production_date}` : null,
+          batch_reference: row
+            ? (formData.batch_reference || rowBatchReference || null)
+            : formData.batch_reference || production?.id || null,
+          quantity: row ? row.waste_grams : safeNumber(formData.quantity),
+          unit: row ? 'g' : formData.unit,
+          wasted_weight_grams: row ? row.waste_grams : null,
+          produced_weight_grams: row ? safeNumber(row.produced_weight_grams) : null,
+          available_weight_grams_before: row ? safeNumber(row.available_weight_grams) : null,
+          estimated_cost: estimatedCost,
+          approval_status: approvalStatus,
+          status: approvalStatus === 'pending' ? 'pending_review' : 'logged',
+          high_value: estimatedCost >= APPROVAL_THRESHOLD,
+          evidence_image_url: evidenceImageUrl,
+          image_url: evidenceImageUrl,
+          notes: formData.notes
+        };
+      };
+
+      if (isBatchOverproduction) {
+        createWasteMutation.mutate(selectedBatchWasteRows.map((row) => (
+          buildPayload({
+            row,
+            estimatedCost: Number((row.waste_grams * safeNumber(row.estimated_cost_per_gram)).toFixed(2))
+          })
+        )));
+        return;
+      }
+
+      const payload = buildPayload();
+
+      if (editingWasteId) {
+        updateWasteMutation.mutate({ id: editingWasteId, payload });
+        return;
+      }
+
+      createWasteMutation.mutate(payload);
+    };
+
+    saveWasteRecord().catch((error) => {
+      setWasteImageUploading(false);
+      setMessage(error.message || 'Failed to upload waste picture');
+    });
   };
 
   const handleOpenCreateDialog = () => {
     setEditingWasteId(null);
     setFormData(createDefaultWasteForm());
+    setDishWasteGramsByRecipe({});
+    setWasteImageFile(null);
+    setWasteImagePreview('');
     setFormOpen(true);
   };
 
-  const handleOpenQrDialog = () => {
-    setSelectedQrSiteId((current) => current || formData.site_id || sites[0]?.id || '');
-    setQrDialogOpen(true);
-  };
-
   const handleOpenEditDialog = (record) => {
+    if (isMealServiceLeftover(record)) {
+      setMessage('Meal Service Leftover records are system managed. Correct them by reversing the related Meal Service request.');
+      return;
+    }
+    if (isBatchOverproductionWasteRecord(record)) {
+      setMessage('Batch Overproduction waste is dish-wise. Correct it by recording a new dish entry.');
+      return;
+    }
     setEditingWasteId(record.id);
     setFormData({
       site_id: record.site_id || '',
@@ -789,7 +972,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       meal_type: String(record.meal_type || 'breakfast').toLowerCase(),
       waste_category: record.waste_category || 'plate_waste',
       reason_code: record.reason_code || 'overproduction',
-      waste_scope: record.waste_scope || 'ingredient',
+      waste_scope: ['recipe', 'batch'].includes(record.waste_scope) ? record.waste_scope : 'recipe',
       ingredient_id: record.ingredient_id || 'none',
       recipe_id: record.recipe_id || 'none',
       production_id: record.production_id || 'none',
@@ -797,35 +980,27 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       quantity: String(record.quantity ?? ''),
       unit: record.unit || 'kg',
       preventable: record.avoidable_type !== 'unavoidable' || Boolean(record.preventable),
+      evidence_image_url: record.evidence_image_url || record.image_url || '',
       notes: record.notes || ''
     });
+    setWasteImageFile(null);
+    setWasteImagePreview(record.evidence_image_url || record.image_url || '');
     setFormOpen(true);
   };
 
-  const downloadQrCode = (siteId) => {
-    const svg = document.getElementById(`food-waste-qr-${siteId}`);
-    if (!svg) return;
-    const svgData = new XMLSerializer().serializeToString(svg);
-    const blob = new Blob([svgData], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `food-waste-${siteId}.svg`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const copyQrLink = async (value) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setMessage('Food Waste QR link copied.');
-    } catch {
-      setMessage('Unable to copy the Food Waste QR link.');
+  const handleWasteImageChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type?.startsWith('image/')) {
+      setMessage('Waste evidence must be an image file.');
+      return;
     }
+    setWasteImageFile(file);
+    setWasteImagePreview(URL.createObjectURL(file));
   };
 
   const exportWastePackage = (type = 'csv') => {
-    const wasteRows = filteredWaste.map((item) => ({
+    const wasteRows = analyticsWaste.map((item) => ({
       item_code: getItemCodeFromRecords([
         ingredientMap.get(item.ingredient_id),
         item,
@@ -837,13 +1012,15 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
       site_name: item.site_name,
       waste_category: item.waste_category,
       reason: item.reason,
+      source: getWasteSourceLabel(item),
       avoidable_type: item.avoidable_type,
       recipe_name: item.recipe_name,
       batch_reference: item.batch_reference,
       quantity: item.quantity,
       unit: item.unit,
       estimated_cost: item.estimated_cost,
-      approval_status: item.approval_status
+      approval_status: item.approval_status,
+      record_status: item.status
     }));
     const recommendationRows = wasteReductionInsights.recipeActions.map((item) => ({
       site_name: item.site_name,
@@ -919,12 +1096,6 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
             <Button variant="outline" onClick={() => setTargetDialogOpen(true)}>
               <Target className="w-4 h-4 mr-2" />
               Waste Targets
-            </Button>
-          ) : null}
-          {can('manage_waste') ? (
-            <Button variant="outline" onClick={handleOpenQrDialog}>
-              <QrCode className="w-4 h-4 mr-2" />
-              Unit QR Access
             </Button>
           ) : null}
           {can('manage_waste') ? (
@@ -1037,10 +1208,8 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Scopes</SelectItem>
-                    <SelectItem value="ingredient">Ingredient</SelectItem>
                     <SelectItem value="recipe">Recipe</SelectItem>
                     <SelectItem value="batch">Batch</SelectItem>
-                    <SelectItem value="location">Location</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1051,7 +1220,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
           <StatCard title="Total Waste Quantity" value={`${totalWasteQuantity.toFixed(2)} kg`} icon={Trash2} iconBg="bg-red-50" iconColor="text-red-600" />
           <StatCard title="Waste Cost" value={formatCurrency(totalWasteCost)} icon={CircleDollarSign} iconBg="bg-amber-50" iconColor="text-amber-600" />
-          <StatCard title="Avoidable Waste" value={formatCurrency(avoidableCost)} subtitle={`${filteredWaste.filter((item) => item.avoidable_type === 'avoidable' || item.preventable).length} records`} icon={AlertTriangle} iconBg="bg-orange-50" iconColor="text-orange-600" />
+          <StatCard title="Avoidable Waste" value={formatCurrency(avoidableCost)} subtitle={`${analyticsWaste.filter((item) => item.avoidable_type === 'avoidable' || item.preventable).length} records`} icon={AlertTriangle} iconBg="bg-orange-50" iconColor="text-orange-600" />
           <StatCard title="Waste vs Production" value={`${wastePercentVsProduction}%`} subtitle={`${totalProductionOutput.toFixed(0)} production output`} icon={TrendingDown} iconBg="bg-purple-50" iconColor="text-purple-600" />
           <StatCard title="Pending Approvals" value={pendingApprovalWaste.length} subtitle={`Threshold ${formatCurrency(APPROVAL_THRESHOLD)}`} icon={CheckCircle2} iconBg="bg-blue-50" iconColor="text-blue-600" />
         </div>
@@ -1455,8 +1624,10 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                   <TableHead>Location</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead>Reason</TableHead>
+                  <TableHead>Source</TableHead>
                   <TableHead>Quantity</TableHead>
                   <TableHead>Cost</TableHead>
+                  <TableHead>Picture</TableHead>
                   <TableHead>Recording Window</TableHead>
                   <TableHead>Approval</TableHead>
                   <TableHead>Actions</TableHead>
@@ -1465,7 +1636,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
               <TableBody>
                 {filteredWaste.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
+                    <TableCell colSpan={14} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
                   </TableRow>
                 ) : filteredWaste.slice(0, 30).map((item) => (
                   <TableRow key={item.id}>
@@ -1486,34 +1657,68 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                       </Badge>
                     </TableCell>
                     <TableCell>{item.reason || getReasonMeta(item.reason_code)?.label || '-'}</TableCell>
-                    <TableCell>{safeNumber(item.quantity).toFixed(2)} {item.unit}</TableCell>
+                    <TableCell>
+                      <Badge className={isMealServiceLeftover(item) ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}>
+                        {getWasteSourceLabel(item)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{formatWasteQuantity(item)}</TableCell>
                     <TableCell>{formatCurrency(item.estimated_cost)}</TableCell>
+                    <TableCell>
+                      {item.evidence_image_url || item.image_url ? (
+                        <a className="text-sm font-medium text-emerald-700 hover:underline" href={item.evidence_image_url || item.image_url} target="_blank" rel="noreferrer">
+                          View
+                        </a>
+                      ) : isMealServiceLeftover(item) ? (
+                        <Badge className="bg-slate-100 text-slate-700">System generated</Badge>
+                      ) : (
+                        <Badge className="bg-red-100 text-red-700">Missing</Badge>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge className={
                         item.is_within_recording_window
                           ? 'bg-emerald-100 text-emerald-700'
-                          : item.window_status === 'before_service'
+                          : item.window_status === 'before_production'
                             ? 'bg-blue-100 text-blue-700'
                             : 'bg-slate-200 text-slate-700'
                       }>
                         {item.window_status === 'open'
                           ? 'Open'
-                          : item.window_status === 'before_service'
-                            ? 'Before service'
+                          : item.window_status === 'before_production'
+                            ? 'Before production'
+                            : item.window_status === 'future_date'
+                              ? 'Future date'
                             : 'Closed'}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge className={APPROVAL_TONES[item.approval_status] || 'bg-slate-100 text-slate-700'}>
-                        {item.approval_status || 'approved'}
+                      <Badge className={String(item.status || '').toLowerCase() === 'reversed'
+                        ? 'bg-slate-200 text-slate-700'
+                        : APPROVAL_TONES[item.approval_status] || 'bg-slate-100 text-slate-700'}>
+                        {String(item.status || '').toLowerCase() === 'reversed' ? 'reversed' : item.approval_status || 'approved'}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {can('manage_waste') ? (
+                      {isMealServiceLeftover(item) ? (
+                        <Badge
+                          className="bg-slate-100 text-slate-700"
+                          title="System managed. Reverse the related Meal Service request to correct this record."
+                        >
+                          System managed
+                        </Badge>
+                      ) : isBatchOverproductionWasteRecord(item) ? (
+                        <Badge
+                          className="bg-amber-100 text-amber-700"
+                          title="Dish-wise batch overproduction waste should be corrected by recording a new dish entry."
+                        >
+                          Dish-wise
+                        </Badge>
+                      ) : can('manage_waste') ? (
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={!item.can_edit}
+                          disabled={!item.can_edit || String(item.status || '').toLowerCase() === 'reversed'}
                           onClick={() => handleOpenEditDialog(item)}
                         >
                           <Pencil className="mr-2 h-4 w-4" />
@@ -1535,36 +1740,24 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
             if (!open) {
               setEditingWasteId(null);
               setFormData(createDefaultWasteForm());
+              setDishWasteGramsByRecipe({});
+              setWasteImageFile(null);
+              setWasteImagePreview('');
             }
           }}
         >
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
-                {editingWasteId
-                  ? 'Edit Food Waste Record'
-                  : qrMode
-                    ? 'Record Food Waste (QR Access)'
-                    : 'Record Food Waste'}
+                {editingWasteId ? 'Edit Food Waste Record' : 'Record Food Waste'}
               </DialogTitle>
             </DialogHeader>
             <form onSubmit={handleWasteSubmit} className="space-y-4">
-              {qrResolvedContext?.site ? (
-                <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                  <div className="flex items-center gap-2 font-medium">
-                    <QrCode className="h-4 w-4" />
-                    <span>QR-linked unit: {qrResolvedContext.site.name}</span>
-                  </div>
-                  <p className="mt-2 text-blue-700">
-                    This Food Waste form was opened from a unit QR code. The location is locked to the scanned unit and all meal/date and 2-hour rules still apply.
-                  </p>
-                </div>
-              ) : null}
               {wasteContext ? (
                 <div className={`rounded-xl border px-4 py-3 text-sm ${
                   wasteContext.is_within_recording_window
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                    : wasteContext.window_status === 'before_service'
+                    : wasteContext.window_status === 'before_production'
                       ? 'border-blue-200 bg-blue-50 text-blue-800'
                       : 'border-red-200 bg-red-50 text-red-800'
                 }`}>
@@ -1574,11 +1767,19 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                   </div>
                   <div className="mt-2 grid gap-2 md:grid-cols-2">
                     <p>
-                      <span className="font-medium">Meal service:</span>{' '}
-                      {wasteContext.served_at ? new Date(wasteContext.served_at).toLocaleString() : 'Not scheduled'}
+                      <span className="font-medium">
+                        {wasteContext.recording_window_basis === 'admin_month' ? 'Admin window:' : 'Production completed:'}
+                      </span>{' '}
+                      {wasteContext.recording_window_basis === 'admin_month'
+                        ? 'Current month'
+                        : wasteContext.production_completed_at
+                          ? new Date(wasteContext.production_completed_at).toLocaleString()
+                          : 'No successful production found'}
                     </p>
                     <p>
-                      <span className="font-medium">Recording deadline:</span>{' '}
+                      <span className="font-medium">
+                        {wasteContext.recording_window_basis === 'admin_month' ? 'Month closes:' : 'Recording deadline:'}
+                      </span>{' '}
                       {wasteContext.recording_deadline_at ? new Date(wasteContext.recording_deadline_at).toLocaleString() : 'Unavailable'}
                     </p>
                   </div>
@@ -1601,7 +1802,6 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                   <Select
                     value={formData.site_id}
                     onValueChange={(value) => setFormData((current) => ({ ...current, site_id: value }))}
-                    disabled={Boolean(qrResolvedContext?.site?.id)}
                   >
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Select location" /></SelectTrigger>
                     <SelectContent>
@@ -1628,7 +1828,7 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                 </div>
                 <div>
                   <Label>Waste Category</Label>
-                  <Select value={formData.waste_category} onValueChange={(value) => setFormData((current) => ({ ...current, waste_category: value }))}>
+                  <Select value={formData.waste_category} onValueChange={handleWasteCategoryChange}>
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {WASTE_CATEGORIES.map((item) => (
@@ -1658,73 +1858,44 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <Label>Waste Scope</Label>
-                  <Select value={formData.waste_scope} onValueChange={(value) => setFormData((current) => ({ ...current, waste_scope: value }))}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ingredient">Ingredient</SelectItem>
-                      <SelectItem value="recipe">Recipe</SelectItem>
-                      <SelectItem value="batch">Batch</SelectItem>
-                      <SelectItem value="location">Location</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Production Batch</Label>
-                  <Select value={formData.production_id} onValueChange={(value) => setFormData((current) => ({ ...current, production_id: value }))}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No linked batch</SelectItem>
-                      {(wasteContext?.production_options || productions
-                        .filter((item) => !formData.site_id || item.site_id === formData.site_id)
-                        .filter((item) => !formData.meal_type || String(item.meal_type || '').toLowerCase() === formData.meal_type)
-                        .filter((item) => !formData.waste_date || item.production_date === formData.waste_date))
-                        .map((item) => (
-                          <SelectItem key={item.id} value={item.id}>{item.recipe_name} - {item.production_date} - {item.site_name}</SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Ingredient</Label>
-                  <IngredientSearchCombobox
-                    className="mt-1"
-                    value={formData.ingredient_id === 'none' ? '' : formData.ingredient_id}
-                    selectedIngredient={formData.ingredient_id === 'none' ? null : ingredientMap.get(formData.ingredient_id)}
-                    siteId={formData.site_id}
-                    allowClear
-                    clearLabel="No ingredient"
-                    onValueChange={(value, ingredient) => setFormData((current) => ({
-                      ...current,
-                      ingredient_id: value || 'none',
-                      unit: ingredient?.unit || current.unit
-                    }))}
-                  />
-                </div>
-                <div>
-                  <Label>Recipe</Label>
-                  <Select value={formData.recipe_id} onValueChange={(value) => setFormData((current) => ({ ...current, recipe_id: value }))}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No recipe</SelectItem>
-                      {recipes.map((item) => (
-                        <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {!isBatchOverproduction ? (
+                  <div>
+                    <Label>Production Batch</Label>
+                    <Select value={formData.production_id} onValueChange={(value) => setFormData((current) => ({ ...current, production_id: value }))}>
+                      <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No linked batch</SelectItem>
+                        {(wasteContext?.production_options || productions
+                          .filter((item) => !formData.site_id || item.site_id === formData.site_id)
+                          .filter((item) => !formData.meal_type || String(item.meal_type || '').toLowerCase() === formData.meal_type)
+                          .filter((item) => !formData.waste_date || item.production_date === formData.waste_date))
+                          .map((item) => (
+                            <SelectItem key={item.id} value={item.id}>{item.recipe_name} - {item.production_date} - {item.site_name}</SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
                 <div>
                   <Label>Batch Reference</Label>
                   <Input className="mt-1" value={formData.batch_reference} onChange={(event) => setFormData((current) => ({ ...current, batch_reference: event.target.value }))} placeholder="Optional manual batch / lot ref" />
                 </div>
                 <div>
                   <Label>Quantity</Label>
-                  <Input type="number" step="0.01" className="mt-1" value={formData.quantity} onChange={(event) => setFormData((current) => ({ ...current, quantity: event.target.value }))} />
+                  <Input
+                    type="number"
+                    min="0"
+                    step={isBatchOverproduction ? '0.001' : '0.01'}
+                    className="mt-1"
+                    value={formData.quantity}
+                    readOnly={isBatchOverproduction}
+                    placeholder={isBatchOverproduction ? 'Total from dish rows' : ''}
+                    onChange={(event) => setFormData((current) => ({ ...current, quantity: event.target.value }))}
+                  />
                 </div>
                 <div>
                   <Label>Unit</Label>
-                  <Select value={formData.unit} onValueChange={(value) => setFormData((current) => ({ ...current, unit: value }))}>
+                  <Select value={formData.unit} disabled={isBatchOverproduction} onValueChange={(value) => setFormData((current) => ({ ...current, unit: value }))}>
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="kg">kg</SelectItem>
@@ -1736,6 +1907,91 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                   </Select>
                 </div>
               </div>
+
+              {isBatchOverproduction ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Batch Overproduction Production Summary</p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Enter recorded food waste in grams against each produced dish. Quantity stays visible and totals these dish rows.
+                      </p>
+                    </div>
+                    <Badge className="bg-white text-amber-700 border border-amber-200">
+                      Total: {formatWeightGrams(batchWasteTotalGrams)}
+                    </Badge>
+                  </div>
+
+                  {!formData.site_id || !formData.waste_date || !formData.meal_type ? (
+                    <p className="mt-4 rounded-lg border border-dashed border-amber-200 bg-white/70 px-3 py-3 text-sm text-slate-600">
+                      Select a location, waste date, and meal type to load the production summary.
+                    </p>
+                  ) : wasteContextLoading ? (
+                    <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-100 bg-white/70 px-3 py-3 text-sm text-slate-600">
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Loading produced dishes…
+                    </div>
+                  ) : wasteContextError ? (
+                    <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+                      {wasteContextError.message || 'Unable to load the production summary.'}
+                    </p>
+                  ) : batchWasteRows.length ? (
+                    <div className="mt-4 overflow-x-auto rounded-lg border border-amber-100 bg-white">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Dish Name</TableHead>
+                            <TableHead>Produced Quantity</TableHead>
+                            <TableHead>Recorded Food Waste (g)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {batchWasteRows.map((row) => {
+                            const isOverAvailable = row.waste_grams > safeNumber(row.available_weight_grams);
+                            return (
+                              <TableRow key={row.recipe_id}>
+                                <TableCell className="min-w-[220px]">
+                                  <div className="font-medium text-slate-900">{row.recipe_name}</div>
+                                  <div className="text-xs text-slate-500">
+                                    {row.batch_count} {row.batch_count === 1 ? 'batch' : 'batches'}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="font-medium text-slate-900">{formatWeightGrams(row.produced_weight_grams)}</div>
+                                  <div className="text-xs text-slate-500">
+                                    Available: {formatWeightGrams(row.available_weight_grams)}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="min-w-[220px]">
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.001"
+                                    max={safeNumber(row.available_weight_grams) || undefined}
+                                    value={dishWasteGramsByRecipe[row.recipe_id] ?? ''}
+                                    onChange={(event) => handleDishWasteGramsChange(row.recipe_id, event.target.value)}
+                                    className={isOverAvailable ? 'border-red-300 focus-visible:ring-red-500' : ''}
+                                    placeholder="0"
+                                  />
+                                  {isOverAvailable ? (
+                                    <p className="mt-1 text-xs text-red-600">
+                                      Available waste balance is {formatWeightGrams(row.available_weight_grams)}.
+                                    </p>
+                                  ) : null}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <p className="mt-4 rounded-lg border border-dashed border-amber-200 bg-white/70 px-3 py-3 text-sm text-slate-600">
+                      No completed production output was found for this date, location, and meal type.
+                    </p>
+                  )}
+                </div>
+              ) : null}
 
               <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <Switch checked={formData.preventable} onCheckedChange={(checked) => setFormData((current) => ({ ...current, preventable: checked }))} />
@@ -1749,6 +2005,39 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                 <p className="text-sm text-slate-500">Automatic waste cost</p>
                 <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(handleAutoCostPreview())}</p>
                 <p className="mt-1 text-xs text-slate-500">Calculated from ingredient unit cost, recipe cost per serving, or linked production batch cost.</p>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <Label>Waste Picture <span className="text-red-600">*</span></Label>
+                    <p className="mt-1 text-xs text-slate-500">Photo evidence is required before this waste can be saved.</p>
+                  </div>
+                  <Button type="button" variant="outline" onClick={() => wasteImageInputRef.current?.click()}>
+                    <ImagePlus className="mr-2 h-4 w-4" />
+                    {wasteImagePreview ? 'Change Picture' : 'Add Picture'}
+                  </Button>
+                </div>
+                <input
+                  ref={wasteImageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={handleWasteImageChange}
+                />
+                {wasteImagePreview ? (
+                  <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                    <img src={wasteImagePreview} alt="Waste evidence preview" className="h-48 w-full object-cover" />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => wasteImageInputRef.current?.click()}
+                    className="mt-3 flex h-32 w-full items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-sm font-medium text-slate-500"
+                  >
+                    Add required waste picture
+                  </button>
+                )}
               </div>
 
               <div>
@@ -1768,102 +2057,20 @@ export default function FoodWaste({ qrToken = '', qrMode = false } = {}) {
                   disabled={
                     createWasteMutation.isPending
                     || updateWasteMutation.isPending
+                    || wasteImageUploading
                     || !formData.site_id
                     || !formData.quantity
+                    || (!wasteImageFile && !formData.evidence_image_url)
                     || !formData.meal_type
                     || !wasteContext?.is_within_recording_window
                   }
                 >
-                  {createWasteMutation.isPending || updateWasteMutation.isPending
+                  {createWasteMutation.isPending || updateWasteMutation.isPending || wasteImageUploading
                     ? 'Saving...'
                     : editingWasteId ? 'Update Waste Record' : 'Save Waste Record'}
                 </Button>
               </DialogFooter>
             </form>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Unit Food Waste QR Access</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label>Unit / Location</Label>
-                <Select value={selectedQrSiteId} onValueChange={setSelectedQrSiteId}>
-                  <SelectTrigger className="mt-1"><SelectValue placeholder="Select unit" /></SelectTrigger>
-                  <SelectContent>
-                    {sites.map((site) => (
-                      <SelectItem key={site.id} value={site.id}>{site.hierarchy_path || site.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  onClick={() => generateQrMutation.mutate({ site_id: selectedQrSiteId, refresh: false })}
-                  disabled={!selectedQrSiteId || generateQrMutation.isPending}
-                >
-                  <QrCode className="mr-2 h-4 w-4" />
-                  {selectedQrCode ? 'View QR' : 'Generate QR'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => generateQrMutation.mutate({ site_id: selectedQrSiteId, refresh: true })}
-                  disabled={!selectedQrSiteId || generateQrMutation.isPending}
-                >
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Refresh Token
-                </Button>
-              </div>
-
-              {selectedQrCode ? (
-                <div className="grid gap-4 md:grid-cols-[0.9fr_1.1fr]">
-                  <div className="rounded-xl border border-slate-200 bg-white p-4 flex items-center justify-center">
-                    <QRCodeSVG
-                      id={`food-waste-qr-${selectedQrCode.site_id}`}
-                      value={selectedQrScanUrl}
-                      size={220}
-                      level="H"
-                      includeMargin
-                      fgColor="#0f172a"
-                      bgColor="#ffffff"
-                      aria-label="Food Waste unit QR code"
-                    />
-                  </div>
-                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <div>
-                      <p className="text-sm font-medium text-slate-900">{selectedQrCode.site_name}</p>
-                      <p className="text-xs text-slate-500">Scanning this QR opens the secured Food Waste recording form for the selected unit.</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 break-all">
-                      {selectedQrScanUrl || 'QR link unavailable'}
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <Button type="button" variant="outline" onClick={() => copyQrLink(selectedQrScanUrl)} disabled={!selectedQrScanUrl}>
-                        <Copy className="mr-2 h-4 w-4" />
-                        Copy Link
-                      </Button>
-                      <Button type="button" variant="outline" onClick={() => downloadQrCode(selectedQrCode.site_id)}>
-                        <Download className="mr-2 h-4 w-4" />
-                        Download QR
-                      </Button>
-                    </div>
-                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-                      Users must still sign in and have Food Waste permission. The QR does not bypass meal/date checks or the 2-hour recording window.
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                  Generate a QR code to enable unit-level Food Waste access.
-                </div>
-              )}
-            </div>
           </DialogContent>
         </Dialog>
 

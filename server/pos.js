@@ -9,7 +9,6 @@ import {
 import { deductStock } from './inventory.js';
 import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../shared/recipeComposition.js';
-import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
 
 const POS_STATUSES = new Set(['success', 'warning', 'error']);
 
@@ -405,9 +404,8 @@ async function applyMappedItemDeductions({ order, item, mapping, actorEmail }) {
     const ingredientData = ingredients.find((entry) => entry.id === recipeIngredient.ingredient_id);
     const inventory = await findInventoryRecord(order.site_id, recipeIngredient.ingredient_id);
     const inventoryUnit = inventory?.unit || ingredientData?.unit || recipeIngredient.unit;
-    const yieldAdjustment = calculateYieldAdjustedQuantity(recipeIngredient.quantity, ingredientData);
     const quantityToDeduct = convertIngredientQuantity(
-      yieldAdjustment.required_raw_quantity,
+      recipeIngredient.quantity,
       recipeIngredient.unit || inventoryUnit,
       inventoryUnit,
       ingredientData

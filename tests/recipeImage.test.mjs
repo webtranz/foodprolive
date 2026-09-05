@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+
 import {
   MAX_RECIPE_IMAGE_BYTES,
   validateRecipeImageFile,
@@ -15,6 +16,7 @@ assert.match(validateRecipeImageFile({ type: 'image/svg+xml', size: 100 }), /JPG
 assert.match(validateRecipeImageFile(null), /Select/);
 assert.equal(validateSecureImageUrl('https://cdn.example.com/recipes/image.webp'), '');
 assert.equal(validateRecipeImageReference('/uploads/recipe-image.jpg'), '');
+assert.equal(validateRecipeImageReference('/uploads/recipe-abc.png'), '');
 assert.match(validateSecureImageUrl('http://cdn.example.com/image.jpg'), /HTTPS/);
 assert.match(validateSecureImageUrl('https://user:secret@cdn.example.com/image.jpg'), /credentials/);
 assert.match(validateSecureImageUrl('https://localhost/image.jpg'), /public/);

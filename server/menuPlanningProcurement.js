@@ -9,7 +9,7 @@ import { createPurchaseRequest } from './procurement.js';
 import { filterRecordsByLocation, getLocationScope } from './locationScope.js';
 import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
-import { calculateYieldAdjustedQuantity } from '../shared/ingredientYield.js';
+import { calculateYieldOutputQuantity } from '../shared/ingredientYield.js';
 import { getItemCode } from '../shared/itemCode.js';
 
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -136,15 +136,15 @@ function aggregateMenuPlanRequirements(menuPlans = [], recipes = [], ingredients
       }
 
       const inventoryUnit = ingredient.unit || recipeIngredient.unit || 'unit';
-      const yieldAdjustment = calculateYieldAdjustedQuantity(recipeIngredient.quantity, ingredient);
-      const normalizedNetQuantity = convertIngredientQuantity(
+      const yieldOutput = calculateYieldOutputQuantity(recipeIngredient.quantity, ingredient);
+      const normalizedRawQuantity = convertIngredientQuantity(
         toNumber(recipeIngredient.quantity, 0),
         recipeIngredient.unit || ingredient.unit,
         inventoryUnit,
         ingredient
       );
-      const normalizedQuantity = convertIngredientQuantity(
-        yieldAdjustment.required_raw_quantity,
+      const normalizedYieldedQuantity = convertIngredientQuantity(
+        yieldOutput.yielded_quantity,
         recipeIngredient.unit || ingredient.unit,
         inventoryUnit,
         ingredient
@@ -155,20 +155,22 @@ function aggregateMenuPlanRequirements(menuPlans = [], recipes = [], ingredients
         ingredient_id: recipeIngredient.ingredient_id,
         item_code: getItemCode(ingredient, getItemCode(recipeIngredient, null)),
         ingredient_name: ingredient.name || recipeIngredient.ingredient_name || 'Unnamed ingredient',
+        raw_requested_quantity: 0,
         net_requested_quantity: 0,
         requested_quantity: 0,
         unit: inventoryUnit,
-        yield_multiplier: yieldAdjustment.yield_multiplier,
-        yield_percent: yieldAdjustment.yield_percent,
-        yield_source: yieldAdjustment.yield_source,
+        yield_multiplier: yieldOutput.yield_multiplier,
+        yield_percent: yieldOutput.yield_percent,
+        yield_source: yieldOutput.yield_source,
         estimated_unit_price: toNumber(ingredient.cost_per_unit, 0),
         linked_recipes: new Set(),
         linked_dates: new Set(),
         meal_types: new Set()
       };
 
-      current.net_requested_quantity += normalizedNetQuantity;
-      current.requested_quantity += normalizedQuantity;
+      current.raw_requested_quantity += normalizedRawQuantity;
+      current.net_requested_quantity += normalizedYieldedQuantity;
+      current.requested_quantity += normalizedRawQuantity;
       current.linked_recipes.add(recipe.name || requirement.recipe_name || 'Unnamed recipe');
       current.linked_dates.add(requirement.plan_date);
       current.meal_types.add(requirement.meal_type);
@@ -183,12 +185,14 @@ function aggregateMenuPlanRequirements(menuPlans = [], recipes = [], ingredients
       item_code: item.item_code,
       ingredient_name: item.ingredient_name,
       description: `Menu plan demand for ${[...item.linked_recipes].slice(0, 3).join(', ')}${item.linked_recipes.size > 3 ? ' and more' : ''}`,
+      raw_requested_quantity: Number(item.raw_requested_quantity.toFixed(3)),
       net_requested_quantity: Number(item.net_requested_quantity.toFixed(3)),
       requested_quantity: Number(item.requested_quantity.toFixed(3)),
       unit: item.unit,
       yield_multiplier: Number(item.yield_multiplier.toFixed(6)),
       yield_percent: Number(item.yield_percent.toFixed(2)),
       yield_source: item.yield_source,
+      quantity_semantics: 'raw_recipe_to_yielded_output_v2',
       estimated_unit_price: Number(item.estimated_unit_price.toFixed(2)),
       preferred_supplier_id: null,
       preferred_supplier_name: null,

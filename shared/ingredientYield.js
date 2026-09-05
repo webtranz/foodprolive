@@ -63,8 +63,30 @@ export function resolveIngredientYieldMultiplier(ingredient = {}) {
 }
 
 /**
+ * Convert a raw recipe/inventory quantity into its expected cooked output.
+ *
+ * Recipe ingredient quantities are raw quantities. Production therefore
+ * issues and costs `raw_quantity`, while the quantity available to portion
+ * after cooking/preparation is `yielded_quantity`.
+ */
+export function calculateYieldOutputQuantity(rawQuantity, ingredient = {}) {
+  const normalizedQuantity = Math.max(0, finiteNumber(rawQuantity, 0));
+  const yieldDetails = resolveIngredientYield(ingredient);
+
+  return {
+    raw_quantity: normalizedQuantity,
+    yielded_quantity: normalizedQuantity * yieldDetails.multiplier,
+    yield_multiplier: yieldDetails.multiplier,
+    yield_percent: yieldDetails.percent,
+    yield_source: yieldDetails.source
+  };
+}
+
+/**
  * Convert the net/cooked recipe requirement into the raw quantity that
- * production must issue from inventory.
+ * production must issue from inventory. This inverse helper is retained for
+ * legacy v1 production snapshots; new recipe and production flows must use
+ * calculateYieldOutputQuantity because recipe quantities are raw in v2.
  */
 export function calculateYieldAdjustedQuantity(netQuantity, ingredient = {}) {
   const normalizedQuantity = Math.max(0, finiteNumber(netQuantity, 0));

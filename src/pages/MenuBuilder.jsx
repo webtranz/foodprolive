@@ -15,23 +15,23 @@ import { downloadCSV } from '../components/utils/exportData';
 import { formatCurrency, SAR_SYMBOL } from '@/lib/currency';
 
 const CATEGORIES = [
-  { value: 'appetizer', label: 'Appetizer', icon: '🥗', color: 'bg-green-100 text-green-700' },
+  { value: 'starter_salad_soup', label: 'Starter / Salad / Soup', icon: '🥗', color: 'bg-green-100 text-green-700' },
   { value: 'main_course', label: 'Main Course', icon: '🍖', color: 'bg-red-100 text-red-700' },
-  { value: 'starch', label: 'Starch', icon: '🍚', color: 'bg-yellow-100 text-yellow-700' },
-  { value: 'vegetable', label: 'Vegetable Side', icon: '🥦', color: 'bg-emerald-100 text-emerald-700' },
+  { value: 'vegetable', label: 'Vegetable', icon: '🥦', color: 'bg-emerald-100 text-emerald-700' },
   { value: 'dessert', label: 'Dessert', icon: '🍮', color: 'bg-pink-100 text-pink-700' },
-  { value: 'snack', label: 'Snack', icon: '🧆', color: 'bg-orange-100 text-orange-700' },
-  { value: 'beverage', label: 'Beverage', icon: '🥤', color: 'bg-blue-100 text-blue-700' }
+  { value: 'beverages', label: 'Beverages', icon: '🥤', color: 'bg-blue-100 text-blue-700' },
+  { value: 'side_dish', label: 'Side Dish', icon: '🍚', color: 'bg-yellow-100 text-yellow-700' }
 ];
 
 const UNITS = ['g', 'kg', 'pcs', 'ml', 'l', 'servings'];
 
 const BUFFET_STRUCTURE = [
-  { category: 'appetizer', min: 2, max: 3 },
+  { category: 'starter_salad_soup', min: 2, max: 3 },
   { category: 'main_course', min: 2, max: 3 },
-  { category: 'starch', min: 1, max: 2 },
   { category: 'vegetable', min: 1, max: 1 },
-  { category: 'dessert', min: 1, max: 2 }
+  { category: 'side_dish', min: 1, max: 2 },
+  { category: 'dessert', min: 1, max: 2 },
+  { category: 'beverages', min: 1, max: 2 }
 ];
 
 export default function MenuBuilder() {

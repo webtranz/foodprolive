@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
@@ -9,6 +10,7 @@ import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { roundStandardDecimal } from '../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
+import { toBusinessDateTimeParts } from '../shared/businessDate.js';
 import {
   assertBulkUploadAdministrator,
   isBulkInventoryUpload
@@ -109,6 +111,7 @@ import {
 } from './procurement.js';
 import {
   receiveStock,
+  deductStock,
   adjustStock,
   transferStock,
   completeProduction,
@@ -159,10 +162,14 @@ import {
   validateFoodWasteContextInput
 } from './menuPlanningApi.js';
 import {
+  allocateBatchOverproductionWaste,
+  buildBatchOverproductionDishSummary,
   buildFoodWasteMenuPlanSummary,
   decorateFoodWasteRecord,
-  getMealServiceWindow,
+  getFoodWasteRecordingWindow,
+  getLatestSuccessfulProductionCompletedAt,
   isApprovalOnlyWastePatch,
+  normalizeFoodWasteWeightGrams,
   normalizeMealType
 } from './foodWaste.js';
 import {
@@ -173,12 +180,6 @@ import {
   createApprovalHistoryEntry,
   isSpecialEventPlan
 } from './specialEvents.js';
-import {
-  FOOD_WASTE_QR_CATEGORY,
-  buildFoodWasteQrPayload,
-  createFoodWasteQrToken,
-  isFoodWasteQrCode
-} from './foodWasteQr.js';
 import {
   getLocationScope,
   filterRecordsByLocation,
@@ -202,7 +203,20 @@ import {
 import { enqueueBulkUpload, resumeBulkUploadQueue, stopBulkUploadQueue } from './bulkUploadQueue.js';
 import { getIngredientCostSnapshots, searchIngredients } from './ingredientSearch.js';
 import { closeRealtime, subscribeToEntityEvents } from './realtime.js';
+import { isValidSourceName, normalizeSourceName } from '../shared/sourceNames.js';
+import { normalizeMenuCategory, normalizeMenuCuisine } from '../shared/menuCategories.js';
+import { normalizeSiteType, SITE_HIERARCHY_TYPES } from '../shared/siteHierarchy.js';
+import { hasAdminAccess } from './accessControl.js';
 import { getManagementDashboardSnapshot } from './managementDashboard.js';
+import {
+  getMealServiceReport,
+  getProducedItemAvailability,
+  previewMealService,
+  recordMealServiceAttendance,
+  reverseMealServiceAttendance,
+  resolveLegacyProductionMenuClassification,
+  updateMealServicePortionSize
+} from './mealService.js';
 import {
   createObjectKey,
   getStoredObject,
@@ -954,6 +968,7 @@ async function syncMaterialRequestForProduction(
 
   if (
     !preserveApprovedSnapshot
+    && production.recipe_snapshot_locked !== true
     && production.yield_snapshot_source !== 'server_recipe_expansion'
     && production.recipe_id
     && String(production.status || '').toLowerCase() !== 'completed'
@@ -1264,16 +1279,25 @@ async function getMenuPlanBudgetContext(user, planLike = {}) {
   };
 }
 
-async function findScopedOperationalMenuPlan(user, siteId, planDate) {
+async function findScopedOperationalMenuPlan(user, siteId, planDate, options = {}) {
+  const cuisineType = normalizeMenuCuisine(options.cuisine_type || options.cuisineType, 'general');
+  const menuCategory = normalizeMenuCategory(options.menu_category || options.menuCategory, 'senior');
   const records = await listDocuments('MenuPlan', {
     filters: { site_id: siteId, plan_date: planDate },
     limit: 50
   });
-  const scopedRecords = await scopeEntityRecords(user, 'MenuPlan', records.filter(isOperationalMenuPlan));
+  const scopedRecords = await scopeEntityRecords(
+    user,
+    'MenuPlan',
+    records
+      .filter(isOperationalMenuPlan)
+      .filter((record) => normalizeMenuCuisine(record.cuisine_type, 'general') === cuisineType)
+      .filter((record) => normalizeMenuCategory(record.menu_category, 'senior') === menuCategory)
+  );
   return scopedRecords[0] || null;
 }
 
-async function listScopedOperationalMenuPlansForWeek(user, siteId, weekStart) {
+async function listScopedOperationalMenuPlansForWeek(user, siteId, weekStart, options = {}) {
   const range = buildMenuPlanWeekRange(weekStart);
   if (!range) {
     return null;
@@ -1283,7 +1307,7 @@ async function listScopedOperationalMenuPlansForWeek(user, siteId, weekStart) {
     filters: { site_id: siteId },
     sort: 'plan_date'
   });
-  const weeklyRecords = filterMenuPlansForWeek(records, siteId, weekStart);
+  const weeklyRecords = filterMenuPlansForWeek(records, siteId, weekStart, options);
 
   return {
     ...range,
@@ -1317,6 +1341,276 @@ async function getSpecialEventBudgetContext(user, planLike = {}) {
     budget_id: planLike.budget_id || null,
     event_name: planLike.event_name || null
   });
+}
+
+const BUDGET_PLANNING_MEAL_TYPES = Object.freeze(['breakfast', 'lunch', 'dinner', 'snacks', 'other']);
+
+function normalizeBudgetPlanningMonth(value) {
+  const requested = String(value || '').trim();
+  if (/^\d{4}-\d{2}$/.test(requested)) return requested;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(requested)) return requested.slice(0, 7);
+  return new Date().toISOString().slice(0, 7);
+}
+
+function budgetPlanningMonthBounds(monthToken) {
+  const [year, month] = monthToken.split('-').map((part) => Number(part));
+  const lastDay = new Date(year, month, 0).getDate();
+  return {
+    startDate: `${monthToken}-01`,
+    endDate: `${monthToken}-${String(lastDay).padStart(2, '0')}`,
+    daysInMonth: lastDay
+  };
+}
+
+function normalizeBudgetPlanningDate(value, fallback, bounds) {
+  const candidate = normalizeDateOnly(value) || normalizeDateOnly(fallback) || bounds.startDate;
+  if (candidate < bounds.startDate) return bounds.startDate;
+  if (candidate > bounds.endDate) return bounds.endDate;
+  return candidate;
+}
+
+function budgetPlanningDateFromRecord(record = {}, fields = []) {
+  for (const field of fields) {
+    const normalized = normalizeDateOnly(String(record?.[field] || '').slice(0, 10));
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+function budgetPlanningSiteChildren(sites = []) {
+  const children = new Map();
+  sites.forEach((site) => {
+    const parentId = site.parent_site_id ? String(site.parent_site_id) : null;
+    if (!children.has(parentId)) children.set(parentId, []);
+    children.get(parentId).push(site);
+  });
+  return children;
+}
+
+function budgetPlanningDescendantSiteIds(rootId, children) {
+  const result = new Set();
+  const queue = rootId ? [String(rootId)] : [];
+  while (queue.length) {
+    const currentId = queue.shift();
+    if (!currentId || result.has(currentId)) continue;
+    result.add(currentId);
+    (children.get(currentId) || []).forEach((child) => queue.push(String(child.id)));
+  }
+  return result;
+}
+
+function budgetPlanningOperationalProjectId(siteId, sitesById) {
+  let current = sitesById.get(String(siteId || '')) || null;
+  const visited = new Set();
+  while (current && !visited.has(String(current.id))) {
+    visited.add(String(current.id));
+    if (normalizeSiteType(current.type) === SITE_HIERARCHY_TYPES.PROJECT) {
+      return String(current.id);
+    }
+    current = current.parent_site_id ? sitesById.get(String(current.parent_site_id)) || null : null;
+  }
+  return sitesById.has(String(siteId || '')) ? String(siteId) : '';
+}
+
+function budgetPlanningProductionCost(production = {}) {
+  const explicitFields = [
+    production.production_cost_total,
+    production.ingredient_cost_total,
+    production.actual_cost,
+    production.total_cost,
+    production.estimated_batch_cost,
+    production.estimated_cost
+  ];
+  const explicit = explicitFields.find((value) => Number.isFinite(Number(value)));
+  if (typeof explicit !== 'undefined') return Math.max(0, numericMatch(explicit, 0));
+
+  return (Array.isArray(production.ingredients_used) ? production.ingredients_used : [])
+    .reduce((sum, line) => {
+      const lineCost = [
+        line?.actual_cost,
+        line?.line_cost,
+        line?.estimated_cost
+      ].find((value) => Number.isFinite(Number(value)));
+      if (typeof lineCost !== 'undefined') return sum + Math.max(0, numericMatch(lineCost, 0));
+      const quantity = numericMatch(
+        line?.actual_quantity
+          ?? line?.planned_quantity
+          ?? line?.yield_adjusted_quantity
+          ?? line?.adjusted_quantity
+          ?? line?.required_quantity
+          ?? line?.quantity,
+        0
+      );
+      const unitCost = numericMatch(line?.actual_unit_cost ?? line?.unit_cost ?? line?.cost_per_unit, 0);
+      return sum + Math.max(0, quantity * unitCost);
+    }, 0);
+}
+
+function budgetPlanningWasteCost(record = {}) {
+  return Math.max(0, numericMatch(record.estimated_cost ?? record.waste_cost ?? record.total_cost, 0));
+}
+
+function budgetPlanningWasteWeightGrams(record = {}) {
+  const explicit = [
+    record.waste_weight_grams,
+    record.quantity_grams,
+    record.weight_grams,
+    record.recorded_waste_grams,
+    record.total_waste_grams
+  ].find((value) => Number.isFinite(Number(value)));
+  if (typeof explicit !== 'undefined') return Math.max(0, numericMatch(explicit, 0));
+  try {
+    return Math.max(0, normalizeFoodWasteWeightGrams(record.quantity, record.unit));
+  } catch {
+    const quantity = numericMatch(record.quantity, 0);
+    const unit = String(record.unit || '').trim().toLowerCase();
+    if (unit === 'kg') return quantity * 1000;
+    return quantity;
+  }
+}
+
+function emptyBudgetPlanningMealStats() {
+  return Object.fromEntries(BUDGET_PLANNING_MEAL_TYPES.map((mealType) => [mealType, {
+    monthly_food_cost: 0,
+    daily_food_cost: 0,
+    monthly_wastage_cost: 0,
+    daily_wastage_cost: 0,
+    monthly_wastage_grams: 0,
+    daily_wastage_grams: 0
+  }]));
+}
+
+function createBudgetPlanningSiteSummary(site = {}) {
+  return {
+    site_id: site.id || '',
+    site_name: site.name || 'Unknown site',
+    area_id: site.parent_site_id || null,
+    monthly_food_cost: 0,
+    daily_food_cost: 0,
+    monthly_wastage_cost: 0,
+    daily_wastage_cost: 0,
+    monthly_wastage_grams: 0,
+    daily_wastage_grams: 0,
+    meal_stats: emptyBudgetPlanningMealStats()
+  };
+}
+
+function addBudgetPlanningProduction(summary, production, date, dailyDate) {
+  const amount = budgetPlanningProductionCost(production);
+  const mealType = BUDGET_PLANNING_MEAL_TYPES.includes(normalizeMealType(production.meal_type))
+    ? normalizeMealType(production.meal_type)
+    : 'other';
+  summary.monthly_food_cost += amount;
+  summary.meal_stats[mealType].monthly_food_cost += amount;
+  if (date === dailyDate) {
+    summary.daily_food_cost += amount;
+    summary.meal_stats[mealType].daily_food_cost += amount;
+  }
+}
+
+function addBudgetPlanningWaste(summary, waste, date, dailyDate) {
+  const cost = budgetPlanningWasteCost(waste);
+  const grams = budgetPlanningWasteWeightGrams(waste);
+  const mealType = BUDGET_PLANNING_MEAL_TYPES.includes(normalizeMealType(waste.meal_type))
+    ? normalizeMealType(waste.meal_type)
+    : 'other';
+  summary.monthly_wastage_cost += cost;
+  summary.monthly_wastage_grams += grams;
+  summary.meal_stats[mealType].monthly_wastage_cost += cost;
+  summary.meal_stats[mealType].monthly_wastage_grams += grams;
+  if (date === dailyDate) {
+    summary.daily_wastage_cost += cost;
+    summary.daily_wastage_grams += grams;
+    summary.meal_stats[mealType].daily_wastage_cost += cost;
+    summary.meal_stats[mealType].daily_wastage_grams += grams;
+  }
+}
+
+function roundBudgetPlanningStats(summary) {
+  const roundedMeals = Object.fromEntries(Object.entries(summary.meal_stats || {}).map(([mealType, stats]) => [mealType, {
+    monthly_food_cost: Number(numericMatch(stats.monthly_food_cost, 0).toFixed(2)),
+    daily_food_cost: Number(numericMatch(stats.daily_food_cost, 0).toFixed(2)),
+    monthly_wastage_cost: Number(numericMatch(stats.monthly_wastage_cost, 0).toFixed(2)),
+    daily_wastage_cost: Number(numericMatch(stats.daily_wastage_cost, 0).toFixed(2)),
+    monthly_wastage_grams: Number(numericMatch(stats.monthly_wastage_grams, 0).toFixed(2)),
+    daily_wastage_grams: Number(numericMatch(stats.daily_wastage_grams, 0).toFixed(2))
+  }]));
+  return {
+    ...summary,
+    monthly_food_cost: Number(numericMatch(summary.monthly_food_cost, 0).toFixed(2)),
+    daily_food_cost: Number(numericMatch(summary.daily_food_cost, 0).toFixed(2)),
+    monthly_wastage_cost: Number(numericMatch(summary.monthly_wastage_cost, 0).toFixed(2)),
+    daily_wastage_cost: Number(numericMatch(summary.daily_wastage_cost, 0).toFixed(2)),
+    monthly_wastage_grams: Number(numericMatch(summary.monthly_wastage_grams, 0).toFixed(2)),
+    daily_wastage_grams: Number(numericMatch(summary.daily_wastage_grams, 0).toFixed(2)),
+    meal_stats: roundedMeals
+  };
+}
+
+async function buildBudgetPlanningContext(user, filters = {}) {
+  const month = normalizeBudgetPlanningMonth(filters.month);
+  const bounds = budgetPlanningMonthBounds(month);
+  const dailyDate = normalizeBudgetPlanningDate(filters.date, new Date().toISOString().slice(0, 10), bounds);
+  const scope = await getLocationScope(user);
+  const accessibleSites = filterRecordsByLocation(user, 'Site', scope.sites, scope)
+    .filter((site) => site.is_active !== false);
+  const sitesById = new Map(scope.sites.map((site) => [String(site.id), site]));
+
+  const [budgetRecords, productionRecords, foodWasteRecords] = await Promise.all([
+    listDocuments('Budget', { sort: '-start_date', limit: 10000 }),
+    listDocuments('Production', { sort: '-production_date', limit: 10000 }),
+    listDocuments('FoodWaste', { sort: '-waste_date', limit: 10000 })
+  ]);
+
+  const [budgets, productions, foodWaste] = await Promise.all([
+    scopeEntityRecords(user, 'Budget', budgetRecords, scope),
+    scopeEntityRecords(user, 'Production', productionRecords, scope),
+    scopeEntityRecords(user, 'FoodWaste', foodWasteRecords, scope)
+  ]);
+
+  const projectSites = accessibleSites.filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT);
+  const siteSummaries = new Map(projectSites.map((site) => [String(site.id), createBudgetPlanningSiteSummary(site)]));
+
+  productions.forEach((production) => {
+    const productionDate = budgetPlanningDateFromRecord(production, ['production_date', 'completed_date', 'created_at']);
+    if (!productionDate || productionDate < bounds.startDate || productionDate > bounds.endDate) return;
+    const projectId = budgetPlanningOperationalProjectId(production.site_id || production.fulfillment_store_id, sitesById);
+    if (!projectId) return;
+    if (!siteSummaries.has(projectId)) {
+      siteSummaries.set(projectId, createBudgetPlanningSiteSummary(sitesById.get(projectId) || {
+        id: projectId,
+        name: production.site_name || production.fulfillment_store_name || 'Unknown site'
+      }));
+    }
+    addBudgetPlanningProduction(siteSummaries.get(projectId), production, productionDate, dailyDate);
+  });
+
+  foodWaste.forEach((waste) => {
+    const wasteDate = budgetPlanningDateFromRecord(waste, ['waste_date', 'date', 'created_at']);
+    if (!wasteDate || wasteDate < bounds.startDate || wasteDate > bounds.endDate) return;
+    const projectId = budgetPlanningOperationalProjectId(waste.site_id || waste.location_id, sitesById);
+    if (!projectId) return;
+    if (!siteSummaries.has(projectId)) {
+      siteSummaries.set(projectId, createBudgetPlanningSiteSummary(sitesById.get(projectId) || {
+        id: projectId,
+        name: waste.site_name || waste.location_name || 'Unknown site'
+      }));
+    }
+    addBudgetPlanningWaste(siteSummaries.get(projectId), waste, wasteDate, dailyDate);
+  });
+
+  return {
+    month,
+    start_date: bounds.startDate,
+    end_date: bounds.endDate,
+    days_in_month: bounds.daysInMonth,
+    daily_date: dailyDate,
+    sites: accessibleSites,
+    budgets,
+    site_summaries: [...siteSummaries.values()]
+      .map(roundBudgetPlanningStats)
+      .sort((left, right) => String(left.site_name || '').localeCompare(String(right.site_name || '')))
+  };
 }
 
 async function calculateSpecialEventPlanning(user, record) {
@@ -1478,6 +1772,8 @@ function buildMenuPlanWritePayload(body = {}, existing = null) {
   return {
     ...body,
     meals,
+    cuisine_type: normalizeMenuCuisine(body.cuisine_type ?? existing?.cuisine_type, 'general'),
+    menu_category: normalizeMenuCategory(body.menu_category ?? existing?.menu_category, 'senior'),
     status: body.status || existing?.status || 'draft',
     total_expected_servings: summary.total_expected_servings,
     total_calories: summary.total_calories,
@@ -1540,15 +1836,32 @@ async function getScopedProduction(request, productionId) {
   return { scope, production: scopedProduction };
 }
 
+async function listBatchOverproductionBatches(user, {
+  siteId,
+  wasteDate,
+  mealType,
+  executor = null,
+  lock = false,
+  existingScope = null
+} = {}) {
+  if (!siteId || !wasteDate || !mealType) return [];
+  const rows = await listDocuments('ProducedItemBatch', {
+    filters: {
+      site_id: siteId,
+      production_date: wasteDate,
+      meal_type: mealType
+    },
+    sort: 'completed_at',
+    limit: 10000,
+    lock
+  }, executor || undefined);
+  return scopeEntityRecords(user, 'ProducedItemBatch', rows, existingScope);
+}
+
 async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = new Date() }) {
   const normalizedMealType = normalizeMealType(mealType);
   const siteIdValue = String(siteId || '').trim();
   const wasteDateValue = normalizeDateOnly(wasteDate);
-  const timeWindow = getMealServiceWindow({
-    wasteDate: wasteDateValue,
-    mealType: normalizedMealType,
-    now
-  });
 
   const menuPlan = siteIdValue && wasteDateValue
     ? await findScopedOperationalMenuPlan(user, siteIdValue, wasteDateValue)
@@ -1567,6 +1880,27 @@ async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = 
     )
     : [];
 
+  const producedItemBatches = siteIdValue && wasteDateValue
+    ? await listBatchOverproductionBatches(user, {
+      siteId: siteIdValue,
+      wasteDate: wasteDateValue,
+      mealType: normalizedMealType
+    })
+    : [];
+  const batchOverproductionDishes = buildBatchOverproductionDishSummary(producedItemBatches, productionRows);
+  const latestProductionCompletedAt = getLatestSuccessfulProductionCompletedAt({
+    productions: productionRows,
+    producedItemBatches,
+    mealType: normalizedMealType
+  });
+  const timeWindow = getFoodWasteRecordingWindow({
+    wasteDate: wasteDateValue,
+    mealType: normalizedMealType,
+    now,
+    isAdmin: hasAdminAccess(user),
+    productionCompletedAt: latestProductionCompletedAt
+  });
+
   const productionOptions = productionRows
     .filter((item) => normalizeMealType(item.meal_type) === normalizedMealType)
     .map((item) => ({
@@ -1579,6 +1913,8 @@ async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = 
       meal_type: normalizeMealType(item.meal_type),
       target_servings: numericMatch(item.target_servings, 0),
       actual_servings: numericMatch(item.actual_servings || item.target_servings, 0),
+      total_cost: numericMatch(item.total_cost, 0),
+      estimated_total_cost: numericMatch(item.estimated_total_cost, 0),
       status: item.status || 'planned'
     }));
 
@@ -1593,7 +1929,9 @@ async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = 
       ...menuPlanSummary
     } : null,
     planned_menu_items: menuPlanSummary.recipes,
-    production_options: productionOptions
+    production_options: productionOptions,
+    batch_overproduction_dishes: batchOverproductionDishes,
+    produced_dishes: batchOverproductionDishes
   };
 }
 
@@ -1604,20 +1942,6 @@ async function findAccessibleSite(user, siteId) {
   }
 
   return (await scopeEntityRecords(user, 'Site', [site]))[0] || null;
-}
-
-async function getFoodWasteQrCodes(user, siteId = '') {
-  const qrCodes = await listDocuments('QRCode', {
-    filters: { category: FOOD_WASTE_QR_CATEGORY },
-    sort: '-updated_date',
-    limit: 500
-  });
-
-  const filtered = filterRowsByAccessibleSites(qrCodes, await getLocationScope(user), ['site_id'])
-    .filter((record) => isFoodWasteQrCode(record))
-    .filter((record) => !siteId || record.site_id === siteId);
-
-  return filtered;
 }
 
 function filterFoodWasteRows(rows, filters = {}) {
@@ -1922,6 +2246,18 @@ app.get('/api/auth/me', requireAuth, async (request, response, next) => {
   }
 });
 
+app.get('/api/budgets/planning-context', requireAuth, requireAnyPermission(['view_budget', 'manage_budget']), async (request, response, next) => {
+  try {
+    response.set('Cache-Control', 'private, no-store');
+    response.json(await buildBudgetPlanningContext(request.user, {
+      month: request.query.month,
+      date: request.query.date
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/dashboard/management', requireAuth, requirePermission('view_dashboard'), async (request, response, next) => {
   try {
     response.set('Cache-Control', 'private, no-store');
@@ -2077,13 +2413,18 @@ app.get('/api/menu-plans/by-date', requireAuth, requirePermission('manage_menu_p
   try {
     const siteId = String(request.query.site_id || '').trim();
     const planDate = String(request.query.plan_date || '').trim();
+    const cuisineType = normalizeMenuCuisine(request.query.cuisine_type, 'general');
+    const menuCategory = normalizeMenuCategory(request.query.menu_category, 'senior');
 
     const errors = validateSiteAndDateInput({ siteId, planDate });
     if (errors.length) {
       return response.status(400).json({ message: errors[0], errors });
     }
 
-    const plan = await findScopedOperationalMenuPlan(request.user, siteId, planDate);
+    const plan = await findScopedOperationalMenuPlan(request.user, siteId, planDate, {
+      cuisine_type: cuisineType,
+      menu_category: menuCategory
+    });
     const budgetContext = await getMenuPlanBudgetContext(request.user, {
       ...(plan || {}),
       site_id: siteId,
@@ -2094,7 +2435,7 @@ app.get('/api/menu-plans/by-date', requireAuth, requirePermission('manage_menu_p
     return response.json(buildApiObjectResponse({
       plan: plan || null,
       ...budgetContext
-    }, { site_id: siteId, plan_date: planDate }));
+    }, { site_id: siteId, plan_date: planDate, cuisine_type: cuisineType, menu_category: menuCategory }));
   } catch (error) {
     return next(error);
   }
@@ -2104,14 +2445,24 @@ app.get('/api/menu-plans/week', requireAuth, requirePermission('manage_menu_plan
   try {
     const siteId = String(request.query.site_id || '').trim();
     const weekStart = String(request.query.week_start || '').trim();
+    const cuisineType = normalizeMenuCuisine(request.query.cuisine_type, 'general');
+    const menuCategory = normalizeMenuCategory(request.query.menu_category, 'senior');
     const errors = validateSiteAndDateInput({ siteId, planDate: weekStart });
     if (errors.length) {
       const normalizedErrors = errors.map((error) => error.replace('plan_date', 'week_start'));
       return response.status(400).json({ message: normalizedErrors[0], errors: normalizedErrors });
     }
 
-    const result = await listScopedOperationalMenuPlansForWeek(request.user, siteId, weekStart);
-    return response.json(buildApiObjectResponse(result, { site_id: siteId, week_start: weekStart }));
+    const result = await listScopedOperationalMenuPlansForWeek(request.user, siteId, weekStart, {
+      cuisine_type: cuisineType,
+      menu_category: menuCategory
+    });
+    return response.json(buildApiObjectResponse(result, {
+      site_id: siteId,
+      week_start: weekStart,
+      cuisine_type: cuisineType,
+      menu_category: menuCategory
+    }));
   } catch (error) {
     return next(error);
   }
@@ -2236,7 +2587,10 @@ app.post('/api/menu-plans', requireAuth, requirePermission('manage_menu_planning
       return response.status(400).json({ message: errors[0], errors });
     }
 
-    const existing = await findScopedOperationalMenuPlan(request.user, payload.site_id, payload.plan_date);
+    const existing = await findScopedOperationalMenuPlan(request.user, payload.site_id, payload.plan_date, {
+      cuisine_type: payload.cuisine_type,
+      menu_category: payload.menu_category
+    });
     if (existing) {
       return response.status(409).json({ message: 'A menu plan already exists for this project and date' });
     }
@@ -3020,107 +3374,6 @@ app.post('/api/special-events/:id/reject', requireAuth, requirePermission('rejec
   }
 });
 
-app.get('/api/food-waste/qr-codes', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
-  try {
-    const siteId = String(request.query.site_id || '').trim();
-    if (siteId) {
-      const accessibleSite = await findAccessibleSite(request.user, siteId);
-      if (!accessibleSite) {
-        return response.status(403).json({ message: 'You do not have access to this unit.' });
-      }
-    }
-
-    const qrCodes = await getFoodWasteQrCodes(request.user, siteId);
-    return response.json(qrCodes);
-  } catch (error) {
-    return next(error);
-  }
-});
-
-app.post('/api/food-waste/qr-codes', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
-  try {
-    const siteId = String(request.body?.site_id || '').trim();
-    const refresh = Boolean(request.body?.refresh);
-
-    if (!siteId) {
-      return response.status(400).json({ message: 'site_id is required' });
-    }
-
-    const accessibleSite = await findAccessibleSite(request.user, siteId);
-    if (!accessibleSite) {
-      return response.status(403).json({ message: 'You do not have access to this unit.' });
-    }
-
-    const existingCodes = await getFoodWasteQrCodes(request.user, siteId);
-    const activeCode = existingCodes.find((record) => String(record.status || '').toLowerCase() === 'active') || existingCodes[0] || null;
-
-    if (activeCode && !refresh) {
-      return response.json(activeCode);
-    }
-
-    const token = createFoodWasteQrToken();
-    const payload = buildFoodWasteQrPayload({
-      site: accessibleSite,
-      baseUrl: resolvePublicBaseUrl(request),
-      token,
-      existing: activeCode,
-      createdBy: request.user?.email || null
-    });
-
-    const qrCode = activeCode
-      ? await updateDocument('QRCode', activeCode.id, payload)
-      : await createDocument('QRCode', payload);
-
-    return response.status(activeCode ? 200 : 201).json(buildApiObjectResponse(qrCode, { action: activeCode ? 'reuse' : 'create' }));
-  } catch (error) {
-    return next(error);
-  }
-});
-
-app.get('/api/food-waste/qr-resolve', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
-  try {
-    const token = String(request.query.token || '').trim();
-    const errors = validateFoodWasteContextInput({ token });
-    if (errors.length) {
-      return response.status(400).json({ message: errors[0], errors });
-    }
-
-    const matches = await listDocuments('QRCode', {
-      filters: { token },
-      sort: '-updated_date',
-      limit: 5
-    });
-    const qrCode = matches.find((record) => isFoodWasteQrCode(record));
-
-    if (!qrCode) {
-      return response.status(404).json({ message: 'Food waste QR code not found.' });
-    }
-
-    if (String(qrCode.status || '').toLowerCase() !== 'active') {
-      return response.status(410).json({ message: 'This Food Waste QR code is no longer active.' });
-    }
-
-    const accessibleSite = await findAccessibleSite(request.user, String(qrCode.site_id || qrCode.linked_item || '').trim());
-    if (!accessibleSite) {
-      return response.status(403).json({ message: 'You do not have access to this unit.' });
-    }
-
-    const updatedCode = await updateDocument('QRCode', qrCode.id, {
-      scan_count: Number(qrCode.scan_count || 0) + 1,
-      last_scanned_at: new Date().toISOString()
-    });
-
-    return response.json(buildApiObjectResponse({
-      qr_code: updatedCode,
-      site: accessibleSite,
-      default_waste_date: new Date().toISOString().slice(0, 10),
-      meal_types: ['breakfast', 'lunch', 'dinner']
-    }, { token }));
-  } catch (error) {
-    return next(error);
-  }
-});
-
 app.get('/api/food-waste/context', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
@@ -3161,7 +3414,10 @@ app.get('/api/food-waste', requireAuth, requirePermission('manage_waste'), async
       meal_type: String(request.query.meal_type || '').trim()
     });
 
-    return response.json(filteredRecords.map((record) => decorateFoodWasteRecord(record)));
+    const isAdministrator = hasAdminAccess(request.user);
+    return response.json(filteredRecords.map((record) => decorateFoodWasteRecord(record, new Date(), {
+      isAdmin: isAdministrator
+    })));
   } catch (error) {
     return next(error);
   }
@@ -3173,10 +3429,17 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
     const siteId = String(payload.site_id || '').trim();
     const wasteDate = normalizeDateOnly(payload.waste_date);
     const mealType = normalizeMealType(payload.meal_type);
+    const evidenceImageUrl = String(payload.evidence_image_url || payload.image_url || '').trim();
 
     const errors = validateFoodWasteContextInput({ siteId, wasteDate, mealType });
     if (errors.length) {
       return response.status(400).json({ message: errors[0], errors });
+    }
+    if (!evidenceImageUrl) {
+      return response.status(400).json({ message: 'Add a waste picture before saving this record.' });
+    }
+    if (String(payload.waste_scope || '').toLowerCase() === 'ingredient' && !String(payload.ingredient_id || '').trim()) {
+      return response.status(400).json({ message: 'Select the location and ingredient to remove from inventory.' });
     }
 
     const context = await buildFoodWasteContext(request.user, {
@@ -3192,12 +3455,17 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
     const matchingProduction = payload.production_id
       ? context.production_options.find((item) => item.id === payload.production_id) || null
       : null;
+    const isBatchOverproductionWaste = String(payload.waste_category || '').toLowerCase() === 'batch_overproduction'
+      && String(payload.waste_scope || '').toLowerCase() === 'batch';
 
     const preparedPayload = {
       ...payload,
       waste_date: wasteDate,
       meal_type: mealType,
       served_at: context.served_at,
+      production_completed_at: context.production_completed_at,
+      recording_window_basis: context.recording_window_basis,
+      recording_window_open_at: context.recording_window_open_at,
       recording_deadline_at: context.recording_deadline_at,
       menu_plan_id: context.menu_plan?.id || null,
       menu_plan_name: context.menu_plan?.name || null,
@@ -3205,12 +3473,101 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
       production_name: matchingProduction
         ? `${matchingProduction.recipe_name} - ${matchingProduction.production_date}`
         : payload.production_name || null,
+      evidence_image_url: evidenceImageUrl,
+      image_url: evidenceImageUrl,
       status: payload.status || 'logged'
     };
 
     authorizeEntityAction(request.user, 'FoodWaste', 'create', preparedPayload);
     const finalPayload = await prepareEntityPayload(request.user, 'FoodWaste', preparedPayload);
-    const created = await createDocument('FoodWaste', finalPayload);
+    const created = await withTransaction(async (client) => {
+      let batchWasteAllocation = null;
+      let payloadForCreate = finalPayload;
+      if (isBatchOverproductionWaste) {
+        const wasteWeightGrams = normalizeFoodWasteWeightGrams(
+          finalPayload.wasted_weight_grams ?? finalPayload.quantity,
+          finalPayload.unit
+        );
+        const scopedBatches = await listBatchOverproductionBatches(request.user, {
+          siteId,
+          wasteDate,
+          mealType,
+          executor: client,
+          lock: true
+        });
+        batchWasteAllocation = allocateBatchOverproductionWaste({
+          recipeId: finalPayload.recipe_id,
+          wasteWeightGrams,
+          batches: scopedBatches
+        });
+        const firstAllocation = batchWasteAllocation.allocations[0] || null;
+        payloadForCreate = {
+          ...finalPayload,
+          source_type: 'batch_overproduction',
+          waste_scope: 'batch',
+          unit: 'g',
+          quantity: batchWasteAllocation.wasted_weight_grams,
+          wasted_weight_grams: batchWasteAllocation.wasted_weight_grams,
+          wasted_production_equivalent_servings: batchWasteAllocation.wasted_production_equivalent_servings,
+          output_allocations: batchWasteAllocation.allocations,
+          production_id: finalPayload.production_id || firstAllocation?.production_id || null,
+          batch_reference: finalPayload.batch_reference
+            || batchWasteAllocation.allocations.map((allocation) => allocation.batch_number).filter(Boolean).join(', ')
+            || null
+        };
+      }
+
+      const wasteRecord = await createDocument('FoodWaste', payloadForCreate, client);
+      if (batchWasteAllocation) {
+        await Promise.all(batchWasteAllocation.batches.map((batch) => updateDocument('ProducedItemBatch', batch.id, {
+          served_servings: batch.served_servings,
+          served_weight_grams: batch.served_weight_grams,
+          wasted_servings: batch.wasted_servings,
+          wasted_weight_grams: batch.wasted_weight_grams,
+          remaining_servings: batch.remaining_servings,
+          remaining_weight_grams: batch.remaining_weight_grams,
+          status: batch.status
+        }, client)));
+        return wasteRecord;
+      }
+      if (String(finalPayload.waste_scope || '').toLowerCase() !== 'ingredient' || !finalPayload.ingredient_id) {
+        return wasteRecord;
+      }
+      const deduction = await deductStock({
+        site_id: finalPayload.site_id,
+        site_name: finalPayload.site_name,
+        ingredient_id: finalPayload.ingredient_id,
+        ingredient_name: finalPayload.ingredient_name,
+        quantity: finalPayload.quantity,
+        unit: finalPayload.unit,
+        transaction_type: 'waste',
+        transaction_date: finalPayload.waste_date,
+        reference_id: wasteRecord.id,
+        reference_type: 'FoodWaste',
+        notes: finalPayload.notes || `Food waste recorded for ${finalPayload.ingredient_name || 'ingredient'}`,
+        performed_by: request.user?.email || 'food-waste',
+        reason_code: finalPayload.reason_code || 'food_waste',
+        allow_shortage: false,
+        source: 'food_waste',
+        source_type: 'food_waste',
+        idempotency_key: `${wasteRecord.id}:food-waste-deduction`,
+        metadata: {
+          waste_category: finalPayload.waste_category || null,
+          meal_type: finalPayload.meal_type || null,
+          evidence_image_url: finalPayload.evidence_image_url || null
+        }
+      }, client);
+      return updateDocument('FoodWaste', wasteRecord.id, {
+        inventory_transaction_id: deduction.transaction_id,
+        inventory_deduction_quantity: deduction.issued_quantity,
+        inventory_shortage_quantity: deduction.shortage_quantity,
+        inventory_movement_layers: deduction.movement_layers,
+        estimated_cost: deduction.total_cost || finalPayload.estimated_cost || 0
+      }, client);
+    });
+    if (created.source_type === 'batch_overproduction') {
+      recordChanged('ProducedItemBatch');
+    }
     return response.status(201).json(buildApiObjectResponse(decorateFoodWasteRecord(created), { action: 'create' }));
   } catch (error) {
     return next(error);
@@ -3240,6 +3597,10 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
       return response.status(403).json({ message: 'You do not have permission to edit food waste.' });
     }
 
+    if (!approvalOnly && !String(payload.evidence_image_url || payload.image_url || existing.evidence_image_url || existing.image_url || '').trim()) {
+      return response.status(400).json({ message: 'Add a waste picture before saving this record.' });
+    }
+
     const merged = {
       ...existing,
       ...payload,
@@ -3260,6 +3621,9 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
       }
 
       merged.served_at = context.served_at;
+      merged.production_completed_at = context.production_completed_at;
+      merged.recording_window_basis = context.recording_window_basis;
+      merged.recording_window_open_at = context.recording_window_open_at;
       merged.recording_deadline_at = context.recording_deadline_at;
       merged.menu_plan_id = context.menu_plan?.id || null;
       merged.menu_plan_name = context.menu_plan?.name || null;
@@ -3731,6 +4095,234 @@ function serializeBulkUploadJob(job) {
   return safeJob;
 }
 
+function normalizeNotificationToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function formatNotificationActionLabel(value) {
+  return String(value || 'Activity')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+const notificationRoleAliases = {
+  admin: ['admin', 'administrator', 'super_admin'],
+  project_manager: ['project_manager', 'pm', 'manager', 'project'],
+  procurement: ['procurement', 'procurement_officer', 'storekeeper', 'store', 'store_manager', 'warehouse', 'inventory_manager'],
+  area_manager: ['area_manager', 'am', 'area'],
+  chef: ['chef', 'production_supervisor', 'production', 'production_user', 'kitchen'],
+  user: ['user']
+};
+
+function getNotificationRoleTokens(user = {}) {
+  const rawValues = [
+    user.role,
+    user.role_name,
+    user.access_level,
+    user.dashboard_variant,
+    ...(Array.isArray(user.role_permissions) ? user.role_permissions : [])
+  ];
+  const tokens = new Set(rawValues.map(normalizeNotificationToken).filter(Boolean));
+  Object.entries(notificationRoleAliases).forEach(([canonical, aliases]) => {
+    if (aliases.some((alias) => tokens.has(alias))) tokens.add(canonical);
+  });
+  if (tokens.has('acknowledge_material_request') || tokens.has('manage_procurement') || tokens.has('approve_procurement')) {
+    tokens.add('procurement');
+  }
+  if (tokens.has('approve_production_request') || tokens.has('review_production_request')) {
+    tokens.add('project_manager');
+  }
+  if (tokens.has('approve_production') || tokens.has('request_changes_area_production') || tokens.has('reject_area_production')) {
+    tokens.add('area_manager');
+  }
+  if (tokens.has('create_production_request') || tokens.has('submit_production_request') || tokens.has('start_production')) {
+    tokens.add('chef');
+  }
+  if (getUserEffectiveRole(user) === 'admin') tokens.add('admin');
+  return tokens;
+}
+
+function textIncludesAny(source, needles = []) {
+  return needles.some((needle) => source.includes(needle));
+}
+
+function getWorkflowNotificationAudience(log = {}) {
+  const action = normalizeNotificationToken(log.action);
+  const entity = normalizeNotificationToken(log.entity);
+  const details = normalizeNotificationToken(JSON.stringify(log.details || {}));
+  const text = `${action} ${entity} ${details}`;
+  const audience = new Set();
+
+  if (entity === 'production' || action.startsWith('production_')) {
+    audience.add('admin');
+    audience.add('chef');
+    if (textIncludesAny(text, ['submitted_for_pm_approval', 'pending_pm_approval', 'pending_approval'])) {
+      audience.add('project_manager');
+    }
+    if (textIncludesAny(text, ['pm_approved', 'pending_procurement', 'store_procurement', 'procurement', 'material_request'])) {
+      audience.add('procurement');
+      audience.add('project_manager');
+    }
+    if (textIncludesAny(text, ['pending_area_manager_approval', 'area_approval_status_pending', 'area_manager'])) {
+      audience.add('area_manager');
+    }
+    if (textIncludesAny(text, ['area_approved', 'area_rejected', 'production_started', 'production_completed', 'cancelled'])) {
+      audience.add('project_manager');
+      audience.add('procurement');
+      audience.add('area_manager');
+    }
+    return [...audience];
+  }
+
+  if (entity === 'materialrequest' || textIncludesAny(text, ['material_request', 'purchase_request'])) {
+    return ['admin', 'project_manager', 'procurement', 'area_manager'];
+  }
+
+  if (
+    entity === 'purchaseorder'
+    || entity === 'goodsreceipt'
+    || textIncludesAny(text, ['purchase_order', 'goods_receipt', 'supplier_invoice'])
+  ) {
+    return ['admin', 'procurement', 'project_manager'];
+  }
+
+  if (textIncludesAny(text, ['bulk_upload_failed', 'bulk_upload_completed', 'bulk_upload_queued'])) {
+    return ['admin'];
+  }
+
+  if (textIncludesAny(text, ['approval', 'approved', 'rejected', 'submitted', 'acknowledged', 'workflow'])) {
+    return ['admin', 'project_manager', 'procurement', 'area_manager'];
+  }
+
+  return [];
+}
+
+function isWorkflowNotificationLog(log = {}) {
+  return getWorkflowNotificationAudience(log).length > 0;
+}
+
+function canReceiveWorkflowNotification(user, log) {
+  const userRoles = getNotificationRoleTokens(user);
+  const audience = getWorkflowNotificationAudience(log);
+  return audience.some((role) => userRoles.has(role));
+}
+
+function getNotificationProductionRecord(log = {}) {
+  const details = log.details || {};
+  return details.after
+    || details.saved_record
+    || details.created_record
+    || details.production
+    || details.input
+    || {};
+}
+
+function getProductionNotificationFields(log = {}) {
+  const action = normalizeNotificationToken(log.action);
+  const record = getNotificationProductionRecord(log);
+  const recipeName = record.recipe_name || record.recipe || record.name || 'Production request';
+  const siteName = record.site_name || log.site_name || 'assigned project';
+  const actorName = log.actor_name || log.actor_email || 'System';
+  const materialRequestNumber = record.linked_material_request_number
+    || log.details?.saved_record?.request_number
+    || log.details?.saved_record?.material_request_number
+    || '';
+
+  if (action === 'production_create' || action === 'production_submitted_for_pm_approval') {
+    return {
+      title: 'Production created by Chef',
+      message: `${recipeName} for ${siteName} is pending Project Manager approval.`,
+      workflow_step: 'Pending PM Approval'
+    };
+  }
+
+  if (action === 'production_pm_approved') {
+    return {
+      title: 'PM approved and forwarded to Procurement',
+      message: `${recipeName} was approved by ${actorName} and sent to Store / Procurement${materialRequestNumber ? ` as ${materialRequestNumber}` : ''}.`,
+      workflow_step: 'Pending Store / Procurement'
+    };
+  }
+
+  if (action === 'production_material_request_activated') {
+    return {
+      title: 'Material request pending Procurement',
+      message: `${recipeName} material request is ready for Store / Procurement acknowledgement.`,
+      workflow_step: 'Pending Store / Procurement'
+    };
+  }
+
+  if (action === 'production_procurement_acknowledged') {
+    return {
+      title: 'Procurement approved and forwarded to AM',
+      message: `${recipeName} was acknowledged by ${actorName} and forwarded to Area Manager approval.`,
+      workflow_step: 'Pending Area Manager Approval'
+    };
+  }
+
+  if (action === 'production_area_approved') {
+    return {
+      title: 'Production approved',
+      message: `${recipeName} was approved by Area Manager and is ready for production execution.`,
+      workflow_step: 'Production Approved'
+    };
+  }
+
+  if (action === 'production_started') {
+    return {
+      title: 'Production started',
+      message: `${recipeName} production has started.`,
+      workflow_step: 'In Production'
+    };
+  }
+
+  if (action === 'production_completed') {
+    return {
+      title: 'Production completed',
+      message: `${recipeName} production has been completed.`,
+      workflow_step: 'Completed'
+    };
+  }
+
+  if (action.includes('rejected') || action.includes('changes_requested')) {
+    return {
+      title: 'Production returned for changes',
+      message: `${recipeName} was returned by ${actorName}.`,
+      workflow_step: 'Changes Requested'
+    };
+  }
+
+  return {
+    title: formatNotificationActionLabel(log.action),
+    message: `${log.entity || 'Workflow'}${siteName ? ` for ${siteName}` : ''}`,
+    workflow_step: record.status ? formatNotificationActionLabel(record.status) : 'Workflow Update'
+  };
+}
+
+function serializeNotificationLog(log, notificationType) {
+  const workflowFields = notificationType === 'workflow'
+    ? getProductionNotificationFields(log)
+    : {};
+  return {
+    id: log.id,
+    notification_type: notificationType,
+    ...workflowFields,
+    action: log.action,
+    entity: log.entity,
+    entity_id: log.entity_id,
+    actor_name: log.actor_name || 'System',
+    actor_email: log.actor_email || '',
+    role: log.role || '',
+    site_name: log.site_name || '',
+    site_id: log.site_id || '',
+    created_at: log.created_at
+  };
+}
+
 async function accessibleSiteIds(user) {
   const scope = await getLocationScope(user);
   return scope.unrestricted ? null : [...scope.accessibleSiteIds];
@@ -3782,15 +4374,41 @@ app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrat
         return response.status(400).json({ message: 'Select a supported upload module.' });
       }
       const importMode = String(request.body?.import_mode || 'keep_existing');
-      if (!['keep_existing', 'replace_existing', 'delete_existing'].includes(importMode)) {
+      if (!['keep_existing', 'update_stock_only', 'replace_existing', 'delete_existing'].includes(importMode)) {
         await cleanupUploadedFile();
         return response.status(400).json({ message: 'Invalid import mode.' });
       }
-      if (definition.entity === 'Inventory' && importMode !== 'keep_existing') {
+      if (importMode === 'update_stock_only' && !['Ingredient', 'Inventory'].includes(definition.entity)) {
         await cleanupUploadedFile();
-        return response.status(409).json({
-          message: 'Inventory uploads are additive receipts. Replace and delete modes are disabled to preserve batches and movement history.'
-        });
+        return response.status(400).json({ message: 'Update stock only is available for Inventory and Ingredients uploads.' });
+      }
+      const sourceNameRequired = ['Ingredient', 'Inventory'].includes(definition.entity)
+        && importMode !== 'delete_existing';
+      const sourceName = normalizeSourceName(request.body?.source_name, '');
+      if (sourceNameRequired && !isValidSourceName(sourceName)) {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Select Source Name: D365 or Cash before uploading.' });
+      }
+      const recipeTypeRequired = definition.entity === 'Recipe';
+      const recipeType = String(request.body?.recipe_type || '').trim().toLowerCase();
+      if (recipeTypeRequired && !['general', 'filipino'].includes(recipeType)) {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Select Recipe Type: General or Filipino before continuing.' });
+      }
+      const menuPlanOptionsRequired = definition.entity === 'MenuPlan';
+      const menuCuisine = normalizeMenuCuisine(request.body?.menu_cuisine, '');
+      const menuCategory = normalizeMenuCategory(request.body?.menu_category, '');
+      if (menuPlanOptionsRequired && !['general', 'philippines'].includes(menuCuisine)) {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Select Menu Cuisine: General or Philippines before uploading.' });
+      }
+      if (menuPlanOptionsRequired && !['senior', 'junior', 'labor', 'management_menu'].includes(menuCategory)) {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Select Menu Category: Senior, Junior, Labor, or Management Menu before uploading.' });
+      }
+      if (menuPlanOptionsRequired && menuCuisine === 'philippines' && menuCategory === 'management_menu') {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Philippines menus support Senior, Junior, or Labor categories.' });
       }
       if (importMode !== 'delete_existing' && !request.file) {
         return response.status(400).json({ message: 'Select a CSV file to upload.' });
@@ -3805,6 +4423,10 @@ app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrat
       if (requestedSiteId && !scope.unrestricted && !scope.accessibleSiteIds.has(requestedSiteId)) {
         await cleanupUploadedFile();
         return response.status(403).json({ message: 'You do not have access to the selected project.' });
+      }
+      if (importMode === 'update_stock_only' && definition.entity === 'Ingredient' && !requestedSiteId) {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Select a project scope before updating stock from an Ingredients file.' });
       }
       const batchSize = Math.min(
         Math.max(Number(process.env.BULK_UPLOAD_BATCH_SIZE || 500), 50),
@@ -3824,7 +4446,12 @@ app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrat
         batch_size: batchSize,
         actor: request.user,
         site_id: requestedSiteId,
-        site_name: String(request.body?.site_name || '').trim() || null
+        site_name: String(request.body?.site_name || '').trim() || null,
+        source_name: sourceNameRequired ? sourceName : null,
+        options: {
+          ...(recipeTypeRequired ? { recipe_type: recipeType } : {}),
+          ...(menuPlanOptionsRequired ? { menu_cuisine: menuCuisine, menu_category: menuCategory } : {})
+        }
       });
       cleanupReference = null;
       await auditAction({
@@ -3839,7 +4466,11 @@ app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrat
           file_name: job.file_name,
           file_size: Number(job.file_size),
           import_mode: importMode,
-          batch_size: batchSize
+          batch_size: batchSize,
+          source_name: sourceNameRequired ? sourceName : null,
+          recipe_type: recipeTypeRequired ? recipeType : null,
+          menu_cuisine: menuPlanOptionsRequired ? menuCuisine : null,
+          menu_category: menuPlanOptionsRequired ? menuCategory : null
         }
       });
       enqueueBulkUpload(job.id);
@@ -3882,6 +4513,34 @@ app.get('/api/activity/bulk-upload-jobs/:id', requireAuth, requireAnyPermission(
     return response.json({ job: serializeBulkUploadJob(job) });
   } catch (error) {
     return next(error);
+  }
+});
+
+app.get('/api/activity/notifications', requireAuth, async (request, response, next) => {
+  try {
+    const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 100);
+    const siteIds = await accessibleSiteIds(request.user);
+    const [scopedLogs, personalLogs] = await Promise.all([
+      listAuditLogs({ limit: 250, siteIds }),
+      listAuditLogs({ limit: 100, actorId: request.user.id })
+    ]);
+    const merged = new Map();
+    scopedLogs
+      .filter((log) => isWorkflowNotificationLog(log) && canReceiveWorkflowNotification(request.user, log))
+      .forEach((log) => merged.set(log.id, serializeNotificationLog(log, 'workflow')));
+    personalLogs
+      .forEach((log) => merged.set(log.id, serializeNotificationLog(
+        log,
+        isWorkflowNotificationLog(log) ? 'workflow' : 'user_action'
+      )));
+    const notifications = [...merged.values()]
+      .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())
+      .slice(0, limit);
+    response.json({
+      notifications
+    });
+  } catch (error) {
+    next(error);
   }
 });
 
@@ -3958,6 +4617,30 @@ app.post('/api/integrations/recipe-image', requireAuth, (request, response, next
     }
     try {
       const stored = await persistUploadedFile(request.file, 'recipe-images');
+      return response.json({
+        file_url: stored.fileUrl,
+        public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl)
+      });
+    } catch (storageError) {
+      return next(storageError);
+    }
+  });
+});
+
+app.post('/api/integrations/waste-image', requireAuth, (request, response, next) => {
+  recipeImageUpload.single('file')(request, response, async (error) => {
+    if (error) {
+      const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      const message = error.code === 'LIMIT_FILE_SIZE'
+        ? 'Waste pictures must not exceed 1 MB.'
+        : (error.message || 'Waste picture upload failed.');
+      return response.status(status).json({ message });
+    }
+    if (!request.file) {
+      return response.status(400).json({ message: 'Select a waste picture to upload.' });
+    }
+    try {
+      const stored = await persistUploadedFile(request.file, 'waste-images');
       return response.json({
         file_url: stored.fileUrl,
         public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl)
@@ -4794,6 +5477,16 @@ app.patch('/api/productions/:id/approved-quantity', requireAuth, requireAnyPermi
         yield_snapshot_source: approvedSnapshot.yield_snapshot_source,
         production_warnings: approvedSnapshot.production_warnings,
         inventory_approved_snapshot: approvedSnapshot.inventory_approved_snapshot,
+        quantity_semantics: approvedSnapshot.quantity_semantics,
+        recipe_raw_weight_grams: approvedSnapshot.recipe_raw_weight_grams,
+        expected_finished_weight_grams: approvedSnapshot.expected_finished_weight_grams,
+        portion_size_grams: approvedSnapshot.portion_size_grams,
+        portion_size_source: approvedSnapshot.portion_size_source,
+        expected_yield_servings: approvedSnapshot.expected_yield_servings,
+        actual_finished_weight_grams: null,
+        produced_servings: null,
+        produced_item_batch_id: null,
+        produced_item_batch_number: null,
         ...commitmentResult.production_patch,
         last_review_action: 'production_quantity_adjusted',
         approval_history: appendProductionApprovalHistory(lockedProduction, {
@@ -5288,6 +5981,597 @@ app.post('/api/inventory/transfer', requireAuth, requirePermission('transfer_inv
   }
 });
 
+const STAFF_MEAL_QR_CATEGORY = 'staff_meal_employee';
+const STAFF_MEAL_QR_WINDOWS = Object.freeze({
+  breakfast: { label: 'Breakfast', start_time: '05:00', end_time: '07:00' },
+  lunch: { label: 'Lunch', start_time: '11:00', end_time: '13:00' },
+  dinner: { label: 'Dinner', start_time: '17:00', end_time: '20:00' }
+});
+
+function normalizeStaffMealQrText(value) {
+  return String(value || '').trim();
+}
+
+function normalizeStaffMealQrPhone(value) {
+  return normalizeStaffMealQrText(value).replace(/[^\d+]/g, '');
+}
+
+function normalizeStaffMealQrTime(value, fallback) {
+  const candidate = normalizeStaffMealQrText(value);
+  return /^\d{2}:\d{2}$/.test(candidate) ? candidate : fallback;
+}
+
+function normalizeStaffMealQrWindows(windows = {}) {
+  return Object.fromEntries(Object.entries(STAFF_MEAL_QR_WINDOWS).map(([mealType, defaults]) => ([
+    mealType,
+    {
+      ...defaults,
+      start_time: normalizeStaffMealQrTime(windows?.[mealType]?.start_time, defaults.start_time),
+      end_time: normalizeStaffMealQrTime(windows?.[mealType]?.end_time, defaults.end_time)
+    }
+  ])));
+}
+
+function currentStaffMealDateTime() {
+  const now = new Date();
+  const businessParts = toBusinessDateTimeParts(now) || {};
+  const date = businessParts.date || now.toISOString().slice(0, 10);
+  const time = businessParts.time || now.toISOString().slice(11, 16);
+  return { now, date, time };
+}
+
+function getActiveStaffMealWindow(qr = {}, requestedMealType = '') {
+  const mealType = normalizeStaffMealQrText(requestedMealType).toLowerCase();
+  const window = qr.meal_windows?.[mealType];
+  if (!window || !STAFF_MEAL_QR_WINDOWS[mealType]) {
+    const error = new Error('Select a valid meal period');
+    error.status = 400;
+    throw error;
+  }
+  const { date, time } = currentStaffMealDateTime();
+  if (time < window.start_time || time > window.end_time) {
+    const error = new Error(`${window.label || mealType} QR scanning is allowed only from ${window.start_time} to ${window.end_time}`);
+    error.status = 409;
+    throw error;
+  }
+  return { mealType, date, window };
+}
+
+function normalizeStaffMealQrScanScope(body = {}, fallbackDate = currentStaffMealDateTime().date) {
+  const mealType = normalizeStaffMealQrText(body.meal_type || body.meal_period).toLowerCase();
+  if (!STAFF_MEAL_QR_WINDOWS[mealType]) {
+    const error = new Error('Select a valid meal period');
+    error.status = 400;
+    throw error;
+  }
+  const serviceDate = normalizeStaffMealQrText(body.service_date || body.date) || fallbackDate;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) {
+    const error = new Error('Select a valid service date');
+    error.status = 400;
+    throw error;
+  }
+  const siteId = normalizeStaffMealQrText(body.site_id);
+  if (!siteId) {
+    const error = new Error('Select a project before scanning');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    serviceDate,
+    siteId,
+    menuType: normalizeStaffMealQrText(body.menu_type) || 'general',
+    menuCategory: normalizeStaffMealQrText(body.menu_category) || 'senior',
+    mealType
+  };
+}
+
+function assertStaffMealQrIsScannable(qr = {}, mealType) {
+  if (String(qr.status || '').toLowerCase() !== 'active') {
+    const error = new Error('This employee QR code is inactive');
+    error.status = 409;
+    throw error;
+  }
+  const window = qr.meal_windows?.[mealType] || STAFF_MEAL_QR_WINDOWS[mealType];
+  if (!window || !STAFF_MEAL_QR_WINDOWS[mealType]) {
+    const error = new Error('Select a valid meal period');
+    error.status = 400;
+    throw error;
+  }
+  const { time } = currentStaffMealDateTime();
+  if (time < window.start_time || time > window.end_time) {
+    const error = new Error(`${window.label || mealType} QR scanning is allowed only from ${window.start_time} to ${window.end_time}`);
+    error.status = 409;
+    throw error;
+  }
+  return window;
+}
+
+async function recordStaffMealQrScan(qr, scanScope, { user = null } = {}) {
+  const { serviceDate, siteId, menuType, menuCategory, mealType } = scanScope;
+  const window = assertStaffMealQrIsScannable(qr, mealType);
+  const scanKey = `${serviceDate}:${mealType}`;
+  const scanHistory = Array.isArray(qr.scan_history) ? qr.scan_history : [];
+  if (scanHistory.some((scan) => scan.scan_key === scanKey)) {
+    const error = new Error(`${window.label || mealType} has already been scanned for ${serviceDate}`);
+    error.status = 409;
+    throw error;
+  }
+  const markedAt = new Date().toISOString();
+  const attendance = await createDocument('AttendanceRecord', {
+    session_id: `STAFF-MEAL-QR-${qr.id}-${siteId}`,
+    session_name: `Staff Meal QR - ${qr.employee_name}`,
+    session_date: serviceDate,
+    service_date: serviceDate,
+    site_id: siteId,
+    menu_type: menuType,
+    menu_category: menuCategory,
+    meal_type: mealType,
+    attendee_id: qr.company_id_number,
+    attendee_name: qr.employee_name,
+    attendee_phone: qr.mobile_number,
+    category: 'employee',
+    marked_at: markedAt,
+    scan_method: 'employee_meal_qr',
+    qr_code_id: qr.id,
+    scanned_by: user?.email || null,
+    scanned_by_name: user?.full_name || user?.email || null,
+    status: 'checked_in',
+    approval_status: 'approved',
+    attendance_status: 'present'
+  });
+  const updatedHistory = [
+    {
+      scan_key: scanKey,
+      attendance_record_id: attendance.id,
+      meal_type: mealType,
+      session_date: serviceDate,
+      site_id: siteId,
+      menu_type: menuType,
+      menu_category: menuCategory,
+      scanned_at: markedAt,
+      scanned_by: user?.email || null
+    },
+    ...scanHistory
+  ];
+  const updatedQr = await updateDocument('QRCode', qr.id, { scan_history: updatedHistory, last_scanned_at: markedAt });
+  recordChanged('QRCode');
+  recordChanged('AttendanceRecord');
+  return {
+    message: `${window.label || mealType} attendance recorded`,
+    attendance,
+    qr: staffMealQrPublicPayload(updatedQr)
+  };
+}
+
+function staffMealQrPublicPayload(qr = {}) {
+  return {
+    id: qr.id,
+    employee_name: qr.employee_name,
+    company_id_number: qr.company_id_number,
+    mobile_number: qr.mobile_number,
+    meal_windows: qr.meal_windows || STAFF_MEAL_QR_WINDOWS,
+    status: qr.status,
+    scan_history: qr.scan_history || []
+  };
+}
+
+async function findStaffMealQrByToken(token) {
+  const normalizedToken = normalizeStaffMealQrText(token);
+  if (!normalizedToken) return null;
+  const matches = await listDocuments('QRCode', {
+    filters: { token: normalizedToken, category: STAFF_MEAL_QR_CATEGORY },
+    limit: 1
+  });
+  return matches[0] || null;
+}
+
+app.get('/api/staff-meal-qr', requireAuth, requirePermission('create_employee_meal_qr'), async (_request, response, next) => {
+  try {
+    const codes = await listDocuments('QRCode', {
+      filters: { category: STAFF_MEAL_QR_CATEGORY },
+      sort: '-created_date',
+      limit: 500
+    });
+    response.json(codes);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/staff-meal-qr', requireAuth, requirePermission('create_employee_meal_qr'), async (request, response, next) => {
+  try {
+    const employeeName = normalizeStaffMealQrText(request.body?.employee_name || request.body?.name);
+    const companyIdNumber = normalizeStaffMealQrText(request.body?.company_id_number);
+    const mobileNumber = normalizeStaffMealQrPhone(request.body?.mobile_number);
+    if (!employeeName) return response.status(400).json({ message: 'Employee name is required' });
+    if (!companyIdNumber) return response.status(400).json({ message: 'Company ID number is required' });
+    if (!mobileNumber) return response.status(400).json({ message: 'Active WhatsApp mobile number is required' });
+    const token = `staff-meal-${randomUUID()}`;
+    const record = await createDocument('QRCode', {
+      category: STAFF_MEAL_QR_CATEGORY,
+      name: employeeName,
+      employee_name: employeeName,
+      company_id_number: companyIdNumber,
+      mobile_number: mobileNumber,
+      active_whatsapp: true,
+      token,
+      meal_windows: normalizeStaffMealQrWindows(request.body?.meal_windows),
+      scan_history: [],
+      status: 'active',
+      created_by: request.user.email,
+      created_by_name: request.user.full_name || request.user.email
+    });
+    recordChanged('QRCode');
+    await auditAction({
+      user: request.user,
+      action: 'STAFF_MEAL_QR_CREATED',
+      entity: 'QRCode',
+      entityId: record.id,
+      details: { employee_name: employeeName, company_id_number: companyIdNumber }
+    });
+    response.status(201).json(record);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/staff-meal-qr/:id', requireAuth, requirePermission('create_employee_meal_qr'), async (request, response, next) => {
+  try {
+    const existing = await findDocument('QRCode', request.params.id);
+    if (!existing || existing.category !== STAFF_MEAL_QR_CATEGORY) {
+      return response.status(404).json({ message: 'Employee QR code not found' });
+    }
+    const employeeName = normalizeStaffMealQrText(request.body?.employee_name || request.body?.name);
+    const companyIdNumber = normalizeStaffMealQrText(request.body?.company_id_number);
+    const mobileNumber = normalizeStaffMealQrPhone(request.body?.mobile_number);
+    if (!employeeName) return response.status(400).json({ message: 'Employee name is required' });
+    if (!companyIdNumber) return response.status(400).json({ message: 'Company ID number is required' });
+    if (!mobileNumber) return response.status(400).json({ message: 'Active WhatsApp mobile number is required' });
+    const record = await updateDocument('QRCode', existing.id, {
+      name: employeeName,
+      employee_name: employeeName,
+      company_id_number: companyIdNumber,
+      mobile_number: mobileNumber,
+      active_whatsapp: true,
+      meal_windows: normalizeStaffMealQrWindows(request.body?.meal_windows),
+      updated_by: request.user.email,
+      updated_by_name: request.user.full_name || request.user.email
+    });
+    recordChanged('QRCode');
+    await auditAction({
+      user: request.user,
+      action: 'STAFF_MEAL_QR_UPDATED',
+      entity: 'QRCode',
+      entityId: record.id,
+      details: { employee_name: employeeName, company_id_number: companyIdNumber }
+    });
+    response.json(record);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/staff-meal-qr/:id', requireAuth, requirePermission('create_employee_meal_qr'), async (request, response, next) => {
+  try {
+    const existing = await findDocument('QRCode', request.params.id);
+    if (!existing || existing.category !== STAFF_MEAL_QR_CATEGORY) {
+      return response.status(404).json({ message: 'Employee QR code not found' });
+    }
+    await deleteDocument('QRCode', existing.id);
+    recordChanged('QRCode');
+    await auditAction({
+      user: request.user,
+      action: 'STAFF_MEAL_QR_DELETED',
+      entity: 'QRCode',
+      entityId: existing.id,
+      details: { employee_name: existing.employee_name, company_id_number: existing.company_id_number }
+    });
+    response.json({ id: existing.id, deleted: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/staff-meal-qr/scan', requireAuth, requireAnyPermission([
+  'record_customer_meal_service',
+  'generate_staff_meal_qr',
+  'create_employee_meal_qr'
+]), async (request, response, next) => {
+  try {
+    const qr = await findStaffMealQrByToken(request.body?.token);
+    if (!qr) return response.status(404).json({ message: 'QR code not found' });
+    const scanScope = normalizeStaffMealQrScanScope(request.body);
+    const scope = await getLocationScope(request.user);
+    if (!scope.unrestricted && !scope.accessibleSiteIds.has(scanScope.siteId)) {
+      return response.status(403).json({ message: 'You do not have access to this Meal Service location' });
+    }
+    const result = await recordStaffMealQrScan(qr, scanScope, { user: request.user });
+    await auditAction({
+      user: request.user,
+      action: 'STAFF_MEAL_QR_SCANNED',
+      entity: 'AttendanceRecord',
+      entityId: result.attendance.id,
+      details: {
+        employee_name: qr.employee_name,
+        company_id_number: qr.company_id_number,
+        service_date: scanScope.serviceDate,
+        site_id: scanScope.siteId,
+        menu_type: scanScope.menuType,
+        menu_category: scanScope.menuCategory,
+        meal_type: scanScope.mealType
+      }
+    });
+    response.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/staff-meal-qr/public/:token', async (request, response, next) => {
+  try {
+    const qr = await findStaffMealQrByToken(request.params.token);
+    if (!qr) return response.status(404).json({ message: 'QR code not found' });
+    response.json(staffMealQrPublicPayload(qr));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/staff-meal-qr/public/:token/scan', async (request, response, next) => {
+  try {
+    const qr = await findStaffMealQrByToken(request.params.token);
+    if (!qr) return response.status(404).json({ message: 'QR code not found' });
+    const { mealType, date } = getActiveStaffMealWindow(qr, request.body?.meal_type);
+    const result = await recordStaffMealQrScan(qr, {
+      serviceDate: date,
+      siteId: normalizeStaffMealQrText(request.body?.site_id) || 'self-service',
+      menuType: normalizeStaffMealQrText(request.body?.menu_type) || 'general',
+      menuCategory: normalizeStaffMealQrText(request.body?.menu_category) || 'senior',
+      mealType
+    });
+    response.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/meal-service/availability', requireAuth, requireAnyPermission([
+  'view_customer_meal_service',
+  'record_customer_meal_service',
+  'generate_staff_meal_qr'
+]), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const siteId = String(request.query.site_id || '').trim();
+    if (!siteId) return response.status(400).json({ message: 'Select a location for produced-item availability' });
+    if (!scope.unrestricted && !scope.accessibleSiteIds.has(siteId)) {
+      return response.status(403).json({ message: 'You do not have access to this Meal Service location' });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+    return response.json(await getProducedItemAvailability(request.query, { location }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/meal-service/preview', requireAuth, requireAnyPermission([
+  'view_customer_meal_service',
+  'record_customer_meal_service',
+  'generate_staff_meal_qr'
+]), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const siteId = String(request.body?.site_id || '').trim();
+    if (!siteId || (!scope.unrestricted && !scope.accessibleSiteIds.has(siteId))) {
+      return response.status(siteId ? 403 : 400).json({
+        message: siteId
+          ? 'You do not have access to this Meal Service location'
+          : 'Select a location for Meal Service'
+      });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+    return response.json(await previewMealService(request.body || {}, { location }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.patch('/api/meal-service/portion-size', requireAuth, async (request, response, next) => {
+  try {
+    if (!hasAdminAccess(request.user)) {
+      return response.status(403).json({ message: 'Only administrators can change meal-service portion sizes' });
+    }
+    const scope = await getLocationScope(request.user);
+    const siteId = String(request.body?.site_id || '').trim();
+    if (!siteId || (!scope.unrestricted && !scope.accessibleSiteIds.has(siteId))) {
+      return response.status(siteId ? 403 : 400).json({
+        message: siteId ? 'You do not have access to this location' : 'Select a location'
+      });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+    const result = await updateMealServicePortionSize(request.body || {}, request.user, { location });
+    recordChanged('ProducedItemBatch');
+    await auditAction({
+      user: request.user,
+      action: 'MEAL_SERVICE_PORTION_SIZE_UPDATED',
+      entity: 'ProducedItemBatch',
+      entityId: result.updated_batch_ids[0] || null,
+      details: result
+    });
+    return response.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/meal-service/attendance', requireAuth, requirePermission('record_customer_meal_service'), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const siteId = String(request.body?.site_id || '').trim();
+    if (!siteId || (!scope.unrestricted && !scope.accessibleSiteIds.has(siteId))) {
+      return response.status(siteId ? 403 : 400).json({
+        message: siteId
+          ? 'You do not have access to this Meal Service location'
+          : 'Select a location for Meal Service'
+      });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+    const result = await recordMealServiceAttendance(request.body || {}, request.user, { location });
+    if (!result.replayed) {
+      recordChanged('ProducedItemBatch');
+      recordChanged('MealServiceAttendance');
+      recordChanged('MealServiceConsumption');
+      if ((result.waste_records || []).length) recordChanged('FoodWaste');
+      await auditAction({
+        user: request.user,
+        action: 'MEAL_SERVICE_SAVED',
+        entity: 'MealServiceAttendance',
+        entityId: result.attendance.id,
+        details: {
+          service_reference: result.attendance.service_reference,
+          attendee_count: result.attendance.attendee_count,
+          menu_plan_id: result.attendance.menu_plan_id,
+          menu_type: result.attendance.menu_type,
+          menu_category: result.attendance.menu_category,
+          dishes: (result.attendance.items || []).map((item) => ({
+            recipe_id: item.recipe_id,
+            prepared_meal_name: item.recipe_name,
+            service_portion_size_grams: item.portion_size_grams,
+            covers: item.covers
+          })),
+          waste_record_ids: (result.waste_records || []).map((record) => record.id),
+          summary: result.summary,
+          idempotency_key: result.attendance.idempotency_key
+        }
+      });
+    }
+    return response.status(result.replayed ? 200 : 201).json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/meal-service/attendance/:id/reverse', requireAuth, requirePermission('record_customer_meal_service'), async (request, response, next) => {
+  try {
+    if (!hasAdminAccess(request.user)) {
+      return response.status(403).json({ message: 'Only administrators can reverse a saved Meal Service request' });
+    }
+    const scope = await getLocationScope(request.user);
+    const attendance = await findDocument('MealServiceAttendance', request.params.id);
+    if (!attendance) return response.status(404).json({ message: 'Meal Service record not found' });
+    if (!scope.unrestricted && !scope.accessibleSiteIds.has(String(attendance.site_id || ''))) {
+      return response.status(403).json({ message: 'You do not have access to this Meal Service record' });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+    const result = await reverseMealServiceAttendance(
+      request.params.id,
+      request.body || {},
+      request.user,
+      { location }
+    );
+    if (!result.replayed) {
+      recordChanged('ProducedItemBatch');
+      recordChanged('MealServiceAttendance');
+      recordChanged('MealServiceConsumption');
+      recordChanged('FoodWaste');
+      await auditAction({
+        user: request.user,
+        action: 'MEAL_SERVICE_REVERSED',
+        entity: 'MealServiceAttendance',
+        entityId: result.attendance.id,
+        details: {
+          service_reference: result.attendance.service_reference,
+          reason: result.attendance.reversal_reason,
+          reversal_idempotency_key: result.attendance.reversal_idempotency_key
+        }
+      });
+    }
+    return response.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/meal-service/report', requireAuth, requireAnyPermission([
+  'view_customer_meal_service',
+  'record_customer_meal_service',
+  'generate_staff_meal_qr'
+]), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const siteId = String(request.query.site_id || '').trim();
+    if (siteId && !scope.unrestricted && !scope.accessibleSiteIds.has(siteId)) {
+      return response.status(403).json({ message: 'You do not have access to this Meal Service location' });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+    return response.json(await getMealServiceReport(request.query, { location }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/inventory/production/:id/repair-menu-classification', requireAuth, async (request, response, next) => {
+  try {
+    if (!hasAdminAccess(request.user)) {
+      return response.status(403).json({ message: 'Only administrators can repair legacy production menu classification' });
+    }
+    const menuPlanId = String(request.body?.menu_plan_id || '').trim();
+    if (!menuPlanId) return response.status(400).json({ message: 'Select the exact menu plan for this legacy production' });
+    const repairedAt = new Date().toISOString();
+    const result = await withTransaction(async (client) => {
+      const production = await findDocument('Production', request.params.id, client, true);
+      if (!production) {
+        const error = new Error('Production record not found');
+        error.status = 404;
+        throw error;
+      }
+      const scope = await getLocationScope(request.user);
+      if (!scope.unrestricted && !scope.accessibleSiteIds.has(String(production.site_id || ''))) {
+        const error = new Error('You do not have access to this production record');
+        error.status = 403;
+        throw error;
+      }
+      const plan = await findDocument('MenuPlan', menuPlanId, client, true);
+      if (!plan) {
+        const error = new Error('Menu plan not found');
+        error.status = 404;
+        throw error;
+      }
+      const classification = resolveLegacyProductionMenuClassification(production, plan);
+      return updateDocument('Production', production.id, {
+        ...classification,
+        legacy_menu_classification_repaired: true,
+        legacy_menu_classification_repaired_by: request.user.email || null,
+        legacy_menu_classification_repaired_by_name: request.user.full_name || request.user.email || null,
+        legacy_menu_classification_repaired_at: repairedAt
+      }, client);
+    });
+    recordChanged('Production');
+    await auditAction({
+      user: request.user,
+      action: 'LEGACY_PRODUCTION_MENU_CLASSIFICATION_REPAIRED',
+      entity: 'Production',
+      entityId: result.id,
+      details: { saved_record: result, menu_plan_id: menuPlanId }
+    });
+    return response.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/inventory/production/:id/complete', requireAuth, requirePermission('complete_production'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
@@ -5310,13 +6594,18 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
     ) {
       return response.status(403).json({ message: 'You do not have access to the selected fulfillment Store' });
     }
-    const result = await completeProduction(request.params.id, request.user, request.body || {});
+    // Completion accepts only the selected legacy fulfillment Store. Raw
+    // reconciliation and finished yield are always recalculated server-side.
+    const result = await completeProduction(request.params.id, request.user, {
+      fulfillment_store_id: requestedFulfillmentStoreId || undefined
+    });
     if (result.mutated) {
       recordChanged('Production');
       recordChanged('ProductionConsumptionReport');
       recordChanged('Inventory');
       recordChanged('InventoryLot');
       recordChanged('InventoryTransaction');
+      recordChanged('ProducedItemBatch');
       await auditAction({
         user: request.user,
         action: 'PRODUCTION_CONSUMPTION_POSTED',
@@ -5325,11 +6614,15 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
         details: {
           saved_record: result.record,
           consumption_report_id: result.record.consumption_report_id,
-          consumption_report_number: result.record.consumption_report_number
+          consumption_report_number: result.record.consumption_report_number,
+          produced_item_batch_id: result.produced_item_batch?.id || result.record.produced_item_batch_id
         }
       });
     }
-    response.json(result.record);
+    response.json({
+      ...result.record,
+      produced_item_batch: result.produced_item_batch || null
+    });
   } catch (error) {
     next(error);
   }

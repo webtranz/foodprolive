@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { addDays, eachDayOfInterval, format, startOfWeek } from 'date-fns';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DragDropContext, Draggable, Droppable } from '@hello-pangea/dnd';
+import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import PageHeader from '@/components/ui/PageHeader';
 import AsyncStatePanel from '@/components/ui/AsyncStatePanel';
@@ -11,9 +12,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertCircle, Calendar, ChevronLeft, ChevronRight, GripVertical, Plus, RefreshCw, Save, ShoppingCart, Trash2, Users } from 'lucide-react';
+import { AlertCircle, Calendar, ChevronLeft, ChevronRight, Factory, GripVertical, Plus, RefreshCw, Save, ShoppingCart, Trash2, Users } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
 import { usePermissions } from '@/components/auth/usePermissions';
+import {
+  getMenuCategoryLabel,
+  getMenuCategoryOptions,
+  MENU_CUISINE_OPTIONS
+} from '../../shared/menuCategories.js';
 import {
   buildDailyMenuState,
   buildMenuPlanMeals,
@@ -45,6 +51,12 @@ const MEAL_BADGES = {
   dinner: 'bg-blue-100 text-blue-700 border-blue-200'
 };
 
+function normalizeRecipeCuisine(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['filipino', 'philippines', 'phillipines', 'philipino'].includes(normalized)) return 'philippines';
+  return normalized || 'general';
+}
+
 function recipeMatchesSite(recipe, siteId) {
   if (!siteId) {
     return true;
@@ -75,9 +87,13 @@ function getGeneratedPRNumber(run) {
 
 export default function MenuPlanning() {
   const { can } = usePermissions();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedSite, setSelectedSite] = useState('');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedMenuCuisine, setSelectedMenuCuisine] = useState('general');
+  const [selectedMenuCategory, setSelectedMenuCategory] = useState('senior');
+  const [selectedMealView, setSelectedMealView] = useState('all');
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [formData, setFormData] = useState(createEmptyDailyMenuState());
   const [selectedBudgetId, setSelectedBudgetId] = useState('');
@@ -129,8 +145,11 @@ export default function MenuPlanning() {
     isLoading: menuPlansLoading,
     error: menuPlansError
   } = useQuery({
-    queryKey: ['menuPlansByWeek', selectedSite, weekStartKey],
-    queryFn: () => base44.menuPlanning.getWeek(selectedSite, weekStartKey),
+    queryKey: ['menuPlansByWeek', selectedSite, weekStartKey, selectedMenuCuisine, selectedMenuCategory],
+    queryFn: () => base44.menuPlanning.getWeek(selectedSite, weekStartKey, {
+      cuisine_type: selectedMenuCuisine,
+      menu_category: selectedMenuCategory
+    }),
     enabled: !!selectedSite
   });
 
@@ -139,8 +158,11 @@ export default function MenuPlanning() {
     isLoading: selectedPlanLoading,
     error: selectedPlanError
   } = useQuery({
-    queryKey: ['menuPlanByDate', selectedSite, selectedDate],
-    queryFn: () => base44.menuPlanning.getByDate(selectedSite, selectedDate),
+    queryKey: ['menuPlanByDate', selectedSite, selectedDate, selectedMenuCuisine, selectedMenuCategory],
+    queryFn: () => base44.menuPlanning.getByDate(selectedSite, selectedDate, {
+      cuisine_type: selectedMenuCuisine,
+      menu_category: selectedMenuCategory
+    }),
     enabled: !!selectedSite && !!selectedDate
   });
 
@@ -218,6 +240,17 @@ export default function MenuPlanning() {
     setCurrentWeekStart(startOfWeek(new Date(selectedDate), { weekStartsOn: 1 }));
   }, [selectedDate]);
 
+  const selectedMenuCategoryOptions = useMemo(
+    () => getMenuCategoryOptions(selectedMenuCuisine),
+    [selectedMenuCuisine]
+  );
+
+  useEffect(() => {
+    if (!selectedMenuCategoryOptions.some((option) => option.value === selectedMenuCategory)) {
+      setSelectedMenuCategory(selectedMenuCategoryOptions[0]?.value || 'senior');
+    }
+  }, [selectedMenuCategory, selectedMenuCategoryOptions]);
+
   useEffect(() => {
     setFormData(buildDailyMenuState(selectedPlan));
   }, [selectedPlan]);
@@ -270,8 +303,13 @@ export default function MenuPlanning() {
   ), [selectedPlan]);
 
   const availableRecipes = useMemo(() => (
-    recipes.filter((recipe) => recipeMatchesSite(recipe, selectedSite))
-  ), [recipes, selectedSite]);
+    recipes
+      .filter((recipe) => recipeMatchesSite(recipe, selectedSite))
+      .filter((recipe) => (
+        normalizeRecipeCuisine(recipe.cuisine_type) === selectedMenuCuisine
+        || (Array.isArray(selectedPlan?.meals) && selectedPlan.meals.some((meal) => meal.recipe_id === recipe.id))
+      ))
+  ), [recipes, selectedSite, selectedMenuCuisine, selectedPlan?.meals]);
 
   const sortedAvailableRecipes = useMemo(() => (
     [...availableRecipes].sort((left, right) => {
@@ -317,6 +355,37 @@ export default function MenuPlanning() {
     lunch: computeMealBudgetStatus(mealBudgetLimits.lunch, costSummary.lunch.total_cost),
     dinner: computeMealBudgetStatus(mealBudgetLimits.dinner, costSummary.dinner.total_cost)
   }), [mealBudgetLimits, costSummary]);
+
+  const visibleMealTypes = selectedMealView === 'all'
+    ? CORE_MENU_MEAL_TYPES
+    : CORE_MENU_MEAL_TYPES.filter((mealType) => mealType === selectedMealView);
+
+  const selectedPlanIssueMeals = useMemo(() => {
+    const meals = Array.isArray(selectedPlan?.meals) ? selectedPlan.meals : [];
+    return meals.filter((meal) => {
+      const mealType = String(meal?.meal_type || '').trim().toLowerCase();
+      const servings = Number(meal?.expected_servings || 0);
+      return CORE_MENU_MEAL_TYPES.includes(mealType)
+        && visibleMealTypes.includes(mealType)
+        && meal.recipe_id
+        && Number.isFinite(servings)
+        && servings > 0;
+    });
+  }, [selectedPlan?.meals, visibleMealTypes]);
+
+  const hasUnsavedMenuChanges = Boolean(selectedSite)
+    && !selectedPlanLoading
+    && hasMenuCalendarChanges(formData, selectedPlan);
+
+  const issueProductionDisabledReason = !can('create_production_request')
+    ? 'You need production creation permission to issue production.'
+    : !selectedPlan
+      ? 'Save the menu plan before issuing production.'
+      : hasUnsavedMenuChanges
+        ? 'Save the latest menu changes before issuing production.'
+        : selectedPlanIssueMeals.length === 0
+          ? 'Add at least one saved recipe with servings in the selected meal view.'
+          : '';
 
   const weekDays = useMemo(() => eachDayOfInterval({
     start: currentWeekStart,
@@ -496,6 +565,8 @@ export default function MenuPlanning() {
       site_id: selectedSiteRecord.id,
       site_name: selectedSiteRecord.name,
       plan_date: selectedDate,
+      cuisine_type: selectedMenuCuisine,
+      menu_category: selectedMenuCategory,
       meals,
       status: selectedPlan?.status || 'planned',
       total_expected_servings: summary.total_expected_servings,
@@ -563,6 +634,30 @@ export default function MenuPlanning() {
     });
   };
 
+  const handleIssueProduction = () => {
+    setMessage('');
+    if (issueProductionDisabledReason) {
+      setMessage(issueProductionDisabledReason);
+      return;
+    }
+
+    navigate('/Production', {
+      state: {
+        issueProduction: {
+          source: 'menu_planning',
+          menu_plan_id: selectedPlan.id,
+          site_id: selectedSiteRecord?.id || selectedSite,
+          site_name: selectedSiteRecord?.name || '',
+          plan_date: selectedDate,
+          meal_view: selectedMealView,
+          menu_type: selectedMenuCuisine,
+          menu_category: selectedMenuCategory,
+          plan: selectedPlan
+        }
+      }
+    });
+  };
+
   const navigateWeek = (direction) => {
     const nextDate = addDays(currentWeekStart, direction * 7);
     setCurrentWeekStart(nextDate);
@@ -596,6 +691,48 @@ export default function MenuPlanning() {
             <span>{message}</span>
           </div>
         ) : null}
+
+        <Card className="border-slate-100 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <Label>Menu Type</Label>
+                <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1 sm:inline-grid">
+                  {MENU_CUISINE_OPTIONS.map((option) => (
+                    <Button
+                      key={option.value}
+                      type="button"
+                      variant={selectedMenuCuisine === option.value ? 'default' : 'ghost'}
+                      className="h-9 px-4"
+                      onClick={() => setSelectedMenuCuisine(option.value)}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div className="w-full lg:max-w-xs">
+                <Label>Menu Category</Label>
+                <Select value={selectedMenuCategory} onValueChange={setSelectedMenuCategory}>
+                  <SelectTrigger className="mt-2 bg-white">
+                    <SelectValue placeholder="Select menu category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectedMenuCategoryOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 lg:min-w-[260px]">
+                <p className="font-semibold text-slate-900">
+                  {MENU_CUISINE_OPTIONS.find((option) => option.value === selectedMenuCuisine)?.label} / {getMenuCategoryLabel(selectedMenuCategory)}
+                </p>
+                <p className="mt-1">Calendar, recipes, save, and upload lookup use this selection.</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {bootstrapError ? (
           <AsyncStatePanel
@@ -1071,6 +1208,65 @@ export default function MenuPlanning() {
                   ) : null}
                 </div>
 
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                      <Label>Meal Period View</Label>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant={selectedMealView === 'all' ? 'default' : 'outline'}
+                          className="h-9"
+                          onClick={() => setSelectedMealView('all')}
+                        >
+                          All Meals
+                        </Button>
+                        <Select value={selectedMealView} onValueChange={setSelectedMealView}>
+                          <SelectTrigger className="h-9 w-full bg-white sm:w-[220px]">
+                            <SelectValue placeholder="Open full meal view" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Meals</SelectItem>
+                            {CORE_MENU_MEAL_TYPES.map((mealType) => (
+                              <SelectItem key={mealType} value={mealType}>{MEAL_LABELS[mealType]}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="flex w-full flex-col gap-2 lg:w-auto lg:items-end">
+                      <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        {selectedMealView === 'all'
+                          ? 'Showing Breakfast, Lunch, and Dinner together.'
+                          : `Showing ${MEAL_LABELS[selectedMealView]} in full view.`}
+                      </div>
+                      {can('create_production_request') ? (
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-end">
+                          <Button
+                            type="button"
+                            className="bg-indigo-700 hover:bg-indigo-800"
+                            onClick={handleIssueProduction}
+                            disabled={Boolean(issueProductionDisabledReason)}
+                            title={issueProductionDisabledReason || undefined}
+                          >
+                            <Factory className="mr-2 h-4 w-4" />
+                            Issue Production
+                          </Button>
+                          {issueProductionDisabledReason ? (
+                            <p className="max-w-sm text-xs text-slate-500 sm:text-right">
+                              {issueProductionDisabledReason}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-slate-500 sm:text-right">
+                              {selectedPlanIssueMeals.length} planned item{selectedPlanIssueMeals.length === 1 ? '' : 's'} ready
+                            </p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+
                 <DragDropContext onDragEnd={handleDragEnd}>
                   <div className="grid gap-4 xl:grid-cols-[320px_1fr]">
                     <Card className="border-slate-200 shadow-none">
@@ -1115,15 +1311,15 @@ export default function MenuPlanning() {
                       </CardContent>
                     </Card>
 
-                    <div className="grid gap-4 xl:grid-cols-3">
-                      {CORE_MENU_MEAL_TYPES.map((mealType) => {
+                    <div className={`grid gap-4 ${selectedMealView === 'all' ? 'xl:grid-cols-3' : 'xl:grid-cols-1'}`}>
+                      {visibleMealTypes.map((mealType) => {
                         const mealRecipes = getRecipesForMeal(mealType);
                         const mealRows = Array.isArray(formData[mealType]) ? formData[mealType] : [createEmptyMealEntry()];
 
                         return (
                           <Card key={mealType} className="border-slate-200 shadow-none">
                             <CardHeader>
-                              <CardTitle className="flex items-center justify-between text-base">
+                              <CardTitle className="flex flex-col gap-3 text-base sm:flex-row sm:items-center sm:justify-between">
                                 <span>{MEAL_LABELS[mealType]}</span>
                                 <div className="flex items-center gap-2">
                                   <Badge className={MEAL_BADGES[mealType]}>
@@ -1142,7 +1338,9 @@ export default function MenuPlanning() {
                                   <div
                                     ref={provided.innerRef}
                                     {...provided.droppableProps}
-                                    className={`space-y-4 rounded-2xl border border-dashed p-2 transition ${snapshot.isDraggingOver ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-slate-50/40'}`}
+                                    className={`grid gap-4 rounded-2xl border border-dashed p-2 transition ${
+                                      selectedMealView === 'all' ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2'
+                                    } ${snapshot.isDraggingOver ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-slate-50/40'}`}
                                   >
                                     {mealRows.map((recipeRow, index) => {
                                       const selectedRecipe = availableRecipes.find((recipe) => recipe.id === recipeRow.recipe_id);

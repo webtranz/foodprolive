@@ -1,0 +1,1051 @@
+status,sheet,cuisine_type,menu_category,source_menu_category,row,day,plan_date,meal_type,menu_item,mapped_recipe_code,mapped_recipe_name,reason
+mapped,SENIOR MESS NEW-2026,general,senior,senior,6,SATURDAY,2026-09-05,breakfast,CHANA MASSALA,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,6,SATURDAY,2026-09-05,breakfast,CHANA MASSALA,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,6,SATURDAY,2026-09-05,breakfast,CHANA MASSALA,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,6,TUESDAY,2026-09-01,breakfast,CHANA DHAL,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,6,TUESDAY,2026-09-01,breakfast,CHANA DHAL,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,6,TUESDAY,2026-09-01,breakfast,CHANA DHAL,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,6,WEDNESDAY,2026-09-02,breakfast,DALL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,6,WEDNESDAY,2026-09-02,breakfast,DALL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,6,WEDNESDAY,2026-09-02,breakfast,DALL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,6,THURSDAY,2026-09-03,breakfast,CHANA DALL,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,6,THURSDAY,2026-09-03,breakfast,CHANA DALL,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,6,THURSDAY,2026-09-03,breakfast,CHANA DALL,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,6,FRIDAY,2026-09-04,breakfast,CHANA MONGO,RCP-009-DALLMONG-KBR384ONEGOV3,Dall Mong KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,6,FRIDAY,2026-09-04,breakfast,CHANA MONGO,RCP-009-DALLMONG-KBR384ONEGOV3,Dall Mong KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,6,FRIDAY,2026-09-04,breakfast,CHANA MONGO,RCP-009-DALLMONG-KBR384ONEGOV3,Dall Mong KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,7,SATURDAY,2026-09-05,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,7,SATURDAY,2026-09-05,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,7,SATURDAY,2026-09-05,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,7,TUESDAY,2026-09-01,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,7,TUESDAY,2026-09-01,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,7,TUESDAY,2026-09-01,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,7,WEDNESDAY,2026-09-02,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,7,WEDNESDAY,2026-09-02,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,7,WEDNESDAY,2026-09-02,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,7,THURSDAY,2026-09-03,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,7,THURSDAY,2026-09-03,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,7,THURSDAY,2026-09-03,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,7,THURSDAY,2026-09-03,breakfast,HALWA,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,7,THURSDAY,2026-09-03,breakfast,HALWA,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,7,THURSDAY,2026-09-03,breakfast,HALWA,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,7,FRIDAY,2026-09-04,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,7,FRIDAY,2026-09-04,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,7,FRIDAY,2026-09-04,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,SENIOR MESS NEW-2026,general,senior,senior,8,SATURDAY,2026-09-05,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,8,SATURDAY,2026-09-05,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,8,SATURDAY,2026-09-05,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,8,TUESDAY,2026-09-01,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,8,TUESDAY,2026-09-01,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,8,TUESDAY,2026-09-01,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,8,WEDNESDAY,2026-09-02,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,8,WEDNESDAY,2026-09-02,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,8,WEDNESDAY,2026-09-02,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,8,THURSDAY,2026-09-03,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,8,THURSDAY,2026-09-03,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,8,THURSDAY,2026-09-03,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,8,FRIDAY,2026-09-04,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,8,FRIDAY,2026-09-04,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,8,FRIDAY,2026-09-04,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,9,SATURDAY,2026-09-05,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,9,SATURDAY,2026-09-05,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,9,SATURDAY,2026-09-05,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,9,TUESDAY,2026-09-01,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,9,TUESDAY,2026-09-01,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,9,TUESDAY,2026-09-01,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,9,WEDNESDAY,2026-09-02,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,9,WEDNESDAY,2026-09-02,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,9,WEDNESDAY,2026-09-02,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,9,THURSDAY,2026-09-03,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,9,THURSDAY,2026-09-03,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,9,THURSDAY,2026-09-03,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,9,FRIDAY,2026-09-04,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,9,FRIDAY,2026-09-04,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,9,FRIDAY,2026-09-04,breakfast,JAM,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,10,SATURDAY,2026-09-05,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,10,SATURDAY,2026-09-05,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,10,SATURDAY,2026-09-05,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,10,TUESDAY,2026-09-01,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,10,TUESDAY,2026-09-01,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,10,TUESDAY,2026-09-01,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,10,WEDNESDAY,2026-09-02,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,10,WEDNESDAY,2026-09-02,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,10,WEDNESDAY,2026-09-02,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,10,THURSDAY,2026-09-03,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,10,THURSDAY,2026-09-03,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,10,THURSDAY,2026-09-03,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,10,FRIDAY,2026-09-04,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,10,FRIDAY,2026-09-04,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,10,FRIDAY,2026-09-04,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+mapped,SENIOR MESS NEW-2026,general,senior,senior,11,SATURDAY,2026-09-05,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,11,SATURDAY,2026-09-05,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,11,SATURDAY,2026-09-05,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,11,TUESDAY,2026-09-01,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,11,TUESDAY,2026-09-01,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,11,TUESDAY,2026-09-01,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,11,WEDNESDAY,2026-09-02,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,11,WEDNESDAY,2026-09-02,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,11,WEDNESDAY,2026-09-02,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,11,THURSDAY,2026-09-03,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,11,THURSDAY,2026-09-03,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,11,THURSDAY,2026-09-03,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,11,FRIDAY,2026-09-04,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,11,FRIDAY,2026-09-04,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,11,FRIDAY,2026-09-04,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,12,SATURDAY,2026-09-05,breakfast,EGG OMLET,RCP-016-OMLETTEWIT-KBR384ONEGOV3,Omlette with onion and tomato KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,12,SATURDAY,2026-09-05,breakfast,EGG OMLET,RCP-016-OMLETTEWIT-KBR384ONEGOV3,Omlette with onion and tomato KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,12,SATURDAY,2026-09-05,breakfast,EGG OMLET,RCP-016-OMLETTEWIT-KBR384ONEGOV3,Omlette with onion and tomato KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,12,TUESDAY,2026-09-01,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,12,TUESDAY,2026-09-01,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,12,TUESDAY,2026-09-01,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,12,WEDNESDAY,2026-09-02,breakfast,EGG OMLET,RCP-016-OMLETTEWIT-KBR384ONEGOV3,Omlette with onion and tomato KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,12,WEDNESDAY,2026-09-02,breakfast,EGG OMLET,RCP-016-OMLETTEWIT-KBR384ONEGOV3,Omlette with onion and tomato KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,12,WEDNESDAY,2026-09-02,breakfast,EGG OMLET,RCP-016-OMLETTEWIT-KBR384ONEGOV3,Omlette with onion and tomato KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,12,THURSDAY,2026-09-03,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,12,THURSDAY,2026-09-03,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,12,THURSDAY,2026-09-03,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,12,FRIDAY,2026-09-04,breakfast,EGG OMLET,RCP-016-OMLETTEWIT-KBR384ONEGOV3,Omlette with onion and tomato KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,12,FRIDAY,2026-09-04,breakfast,EGG OMLET,RCP-016-OMLETTEWIT-KBR384ONEGOV3,Omlette with onion and tomato KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,12,FRIDAY,2026-09-04,breakfast,EGG OMLET,RCP-016-OMLETTEWIT-KBR384ONEGOV3,Omlette with onion and tomato KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,12,FRIDAY,2026-09-04,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,12,FRIDAY,2026-09-04,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,12,FRIDAY,2026-09-04,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,SENIOR MESS NEW-2026,general,senior,senior,13,SATURDAY,2026-09-05,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,13,SATURDAY,2026-09-05,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,13,SATURDAY,2026-09-05,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,13,TUESDAY,2026-09-01,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,13,TUESDAY,2026-09-01,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,13,TUESDAY,2026-09-01,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,13,WEDNESDAY,2026-09-02,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,13,WEDNESDAY,2026-09-02,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,13,WEDNESDAY,2026-09-02,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,13,THURSDAY,2026-09-03,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,13,THURSDAY,2026-09-03,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,13,THURSDAY,2026-09-03,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,13,FRIDAY,2026-09-04,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,13,FRIDAY,2026-09-04,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,13,FRIDAY,2026-09-04,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,14,SATURDAY,2026-09-05,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,14,SATURDAY,2026-09-05,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,14,SATURDAY,2026-09-05,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,14,TUESDAY,2026-09-01,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,14,TUESDAY,2026-09-01,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,14,TUESDAY,2026-09-01,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,14,WEDNESDAY,2026-09-02,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,14,WEDNESDAY,2026-09-02,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,14,WEDNESDAY,2026-09-02,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,14,THURSDAY,2026-09-03,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,14,THURSDAY,2026-09-03,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,14,THURSDAY,2026-09-03,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,14,FRIDAY,2026-09-04,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,14,FRIDAY,2026-09-04,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,14,FRIDAY,2026-09-04,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,15,SATURDAY,2026-09-05,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,15,SATURDAY,2026-09-05,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,15,SATURDAY,2026-09-05,breakfast,WATER BTL,,,Support/non-recipe item
+mapped,SENIOR MESS NEW-2026,general,senior,senior,15,TUESDAY,2026-09-01,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,15,TUESDAY,2026-09-01,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,15,TUESDAY,2026-09-01,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,15,WEDNESDAY,2026-09-02,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,15,WEDNESDAY,2026-09-02,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,15,WEDNESDAY,2026-09-02,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,15,THURSDAY,2026-09-03,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,15,THURSDAY,2026-09-03,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,15,THURSDAY,2026-09-03,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,15,FRIDAY,2026-09-04,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,15,FRIDAY,2026-09-04,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,15,FRIDAY,2026-09-04,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,16,SATURDAY,2026-09-05,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,16,SATURDAY,2026-09-05,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,16,SATURDAY,2026-09-05,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,16,TUESDAY,2026-09-01,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,16,TUESDAY,2026-09-01,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,16,TUESDAY,2026-09-01,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,16,WEDNESDAY,2026-09-02,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,16,WEDNESDAY,2026-09-02,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,16,WEDNESDAY,2026-09-02,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,16,THURSDAY,2026-09-03,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,16,THURSDAY,2026-09-03,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,16,THURSDAY,2026-09-03,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,16,FRIDAY,2026-09-04,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,16,FRIDAY,2026-09-04,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,16,FRIDAY,2026-09-04,breakfast,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,19,SATURDAY,2026-09-05,lunch,CHICKEN CURRY,RCP-028-CHICKENCUR-KBR384ONEGOV3,Chicken Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,19,SATURDAY,2026-09-05,lunch,CHICKEN CURRY,RCP-028-CHICKENCUR-KBR384ONEGOV3,Chicken Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,19,SATURDAY,2026-09-05,lunch,CHICKEN CURRY,RCP-028-CHICKENCUR-KBR384ONEGOV3,Chicken Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,19,TUESDAY,2026-09-01,lunch,CHICKEN TADORI,RCP-036-CHICKENTAN-KBR384ONEGOV3,Chicken Tandori KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,19,TUESDAY,2026-09-01,lunch,CHICKEN TADORI,RCP-036-CHICKENTAN-KBR384ONEGOV3,Chicken Tandori KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,19,TUESDAY,2026-09-01,lunch,CHICKEN TADORI,RCP-036-CHICKENTAN-KBR384ONEGOV3,Chicken Tandori KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,19,WEDNESDAY,2026-09-02,lunch,BUTTER CHICKEN,RCP-024-BUTTERCHIC-KBR384ONEGOV3,Butter Chicken KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,19,WEDNESDAY,2026-09-02,lunch,BUTTER CHICKEN,RCP-024-BUTTERCHIC-KBR384ONEGOV3,Butter Chicken KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,19,WEDNESDAY,2026-09-02,lunch,BUTTER CHICKEN,RCP-024-BUTTERCHIC-KBR384ONEGOV3,Butter Chicken KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,19,THURSDAY,2026-09-03,lunch,CHICKEN CURRY,RCP-028-CHICKENCUR-KBR384ONEGOV3,Chicken Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,19,THURSDAY,2026-09-03,lunch,CHICKEN CURRY,RCP-028-CHICKENCUR-KBR384ONEGOV3,Chicken Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,19,THURSDAY,2026-09-03,lunch,CHICKEN CURRY,RCP-028-CHICKENCUR-KBR384ONEGOV3,Chicken Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,19,FRIDAY,2026-09-04,lunch,MUTTON BIRYANI,RCP-055-MUTTONBIRY-KBR384ONEGOV3,Mutton Biryani KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,19,FRIDAY,2026-09-04,lunch,MUTTON BIRYANI,RCP-055-MUTTONBIRY-KBR384ONEGOV3,Mutton Biryani KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,19,FRIDAY,2026-09-04,lunch,MUTTON BIRYANI,RCP-055-MUTTONBIRY-KBR384ONEGOV3,Mutton Biryani KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,19,FRIDAY,2026-09-04,lunch,CHICKEN BIRYANI,RCP-025-CHICKENBIR-KBR384ONEGOV3,Chicken Biryani KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,19,FRIDAY,2026-09-04,lunch,CHICKEN BIRYANI,RCP-025-CHICKENBIR-KBR384ONEGOV3,Chicken Biryani KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,19,FRIDAY,2026-09-04,lunch,CHICKEN BIRYANI,RCP-025-CHICKENBIR-KBR384ONEGOV3,Chicken Biryani KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,20,SATURDAY,2026-09-05,lunch,CAULIFLOWER,RCP-097-CAULIFLOWE-KBR384ONEGOV3,Cauliflower Potato Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,20,SATURDAY,2026-09-05,lunch,CAULIFLOWER,RCP-097-CAULIFLOWE-KBR384ONEGOV3,Cauliflower Potato Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,20,SATURDAY,2026-09-05,lunch,CAULIFLOWER,RCP-097-CAULIFLOWE-KBR384ONEGOV3,Cauliflower Potato Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,20,TUESDAY,2026-09-01,lunch,CAULIFLOWER,RCP-097-CAULIFLOWE-KBR384ONEGOV3,Cauliflower Potato Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,20,TUESDAY,2026-09-01,lunch,CAULIFLOWER,RCP-097-CAULIFLOWE-KBR384ONEGOV3,Cauliflower Potato Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,20,TUESDAY,2026-09-01,lunch,CAULIFLOWER,RCP-097-CAULIFLOWE-KBR384ONEGOV3,Cauliflower Potato Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,20,WEDNESDAY,2026-09-02,lunch,BITTER GUARD,RCP-095-BITTERGOUR-KBR384ONEGOV3,Bitter Gourd POTATO KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,20,WEDNESDAY,2026-09-02,lunch,BITTER GUARD,RCP-095-BITTERGOUR-KBR384ONEGOV3,Bitter Gourd POTATO KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,20,WEDNESDAY,2026-09-02,lunch,BITTER GUARD,RCP-095-BITTERGOUR-KBR384ONEGOV3,Bitter Gourd POTATO KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,20,THURSDAY,2026-09-03,lunch,GREEN BEANS,RCP-099-GREENBEANS-KBR384ONEGOV3,Green Beans KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,20,THURSDAY,2026-09-03,lunch,GREEN BEANS,RCP-099-GREENBEANS-KBR384ONEGOV3,Green Beans KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,20,THURSDAY,2026-09-03,lunch,GREEN BEANS,RCP-099-GREENBEANS-KBR384ONEGOV3,Green Beans KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,21,SATURDAY,2026-09-05,lunch,DHAL CHANA,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,21,SATURDAY,2026-09-05,lunch,DHAL CHANA,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,21,SATURDAY,2026-09-05,lunch,DHAL CHANA,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,21,TUESDAY,2026-09-01,lunch,DHAL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,21,TUESDAY,2026-09-01,lunch,DHAL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,21,TUESDAY,2026-09-01,lunch,DHAL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,21,WEDNESDAY,2026-09-02,lunch,DHAL BROWN LENTAL,RCP-043-DALMAKHNI-KBR384ONEGOV3,Dal Makhni KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,21,WEDNESDAY,2026-09-02,lunch,DHAL BROWN LENTAL,RCP-043-DALMAKHNI-KBR384ONEGOV3,Dal Makhni KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,21,WEDNESDAY,2026-09-02,lunch,DHAL BROWN LENTAL,RCP-043-DALMAKHNI-KBR384ONEGOV3,Dal Makhni KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,21,THURSDAY,2026-09-03,lunch,DHAL CHICK PEAS,RCP-040-CHICKPEASM-KBR384ONEGOV3,Chickpeas Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,21,THURSDAY,2026-09-03,lunch,DHAL CHICK PEAS,RCP-040-CHICKPEASM-KBR384ONEGOV3,Chickpeas Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,21,THURSDAY,2026-09-03,lunch,DHAL CHICK PEAS,RCP-040-CHICKPEASM-KBR384ONEGOV3,Chickpeas Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,21,FRIDAY,2026-09-04,lunch,DHAL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,21,FRIDAY,2026-09-04,lunch,DHAL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,21,FRIDAY,2026-09-04,lunch,DHAL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,22,SATURDAY,2026-09-05,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,22,SATURDAY,2026-09-05,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,22,SATURDAY,2026-09-05,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,22,TUESDAY,2026-09-01,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,22,TUESDAY,2026-09-01,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,22,TUESDAY,2026-09-01,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,22,WEDNESDAY,2026-09-02,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,22,WEDNESDAY,2026-09-02,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,22,WEDNESDAY,2026-09-02,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,22,THURSDAY,2026-09-03,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,22,THURSDAY,2026-09-03,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,22,THURSDAY,2026-09-03,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,22,FRIDAY,2026-09-04,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,22,FRIDAY,2026-09-04,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,22,FRIDAY,2026-09-04,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,23,SATURDAY,2026-09-05,lunch,VERMICELLI RISE,RCP-075-VERMICELLI-KBR384ONEGOV3,Vermicelli Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,23,SATURDAY,2026-09-05,lunch,VERMICELLI RISE,RCP-075-VERMICELLI-KBR384ONEGOV3,Vermicelli Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,23,SATURDAY,2026-09-05,lunch,VERMICELLI RISE,RCP-075-VERMICELLI-KBR384ONEGOV3,Vermicelli Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,23,TUESDAY,2026-09-01,lunch,KABSA RICE,RCP-070-PLAINKABSA-KBR384ONEGOV3,Plain Kabsa Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,23,TUESDAY,2026-09-01,lunch,KABSA RICE,RCP-070-PLAINKABSA-KBR384ONEGOV3,Plain Kabsa Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,23,TUESDAY,2026-09-01,lunch,KABSA RICE,RCP-070-PLAINKABSA-KBR384ONEGOV3,Plain Kabsa Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,23,WEDNESDAY,2026-09-02,lunch,CHANA POLAW,RCP-066-CHICKPEARI-KBR384ONEGOV3,Chickpea Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,23,WEDNESDAY,2026-09-02,lunch,CHANA POLAW,RCP-066-CHICKPEARI-KBR384ONEGOV3,Chickpea Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,23,WEDNESDAY,2026-09-02,lunch,CHANA POLAW,RCP-066-CHICKPEARI-KBR384ONEGOV3,Chickpea Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,23,THURSDAY,2026-09-03,lunch,VEGETABLE RICE,RCP-074-VEGETABLER-KBR384ONEGOV3,Vegetable Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,23,THURSDAY,2026-09-03,lunch,VEGETABLE RICE,RCP-074-VEGETABLER-KBR384ONEGOV3,Vegetable Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,23,THURSDAY,2026-09-03,lunch,VEGETABLE RICE,RCP-074-VEGETABLER-KBR384ONEGOV3,Vegetable Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,23,FRIDAY,2026-09-04,lunch,RAITA,RCP-083-RAITA-KBR384ONEGOV3,Raita KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,23,FRIDAY,2026-09-04,lunch,RAITA,RCP-083-RAITA-KBR384ONEGOV3,Raita KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,23,FRIDAY,2026-09-04,lunch,RAITA,RCP-083-RAITA-KBR384ONEGOV3,Raita KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,SENIOR MESS NEW-2026,general,senior,senior,24,SATURDAY,2026-09-05,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,24,SATURDAY,2026-09-05,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,24,SATURDAY,2026-09-05,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,24,TUESDAY,2026-09-01,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,24,TUESDAY,2026-09-01,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,24,TUESDAY,2026-09-01,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,24,WEDNESDAY,2026-09-02,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,24,WEDNESDAY,2026-09-02,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,24,WEDNESDAY,2026-09-02,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,24,THURSDAY,2026-09-03,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,24,THURSDAY,2026-09-03,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,24,THURSDAY,2026-09-03,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,24,FRIDAY,2026-09-04,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,24,FRIDAY,2026-09-04,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,24,FRIDAY,2026-09-04,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,25,SATURDAY,2026-09-05,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,25,SATURDAY,2026-09-05,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,25,SATURDAY,2026-09-05,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,25,TUESDAY,2026-09-01,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,25,TUESDAY,2026-09-01,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,25,TUESDAY,2026-09-01,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,25,WEDNESDAY,2026-09-02,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,25,WEDNESDAY,2026-09-02,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,25,WEDNESDAY,2026-09-02,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,25,THURSDAY,2026-09-03,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,25,THURSDAY,2026-09-03,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,25,THURSDAY,2026-09-03,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,25,FRIDAY,2026-09-04,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,25,FRIDAY,2026-09-04,lunch,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,25,FRIDAY,2026-09-04,lunch,WATER BTL,,,Support/non-recipe item
+mapped,SENIOR MESS NEW-2026,general,senior,senior,26,SATURDAY,2026-09-05,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,26,SATURDAY,2026-09-05,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,26,SATURDAY,2026-09-05,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,26,TUESDAY,2026-09-01,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,26,TUESDAY,2026-09-01,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,26,TUESDAY,2026-09-01,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,26,WEDNESDAY,2026-09-02,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,26,WEDNESDAY,2026-09-02,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,26,WEDNESDAY,2026-09-02,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,26,THURSDAY,2026-09-03,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,26,THURSDAY,2026-09-03,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,26,THURSDAY,2026-09-03,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,SENIOR MESS NEW-2026,general,senior,senior,26,FRIDAY,2026-09-04,lunch,SOFT DRINK,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,26,FRIDAY,2026-09-04,lunch,SOFT DRINK,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,26,FRIDAY,2026-09-04,lunch,SOFT DRINK,,,Support/non-recipe item
+mapped,SENIOR MESS NEW-2026,general,senior,senior,26,FRIDAY,2026-09-04,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,26,FRIDAY,2026-09-04,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,26,FRIDAY,2026-09-04,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,27,SATURDAY,2026-09-05,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,27,SATURDAY,2026-09-05,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,27,SATURDAY,2026-09-05,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,27,TUESDAY,2026-09-01,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,27,TUESDAY,2026-09-01,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,27,TUESDAY,2026-09-01,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,27,WEDNESDAY,2026-09-02,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,27,WEDNESDAY,2026-09-02,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,27,WEDNESDAY,2026-09-02,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,27,THURSDAY,2026-09-03,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,27,THURSDAY,2026-09-03,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,27,THURSDAY,2026-09-03,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,27,FRIDAY,2026-09-04,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,27,FRIDAY,2026-09-04,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,27,FRIDAY,2026-09-04,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,28,SATURDAY,2026-09-05,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,28,SATURDAY,2026-09-05,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,28,SATURDAY,2026-09-05,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,28,TUESDAY,2026-09-01,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,28,TUESDAY,2026-09-01,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,28,TUESDAY,2026-09-01,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,28,WEDNESDAY,2026-09-02,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,28,WEDNESDAY,2026-09-02,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,28,WEDNESDAY,2026-09-02,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,28,THURSDAY,2026-09-03,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,28,THURSDAY,2026-09-03,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,28,THURSDAY,2026-09-03,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,28,FRIDAY,2026-09-04,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,28,FRIDAY,2026-09-04,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,28,FRIDAY,2026-09-04,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,31,SATURDAY,2026-09-05,dinner,GRILLED FISH FILLET,RCP-053-GRILLEDFIS-KBR384ONEGOV3,Grilled Fish Fillet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,31,SATURDAY,2026-09-05,dinner,GRILLED FISH FILLET,RCP-053-GRILLEDFIS-KBR384ONEGOV3,Grilled Fish Fillet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,31,SATURDAY,2026-09-05,dinner,GRILLED FISH FILLET,RCP-053-GRILLEDFIS-KBR384ONEGOV3,Grilled Fish Fillet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,31,TUESDAY,2026-09-01,dinner,CHICKEN BROASTED,RCP-026-CHICKENBRO-KBR384ONEGOV3,Chicken Broasted KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,31,TUESDAY,2026-09-01,dinner,CHICKEN BROASTED,RCP-026-CHICKENBRO-KBR384ONEGOV3,Chicken Broasted KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,31,TUESDAY,2026-09-01,dinner,CHICKEN BROASTED,RCP-026-CHICKENBRO-KBR384ONEGOV3,Chicken Broasted KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,31,WEDNESDAY,2026-09-02,dinner,CHICKEN JALFREZI,RCP-032-CHICKENJAL-KBR384ONEGOV3,Chicken Jalfrezi KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,31,WEDNESDAY,2026-09-02,dinner,CHICKEN JALFREZI,RCP-032-CHICKENJAL-KBR384ONEGOV3,Chicken Jalfrezi KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,31,WEDNESDAY,2026-09-02,dinner,CHICKEN JALFREZI,RCP-032-CHICKENJAL-KBR384ONEGOV3,Chicken Jalfrezi KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,31,THURSDAY,2026-09-03,dinner,CHICKEN STRIPE,RCP-038-CRISPYCHIC-KBR384ONEGOV3,Crispy Chicken Strips KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,31,THURSDAY,2026-09-03,dinner,CHICKEN STRIPE,RCP-038-CRISPYCHIC-KBR384ONEGOV3,Crispy Chicken Strips KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,31,THURSDAY,2026-09-03,dinner,CHICKEN STRIPE,RCP-038-CRISPYCHIC-KBR384ONEGOV3,Crispy Chicken Strips KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,31,FRIDAY,2026-09-04,dinner,CHICKEN TIKKA MASALA,RCP-037-CHICKENTIK-KBR384ONEGOV3,Chicken Tikka KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,31,FRIDAY,2026-09-04,dinner,CHICKEN TIKKA MASALA,RCP-037-CHICKENTIK-KBR384ONEGOV3,Chicken Tikka KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,31,FRIDAY,2026-09-04,dinner,CHICKEN TIKKA MASALA,RCP-037-CHICKENTIK-KBR384ONEGOV3,Chicken Tikka KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,32,SATURDAY,2026-09-05,dinner,ALO PALAK,RCP-035-CHICKENPAL-KBR384ONEGOV3,Chicken Palak KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,32,SATURDAY,2026-09-05,dinner,ALO PALAK,RCP-035-CHICKENPAL-KBR384ONEGOV3,Chicken Palak KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,32,SATURDAY,2026-09-05,dinner,ALO PALAK,RCP-035-CHICKENPAL-KBR384ONEGOV3,Chicken Palak KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,32,TUESDAY,2026-09-01,dinner,LONG MARROW,RCP-100-LONEMARROW-KBR384ONEGOV3,LONE MARROW POTATO SWEET PEPPER KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,32,TUESDAY,2026-09-01,dinner,LONG MARROW,RCP-100-LONEMARROW-KBR384ONEGOV3,LONE MARROW POTATO SWEET PEPPER KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,32,TUESDAY,2026-09-01,dinner,LONG MARROW,RCP-100-LONEMARROW-KBR384ONEGOV3,LONE MARROW POTATO SWEET PEPPER KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,32,WEDNESDAY,2026-09-02,dinner,PASTA,RCP-060-PASTAWITHT-KBR384ONEGOV3,Pasta with Tomato Sauce KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,32,WEDNESDAY,2026-09-02,dinner,PASTA,RCP-060-PASTAWITHT-KBR384ONEGOV3,Pasta with Tomato Sauce KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,32,WEDNESDAY,2026-09-02,dinner,PASTA,RCP-060-PASTAWITHT-KBR384ONEGOV3,Pasta with Tomato Sauce KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,32,THURSDAY,2026-09-03,dinner,FRESH SMALL MERROW,RCP-100-LONEMARROW-KBR384ONEGOV3,LONE MARROW POTATO SWEET PEPPER KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,32,THURSDAY,2026-09-03,dinner,FRESH SMALL MERROW,RCP-100-LONEMARROW-KBR384ONEGOV3,LONE MARROW POTATO SWEET PEPPER KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,32,THURSDAY,2026-09-03,dinner,FRESH SMALL MERROW,RCP-100-LONEMARROW-KBR384ONEGOV3,LONE MARROW POTATO SWEET PEPPER KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,32,FRIDAY,2026-09-04,dinner,VIGGES POTATO,RCP-102-ROASTPOTAT-KBR384ONEGOV3,Roast Potatoes KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,32,FRIDAY,2026-09-04,dinner,VIGGES POTATO,RCP-102-ROASTPOTAT-KBR384ONEGOV3,Roast Potatoes KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,32,FRIDAY,2026-09-04,dinner,VIGGES POTATO,RCP-102-ROASTPOTAT-KBR384ONEGOV3,Roast Potatoes KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,33,SATURDAY,2026-09-05,dinner,DHAL MONGO,RCP-049-DALLMONGO-KBR384ONEGOV3,Dall Mongo KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,33,SATURDAY,2026-09-05,dinner,DHAL MONGO,RCP-049-DALLMONGO-KBR384ONEGOV3,Dall Mongo KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,33,SATURDAY,2026-09-05,dinner,DHAL MONGO,RCP-049-DALLMONGO-KBR384ONEGOV3,Dall Mongo KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,33,TUESDAY,2026-09-01,dinner,WHITE BEANS,RCP-041-DAALLOBIA-KBR384ONEGOV3,Daal Lobia KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,33,TUESDAY,2026-09-01,dinner,WHITE BEANS,RCP-041-DAALLOBIA-KBR384ONEGOV3,Daal Lobia KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,33,TUESDAY,2026-09-01,dinner,WHITE BEANS,RCP-041-DAALLOBIA-KBR384ONEGOV3,Daal Lobia KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,33,WEDNESDAY,2026-09-02,dinner,DHAL MASH,RCP-048-DALLMASH-KBR384ONEGOV3,Dall Mash KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,33,WEDNESDAY,2026-09-02,dinner,DHAL MASH,RCP-048-DALLMASH-KBR384ONEGOV3,Dall Mash KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,33,WEDNESDAY,2026-09-02,dinner,DHAL MASH,RCP-048-DALLMASH-KBR384ONEGOV3,Dall Mash KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,33,THURSDAY,2026-09-03,dinner,DHAL MASH,RCP-048-DALLMASH-KBR384ONEGOV3,Dall Mash KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,33,THURSDAY,2026-09-03,dinner,DHAL MASH,RCP-048-DALLMASH-KBR384ONEGOV3,Dall Mash KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,33,THURSDAY,2026-09-03,dinner,DHAL MASH,RCP-048-DALLMASH-KBR384ONEGOV3,Dall Mash KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,33,FRIDAY,2026-09-04,dinner,DHAL CHANA,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,33,FRIDAY,2026-09-04,dinner,DHAL CHANA,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,33,FRIDAY,2026-09-04,dinner,DHAL CHANA,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,34,SATURDAY,2026-09-05,dinner,MANDI RICE,RCP-063-ARABICMAND-KBR384ONEGOV3,arabic Mandi Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,34,SATURDAY,2026-09-05,dinner,MANDI RICE,RCP-063-ARABICMAND-KBR384ONEGOV3,arabic Mandi Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,34,SATURDAY,2026-09-05,dinner,MANDI RICE,RCP-063-ARABICMAND-KBR384ONEGOV3,arabic Mandi Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,34,TUESDAY,2026-09-01,dinner,YELLOW RICE,RCP-077-YELLOWRICE-KBR384ONEGOV3,Yellow Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,34,TUESDAY,2026-09-01,dinner,YELLOW RICE,RCP-077-YELLOWRICE-KBR384ONEGOV3,Yellow Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,34,TUESDAY,2026-09-01,dinner,YELLOW RICE,RCP-077-YELLOWRICE-KBR384ONEGOV3,Yellow Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,34,WEDNESDAY,2026-09-02,dinner,BROWN RICE,RCP-071-PLAINPULAO-KBR384ONEGOV3,Plain Pulao Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,34,WEDNESDAY,2026-09-02,dinner,BROWN RICE,RCP-071-PLAINPULAO-KBR384ONEGOV3,Plain Pulao Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,34,WEDNESDAY,2026-09-02,dinner,BROWN RICE,RCP-071-PLAINPULAO-KBR384ONEGOV3,Plain Pulao Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,34,THURSDAY,2026-09-03,dinner,POTATO RICE,RCP-074-VEGETABLER-KBR384ONEGOV3,Vegetable Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,34,THURSDAY,2026-09-03,dinner,POTATO RICE,RCP-074-VEGETABLER-KBR384ONEGOV3,Vegetable Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,34,THURSDAY,2026-09-03,dinner,POTATO RICE,RCP-074-VEGETABLER-KBR384ONEGOV3,Vegetable Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,34,FRIDAY,2026-09-04,dinner,ZERA RICE,RCP-068-CUMINRICE-KBR384ONEGOV3,Cumin Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,34,FRIDAY,2026-09-04,dinner,ZERA RICE,RCP-068-CUMINRICE-KBR384ONEGOV3,Cumin Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,34,FRIDAY,2026-09-04,dinner,ZERA RICE,RCP-068-CUMINRICE-KBR384ONEGOV3,Cumin Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,35,SATURDAY,2026-09-05,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,35,SATURDAY,2026-09-05,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,35,SATURDAY,2026-09-05,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,35,TUESDAY,2026-09-01,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,35,TUESDAY,2026-09-01,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,35,TUESDAY,2026-09-01,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,35,WEDNESDAY,2026-09-02,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,35,WEDNESDAY,2026-09-02,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,35,WEDNESDAY,2026-09-02,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,35,THURSDAY,2026-09-03,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,35,THURSDAY,2026-09-03,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,35,THURSDAY,2026-09-03,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,35,FRIDAY,2026-09-04,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,35,FRIDAY,2026-09-04,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,35,FRIDAY,2026-09-04,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,36,SATURDAY,2026-09-05,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,36,SATURDAY,2026-09-05,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,36,SATURDAY,2026-09-05,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,36,TUESDAY,2026-09-01,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,36,TUESDAY,2026-09-01,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,36,TUESDAY,2026-09-01,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,36,WEDNESDAY,2026-09-02,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,36,WEDNESDAY,2026-09-02,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,36,WEDNESDAY,2026-09-02,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,36,THURSDAY,2026-09-03,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,36,THURSDAY,2026-09-03,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,36,THURSDAY,2026-09-03,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,36,FRIDAY,2026-09-04,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,36,FRIDAY,2026-09-04,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,36,FRIDAY,2026-09-04,dinner,SWEET,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,SENIOR MESS NEW-2026,general,senior,senior,37,SATURDAY,2026-09-05,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,37,SATURDAY,2026-09-05,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,37,SATURDAY,2026-09-05,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,37,TUESDAY,2026-09-01,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,37,TUESDAY,2026-09-01,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,37,TUESDAY,2026-09-01,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,37,WEDNESDAY,2026-09-02,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,37,WEDNESDAY,2026-09-02,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,37,WEDNESDAY,2026-09-02,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,37,THURSDAY,2026-09-03,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,37,THURSDAY,2026-09-03,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,37,THURSDAY,2026-09-03,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,37,FRIDAY,2026-09-04,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,37,FRIDAY,2026-09-04,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,37,FRIDAY,2026-09-04,dinner,WATER BTL,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,38,SATURDAY,2026-09-05,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,38,SATURDAY,2026-09-05,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,38,SATURDAY,2026-09-05,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,38,TUESDAY,2026-09-01,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,38,TUESDAY,2026-09-01,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,38,TUESDAY,2026-09-01,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,38,WEDNESDAY,2026-09-02,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,38,WEDNESDAY,2026-09-02,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,38,WEDNESDAY,2026-09-02,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,38,THURSDAY,2026-09-03,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,38,THURSDAY,2026-09-03,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,38,THURSDAY,2026-09-03,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,senior,senior,38,FRIDAY,2026-09-04,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,labor,senior,38,FRIDAY,2026-09-04,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,38,FRIDAY,2026-09-04,dinner,ARABIC BREAD,,,Support/non-recipe item
+mapped,SENIOR MESS NEW-2026,general,senior,senior,39,SATURDAY,2026-09-05,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,39,SATURDAY,2026-09-05,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,39,SATURDAY,2026-09-05,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,39,TUESDAY,2026-09-01,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,39,TUESDAY,2026-09-01,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,39,TUESDAY,2026-09-01,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,39,WEDNESDAY,2026-09-02,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,39,WEDNESDAY,2026-09-02,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,39,WEDNESDAY,2026-09-02,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,39,THURSDAY,2026-09-03,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,39,THURSDAY,2026-09-03,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,39,THURSDAY,2026-09-03,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,39,FRIDAY,2026-09-04,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,39,FRIDAY,2026-09-04,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,39,FRIDAY,2026-09-04,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,40,SATURDAY,2026-09-05,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,40,SATURDAY,2026-09-05,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,40,SATURDAY,2026-09-05,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,40,TUESDAY,2026-09-01,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,40,TUESDAY,2026-09-01,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,40,TUESDAY,2026-09-01,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,40,WEDNESDAY,2026-09-02,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,40,WEDNESDAY,2026-09-02,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,40,WEDNESDAY,2026-09-02,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,40,THURSDAY,2026-09-03,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,40,THURSDAY,2026-09-03,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,40,THURSDAY,2026-09-03,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,senior,senior,40,FRIDAY,2026-09-04,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,labor,senior,40,FRIDAY,2026-09-04,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,SENIOR MESS NEW-2026,general,management_menu,senior,40,FRIDAY,2026-09-04,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,SENIOR MESS NEW-2026,general,senior,senior,42,SATURDAY,2026-09-05,dinner,NOTE: THE MENU CAN BE CHANGED WITHOUT NOTIFICATION DUE TO NON AVAILABILITY OF MATERIALS.,,,Workbook footer/non-menu text
+skipped,SENIOR MESS NEW-2026,general,labor,senior,42,SATURDAY,2026-09-05,dinner,NOTE: THE MENU CAN BE CHANGED WITHOUT NOTIFICATION DUE TO NON AVAILABILITY OF MATERIALS.,,,Workbook footer/non-menu text
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,42,SATURDAY,2026-09-05,dinner,NOTE: THE MENU CAN BE CHANGED WITHOUT NOTIFICATION DUE TO NON AVAILABILITY OF MATERIALS.,,,Workbook footer/non-menu text
+skipped,SENIOR MESS NEW-2026,general,senior,senior,42,FRIDAY,2026-09-04,dinner,31/08-2026,,,Workbook footer/non-menu text
+skipped,SENIOR MESS NEW-2026,general,labor,senior,42,FRIDAY,2026-09-04,dinner,31/08-2026,,,Workbook footer/non-menu text
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,42,FRIDAY,2026-09-04,dinner,31/08-2026,,,Workbook footer/non-menu text
+skipped,SENIOR MESS NEW-2026,general,senior,senior,45,THURSDAY,2026-09-03,dinner,APPROVED BY:_______________________,,,Workbook footer/non-menu text
+skipped,SENIOR MESS NEW-2026,general,labor,senior,45,THURSDAY,2026-09-03,dinner,APPROVED BY:_______________________,,,Workbook footer/non-menu text
+skipped,SENIOR MESS NEW-2026,general,management_menu,senior,45,THURSDAY,2026-09-03,dinner,APPROVED BY:_______________________,,,Workbook footer/non-menu text
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,6,SATURDAY,2026-09-05,breakfast,CHANA MASSALA,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,6,TUESDAY,2026-09-01,breakfast,CHANA DHAL,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,6,WEDNESDAY,2026-09-02,breakfast,DHAL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,6,THURSDAY,2026-09-03,breakfast,CHANA DHAL,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,6,FRIDAY,2026-09-04,breakfast,MIX DALL,RCP-047-DALLMAKHNI-KBR384ONEGOV3,Dall Makhni Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,7,SATURDAY,2026-09-05,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,7,TUESDAY,2026-09-01,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,7,WEDNESDAY,2026-09-02,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,7,THURSDAY,2026-09-03,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,7,FRIDAY,2026-09-04,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,8,THURSDAY,2026-09-03,breakfast,HALWA,RCP-090-STANDARDCA-KBR384ONEGOV3,Standard Catering Sweet KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,8,FRIDAY,2026-09-04,breakfast,BOILED EGG,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,9,SATURDAY,2026-09-05,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,9,TUESDAY,2026-09-01,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,9,WEDNESDAY,2026-09-02,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,9,THURSDAY,2026-09-03,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,9,FRIDAY,2026-09-04,breakfast,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,10,SATURDAY,2026-09-05,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,10,TUESDAY,2026-09-01,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,10,WEDNESDAY,2026-09-02,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,10,THURSDAY,2026-09-03,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,10,FRIDAY,2026-09-04,breakfast,SLICE BREAD,,,Support/non-recipe item
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,11,SATURDAY,2026-09-05,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,11,TUESDAY,2026-09-01,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,11,WEDNESDAY,2026-09-02,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,11,THURSDAY,2026-09-03,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,11,FRIDAY,2026-09-04,breakfast,WHITE RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,12,SATURDAY,2026-09-05,breakfast,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,12,TUESDAY,2026-09-01,breakfast,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,12,WEDNESDAY,2026-09-02,breakfast,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,12,THURSDAY,2026-09-03,breakfast,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,12,FRIDAY,2026-09-04,breakfast,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,13,SATURDAY,2026-09-05,breakfast,TEA/COFFEE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,13,TUESDAY,2026-09-01,breakfast,TEA/COFFEE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,13,WEDNESDAY,2026-09-02,breakfast,TEA/COFFEE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,13,THURSDAY,2026-09-03,breakfast,TEA/COFFEE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,13,FRIDAY,2026-09-04,breakfast,TEA/COFFEE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,14,SATURDAY,2026-09-05,breakfast,MILK POWDER,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,14,TUESDAY,2026-09-01,breakfast,MILK POWDER,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,14,WEDNESDAY,2026-09-02,breakfast,MILK POWDER,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,14,THURSDAY,2026-09-03,breakfast,MILK POWDER,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,14,FRIDAY,2026-09-04,breakfast,MILK POWDER,,,Support/non-recipe item
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,19,SATURDAY,2026-09-05,lunch,CHICKEN WINGS FRIED,RCP-026-CHICKENBRO-KBR384ONEGOV3,Chicken Broasted KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,19,TUESDAY,2026-09-01,lunch,BUTTER CHICKEN,RCP-024-BUTTERCHIC-KBR384ONEGOV3,Butter Chicken KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,19,WEDNESDAY,2026-09-02,lunch,WINGH CURRY,RCP-028-CHICKENCUR-KBR384ONEGOV3,Chicken Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,19,THURSDAY,2026-09-03,lunch,CHICKEN PALAK,RCP-035-CHICKENPAL-KBR384ONEGOV3,Chicken Palak KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,19,FRIDAY,2026-09-04,lunch,CHICKEN BIRYANI,RCP-025-CHICKENBIR-KBR384ONEGOV3,Chicken Biryani KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,19,FRIDAY,2026-09-04,lunch,MUTTON BIRYANI,RCP-055-MUTTONBIRY-KBR384ONEGOV3,Mutton Biryani KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,20,SATURDAY,2026-09-05,lunch,MIX VEGETABLE,RCP-101-MIXVEGETAB-KBR384ONEGOV3,Mix Vegetable Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,20,TUESDAY,2026-09-01,lunch,ALO GOBI,RCP-094-ALOOGOBI-KBR384ONEGOV3,ALOO GOBI KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,20,WEDNESDAY,2026-09-02,lunch,ALO PALAK,RCP-035-CHICKENPAL-KBR384ONEGOV3,Chicken Palak KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,20,THURSDAY,2026-09-03,lunch,CUT GREEN BEAN,RCP-099-GREENBEANS-KBR384ONEGOV3,Green Beans KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,20,FRIDAY,2026-09-04,lunch,RAITA,RCP-083-RAITA-KBR384ONEGOV3,Raita KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,21,SATURDAY,2026-09-05,lunch,DAAL CHANA,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,21,TUESDAY,2026-09-01,lunch,DAAL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,21,WEDNESDAY,2026-09-02,lunch,DAAL BROWN LENTAL,RCP-043-DALMAKHNI-KBR384ONEGOV3,Dal Makhni KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,21,THURSDAY,2026-09-03,lunch,CHICK PEAS ( Chana),RCP-040-CHICKPEASM-KBR384ONEGOV3,Chickpeas Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,21,FRIDAY,2026-09-04,lunch,DHAL MASOOR,RCP-008-DALMASOOR-KBR384ONEGOV3,Dal Masoor (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,22,SATURDAY,2026-09-05,lunch,GREEN SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,22,TUESDAY,2026-09-01,lunch,GREEN SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,22,WEDNESDAY,2026-09-02,lunch,GREEN SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,22,THURSDAY,2026-09-03,lunch,GREEN SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,22,FRIDAY,2026-09-04,lunch,RAITA,RCP-083-RAITA-KBR384ONEGOV3,Raita KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,23,SATURDAY,2026-09-05,lunch,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,23,TUESDAY,2026-09-01,lunch,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,23,WEDNESDAY,2026-09-02,lunch,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,23,THURSDAY,2026-09-03,lunch,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,23,FRIDAY,2026-09-04,lunch,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,24,SATURDAY,2026-09-05,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,24,TUESDAY,2026-09-01,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,24,WEDNESDAY,2026-09-02,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,24,THURSDAY,2026-09-03,lunch,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,24,FRIDAY,2026-09-04,lunch,ARABIC BREAD,,,Support/non-recipe item
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,25,SATURDAY,2026-09-05,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,25,TUESDAY,2026-09-01,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,25,WEDNESDAY,2026-09-02,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,25,THURSDAY,2026-09-03,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,25,FRIDAY,2026-09-04,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,26,SATURDAY,2026-09-05,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,26,TUESDAY,2026-09-01,lunch,SMALL MILK,,,Support/non-recipe item
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,26,WEDNESDAY,2026-09-02,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,26,THURSDAY,2026-09-03,lunch,SMALL MILK,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,26,FRIDAY,2026-09-04,lunch,SOFT DRINK,,,Support/non-recipe item
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,27,SATURDAY,2026-09-05,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,27,TUESDAY,2026-09-01,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,27,WEDNESDAY,2026-09-02,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,27,THURSDAY,2026-09-03,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,27,FRIDAY,2026-09-04,lunch,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,32,SATURDAY,2026-09-05,dinner,EGG CURRY,RCP-021-EGGCURRY-KBR384ONEGOV3,Egg Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,32,TUESDAY,2026-09-01,dinner,MUTTON CURRY,RCP-056-MUTTONCURR-KBR384ONEGOV3,Mutton Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,32,WEDNESDAY,2026-09-02,dinner,CHICKEN HALEEM,RCP-030-CHICKENHAL-KBR384ONEGOV3,Chicken Haleem KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,32,THURSDAY,2026-09-03,dinner,FISH CURRY,RCP-051-FISHCURRY-KBR384ONEGOV3,Fish Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,32,FRIDAY,2026-09-04,dinner,CHICKEN CURRY,RCP-028-CHICKENCUR-KBR384ONEGOV3,Chicken Curry KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,33,SATURDAY,2026-09-05,dinner,LONG MERROW,RCP-100-LONEMARROW-KBR384ONEGOV3,LONE MARROW POTATO SWEET PEPPER KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,33,TUESDAY,2026-09-01,dinner,LONG MARROW,RCP-100-LONEMARROW-KBR384ONEGOV3,LONE MARROW POTATO SWEET PEPPER KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,33,WEDNESDAY,2026-09-02,dinner,SMALL MARROW,RCP-100-LONEMARROW-KBR384ONEGOV3,LONE MARROW POTATO SWEET PEPPER KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,33,THURSDAY,2026-09-03,dinner,OKRA,RCP-092-ACHARIOKRA-KBR384ONEGOV3,Achari Okra KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,33,FRIDAY,2026-09-04,dinner,CURRY PAKURA,RCP-098-DAHIKARIWI-KBR384ONEGOV3,Dahi Kari with Pakora KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,33,FRIDAY,2026-09-04,dinner,ALO PALAK,RCP-035-CHICKENPAL-KBR384ONEGOV3,Chicken Palak KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,34,SATURDAY,2026-09-05,dinner,DAAL MOONG,RCP-049-DALLMONGO-KBR384ONEGOV3,Dall Mongo KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,34,TUESDAY,2026-09-01,dinner,DALL MASH,RCP-048-DALLMASH-KBR384ONEGOV3,Dall Mash KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,34,WEDNESDAY,2026-09-02,dinner,-,,,Support/non-recipe item
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,34,THURSDAY,2026-09-03,dinner,WHITE BEANS,RCP-041-DAALLOBIA-KBR384ONEGOV3,Daal Lobia KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,34,FRIDAY,2026-09-04,dinner,DAAL CHANA,RCP-007-DALCHANAFR-KBR384ONEGOV3,Dal Chana Fry (Breakfast Items 1) KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,35,SATURDAY,2026-09-05,dinner,GREEN SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,35,TUESDAY,2026-09-01,dinner,GREEN SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,35,WEDNESDAY,2026-09-02,dinner,GREEN SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,35,THURSDAY,2026-09-03,dinner,GREEN SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,35,FRIDAY,2026-09-04,dinner,GREEN SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,36,SATURDAY,2026-09-05,dinner,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,36,TUESDAY,2026-09-01,dinner,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,36,WEDNESDAY,2026-09-02,dinner,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,36,THURSDAY,2026-09-03,dinner,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,36,FRIDAY,2026-09-04,dinner,RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,37,SATURDAY,2026-09-05,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,37,TUESDAY,2026-09-01,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,37,WEDNESDAY,2026-09-02,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,37,THURSDAY,2026-09-03,dinner,ARABIC BREAD,,,Support/non-recipe item
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,37,FRIDAY,2026-09-04,dinner,ARABIC BREAD,,,Support/non-recipe item
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,38,SATURDAY,2026-09-05,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,38,TUESDAY,2026-09-01,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,38,WEDNESDAY,2026-09-02,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,38,THURSDAY,2026-09-03,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,JUNIOR MESS NEW-2026,general,junior,junior,38,FRIDAY,2026-09-04,dinner,TEA/ COFFEE/ MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,41,SATURDAY,2026-09-05,dinner,NOTE: THE MENU CAN BE CHANGED WITHOUT NOTIFICATION DUE TO NON AVAILABILITY OF MATERIALS.,,,Workbook footer/non-menu text
+skipped,JUNIOR MESS NEW-2026,general,junior,junior,44,THURSDAY,2026-09-03,dinner,APPROVED BY --------------------,,,Workbook footer/non-menu text
+mapped,FILPINO,philippines,senior,senior,5,SATURDAY,2026-09-05,breakfast,BREAK FAST,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,5,SATURDAY,2026-09-05,breakfast,BREAK FAST,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,5,SATURDAY,2026-09-05,breakfast,BREAK FAST,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,6,SATURDAY,2026-09-05,breakfast,SPAGHETTI,PH-020-SPAGHETTIPHI,SPAGHETTI PHILIPPINES Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,6,SATURDAY,2026-09-05,breakfast,SPAGHETTI,PH-020-SPAGHETTIPHI,SPAGHETTI PHILIPPINES Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,6,SATURDAY,2026-09-05,breakfast,SPAGHETTI,PH-020-SPAGHETTIPHI,SPAGHETTI PHILIPPINES Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,6,TUESDAY,2026-09-01,breakfast,SARDINES,PH-021-SARDINEPHILI,Sardine Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,6,TUESDAY,2026-09-01,breakfast,SARDINES,PH-021-SARDINEPHILI,Sardine Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,6,TUESDAY,2026-09-01,breakfast,SARDINES,PH-021-SARDINEPHILI,Sardine Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,6,WEDNESDAY,2026-09-02,breakfast,SCRAMBLED EGGS,RCP-019-SCRAMBLEDE-KBR384ONEGOV3,Scrambled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,6,WEDNESDAY,2026-09-02,breakfast,SCRAMBLED EGGS,RCP-019-SCRAMBLEDE-KBR384ONEGOV3,Scrambled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,6,WEDNESDAY,2026-09-02,breakfast,SCRAMBLED EGGS,RCP-019-SCRAMBLEDE-KBR384ONEGOV3,Scrambled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,6,THURSDAY,2026-09-03,breakfast,TUNA,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,6,THURSDAY,2026-09-03,breakfast,TUNA,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,6,THURSDAY,2026-09-03,breakfast,TUNA,RCP-006-CHANAMASAL-KBR384ONEGOV3,Chana Masala KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,6,FRIDAY,2026-09-04,breakfast,CHICKEN LUNCHION MEAT,PH-003-CHLUNCHEONCH,Ch.Luncheon Chicken / Beef Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,6,FRIDAY,2026-09-04,breakfast,CHICKEN LUNCHION MEAT,PH-003-CHLUNCHEONCH,Ch.Luncheon Chicken / Beef Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,6,FRIDAY,2026-09-04,breakfast,CHICKEN LUNCHION MEAT,PH-003-CHLUNCHEONCH,Ch.Luncheon Chicken / Beef Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,7,SATURDAY,2026-09-05,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,7,SATURDAY,2026-09-05,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,7,SATURDAY,2026-09-05,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,7,TUESDAY,2026-09-01,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,7,TUESDAY,2026-09-01,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,7,TUESDAY,2026-09-01,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,7,WEDNESDAY,2026-09-02,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,7,WEDNESDAY,2026-09-02,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,7,WEDNESDAY,2026-09-02,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,7,THURSDAY,2026-09-03,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,7,THURSDAY,2026-09-03,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,7,THURSDAY,2026-09-03,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,7,FRIDAY,2026-09-04,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,7,FRIDAY,2026-09-04,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,7,FRIDAY,2026-09-04,breakfast,BOILED EGGS,RCP-011-BOILEDEGGS-KBR384ONEGOV3,Boiled Eggs KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,8,SATURDAY,2026-09-05,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,8,SATURDAY,2026-09-05,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,8,SATURDAY,2026-09-05,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,8,TUESDAY,2026-09-01,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,8,TUESDAY,2026-09-01,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,8,TUESDAY,2026-09-01,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,8,WEDNESDAY,2026-09-02,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,8,WEDNESDAY,2026-09-02,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,8,WEDNESDAY,2026-09-02,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,8,THURSDAY,2026-09-03,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,8,THURSDAY,2026-09-03,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,8,THURSDAY,2026-09-03,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,8,FRIDAY,2026-09-04,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,8,FRIDAY,2026-09-04,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,8,FRIDAY,2026-09-04,breakfast,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,9,SATURDAY,2026-09-05,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,9,SATURDAY,2026-09-05,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,9,SATURDAY,2026-09-05,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,9,TUESDAY,2026-09-01,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,9,TUESDAY,2026-09-01,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,9,TUESDAY,2026-09-01,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,9,WEDNESDAY,2026-09-02,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,9,WEDNESDAY,2026-09-02,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,9,WEDNESDAY,2026-09-02,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,9,THURSDAY,2026-09-03,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,9,THURSDAY,2026-09-03,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,9,THURSDAY,2026-09-03,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,9,FRIDAY,2026-09-04,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,9,FRIDAY,2026-09-04,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,9,FRIDAY,2026-09-04,breakfast,OATS,RCP-023-OATMEAL-KBR384ONEGOV3,Oatmeal KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,FILPINO,philippines,senior,senior,10,SATURDAY,2026-09-05,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,10,SATURDAY,2026-09-05,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,10,SATURDAY,2026-09-05,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,10,TUESDAY,2026-09-01,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,10,TUESDAY,2026-09-01,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,10,TUESDAY,2026-09-01,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,10,WEDNESDAY,2026-09-02,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,10,WEDNESDAY,2026-09-02,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,10,WEDNESDAY,2026-09-02,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,10,THURSDAY,2026-09-03,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,10,THURSDAY,2026-09-03,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,10,THURSDAY,2026-09-03,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,10,FRIDAY,2026-09-04,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,10,FRIDAY,2026-09-04,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,10,FRIDAY,2026-09-04,breakfast,CORN FLAKES,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,11,SATURDAY,2026-09-05,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,11,SATURDAY,2026-09-05,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,11,SATURDAY,2026-09-05,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,11,TUESDAY,2026-09-01,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,11,TUESDAY,2026-09-01,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,11,TUESDAY,2026-09-01,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,11,WEDNESDAY,2026-09-02,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,11,WEDNESDAY,2026-09-02,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,11,WEDNESDAY,2026-09-02,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,11,THURSDAY,2026-09-03,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,11,THURSDAY,2026-09-03,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,11,THURSDAY,2026-09-03,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,11,FRIDAY,2026-09-04,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,11,FRIDAY,2026-09-04,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,11,FRIDAY,2026-09-04,breakfast,SLICE BREAD,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,12,SATURDAY,2026-09-05,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,12,SATURDAY,2026-09-05,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,12,SATURDAY,2026-09-05,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,12,TUESDAY,2026-09-01,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,12,TUESDAY,2026-09-01,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,12,TUESDAY,2026-09-01,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,12,WEDNESDAY,2026-09-02,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,12,WEDNESDAY,2026-09-02,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,12,WEDNESDAY,2026-09-02,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,12,THURSDAY,2026-09-03,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,12,THURSDAY,2026-09-03,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,12,THURSDAY,2026-09-03,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,12,FRIDAY,2026-09-04,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,12,FRIDAY,2026-09-04,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,12,FRIDAY,2026-09-04,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,13,SATURDAY,2026-09-05,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,13,SATURDAY,2026-09-05,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,13,SATURDAY,2026-09-05,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,13,TUESDAY,2026-09-01,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,13,TUESDAY,2026-09-01,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,13,TUESDAY,2026-09-01,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,13,WEDNESDAY,2026-09-02,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,13,WEDNESDAY,2026-09-02,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,13,WEDNESDAY,2026-09-02,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,13,THURSDAY,2026-09-03,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,13,THURSDAY,2026-09-03,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,13,THURSDAY,2026-09-03,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,13,FRIDAY,2026-09-04,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,13,FRIDAY,2026-09-04,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,13,FRIDAY,2026-09-04,breakfast,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,SATURDAY,2026-09-05,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,SATURDAY,2026-09-05,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,SATURDAY,2026-09-05,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,SATURDAY,2026-09-05,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,SATURDAY,2026-09-05,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,SATURDAY,2026-09-05,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,TUESDAY,2026-09-01,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,TUESDAY,2026-09-01,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,TUESDAY,2026-09-01,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,TUESDAY,2026-09-01,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,TUESDAY,2026-09-01,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,TUESDAY,2026-09-01,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,WEDNESDAY,2026-09-02,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,WEDNESDAY,2026-09-02,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,WEDNESDAY,2026-09-02,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,WEDNESDAY,2026-09-02,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,WEDNESDAY,2026-09-02,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,WEDNESDAY,2026-09-02,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,THURSDAY,2026-09-03,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,THURSDAY,2026-09-03,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,THURSDAY,2026-09-03,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,THURSDAY,2026-09-03,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,THURSDAY,2026-09-03,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,THURSDAY,2026-09-03,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,FRIDAY,2026-09-04,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,FRIDAY,2026-09-04,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,FRIDAY,2026-09-04,breakfast,HONEY,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,14,FRIDAY,2026-09-04,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,14,FRIDAY,2026-09-04,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,14,FRIDAY,2026-09-04,breakfast,JAM,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,15,SATURDAY,2026-09-05,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,15,SATURDAY,2026-09-05,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,15,SATURDAY,2026-09-05,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,15,TUESDAY,2026-09-01,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,15,TUESDAY,2026-09-01,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,15,TUESDAY,2026-09-01,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,15,WEDNESDAY,2026-09-02,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,15,WEDNESDAY,2026-09-02,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,15,WEDNESDAY,2026-09-02,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,15,THURSDAY,2026-09-03,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,15,THURSDAY,2026-09-03,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,15,THURSDAY,2026-09-03,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,15,FRIDAY,2026-09-04,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,15,FRIDAY,2026-09-04,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,15,FRIDAY,2026-09-04,breakfast,PEANUT BUTTER,,,Support/non-recipe item
+mapped,FILPINO,philippines,senior,senior,16,SATURDAY,2026-09-05,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,16,SATURDAY,2026-09-05,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,16,SATURDAY,2026-09-05,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,16,TUESDAY,2026-09-01,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,16,TUESDAY,2026-09-01,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,16,TUESDAY,2026-09-01,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,16,WEDNESDAY,2026-09-02,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,16,WEDNESDAY,2026-09-02,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,16,WEDNESDAY,2026-09-02,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,16,THURSDAY,2026-09-03,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,16,THURSDAY,2026-09-03,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,16,THURSDAY,2026-09-03,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,16,FRIDAY,2026-09-04,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,16,FRIDAY,2026-09-04,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,16,FRIDAY,2026-09-04,breakfast,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,17,SATURDAY,2026-09-05,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,17,SATURDAY,2026-09-05,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,17,SATURDAY,2026-09-05,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,17,TUESDAY,2026-09-01,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,17,TUESDAY,2026-09-01,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,17,TUESDAY,2026-09-01,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,17,WEDNESDAY,2026-09-02,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,17,WEDNESDAY,2026-09-02,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,17,WEDNESDAY,2026-09-02,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,17,THURSDAY,2026-09-03,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,17,THURSDAY,2026-09-03,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,17,THURSDAY,2026-09-03,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,17,FRIDAY,2026-09-04,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,17,FRIDAY,2026-09-04,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,17,FRIDAY,2026-09-04,breakfast,JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,18,SATURDAY,2026-09-05,lunch,LUNCH,PH-003-CHLUNCHEONCH,Ch.Luncheon Chicken / Beef Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,18,SATURDAY,2026-09-05,lunch,LUNCH,PH-003-CHLUNCHEONCH,Ch.Luncheon Chicken / Beef Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,18,SATURDAY,2026-09-05,lunch,LUNCH,PH-003-CHLUNCHEONCH,Ch.Luncheon Chicken / Beef Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,19,SATURDAY,2026-09-05,lunch,BEEF BISTEK,PH-002-BEEFSTEAKPHI,Beef Steak Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,19,SATURDAY,2026-09-05,lunch,BEEF BISTEK,PH-002-BEEFSTEAKPHI,Beef Steak Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,19,SATURDAY,2026-09-05,lunch,BEEF BISTEK,PH-002-BEEFSTEAKPHI,Beef Steak Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,19,TUESDAY,2026-09-01,lunch,BEEF CALDERETA,PH-001-BEEFCALDARET,Beef Caldareta Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,19,TUESDAY,2026-09-01,lunch,BEEF CALDERETA,PH-001-BEEFCALDARET,Beef Caldareta Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,19,TUESDAY,2026-09-01,lunch,BEEF CALDERETA,PH-001-BEEFCALDARET,Beef Caldareta Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,19,WEDNESDAY,2026-09-02,lunch,CHICKEN ADOBO,PH-004-CHICKENADOBO,Chicken Adobo Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,19,WEDNESDAY,2026-09-02,lunch,CHICKEN ADOBO,PH-004-CHICKENADOBO,Chicken Adobo Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,19,WEDNESDAY,2026-09-02,lunch,CHICKEN ADOBO,PH-004-CHICKENADOBO,Chicken Adobo Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,19,THURSDAY,2026-09-03,lunch,CHICKEN GINATAANG,PH-013-GINATAANGMAN,Ginataang Manok Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,19,THURSDAY,2026-09-03,lunch,CHICKEN GINATAANG,PH-013-GINATAANGMAN,Ginataang Manok Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,19,THURSDAY,2026-09-03,lunch,CHICKEN GINATAANG,PH-013-GINATAANGMAN,Ginataang Manok Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,19,FRIDAY,2026-09-04,lunch,CHIICKEN BROASTED,PH-010-CHICKENFRYPH,Chicken fry Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,19,FRIDAY,2026-09-04,lunch,CHIICKEN BROASTED,PH-010-CHICKENFRYPH,Chicken fry Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,19,FRIDAY,2026-09-04,lunch,CHIICKEN BROASTED,PH-010-CHICKENFRYPH,Chicken fry Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,20,SATURDAY,2026-09-05,lunch,NILAGA SOUP,PH-016-NILAGASOUPPH,Nilaga soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,20,SATURDAY,2026-09-05,lunch,NILAGA SOUP,PH-016-NILAGASOUPPH,Nilaga soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,20,SATURDAY,2026-09-05,lunch,NILAGA SOUP,PH-016-NILAGASOUPPH,Nilaga soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,20,TUESDAY,2026-09-01,lunch,NIGALA SOUP,PH-016-NILAGASOUPPH,Nilaga soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,20,TUESDAY,2026-09-01,lunch,NIGALA SOUP,PH-016-NILAGASOUPPH,Nilaga soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,20,TUESDAY,2026-09-01,lunch,NIGALA SOUP,PH-016-NILAGASOUPPH,Nilaga soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,20,WEDNESDAY,2026-09-02,lunch,PRESANG SOUP,PH-019-PESANGSOUPPH,Pesang soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,20,WEDNESDAY,2026-09-02,lunch,PRESANG SOUP,PH-019-PESANGSOUPPH,Pesang soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,20,WEDNESDAY,2026-09-02,lunch,PRESANG SOUP,PH-019-PESANGSOUPPH,Pesang soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,20,THURSDAY,2026-09-03,lunch,CHICKEN SOTANGHON SOUP,PH-007-CHICKENSOTAN,Chicken Sotanghon Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,20,THURSDAY,2026-09-03,lunch,CHICKEN SOTANGHON SOUP,PH-007-CHICKENSOTAN,Chicken Sotanghon Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,20,THURSDAY,2026-09-03,lunch,CHICKEN SOTANGHON SOUP,PH-007-CHICKENSOTAN,Chicken Sotanghon Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,20,FRIDAY,2026-09-04,lunch,TRINOLA,PH-026-TINOLASOUPPH,Tinola soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,20,FRIDAY,2026-09-04,lunch,TRINOLA,PH-026-TINOLASOUPPH,Tinola soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,20,FRIDAY,2026-09-04,lunch,TRINOLA,PH-026-TINOLASOUPPH,Tinola soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,21,SATURDAY,2026-09-05,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,21,SATURDAY,2026-09-05,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,21,SATURDAY,2026-09-05,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,21,TUESDAY,2026-09-01,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,21,TUESDAY,2026-09-01,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,21,TUESDAY,2026-09-01,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,21,WEDNESDAY,2026-09-02,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,21,WEDNESDAY,2026-09-02,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,21,WEDNESDAY,2026-09-02,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,21,THURSDAY,2026-09-03,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,21,THURSDAY,2026-09-03,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,21,THURSDAY,2026-09-03,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,21,FRIDAY,2026-09-04,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,21,FRIDAY,2026-09-04,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,21,FRIDAY,2026-09-04,lunch,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,22,SATURDAY,2026-09-05,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,22,SATURDAY,2026-09-05,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,22,SATURDAY,2026-09-05,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,22,TUESDAY,2026-09-01,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,22,TUESDAY,2026-09-01,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,22,TUESDAY,2026-09-01,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,22,WEDNESDAY,2026-09-02,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,22,WEDNESDAY,2026-09-02,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,22,WEDNESDAY,2026-09-02,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,22,THURSDAY,2026-09-03,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,22,THURSDAY,2026-09-03,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,22,THURSDAY,2026-09-03,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,22,FRIDAY,2026-09-04,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,22,FRIDAY,2026-09-04,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,22,FRIDAY,2026-09-04,lunch,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,FILPINO,philippines,senior,senior,23,SATURDAY,2026-09-05,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,23,SATURDAY,2026-09-05,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,23,SATURDAY,2026-09-05,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,23,TUESDAY,2026-09-01,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,23,TUESDAY,2026-09-01,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,23,TUESDAY,2026-09-01,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,23,WEDNESDAY,2026-09-02,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,23,WEDNESDAY,2026-09-02,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,23,WEDNESDAY,2026-09-02,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,23,THURSDAY,2026-09-03,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,23,THURSDAY,2026-09-03,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,23,THURSDAY,2026-09-03,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,23,FRIDAY,2026-09-04,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,23,FRIDAY,2026-09-04,lunch,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,23,FRIDAY,2026-09-04,lunch,WATER BTL,,,Support/non-recipe item
+mapped,FILPINO,philippines,senior,senior,24,SATURDAY,2026-09-05,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,24,SATURDAY,2026-09-05,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,24,SATURDAY,2026-09-05,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,24,TUESDAY,2026-09-01,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,24,TUESDAY,2026-09-01,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,24,TUESDAY,2026-09-01,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,24,WEDNESDAY,2026-09-02,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,24,WEDNESDAY,2026-09-02,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,24,WEDNESDAY,2026-09-02,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,24,THURSDAY,2026-09-03,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,24,THURSDAY,2026-09-03,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,24,THURSDAY,2026-09-03,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,24,FRIDAY,2026-09-04,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,24,FRIDAY,2026-09-04,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,24,FRIDAY,2026-09-04,lunch,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,25,SATURDAY,2026-09-05,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,25,SATURDAY,2026-09-05,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,25,SATURDAY,2026-09-05,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,25,TUESDAY,2026-09-01,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,25,TUESDAY,2026-09-01,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,25,TUESDAY,2026-09-01,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,25,WEDNESDAY,2026-09-02,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,25,WEDNESDAY,2026-09-02,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,25,WEDNESDAY,2026-09-02,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,25,THURSDAY,2026-09-03,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,25,THURSDAY,2026-09-03,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,25,THURSDAY,2026-09-03,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,25,FRIDAY,2026-09-04,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,25,FRIDAY,2026-09-04,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,25,FRIDAY,2026-09-04,lunch,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,26,SATURDAY,2026-09-05,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,26,SATURDAY,2026-09-05,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,26,SATURDAY,2026-09-05,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,26,TUESDAY,2026-09-01,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,26,TUESDAY,2026-09-01,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,26,TUESDAY,2026-09-01,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,26,WEDNESDAY,2026-09-02,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,26,WEDNESDAY,2026-09-02,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,26,WEDNESDAY,2026-09-02,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,26,THURSDAY,2026-09-03,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,26,THURSDAY,2026-09-03,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,26,THURSDAY,2026-09-03,lunch,FRESH FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,FILPINO,philippines,senior,senior,26,FRIDAY,2026-09-04,lunch,SOFT DRINK,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,26,FRIDAY,2026-09-04,lunch,SOFT DRINK,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,26,FRIDAY,2026-09-04,lunch,SOFT DRINK,,,Support/non-recipe item
+mapped,FILPINO,philippines,senior,senior,26,FRIDAY,2026-09-04,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,26,FRIDAY,2026-09-04,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,26,FRIDAY,2026-09-04,lunch,FRUIT,RCP-003-FRUITSALAD-KBR384ONEGOV3,FRUIT SALAD KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,FILPINO,philippines,senior,senior,27,SATURDAY,2026-09-05,dinner,DINNER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,27,SATURDAY,2026-09-05,dinner,DINNER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,27,SATURDAY,2026-09-05,dinner,DINNER,,,Support/non-recipe item
+mapped,FILPINO,philippines,senior,senior,28,SATURDAY,2026-09-05,dinner,CHICKEN ADOBO COCO,PH-005-CHICKENADOBO,Chicken Adobo coconut Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,28,SATURDAY,2026-09-05,dinner,CHICKEN ADOBO COCO,PH-005-CHICKENADOBO,Chicken Adobo coconut Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,28,SATURDAY,2026-09-05,dinner,CHICKEN ADOBO COCO,PH-005-CHICKENADOBO,Chicken Adobo coconut Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,28,TUESDAY,2026-09-01,dinner,CHICKEN TINOLA,PH-026-TINOLASOUPPH,Tinola soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,28,TUESDAY,2026-09-01,dinner,CHICKEN TINOLA,PH-026-TINOLASOUPPH,Tinola soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,28,TUESDAY,2026-09-01,dinner,CHICKEN TINOLA,PH-026-TINOLASOUPPH,Tinola soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,28,WEDNESDAY,2026-09-02,dinner,TILAPIA FISH,PH-014-MACKERELTILA,Mackerel / Tilapia / milk fry fish Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,28,WEDNESDAY,2026-09-02,dinner,TILAPIA FISH,PH-014-MACKERELTILA,Mackerel / Tilapia / milk fry fish Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,28,WEDNESDAY,2026-09-02,dinner,TILAPIA FISH,PH-014-MACKERELTILA,Mackerel / Tilapia / milk fry fish Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,28,THURSDAY,2026-09-03,dinner,MILK FISH BANGUS,PH-014-MACKERELTILA,Mackerel / Tilapia / milk fry fish Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,28,THURSDAY,2026-09-03,dinner,MILK FISH BANGUS,PH-014-MACKERELTILA,Mackerel / Tilapia / milk fry fish Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,28,THURSDAY,2026-09-03,dinner,MILK FISH BANGUS,PH-014-MACKERELTILA,Mackerel / Tilapia / milk fry fish Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,28,FRIDAY,2026-09-04,dinner,FISH FILLET FRY,PH-028-WHITEHAMOURF,White hamour fry fish Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,28,FRIDAY,2026-09-04,dinner,FISH FILLET FRY,PH-028-WHITEHAMOURF,White hamour fry fish Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,28,FRIDAY,2026-09-04,dinner,FISH FILLET FRY,PH-028-WHITEHAMOURF,White hamour fry fish Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,29,SATURDAY,2026-09-05,dinner,SARDIN SOTANGON,PH-022-SARDINESOTAN,Sardine Sotanghon Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,29,SATURDAY,2026-09-05,dinner,SARDIN SOTANGON,PH-022-SARDINESOTAN,Sardine Sotanghon Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,29,SATURDAY,2026-09-05,dinner,SARDIN SOTANGON,PH-022-SARDINESOTAN,Sardine Sotanghon Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,29,TUESDAY,2026-09-01,dinner,CH SOTANGHON,PH-007-CHICKENSOTAN,Chicken Sotanghon Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,29,TUESDAY,2026-09-01,dinner,CH SOTANGHON,PH-007-CHICKENSOTAN,Chicken Sotanghon Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,29,TUESDAY,2026-09-01,dinner,CH SOTANGHON,PH-007-CHICKENSOTAN,Chicken Sotanghon Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,29,WEDNESDAY,2026-09-02,dinner,MUNG BEAN SOUP,PH-015-MUNGBEANSOUP,Mung Bean Soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,29,WEDNESDAY,2026-09-02,dinner,MUNG BEAN SOUP,PH-015-MUNGBEANSOUP,Mung Bean Soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,29,WEDNESDAY,2026-09-02,dinner,MUNG BEAN SOUP,PH-015-MUNGBEANSOUP,Mung Bean Soup Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,29,THURSDAY,2026-09-03,dinner,PAK BET,PH-017-PAKBETPHILIP,Pak Bet Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,29,THURSDAY,2026-09-03,dinner,PAK BET,PH-017-PAKBETPHILIP,Pak Bet Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,29,THURSDAY,2026-09-03,dinner,PAK BET,PH-017-PAKBETPHILIP,Pak Bet Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,29,FRIDAY,2026-09-04,dinner,PANCIT MIX,PH-018-PANCITMIXPHI,Pancit Mix Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,29,FRIDAY,2026-09-04,dinner,PANCIT MIX,PH-018-PANCITMIXPHI,Pancit Mix Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,29,FRIDAY,2026-09-04,dinner,PANCIT MIX,PH-018-PANCITMIXPHI,Pancit Mix Philippines Filipino KBR-384 1 Serving,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,30,SATURDAY,2026-09-05,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,30,SATURDAY,2026-09-05,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,30,SATURDAY,2026-09-05,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,30,TUESDAY,2026-09-01,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,30,TUESDAY,2026-09-01,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,30,TUESDAY,2026-09-01,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,30,WEDNESDAY,2026-09-02,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,30,WEDNESDAY,2026-09-02,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,30,WEDNESDAY,2026-09-02,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,30,THURSDAY,2026-09-03,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,30,THURSDAY,2026-09-03,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,30,THURSDAY,2026-09-03,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,30,FRIDAY,2026-09-04,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,30,FRIDAY,2026-09-04,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,30,FRIDAY,2026-09-04,dinner,BOILED RICE,RCP-076-WHITERICE-KBR384ONEGOV3,White Rice KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,31,SATURDAY,2026-09-05,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,31,SATURDAY,2026-09-05,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,31,SATURDAY,2026-09-05,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,31,TUESDAY,2026-09-01,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,31,TUESDAY,2026-09-01,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,31,TUESDAY,2026-09-01,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,31,WEDNESDAY,2026-09-02,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,31,WEDNESDAY,2026-09-02,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,31,WEDNESDAY,2026-09-02,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,31,THURSDAY,2026-09-03,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,31,THURSDAY,2026-09-03,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,31,THURSDAY,2026-09-03,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,31,FRIDAY,2026-09-04,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,31,FRIDAY,2026-09-04,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,31,FRIDAY,2026-09-04,dinner,SALAD,RCP-081-GREENSALAD-KBR384ONEGOV3,Green Salad Mix KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,FILPINO,philippines,senior,senior,32,SATURDAY,2026-09-05,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,32,SATURDAY,2026-09-05,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,32,SATURDAY,2026-09-05,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,32,TUESDAY,2026-09-01,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,32,TUESDAY,2026-09-01,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,32,TUESDAY,2026-09-01,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,32,WEDNESDAY,2026-09-02,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,32,WEDNESDAY,2026-09-02,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,32,WEDNESDAY,2026-09-02,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,32,THURSDAY,2026-09-03,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,32,THURSDAY,2026-09-03,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,32,THURSDAY,2026-09-03,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,senior,senior,32,FRIDAY,2026-09-04,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,32,FRIDAY,2026-09-04,dinner,WATER BTL,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,32,FRIDAY,2026-09-04,dinner,WATER BTL,,,Support/non-recipe item
+mapped,FILPINO,philippines,senior,senior,33,SATURDAY,2026-09-05,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,33,SATURDAY,2026-09-05,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,33,SATURDAY,2026-09-05,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,33,TUESDAY,2026-09-01,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,33,TUESDAY,2026-09-01,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,33,TUESDAY,2026-09-01,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,33,WEDNESDAY,2026-09-02,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,33,WEDNESDAY,2026-09-02,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,33,WEDNESDAY,2026-09-02,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,33,THURSDAY,2026-09-03,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,33,THURSDAY,2026-09-03,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,33,THURSDAY,2026-09-03,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,33,FRIDAY,2026-09-04,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,33,FRIDAY,2026-09-04,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,33,FRIDAY,2026-09-04,dinner,TANG JUICE,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,34,SATURDAY,2026-09-05,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,34,SATURDAY,2026-09-05,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,34,SATURDAY,2026-09-05,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,34,TUESDAY,2026-09-01,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,34,TUESDAY,2026-09-01,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,34,TUESDAY,2026-09-01,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,34,WEDNESDAY,2026-09-02,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,34,WEDNESDAY,2026-09-02,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,34,WEDNESDAY,2026-09-02,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,34,THURSDAY,2026-09-03,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,34,THURSDAY,2026-09-03,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,34,THURSDAY,2026-09-03,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,senior,senior,34,FRIDAY,2026-09-04,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,junior,senior,34,FRIDAY,2026-09-04,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+mapped,FILPINO,philippines,labor,senior,34,FRIDAY,2026-09-04,dinner,TEA+COFFEE+MILK,RCP-001-CLASSICCOF-KBR384ONEGOV3,CLASSIC COFFEE & TANG KBR-384 ONEGO V3,Matched to recipe upload catalog
+skipped,FILPINO,philippines,senior,senior,37,SATURDAY,2026-09-05,dinner,NOTE: Menu can be alternated without prior notification due to non availability of material.,,,Workbook footer/non-menu text
+skipped,FILPINO,philippines,junior,senior,37,SATURDAY,2026-09-05,dinner,NOTE: Menu can be alternated without prior notification due to non availability of material.,,,Workbook footer/non-menu text
+skipped,FILPINO,philippines,labor,senior,37,SATURDAY,2026-09-05,dinner,NOTE: Menu can be alternated without prior notification due to non availability of material.,,,Workbook footer/non-menu text
+skipped,FILPINO,philippines,senior,senior,39,THURSDAY,2026-09-03,dinner,APPROVED BY:_____________________,,,Workbook footer/non-menu text
+skipped,FILPINO,philippines,junior,senior,39,THURSDAY,2026-09-03,dinner,APPROVED BY:_____________________,,,Workbook footer/non-menu text
+skipped,FILPINO,philippines,labor,senior,39,THURSDAY,2026-09-03,dinner,APPROVED BY:_____________________,,,Workbook footer/non-menu text
+skipped,FILPINO,philippines,senior,senior,40,THURSDAY,2026-09-03,dinner,PROJECT MANAGER,,,Support/non-recipe item
+skipped,FILPINO,philippines,junior,senior,40,THURSDAY,2026-09-03,dinner,PROJECT MANAGER,,,Support/non-recipe item
+skipped,FILPINO,philippines,labor,senior,40,THURSDAY,2026-09-03,dinner,PROJECT MANAGER,,,Support/non-recipe item

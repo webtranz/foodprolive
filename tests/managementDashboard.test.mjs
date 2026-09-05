@@ -167,6 +167,11 @@ assert.equal(deriveInventoryStatus({ quantity: 16, min_stock_level: 10, status: 
 assert.equal(deriveInventoryStatus({ quantity: 10, min_stock_level: 10 }), 'low_stock');
 assert.equal(deriveInventoryStatus({ quantity: 0, min_stock_level: 0 }), 'out_of_stock');
 assert.equal(producedServings({ status: 'completed', actual_servings: null, target_servings: 12 }), 12);
+assert.equal(
+  producedServings({ status: 'completed', produced_servings: 9.5, actual_servings: 12, target_servings: 12 }),
+  9.5,
+  'yield-derived finished servings take precedence over legacy or planned serving counts'
+);
 assert.equal(productionCost({
   production_cost_total: null,
   ingredients_used: [{ planned_quantity: 4, unit_cost: 2.5 }]
@@ -289,6 +294,89 @@ const allMealBudget = buildManagementDashboardSnapshot({
 assert.deepEqual(
   allMealBudget.meals.map((meal) => [meal.meal_type, meal.budget]),
   [['breakfast', 300], ['lunch', 300], ['dinner', 300]]
+);
+
+const areaPlanningBudgetRollup = buildManagementDashboardSnapshot({
+  view: 'gm',
+  date: '2026-08-19',
+  selectedSiteId: 'west',
+  sites,
+  budgets: [
+    {
+      id: 'area-planning-budget',
+      site_id: 'west',
+      budget_date: '2026-08-19',
+      source_module: 'budget_planning',
+      budget_level: 'area',
+      budget_amount: 3000,
+      scope_type: 'area_daily_total',
+      meal_type: 'all',
+      status: 'active'
+    },
+    {
+      id: 'project-a-planning-budget',
+      site_id: 'project-a',
+      budget_date: '2026-08-19',
+      source_module: 'budget_planning',
+      budget_level: 'project',
+      budget_amount: 1000,
+      scope_type: 'project_daily_total',
+      meal_type: 'all',
+      status: 'active'
+    },
+    {
+      id: 'project-b-planning-budget',
+      site_id: 'project-b',
+      budget_date: '2026-08-19',
+      source_module: 'budget_planning',
+      budget_level: 'project',
+      budget_amount: 2000,
+      scope_type: 'project_daily_total',
+      meal_type: 'all',
+      status: 'active'
+    }
+  ]
+});
+assert.equal(
+  areaPlanningBudgetRollup.metrics.daily_budget,
+  3000,
+  'area dashboard reporting uses the area planning budget without double-counting child project planning budgets'
+);
+
+const projectPlanningBudgetSnapshot = buildManagementDashboardSnapshot({
+  view: 'project_manager',
+  date: '2026-08-19',
+  selectedSiteId: 'project-a',
+  sites,
+  budgets: [
+    {
+      id: 'area-planning-budget',
+      site_id: 'west',
+      budget_date: '2026-08-19',
+      source_module: 'budget_planning',
+      budget_level: 'area',
+      budget_amount: 3000,
+      scope_type: 'area_daily_total',
+      meal_type: 'all',
+      status: 'active'
+    },
+    {
+      id: 'project-a-planning-budget',
+      site_id: 'project-a',
+      budget_date: '2026-08-19',
+      source_module: 'budget_planning',
+      budget_level: 'project',
+      budget_amount: 1000,
+      scope_type: 'project_daily_total',
+      meal_type: 'all',
+      status: 'active'
+    }
+  ]
+});
+assert.equal(
+  projectPlanningBudgetSnapshot.metrics.daily_budget,
+  1000,
+  'project dashboard reporting remains scoped to the selected project budget'
 );
 
 const childSiteCompletion = buildManagementDashboardSnapshot({

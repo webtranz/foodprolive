@@ -325,13 +325,12 @@ Format as JSON.`;
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="breakfast">Breakfast</SelectItem>
-                  <SelectItem value="lunch">Lunch</SelectItem>
-                  <SelectItem value="dinner">Dinner</SelectItem>
-                  <SelectItem value="snack">Snack</SelectItem>
-                  <SelectItem value="appetizer">Appetizer</SelectItem>
+                  <SelectItem value="starter_salad_soup">Starter / Salad / Soup</SelectItem>
                   <SelectItem value="main_course">Main Course</SelectItem>
+                  <SelectItem value="vegetable">Vegetable</SelectItem>
                   <SelectItem value="dessert">Dessert</SelectItem>
+                  <SelectItem value="beverages">Beverages</SelectItem>
+                  <SelectItem value="side_dish">Side Dish</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -30,6 +30,9 @@ const LOCATION_SCOPED_ENTITIES = new Set([
   'StaffShift',
   'CustomerMealPlan',
   'DinerScan',
+  'ProducedItemBatch',
+  'MealServiceAttendance',
+  'MealServiceConsumption',
   'BranchOrder',
   'Recipe',
   'AdvancedReportSchedule',
@@ -409,9 +412,32 @@ function normalizeUserLocationPayload(payload = {}, scope) {
 }
 
 function normalizeRecipeLocationPayload(payload = {}, scope) {
-  const siteMap = new Map((scope?.sites || []).map((site) => [site.id, site]));
+  const sites = scope?.sites || [];
+  const siteMap = new Map(sites.map((site) => [String(site.id), site]));
+  const siteLookup = new Map();
+  sites.forEach((site) => {
+    [
+      site.id,
+      site.name,
+      site.project_code,
+      site.d365_warehouse_id,
+      site.warehouse_id,
+      site.hierarchy_path
+    ].forEach((value) => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (normalized && !siteLookup.has(normalized)) siteLookup.set(normalized, site);
+    });
+  });
+  const resolveSiteId = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return null;
+    return siteLookup.get(normalized)?.id || String(value).trim();
+  };
   const siteScope = payload.site_scope || 'global';
-  const siteIds = siteScope === 'specific' ? normalizeArray(payload.site_ids) : [];
+  const submittedSiteTokens = siteScope === 'specific'
+    ? [...normalizeArray(payload.site_ids), ...normalizeArray(payload.site_names)]
+    : [];
+  const siteIds = [...new Set(submittedSiteTokens.map(resolveSiteId).filter(Boolean))];
   return {
     ...payload,
     site_scope: siteScope,

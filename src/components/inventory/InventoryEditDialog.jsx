@@ -5,14 +5,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Edit } from 'lucide-react';
 import { getItemCode } from '../../../shared/itemCode.js';
+import { DEFAULT_SOURCE_NAME, SOURCE_NAME_OPTIONS, normalizeSourceName } from '../../../shared/sourceNames.js';
 
 export default function InventoryEditDialog({ open, onOpenChange, inventoryItem }) {
   const [formData, setFormData] = useState({
     min_stock_level: '',
     max_stock_level: '',
-    valuation_method: 'fifo'
+    valuation_method: 'fifo',
+    source_name: DEFAULT_SOURCE_NAME
   });
   const [formError, setFormError] = useState('');
 
@@ -23,7 +26,8 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
       setFormData({
         min_stock_level: inventoryItem.min_stock_level || '',
         max_stock_level: inventoryItem.max_stock_level || '',
-        valuation_method: inventoryItem.valuation_method || 'fifo'
+        valuation_method: inventoryItem.valuation_method || 'fifo',
+        source_name: normalizeSourceName(inventoryItem.source_name)
       });
       setFormError('');
     }
@@ -54,7 +58,8 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
     updateMutation.mutate({
       min_stock_level: min,
       max_stock_level: max,
-      valuation_method: formData.valuation_method || 'fifo'
+      valuation_method: formData.valuation_method || 'fifo',
+      source_name: formData.source_name
     });
   };
 
@@ -108,6 +113,23 @@ export default function InventoryEditDialog({ open, onOpenChange, inventoryItem 
           <p className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
             Expiry is managed separately for each received batch so dated stock is never overwritten at item level.
           </p>
+
+          <div>
+            <Label>Source Name *</Label>
+            <Select
+              value={formData.source_name}
+              onValueChange={(value) => setFormData({ ...formData, source_name: value })}
+            >
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder="Select source" />
+              </SelectTrigger>
+              <SelectContent>
+                {SOURCE_NAME_OPTIONS.map((source) => (
+                  <SelectItem key={source} value={source}>{source}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
           <div>
             <Label>Valuation Method</Label>

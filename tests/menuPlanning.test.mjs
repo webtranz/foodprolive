@@ -241,6 +241,34 @@ const cases = [
     }
   },
   {
+    name: 'recalculates ingredient recipe costs instead of using stale stored costs',
+    run() {
+      const recipe = {
+        id: 'filipino-costing',
+        name: 'Filipino Costing',
+        servings: 10,
+        cost_per_serving: 999,
+        total_cost: 9990,
+        ingredients: [
+          { ingredient_id: 'soy-sauce', quantity: 250, unit: 'ml' },
+          { ingredient_id: 'coriander', quantity: 40, unit: 'g' },
+          { ingredient_id: 'egg', quantity: 2, unit: 'pieces' }
+        ]
+      };
+      const ingredients = [
+        { id: 'soy-sauce', name: 'FILIPINO SOY SAUCE 12/1LTR', unit: 'EA', average_cost: 6 },
+        { id: 'coriander', name: 'CORIANDER LEAVES', unit: 'BDL', average_cost: 2 },
+        { id: 'egg', name: 'SHELL EGGS', unit: 'EA', conversion_unit: 'pieces', conversion_factor: 1, average_cost: 0.4 }
+      ];
+      const snapshot = calculateRecipeCostSnapshot(recipe, ingredients);
+
+      assert.equal(snapshot.has_cost, true);
+      assert.equal(snapshot.source, 'ingredients');
+      assert.equal(snapshot.total_cost, 3.3);
+      assert.ok(Math.abs(snapshot.cost_per_serving - 0.33) < 1e-9);
+    }
+  },
+  {
     name: 'summarizes meal wise and total costs safely',
     run() {
       const summary = summarizeDailyMenuCosts(

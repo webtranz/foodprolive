@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   GRANULAR_PAGE_ACCESS_PERMISSION,
   normalizeGranularPermissions,
+  PAGE_ACCESS_PERMISSION_ALIASES,
   PAGE_ACCESS_PERMISSION_MAP,
   ROLE_PERMISSION_SECTIONS
 } from '@/lib/rolePermissions';
@@ -115,13 +116,25 @@ function preparePermissionsForEditing(permissions = [], requiredPermissions = []
     ...(requiredPermissions || []),
     ...(permissions || [])
   ].filter(Boolean)));
-  if (existing.includes(GRANULAR_PAGE_ACCESS_PERMISSION)) {
-    return existing;
-  }
 
   const can = (permission) => existing.includes(permission);
+  const hasGranularPageAccess = existing.includes(GRANULAR_PAGE_ACCESS_PERMISSION);
+  if (hasGranularPageAccess) {
+    const remappedPagePermissions = Object.entries(PAGE_ACCESS_PERMISSION_MAP)
+      .filter(([page, pagePermission]) => (
+        !can(pagePermission)
+        && (PAGE_ACCESS_PERMISSION_ALIASES[page] || []).some((permission) => can(permission))
+      ))
+      .map(([, pagePermission]) => pagePermission);
+
+    return normalizeGranularPermissions([...existing, ...remappedPagePermissions]);
+  }
+
   const legacyPagePermissions = Object.entries(PAGE_ACCESS_PERMISSION_MAP)
     .filter(([page]) => {
+      if ((PAGE_ACCESS_PERMISSION_ALIASES[page] || []).some((permission) => can(permission))) {
+        return true;
+      }
       const requirement = pagePermissionMap[page];
       if (!requirement) return true;
       return Array.isArray(requirement)
