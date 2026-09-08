@@ -884,7 +884,7 @@ async function assertProductionStartPrerequisites(production, executor = null, u
   // start transaction repairs/reserves those records immediately before it
   // consumes stock, while current records must already pass the shared gate.
   if (!hasAreaProductionApproval(production) || !hasAcknowledgedMaterialRequest(production)) {
-    const error = new Error('Production cannot start until procurement is acknowledged and the Area Manager has approved it.');
+    const error = new Error('Production cannot start until Store / Procurement has acknowledged the material request and inventory is fully reserved.');
     error.status = 409;
     throw error;
   }
@@ -1068,20 +1068,20 @@ async function syncMaterialRequestForProduction(
     }
     const noMaterialReviewAt = new Date().toISOString();
     await updateDocument('Production', production.id, {
-      status: isDraftMode ? production.status : 'pending_production',
+      status: isDraftMode ? production.status : 'approved',
       material_request_status: 'not_required',
       linked_material_request_id: null,
       linked_material_request_number: null,
       fulfillment_store_id: fulfillmentStore?.id || null,
       fulfillment_store_name: fulfillmentStore?.name || null,
       ...(!isDraftMode ? {
-        area_approval_status: 'pending',
+        area_approval_status: null,
         last_review_action: 'procurement_not_required',
         approval_history: appendProductionApprovalHistory(production, {
           action: 'procurement_not_required',
           stage: 'store_procurement',
           from_status: normalizeProductionStatus(production.status),
-          to_status: 'pending_production',
+          to_status: 'approved',
           actor_id: user?.id || null,
           actor_email: user?.email || null,
           actor_name: user?.full_name || user?.email || null,
@@ -1149,7 +1149,7 @@ async function syncMaterialRequestForProduction(
     fulfillment_store_id: fulfillmentStore?.id || null,
     fulfillment_store_name: fulfillmentStore?.name || null,
     ...(!isDraftMode && String(materialRequest.status || '').toLowerCase() === 'acknowledged'
-      ? { status: 'pending_production', area_approval_status: 'pending' }
+      ? { status: 'approved', area_approval_status: null }
       : {})
   }, executor);
 
@@ -4268,9 +4268,9 @@ function getProductionNotificationFields(log = {}) {
 
   if (action === 'production_procurement_acknowledged') {
     return {
-      title: 'Procurement approved and forwarded to AM',
-      message: `${recipeName} was acknowledged by ${actorName} and forwarded to Area Manager approval.`,
-      workflow_step: 'Pending Area Manager Approval'
+      title: 'Procurement approved production',
+      message: `${recipeName} was acknowledged by ${actorName}, inventory was reserved, and production is ready to start.`,
+      workflow_step: 'Production Approved'
     };
   }
 
@@ -4995,7 +4995,7 @@ app.post('/api/material-requests/from-production/:id', requireAuth, requirePermi
       return response.status(200).json({
         material_request: null,
         production: result.production,
-        message: 'No stock-managed ingredients are required. The request moved to Pending Production.'
+        message: 'No stock-managed ingredients are required. The request is approved and ready to start.'
       });
     }
     return response.status(201).json(result.materialRequest);
@@ -5100,14 +5100,39 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
         acknowledged_at: acknowledgedAt,
         procurement_notes: request.body?.notes || materialRequest.procurement_notes || null
       }, client);
+      let productionRecord = null;
+      let inventoryMutated = false;
       if (production) {
-        await updateDocument('Production', production.id, {
-          status: 'pending_production',
+        const productionForReservation = {
+          ...production,
+          status: 'approved',
+          material_request_status: 'acknowledged',
+          linked_material_request_id: materialRequest.id,
+          linked_material_request_number: materialRequest.request_number || null,
+          fulfillment_store_id: fulfillmentStore.id,
+          fulfillment_store_name: fulfillmentStore.name || null
+        };
+        const commitmentResult = await reconcileProductionInventoryForWorkflow({
+          production: productionForReservation,
+          user: request.user,
+          executor: client,
+          fulfillmentStore,
+          operation: 'store_procurement_approval',
+          reason: String(request.body?.notes || '').trim()
+            || 'Yield-adjusted inventory reserved when Store / Procurement approved production.'
+        });
+        inventoryMutated = commitmentResult.mutated;
+        productionRecord = await updateDocument('Production', production.id, {
+          ...commitmentResult.production_patch,
+          status: 'approved',
           material_request_status: 'acknowledged',
           procurement_approved_by: request.user.email,
           procurement_approved_by_name: request.user.full_name || request.user.email,
           procurement_approved_at: acknowledgedAt,
-          area_approval_status: 'pending',
+          area_approval_status: null,
+          area_approved_by: null,
+          area_approved_by_name: null,
+          area_approved_at: null,
           linked_material_request_id: materialRequest.id,
           linked_material_request_number: materialRequest.request_number || null,
           fulfillment_store_id: fulfillmentStore.id,
@@ -5117,7 +5142,7 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
             action: 'procurement_acknowledged',
             stage: 'store_procurement',
             from_status: normalizeProductionStatus(production.status),
-            to_status: 'pending_production',
+            to_status: 'approved',
             actor_id: request.user.id || null,
             actor_email: request.user.email || null,
             actor_name: request.user.full_name || request.user.email || null,
@@ -5127,18 +5152,27 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
           })
         }, client);
       }
-      return acknowledged;
+      return { acknowledged, production: productionRecord, inventoryMutated };
     });
     recordChanged('MaterialRequest');
     recordChanged('Production');
+    if (updated.inventoryMutated) {
+      recordChanged('Inventory');
+      recordChanged('InventoryLot');
+      recordChanged('InventoryTransaction');
+    }
     await auditAction({
       user: request.user,
       action: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGED',
       entity: 'MaterialRequest',
-      entityId: updated.id,
-      details: { saved_record: updated, notes: request.body?.notes || null }
+      entityId: updated.acknowledged.id,
+      details: {
+        saved_record: updated.acknowledged,
+        production_record: updated.production,
+        notes: request.body?.notes || null
+      }
     });
-    response.json(updated);
+    response.json(updated.acknowledged);
   } catch (error) {
     next(error);
   }
@@ -5158,7 +5192,7 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
       const areaApprovalWasAlreadyRecorded = isApprovedRecord && !requiresAreaProductionApproval(lockedProduction);
 
       if (currentStatus !== 'pending_production' && !isApprovedRecord) {
-        const error = new Error('Only a Pending Production request can receive Area Manager approval');
+        const error = new Error('Only a legacy Pending Production request can receive final production approval');
         error.status = 409;
         throw error;
       }
@@ -5298,7 +5332,7 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
         materialStatus !== 'acknowledged'
         && !(materialStatus === 'not_required' && currentHasAuthoritativeEmptyIngredients)
       ) {
-        const error = new Error('Store / Procurement must acknowledge the material request before Area Manager approval');
+        const error = new Error('Store / Procurement must acknowledge the material request before final production approval');
         error.status = 409;
         throw error;
       }

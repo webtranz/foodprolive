@@ -17,7 +17,7 @@ export const PRODUCTION_STATUS_LABELS = Object.freeze({
   planned: 'Production Created',
   pending_approval: 'Pending PM Approval',
   pending_procurement: 'Pending Store / Procurement',
-  pending_production: 'Pending Area Manager Approval',
+  pending_production: 'Legacy Pending Production',
   approved: 'Approved / Ready to Start',
   in_progress: 'Production In Progress',
   completed: 'Production Completed',
@@ -31,7 +31,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   draft: Object.freeze(['pending_approval', 'cancelled']),
   changes_requested: Object.freeze(['pending_approval', 'cancelled']),
   pending_approval: Object.freeze(['pending_procurement', 'changes_requested', 'cancelled']),
-  pending_procurement: Object.freeze(['pending_production', 'cancelled']),
+  pending_procurement: Object.freeze(['approved', 'cancelled']),
   pending_production: Object.freeze(['approved', 'pending_procurement', 'changes_requested', 'cancelled']),
   approved: Object.freeze(['pending_procurement', 'in_progress', 'cancelled']),
   in_progress: Object.freeze(['completed'])
@@ -181,6 +181,7 @@ export function getProductionTransitionPermission(currentStatus, nextStatus, opt
     'changes_requested->pending_approval': 'submit_production_request',
     'pending_approval->pending_procurement': 'approve_production_request',
     'pending_approval->changes_requested': 'request_changes_production',
+    'pending_procurement->approved': 'acknowledge_material_request',
     'pending_production->approved': 'approve_production',
     'pending_production->pending_procurement': 'reject_area_production',
     'pending_production->changes_requested': 'request_changes_area_production',
@@ -211,9 +212,16 @@ export function isProductionTerminalStatus(value) {
 }
 
 export function hasAreaProductionApproval(production) {
-  return normalizeProductionStatus(production?.status) === PRODUCTION_STATUS.READY_TO_START
-    && String(production?.area_approval_status || '').toLowerCase() === 'approved'
-    && Boolean(production?.area_approved_at);
+  if (normalizeProductionStatus(production?.status) !== PRODUCTION_STATUS.READY_TO_START) {
+    return false;
+  }
+  if (
+    String(production?.area_approval_status || '').toLowerCase() === 'approved'
+    && Boolean(production?.area_approved_at)
+  ) {
+    return true;
+  }
+  return hasAcknowledgedMaterialRequest(production);
 }
 
 export function hasAcknowledgedMaterialRequest(production) {
@@ -287,7 +295,7 @@ export function hasStartableProductionInventory(production = {}) {
 
 export function getProductionStartBlockReason(production) {
   if (requiresAreaProductionApproval(production)) {
-    return 'Production cannot start while Area Manager approval is pending.';
+    return 'Production cannot start while final approval is pending.';
   }
   if (normalizeProductionStatus(production?.status) !== PRODUCTION_STATUS.READY_TO_START) {
     return 'Production is not approved and ready to start.';
@@ -303,8 +311,7 @@ export function getProductionStartBlockReason(production) {
 
 export function requiresAreaProductionApproval(production) {
   const status = normalizeProductionStatus(production?.status);
-  return status === PRODUCTION_STATUS.PENDING_PRODUCTION
-    || (status === PRODUCTION_STATUS.READY_TO_START && !hasAreaProductionApproval(production));
+  return status === PRODUCTION_STATUS.READY_TO_START && !hasAreaProductionApproval(production);
 }
 
 export function getProductionRejectionReturnStatus(currentStatus) {
@@ -443,7 +450,7 @@ export function getProductionReviewNotice(production) {
   if (rejected && areaRejected) {
     return {
       action: 'rejected',
-      label: 'Area Manager rejected this request and returned it to Store / Procurement.',
+      label: 'Final approval returned this request to Store / Procurement.',
       reason: reason || 'No rejection reason was recorded.'
     };
   }

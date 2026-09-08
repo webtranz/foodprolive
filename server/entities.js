@@ -1416,19 +1416,25 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
           && nextStatus === 'pending_procurement'
           && !requiresAreaProductionApproval(resource)
         ) {
-          const error = new Error('A production that is already Area-approved cannot be returned through the pending approval action');
+          const error = new Error('A production that is already approved cannot be returned through the pending approval action');
           error.status = 409;
           throw error;
         }
 
         if (nextStatus === 'pending_production') {
-          const error = new Error('Pending Production is set only after Store Keeper / Procurement acknowledgement');
+          const error = new Error('Pending Production is no longer used; Store / Procurement acknowledgement approves production directly');
+          error.status = 409;
+          throw error;
+        }
+
+        if (currentStatus === 'pending_procurement' && nextStatus === 'approved') {
+          const error = new Error('Use the Store / Procurement acknowledgement action so inventory is reserved before production starts');
           error.status = 409;
           throw error;
         }
 
         if (currentStatus === 'pending_production' && nextStatus === 'approved') {
-          const error = new Error('Use the Area Manager approval action so procurement and fulfillment Store checks are enforced');
+          const error = new Error('Use the protected production approval action so procurement and inventory checks are enforced');
           error.status = 409;
           throw error;
         }
@@ -1466,7 +1472,7 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
         }
 
         if (nextStatus === 'in_progress' && !canStartApprovedProduction(resource)) {
-          const error = new Error('Production cannot start until procurement is acknowledged and the Area Manager has approved it');
+          const error = new Error('Production cannot start until Store / Procurement has acknowledged the material request and inventory is fully reserved');
           error.status = 409;
           throw error;
         }

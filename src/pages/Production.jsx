@@ -48,12 +48,10 @@ import {
 } from '@/lib/productionIssue';
 import {
   canStartApprovedProduction,
-  getPendingAreaApprovalProductions,
   getProductionApprovalHistory,
   getProductionRejectionReturnStatus,
   getProductionStartBlockReason,
-  getProductionStatusLabel,
-  requiresAreaProductionApproval
+  getProductionStatusLabel
 } from '../../shared/productionWorkflow.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 import { getProductionInventoryContext } from '../../shared/productionFulfillment.js';
@@ -74,10 +72,6 @@ const MEAL_TYPES = [
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
-}
-
-function isAreaApprovalReview(production) {
-  return requiresAreaProductionApproval(production);
 }
 
 function formatWorkflowTimestamp(value) {
@@ -583,9 +577,6 @@ export default function Production() {
   const navigate = useNavigate();
   const { can, role: currentRole } = usePermissions();
   const { allowedSiteIds, isAdmin, siteId: assignedSiteId } = useSiteContext();
-  const canReviewAreaApprovals = can('approve_production')
-    || can('reject_area_production')
-    || can('request_changes_area_production');
   const [formOpen, setFormOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState('all');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -656,24 +647,6 @@ export default function Production() {
       production_date: selectedDate
     }, '-production_date'),
     enabled: Boolean(selectedDate),
-    refetchInterval: 300000
-  });
-
-  const {
-    data: areaApprovalCandidates = [],
-    isLoading: isAreaApprovalQueueLoading,
-    error: areaApprovalQueueError
-  } = useQuery({
-    queryKey: ['productionAreaApprovalQueue'],
-    queryFn: async () => {
-      const [pending, legacyApproved] = await Promise.all([
-        base44.entities.Production.filter({ status: 'pending_production' }, 'production_date', 5000),
-        base44.entities.Production.filter({ status: 'approved' }, 'production_date', 5000)
-      ]);
-      const records = [...pending, ...legacyApproved];
-      return [...new Map(records.map((record) => [String(record.id), record])).values()];
-    },
-    enabled: canReviewAreaApprovals,
     refetchInterval: 300000
   });
 
@@ -1131,10 +1104,6 @@ export default function Production() {
     const matchesDate = p.production_date === selectedDate;
     return matchesSite && matchesDate;
   });
-  const areaApprovalQueue = getPendingAreaApprovalProductions(
-    areaApprovalCandidates,
-    isAdmin ? [] : allowedSiteIds
-  );
 
   const materialRequestMap = materialRequests.reduce((map, request) => {
     if (request?.source_production_id && !map[request.source_production_id]) {
@@ -1913,13 +1882,6 @@ export default function Production() {
         : [selectedProduction];
 
       const reviewOperations = reviewTargets.map((production) => {
-        const areaReview = isAreaApprovalReview(production);
-        if (action === 'approve' && areaReview) {
-          return {
-            type: 'area_approval',
-            production
-          };
-        }
         const status = action === 'approve'
           ? 'pending_procurement'
           : action === 'request_changes'
@@ -1936,13 +1898,6 @@ export default function Production() {
       });
 
       for (const operation of reviewOperations) {
-        if (operation.type === 'area_approval') {
-          await base44.productionWorkflow.approveForArea(operation.production.id, {
-            notes: reviewNotes || null,
-            fulfillment_store_id: reviewInventorySiteId
-          });
-          continue;
-        }
         await base44.entities.Production.update(operation.production.id, {
           status: operation.status,
           review_notes: reviewNotes || null,
@@ -2076,14 +2031,9 @@ export default function Production() {
           Review Request
         </Button>
       ) : null}
-      {isAreaApprovalReview(production) && canReviewAreaApprovals ? (
-        <Button size="sm" className="justify-center whitespace-normal bg-purple-700 text-xs leading-snug hover:bg-purple-800" onClick={() => openApprovalDialog(production)}>
-          Area Manager Review
-        </Button>
-      ) : null}
       {production.status === 'pending_production' && can('start_production') ? (
         <Button size="sm" variant="outline" className="justify-center whitespace-normal text-xs leading-snug" disabled title={startBlockReason}>
-          Area Approval Required
+          Store / Procurement Approval Required
         </Button>
       ) : null}
       {production.status === 'approved' && can('start_production') ? (
@@ -2158,7 +2108,6 @@ export default function Production() {
     || materialRequestsError?.message
     || issuePlanError?.message
     || '';
-  const selectedIsAreaReview = isAreaApprovalReview(selectedProduction);
   const reviewInventoryReady = Boolean(reviewInventorySiteId) && !inventoryDataLoading && !inventoryDataError;
   const reviewInventoryCheck = reviewInventoryReady ? buildProductionInventoryCheck(selectedProduction) : [];
   const inventoryActionState = getProductionInventoryState(inventoryAction || {});
@@ -2213,15 +2162,9 @@ export default function Production() {
     yielded_weight_grams: completionYieldSummary.line_weights[index]?.yielded_weight_grams ?? null,
     reconciliation_source: completionYieldSummary.line_weights[index]?.source || 'automatic_yield_plan'
   }));
-  const canRequestSelectedChanges = selectedIsAreaReview
-    ? can('request_changes_area_production')
-    : can('review_production_request') && can('request_changes_production');
-  const canRejectSelected = selectedIsAreaReview
-    ? can('reject_area_production')
-    : can('review_production_request') && can('reject_production_request');
-  const canApproveSelected = selectedIsAreaReview
-    ? can('approve_production')
-    : can('review_production_request') && can('approve_production_request');
+  const canRequestSelectedChanges = can('review_production_request') && can('request_changes_production');
+  const canRejectSelected = can('review_production_request') && can('reject_production_request');
+  const canApproveSelected = can('review_production_request') && can('approve_production_request');
   const siteOptions = canViewAllAccessibleSites
     ? [{ id: 'all', name: 'All Sites' }, ...productionSiteOptions]
     : productionSiteOptions;
@@ -2336,11 +2279,11 @@ export default function Production() {
         )}
         onPrint={() => window.print()}
         renderActions={renderProductionActions}
-        showAreaApprovalQueue={canReviewAreaApprovals}
-        areaApprovalQueue={areaApprovalQueue}
-        isAreaApprovalQueueLoading={isAreaApprovalQueueLoading}
-        areaApprovalQueueError={areaApprovalQueueError?.message || ''}
-        onReviewAreaApproval={openApprovalDialog}
+        showAreaApprovalQueue={false}
+        areaApprovalQueue={[]}
+        isAreaApprovalQueueLoading={false}
+        areaApprovalQueueError=""
+        onReviewAreaApproval={() => {}}
         onViewApprovalHistory={setHistoryProduction}
       />
 
@@ -2996,9 +2939,7 @@ export default function Production() {
           <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
-                {isAreaApprovalReview(selectedProduction)
-                  ? 'Area Manager Production Approval'
-                  : 'Project Manager Production Review'}
+                Project Manager Production Review
               </DialogTitle>
             </DialogHeader>
             {actionError ? (
@@ -3092,14 +3033,10 @@ export default function Production() {
                     <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5" />
                     <div>
                       <p className="font-medium text-amber-900">
-                        {isAreaApprovalReview(selectedProduction)
-                          ? 'Shortage Review Before Final Approval'
-                          : 'Store / Procurement Action Required After PM Approval'}
+                        Store / Procurement Action Required After PM Approval
                       </p>
                       <p className="text-sm text-amber-700 mt-1">
-                        {isAreaApprovalReview(selectedProduction)
-                          ? 'Final approval is blocked until the Store receives or corrects the remaining shortage. Approval reserves the yield-adjusted quantities; physical stock is deducted only when production starts.'
-                          : 'After PM approval, the linked material request moves to the Store Keeper / Procurement Officer. Production then waits for Area Manager approval before it can start.'}
+                        After PM approval, the linked material request moves to Store / Procurement. Store / Procurement approval reserves the yield-adjusted quantities and marks production ready to start; physical stock is deducted only when production starts.
                       </p>
                     </div>
                   </div>
@@ -3148,15 +3085,12 @@ export default function Production() {
                     disabled={
                       Boolean(reviewAction)
                       || !reviewInventoryReady
-                      || (selectedIsAreaReview && reviewInventoryCheck.some((ingredient) => !ingredient.sufficient))
                     }
                   >
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                     {reviewAction === 'approve'
                       ? 'Approving...'
-                      : selectedIsAreaReview
-                        ? 'Approve, Reserve Inventory & Mark Ready'
-                        : 'Approve & Send to Store / Procurement'}
+                      : 'Approve & Send to Store / Procurement'}
                   </Button>
                 ) : null}
               </DialogFooter>
@@ -3209,7 +3143,7 @@ export default function Production() {
               </DialogTitle>
             </DialogHeader>
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-              Area Manager approval reserves inventory without deducting physical stock. Before production starts, quantity changes adjust only the reservation and preserve the selected batch, stock-date, expiry, and cost trail.
+              Store / Procurement approval reserves inventory without deducting physical stock. Before production starts, quantity changes adjust only the reservation and preserve the selected batch, stock-date, expiry, and cost trail.
             </div>
             {inventoryAction ? (
               <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">

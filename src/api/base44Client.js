@@ -533,12 +533,6 @@ export const base44 = {
     }
   },
   productionWorkflow: {
-    approveForArea(id, data = {}) {
-      return apiRequest(`/api/productions/${id}/area-approve`, {
-        method: 'POST',
-        body: JSON.stringify(data)
-      });
-    },
     start(id, data = {}) {
       return apiRequest(`/api/entities/Production/${id}`, {
         method: 'PATCH',

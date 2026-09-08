@@ -333,13 +333,13 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
 
         {item.workflow_status === 'pending_production' ? (
           <p className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-2 text-xs text-purple-800">
-            Procurement completed. Area Manager approval is required before production can start.
+            Legacy pending-production record. Store / Procurement approval now moves new requests directly to ready-to-start.
           </p>
         ) : null}
 
         {requiresLegacyAreaReview ? (
           <p className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-2 text-xs text-purple-800">
-            This legacy record is not ready to start. Reconcile its Store / Procurement state, then record a fresh Area Manager approval.
+            This legacy record is not ready to start. Reconcile its Store / Procurement state so inventory can be reserved.
           </p>
         ) : null}
 
@@ -513,8 +513,8 @@ function AreaApprovalQueue({
         <div className="flex items-start gap-2.5">
           <ShieldCheck className="mt-0.5 h-5 w-5 text-purple-700" aria-hidden="true" />
           <div>
-            <h2 id="area-approval-queue-title" className="font-semibold text-purple-950">Pending Area Manager Approvals</h2>
-            <p className="text-xs text-purple-700">All pending production approvals across your accessible sites and dates.</p>
+            <h2 id="area-approval-queue-title" className="font-semibold text-purple-950">Legacy Pending Production Reviews</h2>
+            <p className="text-xs text-purple-700">Older production records that still need workflow reconciliation across your accessible sites and dates.</p>
           </div>
         </div>
         <Badge className="w-fit bg-purple-700 hover:bg-purple-700">
@@ -534,7 +534,7 @@ function AreaApprovalQueue({
       ) : productions.length === 0 ? (
         <div className="flex items-center gap-2 px-4 py-5 text-sm text-emerald-700">
           <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-          No production requests are waiting for Area Manager approval.
+          No legacy production requests are waiting for workflow reconciliation.
         </div>
       ) : (
         <div className="grid gap-3 p-3 lg:grid-cols-2 2xl:grid-cols-3">

@@ -32,7 +32,7 @@ const cases = [
     }
   },
   {
-    name: 'Area Manager queue includes every scoped pending approval across dates',
+    name: 'active workflow no longer queues pending-production records for Area Manager approval',
     run() {
       const records = [
         { id: 'later', site_id: 'project-a', production_date: '2026-08-27', status: 'pending_production' },
@@ -58,12 +58,12 @@ const cases = [
 
       assert.deepEqual(
         getPendingAreaApprovalProductions(records, ['project-a']).map((record) => record.id),
-        ['earlier', 'legacy-pending', 'later']
+        ['legacy-pending']
       );
     }
   },
   {
-    name: 'production start remains blocked until Area approval and procurement acknowledgement exist',
+    name: 'production start remains blocked until Store / Procurement acknowledgement exists',
     run() {
       const pending = {
         status: 'pending_production',
@@ -71,7 +71,7 @@ const cases = [
         material_request_status: 'acknowledged'
       };
       assert.equal(canStartApprovedProduction(pending), false);
-      assert.match(getProductionStartBlockReason(pending), /Area Manager approval is pending/i);
+      assert.match(getProductionStartBlockReason(pending), /not approved and ready to start/i);
 
       const missingProcurement = {
         status: 'approved',
@@ -80,7 +80,7 @@ const cases = [
         material_request_status: 'pending_procurement_ack'
       };
       assert.equal(canStartApprovedProduction(missingProcurement), false);
-      assert.match(getProductionStartBlockReason(missingProcurement), /Procurement acknowledges/i);
+      assert.match(getProductionStartBlockReason(missingProcurement), /final approval is pending|Store \/ Procurement acknowledges/i);
 
       assert.equal(canStartApprovedProduction({
         ...missingProcurement,
@@ -134,7 +134,7 @@ const cases = [
         review_action: 'rejected',
         rejection_reason: 'Procurement must source a substitute.'
       });
-      assert.match(areaNotice.label, /Area Manager rejected/i);
+      assert.match(areaNotice.label, /Final approval returned/i);
       assert.equal(areaNotice.reason, 'Procurement must source a substitute.');
 
       const pmNotice = getProductionReviewNotice({
@@ -182,7 +182,7 @@ const cases = [
     }
   },
   {
-    name: 'backend keeps authoritative history and fully resets procurement acknowledgement on Area rejection',
+    name: 'backend keeps authoritative history and uses Store / Procurement as the final approval gate',
     run() {
       const serverSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
       const preparationSource = fs.readFileSync(new URL('../server/entityPreparation.js', import.meta.url), 'utf8');
@@ -190,27 +190,28 @@ const cases = [
 
       assert.match(serverSource, /applyProductionWorkflowMetadata\([\s\S]*lockedExisting[\s\S]*request\.body/);
       assert.match(serverSource, /approval_history: appendProductionApprovalHistory/);
-      assert.match(serverSource, /isAreaRejectionRollback[\s\S]*syncMaterialRequestForProduction\([\s\S]*isAreaRejectionRollback/);
+      assert.match(serverSource, /operation: 'store_procurement_approval'/);
+      assert.match(serverSource, /PRODUCTION_PROCUREMENT_ACKNOWLEDGED/);
       assert.match(serverSource, /acknowledged_by: null[\s\S]*acknowledged_by_name: null[\s\S]*acknowledged_at: null/);
       assert.match(preparationSource, /'approval_history', 'review_action', 'rejection_reason'/);
       assert.match(entitySource, /Rejected production requests must return to an actionable previous stage/);
     }
   },
   {
-    name: 'production UI provides an all-dates approval queue and visible history',
+    name: 'production UI removes the active Area Manager approval queue and keeps visible history',
     run() {
       const pageSource = fs.readFileSync(new URL('../src/pages/Production.jsx', import.meta.url), 'utf8');
       const dashboardSource = fs.readFileSync(
         new URL('../src/components/production/ProductionPlanningDashboard.jsx', import.meta.url),
         'utf8'
       );
-      assert.match(pageSource, /productionAreaApprovalQueue/);
-      assert.match(pageSource, /status: 'pending_production'/);
+      assert.doesNotMatch(pageSource, /Area Manager Review/);
+      assert.match(pageSource, /pending_production/);
       assert.match(pageSource, /getProductionRejectionReturnStatus/);
       assert.match(pageSource, /rejection_reason/);
       assert.match(pageSource, /Production Approval History/);
-      assert.match(dashboardSource, /All pending production approvals across your accessible sites and dates/);
-      assert.match(dashboardSource, /Pending Area Manager Approvals/);
+      assert.match(dashboardSource, /Legacy Pending Production Reviews/);
+      assert.doesNotMatch(dashboardSource, /Pending Area Manager Approvals/);
     }
   }
 ];

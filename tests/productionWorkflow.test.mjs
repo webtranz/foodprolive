@@ -45,7 +45,7 @@ const projectManager = customUser('project_manager', [
   'request_changes_production'
 ]);
 
-const areaManager = customUser('area_manager', [
+const legacyFinalApprover = customUser('area_manager', [
   'manage_production',
   'approve_production',
   'request_changes_area_production',
@@ -74,8 +74,6 @@ const administrator = {
 const readyProduction = {
   id: 'production-ready',
   status: PRODUCTION_STATUS.READY_TO_START,
-  area_approval_status: 'approved',
-  area_approved_at: '2026-08-24T08:00:00.000Z',
   material_request_status: 'acknowledged'
 };
 
@@ -143,14 +141,15 @@ const cases = [
     }
   },
   {
-    name: 'Area approval has a dedicated audited endpoint and client action',
+    name: 'Store / Procurement acknowledgement approves production and reserves inventory',
     run() {
       const serverSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
       const clientSource = fs.readFileSync(new URL('../src/api/base44Client.js', import.meta.url), 'utf8');
-      assert.match(serverSource, /\/api\/productions\/:id\/area-approve/);
-      assert.match(serverSource, /PRODUCTION_AREA_APPROVED/);
-      assert.match(serverSource, /currentStatus === 'approved'[\s\S]*requiresAreaProductionApproval\(lockedProduction\)/);
-      assert.match(clientSource, /approveForArea\(id, data = \{\}\)/);
+      assert.match(serverSource, /\/api\/material-requests\/:id\/acknowledge/);
+      assert.match(serverSource, /operation: 'store_procurement_approval'/);
+      assert.match(serverSource, /status: 'approved'/);
+      assert.match(serverSource, /PRODUCTION_PROCUREMENT_ACKNOWLEDGED/);
+      assert.doesNotMatch(clientSource, /approveForArea\(id, data = \{\}\)/);
     }
   },
   {
@@ -208,7 +207,7 @@ const cases = [
       assert.equal(getProductionStatusLabel('planned'), 'Production Created');
       assert.equal(getProductionStatusLabel('pending_approval'), 'Pending PM Approval');
       assert.equal(getProductionStatusLabel('pending_procurement'), 'Pending Store / Procurement');
-      assert.equal(getProductionStatusLabel('pending_production'), 'Pending Area Manager Approval');
+      assert.equal(getProductionStatusLabel('pending_production'), 'Legacy Pending Production');
       assert.equal(getProductionStatusLabel('approved'), 'Approved / Ready to Start');
       assert.equal(getProductionStatusLabel('in_progress'), 'Production In Progress');
       assert.equal(getProductionStatusLabel('completed'), 'Production Completed');
@@ -227,7 +226,7 @@ const cases = [
         ['changes_requested', 'pending_approval'],
         ['pending_approval', 'pending_procurement'],
         ['pending_approval', 'changes_requested'],
-        ['pending_procurement', 'pending_production'],
+        ['pending_procurement', 'approved'],
         ['pending_production', 'approved'],
         ['pending_production', 'pending_procurement'],
         ['pending_production', 'changes_requested'],
@@ -256,6 +255,7 @@ const cases = [
 
       assert.equal(getProductionTransitionPermission('draft', 'pending_approval'), 'submit_production_request');
       assert.equal(getProductionTransitionPermission('pending_approval', 'pending_procurement'), 'approve_production_request');
+      assert.equal(getProductionTransitionPermission('pending_procurement', 'approved'), 'acknowledge_material_request');
       assert.equal(getProductionTransitionPermission('pending_production', 'approved'), 'approve_production');
       assert.equal(getProductionTransitionPermission('pending_production', 'changes_requested'), 'request_changes_area_production');
       assert.equal(
@@ -271,7 +271,7 @@ const cases = [
     }
   },
   {
-    name: 'production start requires both Area approval and supply acknowledgement',
+    name: 'production start requires Store / Procurement acknowledgement and reserved supply',
     run() {
       assert.equal(hasAreaProductionApproval(readyProduction), true);
       assert.equal(hasAcknowledgedMaterialRequest(readyProduction), true);
@@ -295,14 +295,6 @@ const cases = [
       }), false, 'a client-spoofable yield flag is not authoritative without the server snapshot marker');
       assert.equal(canStartApprovedProduction({
         ...readyProduction,
-        area_approval_status: 'pending'
-      }), false);
-      assert.equal(canStartApprovedProduction({
-        ...readyProduction,
-        area_approved_at: null
-      }), false);
-      assert.equal(canStartApprovedProduction({
-        ...readyProduction,
         material_request_status: 'pending_procurement_ack'
       }), false);
       assert.equal(canStartApprovedProduction({
@@ -311,11 +303,7 @@ const cases = [
       }), false);
       assert.equal(requiresAreaProductionApproval({
         ...readyProduction,
-        area_approval_status: 'pending'
-      }), true);
-      assert.equal(requiresAreaProductionApproval({
-        ...readyProduction,
-        area_approved_at: null
+        material_request_status: 'pending_procurement_ack'
       }), true);
       assert.equal(requiresAreaProductionApproval(readyProduction), false);
     }
@@ -345,26 +333,26 @@ const cases = [
         { status: 'pending_approval' }
       ), /do not have permission/i);
       assert.throws(() => authorizeEntityAction(
-        areaManager,
+        legacyFinalApprover,
         'Production',
         'update',
         { status: 'approved' },
         { status: 'pending_production' }
-      ), /Area Manager approval action/i);
+      ), /protected production approval action/i);
       assert.throws(() => authorizeEntityAction(
         productionSupervisor,
         'Production',
         'update',
         { status: 'approved' },
         { status: 'pending_production' }
-      ), /Area Manager approval action/i);
+      ), /protected production approval action/i);
       assert.throws(() => authorizeEntityAction(
         procurementOfficer,
         'Production',
         'update',
-        { status: 'pending_production' },
+        { status: 'approved' },
         { status: 'pending_procurement' }
-      ), /set only after Store Keeper \/ Procurement acknowledgement/i);
+      ), /Store \/ Procurement acknowledgement action/i);
       assert.throws(() => authorizeEntityAction(
         projectManager,
         'Production',
@@ -402,7 +390,7 @@ const cases = [
         { status: 'pending_production' }
       ), /do not have permission/i);
       assert.doesNotThrow(() => authorizeEntityAction(
-        areaManager,
+        legacyFinalApprover,
         'Production',
         'update',
         {
@@ -425,7 +413,7 @@ const cases = [
         'update',
         { status: 'approved' },
         { status: 'pending_production' }
-      ), /Area Manager approval action/i);
+      ), /protected production approval action/i);
     }
   },
   {
@@ -444,7 +432,7 @@ const cases = [
         'update',
         { status: 'in_progress' },
         { ...readyProduction, material_request_status: 'pending_procurement_ack' }
-      ), /cannot start until procurement is acknowledged and the Area Manager has approved/i);
+      ), /final approval is pending|Store \/ Procurement has acknowledged/i);
       assert.throws(() => authorizeEntityAction(
         projectManager,
         'Production',
