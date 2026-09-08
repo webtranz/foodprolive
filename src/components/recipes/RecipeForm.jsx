@@ -15,7 +15,6 @@ import { formatCurrency, formatNumber } from '@/lib/currency';
 import { cn } from '@/lib/utils';
 import { normalizeIngredientUnit } from '../../../shared/ingredientUnits.js';
 import {
-  expandRecipeIngredients,
   validateRecipeComposition,
   wouldCreateRecipeCycle
 } from '../../../shared/recipeComposition.js';
@@ -24,6 +23,7 @@ import {
   validateRecipeImageReference
 } from '../../../shared/recipeImage.js';
 import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
+import { calculateRecipeNutrition } from '../../../shared/recipeNutrition.js';
 import { calculateYieldOutputQuantity } from '../../../shared/ingredientYield.js';
 import {
   calculateRecipeCostingSnapshot,
@@ -36,6 +36,12 @@ import {
   standardizeDecimalValue
 } from '../../../shared/recipeNumbers.js';
 import { getItemCode } from '../../../shared/itemCode.js';
+import {
+  clearRecipeLineWeight,
+  getRecipeLineWeight,
+  isExemptProcessingAid
+} from '../../../shared/recipeLineWeight.js';
+import { calculateFrozenProductionLineWeight } from '../../../shared/productionReconciliation.js';
 
 const RECIPE_CATEGORIES = [
   { value: 'starter_salad_soup', label: 'Starter / Salad / Soup' },
@@ -70,29 +76,7 @@ const ALLERGEN_COLORS = {
   sesame: 'bg-rose-100 text-rose-700'
 };
 
-function quantityToGrams(quantity, unit) {
-  const numericQuantity = Number(quantity) || 0;
-  switch (unit) {
-    case 'kg':
-      return numericQuantity * 1000;
-    case 'g':
-      return numericQuantity;
-    case 'l':
-      return numericQuantity * 1000;
-    case 'ml':
-      return numericQuantity;
-    case 'pieces':
-      return numericQuantity * 100;
-    default:
-      return numericQuantity;
-  }
-}
-
-function roundValue(value) {
-  return Math.round((Number(value) || 0) * 10) / 10;
-}
-
-export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, sites = [], isLoading }) {
+export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, sites = [], isLoading, canEditLineWeights = false }) {
   const imageInputRef = useRef(null);
   const [formError, setFormError] = useState('');
   const [imageFile, setImageFile] = useState(null);
@@ -118,6 +102,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     image_url: '',
     ingredients: [],
     sub_recipes: [],
+    declared_allergens: [],
     is_active: true,
     site_scope: 'global',
     site_ids: []
@@ -145,12 +130,17 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
         image_url: recipe.image_url || '',
         ingredients: (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).map((line) => ({
           ...line,
-          quantity: Number.isFinite(Number(line.quantity)) ? Number(line.quantity) : null
+          quantity: Number.isFinite(Number(line.quantity)) ? Number(line.quantity) : null,
+          exempt_processing_aid: isExemptProcessingAid(line)
         })),
         sub_recipes: (Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : []).map((line) => ({
           ...line,
           quantity: Number.isFinite(Number(line.quantity)) ? Number(line.quantity) : null
         })),
+        allergens: Array.isArray(recipe.allergens) ? recipe.allergens : [],
+        ...(Array.isArray(recipe.declared_allergens) ? { declared_allergens: recipe.declared_allergens } : {}),
+        ...(Array.isArray(recipe.legacy_allergens) ? { legacy_allergens: recipe.legacy_allergens } : {}),
+        nutrition_calculation_version: recipe.nutrition_calculation_version,
         is_active: recipe.is_active !== false,
         site_scope: recipe.site_scope || 'global',
         site_ids: Array.isArray(recipe.site_ids) ? recipe.site_ids : []
@@ -174,6 +164,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
         image_url: '',
         ingredients: [],
         sub_recipes: [],
+        declared_allergens: [],
         is_active: true,
         site_scope: 'global',
         site_ids: []
@@ -223,15 +214,14 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       }];
     }));
     Object.values(selectedIngredientsById).forEach((ingredient) => {
-      if (!ingredient?.id) return;
-      const existing = merged.get(ingredient.id) || {};
+      // Search selections are a fallback; refreshed master and scoped inventory data take precedence.
+      if (!ingredient?.id || merged.has(ingredient.id)) return;
       merged.set(ingredient.id, {
-        ...existing,
         ...ingredient,
-        cost_per_unit: existing.cost_per_unit ?? ingredient.cost_per_unit ?? ingredient.last_cost,
-        standard_cost: ingredient.standard_cost ?? existing.standard_cost ?? existing.cost_per_unit,
-        last_cost: ingredient.last_cost ?? existing.last_cost ?? existing.cost_per_unit,
-        average_cost: ingredient.average_cost ?? existing.average_cost ?? existing.cost_per_unit
+        cost_per_unit: ingredient.cost_per_unit ?? ingredient.last_cost,
+        standard_cost: ingredient.standard_cost ?? ingredient.cost_per_unit,
+        last_cost: ingredient.last_cost ?? ingredient.cost_per_unit,
+        average_cost: ingredient.average_cost ?? ingredient.cost_per_unit
       });
     });
     return [...merged.values()];
@@ -244,62 +234,14 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     && !wouldCreateRecipeCycle(recipe?.id, recipeOption.id, recipes)
   )), [recipe?.id, recipes]);
 
-  const calculatedNutrition = useMemo(() => {
-    const totals = {
-      calories: 0,
-      protein: 0,
-      carbs: 0,
-      fat: 0,
-      sodium: 0,
-      sugar: 0
-    };
-    const allergenSet = new Set();
-
-    const expanded = expandRecipeIngredients(
+  const calculatedNutrition = useMemo(
+    () => calculateRecipeNutrition(
       { ...formData, id: recipe?.id || null },
       recipes,
-      ingredientCatalog,
-      { aggregate: false }
-    );
-
-    expanded.ingredients.forEach((ingredientLine) => {
-      const ingredientData = ingredientCatalog.find((item) => item.id === ingredientLine.ingredient_id);
-      if (!ingredientData) {
-        return;
-      }
-
-      const grams = quantityToGrams(ingredientLine.quantity, ingredientLine.unit);
-      const factor = grams / 100;
-
-      totals.calories += (Number(ingredientData.calories_per_100g) || 0) * factor;
-      totals.protein += (Number(ingredientData.protein_per_100g) || 0) * factor;
-      totals.carbs += (Number(ingredientData.carbs_per_100g) || 0) * factor;
-      totals.fat += (Number(ingredientData.fat_per_100g) || 0) * factor;
-      totals.sodium += (Number(ingredientData.sodium_per_100g) || 0) * factor;
-      totals.sugar += (Number(ingredientData.sugar_per_100g) || 0) * factor;
-
-      const ingredientAllergens = Array.isArray(ingredientData.allergens) ? ingredientData.allergens : [];
-      ingredientAllergens.forEach((allergen) => allergenSet.add(allergen));
-    });
-
-    const servings = Math.max(1, Number(formData.servings) || 1);
-
-    return {
-      total_calories: Math.round(totals.calories),
-      total_protein: roundValue(totals.protein),
-      total_carbs: roundValue(totals.carbs),
-      total_fat: roundValue(totals.fat),
-      total_sodium: roundValue(totals.sodium),
-      total_sugar: roundValue(totals.sugar),
-      calories_per_serving: Math.round(totals.calories / servings),
-      protein_per_serving: roundValue(totals.protein / servings),
-      carbs_per_serving: roundValue(totals.carbs / servings),
-      fat_per_serving: roundValue(totals.fat / servings),
-      sodium_per_serving: roundValue(totals.sodium / servings),
-      sugar_per_serving: roundValue(totals.sugar / servings),
-      allergens: Array.from(allergenSet).sort()
-    };
-  }, [formData, ingredientCatalog, recipe?.id, recipes]);
+      ingredientCatalog
+    ),
+    [formData, ingredientCatalog, recipe?.id, recipes]
+  );
 
   const calculatedServingWeight = useMemo(
     () => calculateRecipeServingWeight(
@@ -328,6 +270,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       label: `Ingredient ${line.ingredient_name || 'quantity'}`
     });
     const validationError = numericValidation[`ingredient-${index}`]?.error
+      || numericValidation[`weight-${index}`]?.error
       || (!line.ingredient_id ? 'Select an ingredient.' : '')
       || (!quantityValidation.valid ? quantityValidation.error : '')
       || (!SUPPORTED_RECIPE_INGREDIENT_UNITS.has(normalizedUnit) ? 'Choose a supported unit.' : '')
@@ -342,6 +285,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       yieldPercent: yieldOutput?.yield_percent ?? null,
       yieldedQuantity: yieldOutput?.yielded_quantity ?? null,
       currentStock,
+      autoWeight: calculateFrozenProductionLineWeight({ planned_quantity: 1, unit: line.unit }, ingredient || {}).raw_weight_grams,
+      definedWeight: getRecipeLineWeight(line),
+      processingAid: isExemptProcessingAid(line),
       shortage: currentStock === null || !Number.isFinite(quantityInBaseUnit) ? null : Math.max(0, quantityInBaseUnit - currentStock),
       validationError
     };
@@ -359,7 +305,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
   const addIngredient = () => {
     setFormData((prev) => ({
       ...prev,
-      ingredients: [...prev.ingredients, { ingredient_id: '', item_code: '', ingredient_name: '', quantity: null, unit: 'g' }]
+      ingredients: [...prev.ingredients, { ingredient_id: '', item_code: '', ingredient_name: '', quantity: null, unit: 'g', exempt_processing_aid: false }]
     }));
   };
 
@@ -369,14 +315,20 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       ingredients: prev.ingredients.filter((_, i) => i !== index)
     }));
     setNumericValidation((current) => Object.fromEntries(
-      Object.entries(current).filter(([key]) => !key.startsWith('ingredient-'))
+      Object.entries(current).filter(([key]) => !key.startsWith('ingredient-') && !key.startsWith('weight-'))
     ));
   };
 
   const updateIngredient = (index, field, value) => {
+    if (field === 'unit' || field === 'ingredient_id') {
+      setNumericValidation((current) => ({ ...current, [`weight-${index}`]: {} }));
+    }
     setFormData((prev) => {
       const nextIngredients = [...prev.ingredients];
       nextIngredients[index] = { ...nextIngredients[index], [field]: value };
+      if (field === 'unit' || field === 'ingredient_id') {
+        nextIngredients[index] = clearRecipeLineWeight(nextIngredients[index]);
+      }
 
       if (field === 'ingredient_id') {
         const selected = ingredients.find((item) => item.id === value);
@@ -393,11 +345,12 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
   const selectIngredient = (index, ingredient) => {
     if (!ingredient?.id) return;
+    setNumericValidation((current) => ({ ...current, [`weight-${index}`]: {} }));
     setSelectedIngredientsById((current) => ({ ...current, [ingredient.id]: ingredient }));
     setFormData((current) => {
       const nextIngredients = [...current.ingredients];
       nextIngredients[index] = {
-        ...nextIngredients[index],
+        ...clearRecipeLineWeight(nextIngredients[index]),
         ingredient_id: ingredient.id,
         item_code: getItemCode(ingredient, ''),
         ingredient_name: ingredient.name,
@@ -414,6 +367,21 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
         ...prev.sub_recipes,
         { recipe_id: '', recipe_name: '', quantity: 1, unit: 'batch' }
       ]
+    }));
+  };
+
+  const updateLineWeight = (index, value) => {
+    if (!canEditLineWeights) return;
+    setFormData((current) => ({
+      ...current,
+      ingredients: current.ingredients.map((line, lineIndex) => lineIndex !== index ? line : {
+        ...clearRecipeLineWeight(line),
+        ...(value === null ? {} : {
+          weight_per_unit_grams: value,
+          weight_unit: normalizeIngredientUnit(line.unit),
+          weight_ingredient_id: line.ingredient_id
+        })
+      })
     }));
   };
 
@@ -478,6 +446,11 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const weightError = Object.entries(numericValidation).find(([key, status]) => key.startsWith('weight-') && status.error);
+    if (weightError) {
+      setFormError(weightError[1].error);
+      return;
+    }
     const imageReferenceError = imageFile ? '' : validateRecipeImageReference(formData.image_url);
     if (imageReferenceError) {
       setFormError(imageReferenceError);
@@ -546,14 +519,14 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-h-[92vh] max-w-[1400px] overflow-y-auto">
+      <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] max-w-[1600px] min-w-0 overflow-x-hidden overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl font-semibold">
             {recipe ? 'Edit Recipe' : 'Create New Recipe'}
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="min-w-0 space-y-6">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="md:col-span-2 xl:col-span-4">
               <Label htmlFor="name">Recipe Name *</Label>
@@ -807,19 +780,28 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
               </Button>
             </div>
 
-            <div className="space-y-3">
+            <p className="mb-3 text-sm text-slate-600">
+              Weight per unit is the raw weight in grams of one selected unit (one piece, EA, or PAK), not the entire line.
+              It scales with quantity and production covers without changing the ingredient master.
+              {canEditLineWeights ? ' Enter a verified weight where conversion is missing; leave blank to use the ingredient settings.' : ' Only administrators can define or change this weight.'}
+              {' '}Mark Exempt Processing Aid for items consumed during preparation but not included in the finished recipe weight.
+            </p>
+            <div className="min-w-0 max-w-full overflow-x-auto pb-2">
+            <div className="space-y-3 xl:min-w-[1700px]">
               {formData.ingredients.length > 0 ? (
-                <div className="hidden grid-cols-[100px_minmax(210px,1.5fr)_100px_80px_72px_110px_110px_110px_120px_140px_42px] gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 xl:grid">
+                <div className="hidden grid-cols-[100px_minmax(210px,1.5fr)_100px_80px_140px_72px_110px_110px_110px_120px_140px_160px_42px] gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 xl:grid">
                   <span>Item Code</span>
                   <span>Item Name</span>
                   <span>Raw Quantity</span>
                   <span>Unit</span>
+                  <span>Weight per unit (g)</span>
                   <span>Yield</span>
                   <span>Expected Output</span>
                   <span>Item Cost</span>
                   <span>Line Cost</span>
                   <span>Stock Impact</span>
                   <span>Validation</span>
+                  <span>Processing Aid</span>
                   <span aria-hidden="true" />
                 </div>
               ) : null}
@@ -837,7 +819,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     : null
                 );
                 return (
-                  <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[100px_minmax(210px,1.5fr)_100px_80px_72px_110px_110px_110px_120px_140px_42px]">
+                  <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[100px_minmax(210px,1.5fr)_100px_80px_140px_72px_110px_110px_110px_120px_140px_160px_42px]">
                   <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Code</p>
                     <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-medium text-slate-700">
@@ -884,6 +866,27 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     </Select>
                   </div>
                   <div>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Weight per unit (g)</p>
+                    <StandardDecimalInput
+                      key={`${ingredientLine.ingredient_id}-${ingredientLine.unit}-weight`}
+                      value={costRow?.definedWeight}
+                      unit="g"
+                      precision={4}
+                      max={1000000000}
+                      allowZero={false}
+                      allowEmpty
+                      disabled={!canEditLineWeights || !ingredientLine.ingredient_id || ['g', 'kg'].includes(normalizeIngredientUnit(ingredientLine.unit))}
+                      label={`Raw weight in grams per ${ingredientLine.unit || 'unit'} of ${ingredientLine.ingredient_name || 'ingredient'}`}
+                      onValueChange={(value) => updateLineWeight(index, value)}
+                      onValidationChange={(status) => setNumericValidation((current) => ({ ...current, [`weight-${index}`]: status }))}
+                      placeholder={costRow?.autoWeight == null ? 'Not defined' : `${formatRecipeQuantity(costRow.autoWeight, 'g')} auto`}
+                      className="bg-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      {costRow?.definedWeight != null ? `g per 1 ${ingredientLine.unit}` : costRow?.autoWeight == null ? 'Admin weight needed' : 'From ingredient settings'}
+                    </p>
+                  </div>
+                  <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Yield</p>
                     <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700">
                       {costRow?.yieldPercent == null ? '—' : `${formatNumber(costRow.yieldPercent, 2)}%`}
@@ -891,8 +894,15 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                   </div>
                   <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Expected Output</p>
-                    <div className="flex h-10 items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 text-sm font-semibold text-emerald-800">
-                      {costRow?.yieldedQuantity == null
+                    <div className={cn(
+                      'flex h-10 items-center rounded-md border px-2 text-sm font-semibold',
+                      costRow?.processingAid
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    )}>
+                      {costRow?.processingAid
+                        ? 'Excluded'
+                        : costRow?.yieldedQuantity == null
                         ? '—'
                         : `${formatRecipeQuantity(costRow.yieldedQuantity, ingredientLine.unit)} ${ingredientLine.unit || ''}`}
                     </div>
@@ -944,6 +954,26 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                       </span>
                     </div>
                   </div>
+                  <div className="md:col-span-2 xl:col-span-1">
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Processing Aid</p>
+                    <label
+                      htmlFor={`exempt-processing-aid-${index}`}
+                      className={cn(
+                        'flex min-h-10 cursor-pointer items-center gap-2 rounded-md border bg-white px-2 text-xs font-medium',
+                        costRow?.processingAid
+                          ? 'border-amber-200 text-amber-700'
+                          : 'border-slate-200 text-slate-600'
+                      )}
+                    >
+                      <Checkbox
+                        id={`exempt-processing-aid-${index}`}
+                        checked={costRow?.processingAid === true}
+                        onCheckedChange={(checked) => updateIngredient(index, 'exempt_processing_aid', checked === true)}
+                        className="data-[state=checked]:bg-amber-600 data-[state=checked]:text-white"
+                      />
+                      <span>Exempt Processing Aid.</span>
+                    </label>
+                  </div>
                   <Button
                     type="button"
                     variant="ghost"
@@ -964,6 +994,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
               ) : null}
             </div>
 
+            </div>
             {formData.ingredients.length > 0 || formData.sub_recipes.length > 0 ? (
               <div className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1021,33 +1052,33 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                 <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
                   <div>
                     <p className="text-sm text-orange-700">Calories / serving</p>
-                    <p className="text-2xl font-bold text-orange-900">{calculatedNutrition.calories_per_serving}</p>
+                    <p className="text-2xl font-bold text-orange-900">{calculatedNutrition.calories_per_serving ?? '—'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-orange-700">Protein / serving</p>
-                    <p className="text-xl font-semibold text-orange-900">{calculatedNutrition.protein_per_serving}g</p>
+                    <p className="text-xl font-semibold text-orange-900">{calculatedNutrition.protein_per_serving ?? '—'} g</p>
                   </div>
                   <div>
                     <p className="text-sm text-orange-700">Carbs / serving</p>
-                    <p className="text-xl font-semibold text-orange-900">{calculatedNutrition.carbs_per_serving}g</p>
+                    <p className="text-xl font-semibold text-orange-900">{calculatedNutrition.carbs_per_serving ?? '—'} g</p>
                   </div>
                   <div>
                     <p className="text-sm text-orange-700">Fat / serving</p>
-                    <p className="text-xl font-semibold text-orange-900">{calculatedNutrition.fat_per_serving}g</p>
+                    <p className="text-xl font-semibold text-orange-900">{calculatedNutrition.fat_per_serving ?? '—'} g</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
                   <div>
                     <p className="text-sm text-slate-600">Sodium / serving</p>
-                    <p className="font-semibold text-slate-900">{calculatedNutrition.sodium_per_serving} mg</p>
+                    <p className="font-semibold text-slate-900">{calculatedNutrition.sodium_per_serving ?? '—'} mg</p>
                   </div>
                   <div>
                     <p className="text-sm text-slate-600">Sugar / serving</p>
-                    <p className="font-semibold text-slate-900">{calculatedNutrition.sugar_per_serving} g</p>
+                    <p className="font-semibold text-slate-900">{calculatedNutrition.sugar_per_serving ?? '—'} g</p>
                   </div>
                   <div>
                     <p className="text-sm text-slate-600">Total calories</p>
-                    <p className="font-semibold text-slate-900">{calculatedNutrition.total_calories}</p>
+                    <p className="font-semibold text-slate-900">{calculatedNutrition.total_calories ?? '—'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-slate-600">Servings</p>
@@ -1060,6 +1091,13 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     </p>
                   </div>
                 </div>
+                {!calculatedNutrition.nutrition_complete && (
+                  <p className="text-sm text-amber-800">
+                    Nutrition incomplete — awaiting ingredient nutrition or weight data.
+                    {' '}{calculatedNutrition.nutrition_warnings.slice(0, 3).join(' ')}
+                    {calculatedNutrition.nutrition_warnings.length > 3 && ` +${calculatedNutrition.nutrition_warnings.length - 3} more source data gaps.`}
+                  </p>
+                )}
                 <div className="rounded-lg border border-amber-200 bg-white p-3">
                   <div className="mb-2 flex items-center gap-2">
                     <ShieldAlert className="h-4 w-4 text-amber-600" />
@@ -1073,8 +1111,15 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                         </Badge>
                       ))}
                     </div>
-                  ) : (
-                    <p className="text-sm text-slate-500">No tagged allergens detected from selected ingredients.</p>
+                  ) : calculatedNutrition.allergens_complete ? (
+                    <p className="text-sm text-slate-500">No allergens declared in the ingredient or recipe data.</p>
+                  ) : null}
+                  {!calculatedNutrition.allergens_complete && (
+                    <p className="mt-2 text-sm text-amber-800">
+                      Allergen information incomplete — awaiting ingredient allergen data.
+                      {' '}{calculatedNutrition.allergens_warnings.slice(0, 3).join(' ')}
+                      {calculatedNutrition.allergens_warnings.length > 3 && ` +${calculatedNutrition.allergens_warnings.length - 3} more source data gaps.`}
+                    </p>
                   )}
                 </div>
               </div>

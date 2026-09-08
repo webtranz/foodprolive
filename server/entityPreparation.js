@@ -1,6 +1,7 @@
 import { expandRecipeIngredients, validateRecipeComposition } from '../shared/recipeComposition.js';
 import { validateRecipeImageReference } from '../shared/recipeImage.js';
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
+import { calculateRecipeNutrition } from '../shared/recipeNutrition.js';
 import { normalizeRecipeNumericFields } from '../shared/recipeNumbers.js';
 import { calculateYieldOutputQuantity } from '../shared/ingredientYield.js';
 import {
@@ -15,6 +16,7 @@ import {
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import { inferPackageFields } from '../shared/packageUnits.js';
 import { normalizeProductionMenuScope } from '../shared/menuCategories.js';
+import { resolveMenuRecipeLinks } from '../shared/menuRecipeLinks.js';
 import { normalizeProductionStatus } from '../shared/productionWorkflow.js';
 import {
   assertStandardUserGroupMemberEdit,
@@ -33,6 +35,13 @@ import {
 } from '../shared/siteHierarchy.js';
 import { findDocument, listDocuments } from './db.js';
 import { getIngredientCostSnapshots } from './ingredientSearch.js';
+import { bindProductionRecipeLineWeights, prepareRecipeLineWeights } from './recipeLineWeights.js';
+import {
+  ingredientForRecipeLine,
+  isExemptProcessingAid,
+  recipeLineProcessingAidField,
+  recipeLineWeightFields
+} from '../shared/recipeLineWeight.js';
 import {
   assertPayloadLocationAccess,
   buildSiteHierarchy,
@@ -214,29 +223,6 @@ function normalizeMenuRecipeLookupValue(value) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function stripMenuRecipeSuffix(value) {
-  return normalizeMenuRecipeLookupValue(value)
-    .replace(/\s+kbr-384\s+onego\s+v\d+\s*$/i, '')
-    .replace(/\s+recipe\s*$/i, '')
-    .trim();
-}
-
-function buildMenuRecipeLookup(recipeCatalog = []) {
-  const lookup = new Map();
-  (Array.isArray(recipeCatalog) ? recipeCatalog : []).forEach((recipe) => {
-    [
-      recipe?.id,
-      recipe?.recipe_code,
-      recipe?.name,
-      stripMenuRecipeSuffix(recipe?.name)
-    ].forEach((candidate) => {
-      const normalized = normalizeMenuRecipeLookupValue(candidate);
-      if (normalized && !lookup.has(normalized)) lookup.set(normalized, recipe);
-    });
-  });
-  return lookup;
-}
-
 function buildSiteLookup(sites = []) {
   const lookup = new Map();
   (Array.isArray(sites) ? sites : []).forEach((site) => {
@@ -260,27 +246,14 @@ async function resolveMenuPlanRecipeReferences(menuPlan = {}, context = {}) {
   if (!meals.length) return menuPlan;
 
   const recipeCatalog = context.recipeCatalog || await listDocuments('Recipe', { limit: 5000 });
-  const recipeLookup = buildMenuRecipeLookup(recipeCatalog);
-  const resolvedMeals = meals.map((meal) => {
-    const recipe = recipeLookup.get(normalizeMenuRecipeLookupValue(meal?.recipe_id))
-      || recipeLookup.get(normalizeMenuRecipeLookupValue(meal?.recipe_code))
-      || recipeLookup.get(normalizeMenuRecipeLookupValue(meal?.recipe_name))
-      || recipeLookup.get(stripMenuRecipeSuffix(meal?.recipe_name));
-
-    if (!recipe) return meal;
-
-    return {
-      ...meal,
-      recipe_id: recipe.id,
-      recipe_code: recipe.recipe_code || meal.recipe_code || '',
-      recipe_name: recipe.name || meal.recipe_name || ''
-    };
-  });
-
-  return {
-    ...menuPlan,
-    meals: resolvedMeals
-  };
+  const resolved = resolveMenuRecipeLinks(menuPlan, recipeCatalog, context.scope?.sites || []);
+  const unresolved = resolved.meals.filter((meal) => meal.recipe_link_status !== 'linked');
+  if (unresolved.length) {
+    const error = new Error(`Menu recipes could not be linked for this store: ${unresolved.map((meal) => `${meal.recipe_code || meal.recipe_name || meal.recipe_id || 'Unnamed recipe'} (${meal.recipe_link_status})`).join(', ')}. Upload the matching recipes to this store first, then retry.`);
+    error.status = 400;
+    throw error;
+  }
+  return resolved;
 }
 
 function resolveMenuPlanLocation(menuPlan = {}, scope = {}) {
@@ -295,6 +268,23 @@ function resolveMenuPlanLocation(menuPlan = {}, scope = {}) {
     site_id: site.id,
     site_name: site.name || menuPlan.site_name || ''
   };
+}
+
+function resolveSiteParentFromPayload(sitePayload = {}, scope = {}) {
+  const parentSiteId = normalizeMenuRecipeLookupValue(sitePayload?.parent_site_id || '');
+  const parentSiteName = normalizeMenuRecipeLookupValue(sitePayload?.parent_site_name || '');
+  if (!parentSiteId && !parentSiteName) return null;
+
+  const siteLookup = buildSiteLookup(scope?.sites || []);
+  if (parentSiteId) {
+    const parentById = scope?.graph?.byId?.get(sitePayload.parent_site_id);
+    if (parentById) return parentById;
+    const parentByIdentifier = siteLookup.get(parentSiteId);
+    if (parentByIdentifier) return parentByIdentifier;
+  }
+
+  if (!parentSiteName) return null;
+  return siteLookup.get(parentSiteName) || null;
 }
 
 function resolveApprovedProductionScaleSource(production = {}) {
@@ -365,10 +355,13 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
   const productionIngredients = (Array.isArray(productionRecord.ingredients_used)
     ? productionRecord.ingredients_used
     : []).map((line, index) => {
-    const ingredient = ingredientMap.get(String(line?.ingredient_id || '')) || {};
+    const ingredient = ingredientForRecipeLine(line, ingredientMap.get(String(line?.ingredient_id || '')) || {});
+    const processingAid = isExemptProcessingAid(line);
     const unit = line?.unit || ingredient.unit || line?.inventory_unit || 'unit';
     const rawQuantity = productionLineNumber(line, 0);
-    const yieldedQuantity = Number.isFinite(Number(line?.yielded_quantity ?? line?.yield_adjusted_quantity ?? line?.net_quantity))
+    const yieldedQuantity = processingAid
+      ? 0
+      : Number.isFinite(Number(line?.yielded_quantity ?? line?.yield_adjusted_quantity ?? line?.net_quantity))
       ? Math.max(0, Number(line?.yielded_quantity ?? line?.yield_adjusted_quantity ?? line?.net_quantity))
       : rawQuantity;
     const unitCost = Number(
@@ -381,10 +374,10 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
     const estimatedCost = Number.isFinite(Number(line?.estimated_cost))
       ? Number(line.estimated_cost)
       : calculateIngredientCost(rawQuantity, unit, ingredient, unitCost);
-    const yieldPercent = Number.isFinite(Number(line?.yield_percent))
+    const yieldPercent = processingAid ? 0 : Number.isFinite(Number(line?.yield_percent))
       ? Math.max(0, Number(line.yield_percent))
       : (rawQuantity > 0 ? (yieldedQuantity / rawQuantity) * 100 : 100);
-    const yieldMultiplier = Number.isFinite(Number(line?.yield_multiplier))
+    const yieldMultiplier = processingAid ? 0 : Number.isFinite(Number(line?.yield_multiplier))
       ? Math.max(0, Number(line.yield_multiplier))
       : yieldPercent / 100;
     const submittedCostQuantity = Number(line?.cost_quantity ?? rawQuantity);
@@ -394,6 +387,7 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
 
     const preparedLine = {
       ...line,
+      ...recipeLineProcessingAidField(line),
       ingredient_id: line?.ingredient_id || null,
       item_code: getItemCodeFromRecords([ingredient, line], null),
       ingredient_name: ingredient.name || line?.ingredient_name || 'Ingredient',
@@ -407,7 +401,7 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
       yield_adjusted_quantity: Number(yieldedQuantity.toFixed(4)),
       yield_multiplier: Number(yieldMultiplier.toFixed(6)),
       yield_percent: Number(yieldPercent.toFixed(2)),
-      yield_source: line?.yield_source || 'production_snapshot_override',
+      yield_source: processingAid ? 'exempt_processing_aid' : line?.yield_source || 'production_snapshot_override',
       actual_quantity: null,
       unit,
       cost_quantity: Number(costQuantity.toFixed(4)),
@@ -431,7 +425,9 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
     0
   );
   const recipeRawWeightGrams = productionIngredients.reduce((total, line) => (
-    Number.isFinite(Number(line.raw_weight_grams)) ? total + Number(line.raw_weight_grams) : total
+    !isExemptProcessingAid(line) && Number.isFinite(Number(line.raw_weight_grams))
+      ? total + Number(line.raw_weight_grams)
+      : total
   ), 0);
   const expectedFinishedWeightGrams = productionIngredients.reduce((total, line) => (
     Number.isFinite(Number(line.yielded_weight_grams)) ? total + Number(line.yielded_weight_grams) : total
@@ -614,8 +610,13 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
         ? existing.type
         : normalizeSiteType(requestedType, 'area')
     };
+    const resolvedParent = resolveSiteParentFromPayload(sitePayload, scope);
+    const parent = resolvedParent;
+    if (resolvedParent) {
+      sitePayload.parent_site_id = resolvedParent.id;
+      sitePayload.parent_site_name = resolvedParent.name;
+    }
     const parentId = String(sitePayload.parent_site_id || '').trim();
-    const parent = parentId ? scope?.graph?.byId?.get(parentId) || null : null;
 
     if (isCanonicalSiteType(sitePayload.type)) {
       const hierarchyError = validateCanonicalSiteParent({
@@ -663,8 +664,17 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
   }
 
   if (entity === 'Recipe') {
+    // CSV/API allergen declarations are distinct from the generated allergen
+    // snapshot posted by the editor. Respect explicit declarations on imports
+    // even when updating an already calculated recipe.
+    const recipeWithDeclarations = { ...merged };
+    if (Array.isArray(payload.allergens)
+      && payload.nutrition_calculation_version == null
+      && !Object.prototype.hasOwnProperty.call(payload, 'declared_allergens')) {
+      recipeWithDeclarations.declared_allergens = payload.allergens;
+    }
     const locationNormalizedRecipe = normalizeRecipeLocationPayload({
-      ...merged,
+      ...recipeWithDeclarations,
       image_url: String(merged.image_url || '').trim()
     }, scope);
     const numericResult = normalizeRecipeNumericFields(locationNormalizedRecipe);
@@ -685,6 +695,7 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
       context.ingredientCatalog || listDocuments('Ingredient', { limit: 10000 })
     ]);
     normalizedRecipe.ingredients = resolveRecipeIngredientLines(normalizedRecipe, ingredientCatalog);
+    normalizedRecipe.ingredients = prepareRecipeLineWeights(user, normalizedRecipe.ingredients, existing?.ingredients || []);
     const compositionErrors = validateRecipeComposition(normalizedRecipe, recipeCatalog);
     if (compositionErrors.length > 0) {
       const error = new Error(compositionErrors[0]);
@@ -720,6 +731,7 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
     );
     return {
       ...normalizedRecipe,
+      ...calculateRecipeNutrition(normalizedRecipe, recipeCatalog, ingredientCatalog),
       total_cost: costing.total_cost,
       cost_per_serving: costing.cost_per_serving,
       cost_per_100g: costing.cost_per_100g,
@@ -735,7 +747,7 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
 
   if (entity === 'MenuPlan') {
     const locationResolvedPlan = resolveMenuPlanLocation(merged, scope);
-    return resolveMenuPlanRecipeReferences(locationResolvedPlan, context);
+    return resolveMenuPlanRecipeReferences(locationResolvedPlan, { ...context, scope });
   }
 
   if (entity === 'ProductionBatch') {
@@ -1062,7 +1074,7 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
 
     if (hasLockedProductionSnapshot(productionRecord)) {
       return prepareLockedProductionSnapshot(
-        productionRecord,
+        bindProductionRecipeLineWeights(productionRecord, recipe, recipeCatalog, ingredientCatalog, existing),
         recipe,
         ingredientCatalog,
         targetServings
@@ -1096,6 +1108,15 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
         throw error;
       }
       const yieldOutput = calculateYieldOutputQuantity(line.quantity, ingredient);
+      const processingAid = isExemptProcessingAid(line);
+      const effectiveYieldOutput = processingAid
+        ? {
+            yielded_quantity: 0,
+            yield_multiplier: 0,
+            yield_percent: 0,
+            yield_source: 'exempt_processing_aid'
+          }
+        : yieldOutput;
       const rawQuantity = convertIngredientQuantity(
         line.quantity,
         line.unit || unit,
@@ -1103,7 +1124,7 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
         ingredient
       );
       const yieldedQuantity = convertIngredientQuantity(
-        yieldOutput.yielded_quantity,
+        effectiveYieldOutput.yielded_quantity,
         line.unit || unit,
         unit,
         ingredient
@@ -1118,6 +1139,8 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
       const estimatedCost = calculateIngredientCost(rawQuantity, unit, ingredient, unitCost);
 
       const preparedLine = {
+        ...recipeLineWeightFields(line),
+        ...recipeLineProcessingAidField(line),
         ingredient_id: line.ingredient_id,
         item_code: getItemCodeFromRecords([ingredient, line, submitted], null),
         ingredient_name: ingredient.name || line.ingredient_name,
@@ -1129,9 +1152,9 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
         planned_quantity: Number(rawQuantity.toFixed(4)),
         required_quantity: Number(rawQuantity.toFixed(4)),
         yield_adjusted_quantity: Number(yieldedQuantity.toFixed(4)),
-        yield_multiplier: Number(yieldOutput.yield_multiplier.toFixed(6)),
-        yield_percent: Number(yieldOutput.yield_percent.toFixed(2)),
-        yield_source: yieldOutput.yield_source,
+        yield_multiplier: Number(effectiveYieldOutput.yield_multiplier.toFixed(6)),
+        yield_percent: Number(effectiveYieldOutput.yield_percent.toFixed(2)),
+        yield_source: effectiveYieldOutput.yield_source,
         // Completion is reconciled automatically from this frozen raw plan.
         // Never persist a client-supplied actual that could suppress stock posting.
         actual_quantity: null,
@@ -1147,7 +1170,7 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
         raw_weight_grams: frozenWeight.raw_weight_grams,
         yielded_weight_grams: frozenWeight.yielded_weight_grams,
         weight_calculation_source: frozenWeight.source,
-        yield_calculation_source: yieldOutput.yield_source,
+        yield_calculation_source: effectiveYieldOutput.yield_source,
         weight_snapshot_version: 1
       };
     });

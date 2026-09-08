@@ -1,4 +1,7 @@
-export const ITEM_CODE_FIELDS = Object.freeze(['item_code', 'ingredient_code', 'sku']);
+// D365 stock imports identify an Ingredient by d365_item_id. Treat it as the
+// final display fallback so historical D365 inventory never renders a blank
+// item code when an internal SKU has not been assigned yet.
+export const ITEM_CODE_FIELDS = Object.freeze(['item_code', 'ingredient_code', 'sku', 'd365_item_id']);
 
 function normalizeCodeValue(value) {
   if (value === null || typeof value === 'undefined') return '';

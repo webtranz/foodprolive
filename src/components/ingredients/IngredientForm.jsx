@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DEFAULT_SOURCE_NAME, SOURCE_NAME_OPTIONS, normalizeSourceName } from '../../../shared/sourceNames.js';
+import { normalizeIngredientUnit } from '../../../shared/ingredientUnits.js';
 
 const CATEGORIES = [
   { value: 'proteins', label: 'Proteins' },
@@ -27,6 +28,8 @@ const UNITS = [
   { value: 'ml', label: 'Milliliters (ml)' },
   { value: 'pieces', label: 'Pieces' }
 ];
+
+const NO_CONVERSION_UNIT = '__no_conversion__';
 
 const ALLERGEN_OPTIONS = [
   'dairy',
@@ -127,6 +130,10 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
     }
   }, [ingredient, open]);
 
+  const normalizedConversionUnit = normalizeIngredientUnit(formData.conversion_unit);
+  const isStandardConversionUnit = UNITS.some(unit => unit.value === normalizedConversionUnit);
+  const conversionUnit = isStandardConversionUnit ? normalizedConversionUnit : formData.conversion_unit;
+
   // Auto-calculate yield/shrinkage
   useEffect(() => {
     if (formData.raw_weight_per_unit && formData.cooked_weight_per_unit) {
@@ -161,6 +168,7 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
       sugar_per_100g: formData.sugar_per_100g ? parseFloat(formData.sugar_per_100g) : null,
       allergens: formData.allergens,
       aliases: String(formData.aliases || '').split(',').map((value) => value.trim()).filter(Boolean),
+      conversion_unit: conversionUnit,
       conversion_factor: formData.conversion_factor ? parseFloat(formData.conversion_factor) : null,
       cost_per_unit: formData.cost_per_unit ? parseFloat(formData.cost_per_unit) : null
     };
@@ -296,13 +304,27 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
 
                 <div>
                   <Label htmlFor="conversion_unit">Conversion Unit</Label>
-                  <Input
-                    id="conversion_unit"
-                    value={formData.conversion_unit}
-                    onChange={(e) => setFormData({ ...formData, conversion_unit: e.target.value })}
-                    placeholder="e.g., pieces, box"
-                    className="mt-1"
-                  />
+                  <Select
+                    value={conversionUnit || NO_CONVERSION_UNIT}
+                    onValueChange={(value) => setFormData(prev => ({
+                      ...prev,
+                      conversion_unit: value === NO_CONVERSION_UNIT ? '' : value,
+                      conversion_factor: value === NO_CONVERSION_UNIT ? '' : prev.conversion_factor
+                    }))}
+                  >
+                    <SelectTrigger id="conversion_unit" className="mt-1">
+                      <SelectValue placeholder="Select conversion unit" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_CONVERSION_UNIT}>No conversion</SelectItem>
+                      {UNITS.map(unit => (
+                        <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>
+                      ))}
+                      {conversionUnit && !isStandardConversionUnit && (
+                        <SelectItem value={conversionUnit}>{conversionUnit} (existing unit)</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>

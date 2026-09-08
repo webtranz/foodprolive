@@ -152,6 +152,16 @@ assert.match(entityPreparation, /if \(entity === 'UserGroup'\) \{\s*assertStanda
 assert.match(apiClient, /userGroups:\s*\{\s*bulkImport\(data\)/);
 
 assert.match(bulkUploadCenter, /Deletes selected inventory records and open lots/);
+assert.match(bulkUploadCenter, /const \[projectId, setProjectId\] = useState\(''\)/);
+assert.match(bulkUploadCenter, /const \[storeId, setStoreId\] = useState\(''\)/);
+assert.match(bulkUploadCenter, /<Label>Project \*<\/Label>/);
+assert.match(bulkUploadCenter, /<Label>Store \*<\/Label>/);
+assert.match(bulkUploadCenter, /project_id: requiresStoreScope \? projectId : ''/);
+assert.match(apiClient, /submitBulkUpload\(\{ module, import_mode, file, project_id, site_id/);
+assert.match(apiClient, /formData\.append\('project_id', project_id\)/);
+assert.match(server, /Select a Project and Store before uploading\./);
+assert.match(server, /Select a Store that belongs to the selected Project\./);
+assert.match(worker, /site_scope: 'specific'/);
 assert.match(inventory, /const \{ isAdmin, can \} = usePermissions\(\)/);
 assert.match(inventory, /const canManageInventory = can\('manage_inventory'\)/);
 assert.match(ingredientsPage, /const stockSummaryByIngredient = inventory\.reduce/);

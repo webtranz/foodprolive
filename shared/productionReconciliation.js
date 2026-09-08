@@ -1,5 +1,6 @@
 import { calculateYieldOutputQuantity } from './ingredientYield.js';
-import { normalizeIngredientUnit } from './ingredientUnits.js';
+import { getRecipeLineWeight, isExemptProcessingAid } from './recipeLineWeight.js';
+import { convertIngredientQuantity, ingredientWeightConversion, isIngredientUnitCompatible, normalizeIngredientUnit } from './ingredientUnits.js';
 import {
   PACKAGE_UNITS,
   packageBaseQuantityForUnit,
@@ -31,6 +32,17 @@ function densityGramsPerMillilitre(ingredient = {}) {
   ));
 }
 
+function rawWeightFromMetadata(quantity, unit, ingredient) {
+  const rawWeight = positiveNumber(ingredient.raw_weight_per_unit);
+  const baseUnit = normalizeIngredientUnit(ingredient.unit || unit);
+  const basePackage = packageBaseQuantityForUnit(ingredient, baseUnit);
+  // A normalized 1-unit yield sample does not establish a gram weight for a
+  // packet of counted items. Keep it unknown until an actual weight is entered.
+  if (rawWeight === 1 && (basePackage?.unit === 'pieces' || PACKAGE_UNITS.has(baseUnit) || baseUnit === 'pieces')) return null;
+  if (!rawWeight || !isIngredientUnitCompatible(unit, baseUnit, ingredient)) return null;
+  return convertIngredientQuantity(quantity, unit, baseUnit, ingredient) * rawWeight;
+}
+
 function packageRawWeightGrams(quantity, unit, ingredient = {}) {
   if (!PACKAGE_UNITS.has(unit)) return null;
   const packageBase = packageBaseQuantityForUnit(ingredient, unit);
@@ -41,13 +53,13 @@ function packageRawWeightGrams(quantity, unit, ingredient = {}) {
     return quantity * canonical.quantity * 1000 * densityGramsPerMillilitre(ingredient);
   }
   if (canonical.unit === 'pieces') {
-    const rawWeightPerUnit = positiveNumber(ingredient.raw_weight_per_unit);
-    return rawWeightPerUnit ? quantity * canonical.quantity * rawWeightPerUnit : null;
+    return rawWeightFromMetadata(quantity, unit, ingredient);
   }
   return null;
 }
 
 export function calculateFrozenProductionLineWeight(line = {}, ingredient = {}) {
+  const processingAid = isExemptProcessingAid(line);
   const rawQuantity = finiteNumber(
     line.planned_quantity ?? line.raw_quantity ?? line.required_quantity
   );
@@ -70,17 +82,26 @@ export function calculateFrozenProductionLineWeight(line = {}, ingredient = {}) 
       ?? (frozenYieldedWeight / frozenRawWeight);
     return {
       raw_weight_grams: round(frozenRawWeight),
-      yielded_weight_grams: round(frozenYieldedWeight),
-      yield_multiplier: round(frozenMultiplier),
-      yield_percent: round(frozenMultiplier * 100),
-      source: line.weight_calculation_source || 'frozen_weight_snapshot',
-      yield_source: line.yield_calculation_source || line.yield_source || 'frozen_yield_snapshot',
+      yielded_weight_grams: processingAid ? 0 : round(frozenYieldedWeight),
+      yield_multiplier: processingAid ? 0 : round(frozenMultiplier),
+      yield_percent: processingAid ? 0 : round(frozenMultiplier * 100),
+      source: processingAid
+        ? `${line.weight_calculation_source || 'frozen_weight_snapshot'}:exempt_processing_aid`
+        : line.weight_calculation_source || 'frozen_weight_snapshot',
+      yield_source: processingAid
+        ? 'exempt_processing_aid'
+        : line.yield_calculation_source || line.yield_source || 'frozen_yield_snapshot',
       weight_snapshot_status: 'frozen'
     };
   }
   const unit = normalizeIngredientUnit(line.unit || ingredient.unit);
-  let rawWeightGrams = packageRawWeightGrams(rawQuantity, unit, ingredient);
-  let weightSource = rawWeightGrams === null ? null : 'package_measure';
+  const definedWeight = getRecipeLineWeight(line);
+  const ingredientWeight = definedWeight === null ? ingredientWeightConversion(rawQuantity, unit, ingredient) : null;
+  let rawWeightGrams = definedWeight === null
+    ? ingredientWeight?.grams ?? packageRawWeightGrams(rawQuantity, unit, ingredient)
+    : rawQuantity * definedWeight;
+  let weightSource = definedWeight !== null ? 'admin_recipe_line_weight'
+    : ingredientWeight?.source ?? (rawWeightGrams === null ? null : 'package_measure');
 
   if (rawWeightGrams === null && unit in WEIGHT_GRAMS) {
     rawWeightGrams = rawQuantity * WEIGHT_GRAMS[unit];
@@ -93,9 +114,9 @@ export function calculateFrozenProductionLineWeight(line = {}, ingredient = {}) 
     weightSource = 'volume_density';
   }
   if (rawWeightGrams === null) {
-    const rawWeightPerUnit = positiveNumber(ingredient.raw_weight_per_unit);
-    if (rawWeightPerUnit) {
-      rawWeightGrams = rawQuantity * rawWeightPerUnit;
+    const metadataWeight = rawWeightFromMetadata(rawQuantity, unit, ingredient);
+    if (metadataWeight !== null) {
+      rawWeightGrams = metadataWeight;
       weightSource = 'raw_weight_per_unit';
     }
   }
@@ -121,11 +142,11 @@ export function calculateFrozenProductionLineWeight(line = {}, ingredient = {}) 
 
   return {
     raw_weight_grams: round(rawWeightGrams),
-    yielded_weight_grams: round(rawWeightGrams * multiplier),
-    yield_multiplier: round(multiplier),
-    yield_percent: round(multiplier * 100),
-    source: `${weightSource}:${yieldSource}`,
-    yield_source: yieldSource,
+    yielded_weight_grams: processingAid ? 0 : round(rawWeightGrams * multiplier),
+    yield_multiplier: processingAid ? 0 : round(multiplier),
+    yield_percent: processingAid ? 0 : round(multiplier * 100),
+    source: processingAid ? `${weightSource}:exempt_processing_aid` : `${weightSource}:${yieldSource}`,
+    yield_source: processingAid ? 'exempt_processing_aid' : yieldSource,
     weight_snapshot_status: 'metadata_reconstruction'
   };
 }
@@ -159,16 +180,18 @@ export function buildAutomaticProductionYieldSummary({
       return {
         ingredient_id: line?.ingredient_id || null,
         raw_quantity: rawQuantity,
+        exempt_processing_aid: isExemptProcessingAid(line),
         ...calculateFrozenProductionLineWeight(
           line,
           ingredient
         )
       };
     });
-  const measurableLines = lines.filter((line) => line.yielded_weight_grams !== null);
+  const outputLines = lines.filter((line) => !line.exempt_processing_aid);
+  const measurableLines = outputLines.filter((line) => line.yielded_weight_grams !== null);
   const rawWeight = measurableLines.reduce((total, line) => total + line.raw_weight_grams, 0);
   const yieldedWeight = measurableLines.reduce((total, line) => total + line.yielded_weight_grams, 0);
-  const positiveLines = lines.filter((line) => line.raw_quantity > 0);
+  const positiveLines = outputLines.filter((line) => line.raw_quantity > 0);
   const measurablePositiveLines = positiveLines.filter((line) => line.yielded_weight_grams !== null);
   const isComplete = positiveLines.length > 0 && measurablePositiveLines.length === positiveLines.length;
   const usesMetadataRepair = positiveLines.some(
@@ -238,7 +261,7 @@ export function buildAutomaticProductionYieldSummary({
       ...(hasPortionUnitScaleAnomaly
         ? [`Configured portion size ${round(configuredPortion)} g was replaced by the line-derived ${round(yieldDerivedPortion)} g because the values differ by a unit scale.`]
         : []),
-      ...lines
+      ...outputLines
       .filter((line) => line.raw_quantity > 0 && line.yielded_weight_grams === null)
       .map((line) => `Yield weight unavailable for ingredient ${line.ingredient_id || 'unknown'}.`)
     ]

@@ -56,6 +56,22 @@ assert.equal(result.margin_per_serving, 2.75);
 assert.equal(result.food_cost_percent, 45);
 assert.equal(result.has_cost, true);
 
+const boiledEggs = calculateRecipeCostingSnapshot({
+  servings: 1,
+  costing_method: 'average_cost',
+  ingredients: [
+    { ingredient_id: 'egg', quantity: 1, unit: 'pieces' },
+    { ingredient_id: 'water', quantity: 0.4, unit: 'l', exempt_processing_aid: true }
+  ]
+}, [
+  { id: 'egg', name: 'Egg', unit: 'pieces', raw_weight_per_unit: 50, cooked_weight_per_unit: 50, average_cost: 12.99 },
+  { id: 'water', name: 'Water', unit: 'l', average_cost: 0.64 }
+], []);
+assert.equal(boiledEggs.total_cost, 13.246);
+assert.equal(boiledEggs.total_raw_recipe_weight_grams, 50);
+assert.equal(boiledEggs.expected_yield_weight_grams, 50);
+assert.equal(boiledEggs.cost_per_100g, 26.492);
+
 const soySauceCase = {
   id: 'soy-sauce',
   name: 'FILIPINO SOY SAUCE 12/1LTR',

@@ -141,17 +141,23 @@ export default function Ingredients() {
   }, [queryClient]);
 
   // Ingredient mutations
+  const invalidateIngredientQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ['ingredients'] });
+    queryClient.invalidateQueries({ queryKey: ['ingredient-search'] });
+    queryClient.invalidateQueries({ queryKey: ['recipes'] });
+  };
+
   const createIngMutation = useMutation({
     mutationFn: (data) => base44.entities.Ingredient.create(data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ingredients'] }); setFormOpen(false); }
+    onSuccess: () => { invalidateIngredientQueries(); setFormOpen(false); }
   });
   const updateIngMutation = useMutation({
     mutationFn: ({ id, data }) => base44.entities.Ingredient.update(id, data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ingredients'] }); setFormOpen(false); setEditingIngredient(null); }
+    onSuccess: () => { invalidateIngredientQueries(); setFormOpen(false); setEditingIngredient(null); }
   });
   const deleteIngMutation = useMutation({
     mutationFn: (id) => base44.entities.Ingredient.delete(id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ingredients'] }); setDeleteDialogOpen(false); setIngredientToDelete(null); }
+    onSuccess: () => { invalidateIngredientQueries(); setDeleteDialogOpen(false); setIngredientToDelete(null); }
   });
 
   // Inventory mutations

@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
+import { hasAdministratorAccess } from '../../shared/bulkUploadAccess.js';
 
 const CATEGORIES = [
   { value: 'all', label: 'All Categories' },
@@ -27,7 +28,7 @@ const CATEGORIES = [
 ];
 
 export default function Recipes() {
-  const { allowedSiteIds, isAdmin } = useSiteContext();
+  const { allowedSiteIds, isAdmin, currentUser } = useSiteContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedCuisine, setSelectedCuisine] = useState('all');
@@ -251,6 +252,8 @@ export default function Recipes() {
                 recipe={recipe}
                 recipes={recipes}
                 ingredients={ingredients}
+                inventory={recipeInventory}
+                inventoryLoaded={recipeInventoryLoaded}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
               />
@@ -260,6 +263,7 @@ export default function Recipes() {
 
         {/* Form Dialog */}
         <RecipeForm
+          canEditLineWeights={hasAdministratorAccess(currentUser || {})}
           open={formOpen}
           onClose={() => { setFormOpen(false); setEditingRecipe(null); }}
           onSubmit={handleSubmit}

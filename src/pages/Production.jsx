@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -38,6 +38,7 @@ import {
   buildProductionIngredientsForSubmit,
   buildProductionOverrideAudit,
   finiteProductionNumber,
+  getMenuIssueInventoryCheckState,
   getMenuIssueMealGroupKey,
   getProductionIngredientLineKey,
   normalizeIssueMealView,
@@ -55,6 +56,7 @@ import {
   requiresAreaProductionApproval
 } from '../../shared/productionWorkflow.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
+import { getProductionInventoryContext } from '../../shared/productionFulfillment.js';
 import {
   getMenuCategoryOptions,
   MENU_CUISINE_OPTIONS,
@@ -297,6 +299,17 @@ function ProductionIngredientSnapshotEditor({
           const lineSuggestions = suggestionsByLine[lineKey] || [];
           const isSuggestionLoading = suggestionLoadingLine === lineKey;
           const isAddedLine = line.production_override_action === 'added';
+          const conversionSummary = line.inventory_conversion_summary;
+          const inventoryRequirementUnit = conversionSummary?.inventory_unit || line.inventory_unit || line.unit;
+          const lineShortageQuantity = finiteProductionNumber(line.shortage, 0);
+          const aggregateShortageQuantity = finiteProductionNumber(line.aggregate_shortage_quantity, 0);
+          const displayShortageQuantity = lineShortageQuantity > 0 ? lineShortageQuantity : aggregateShortageQuantity;
+          const displayShortageUnit = lineShortageQuantity > 0
+            ? (line.inventory_unit || line.unit)
+            : (line.aggregate_inventory_unit || line.inventory_unit || line.unit);
+          const showAggregateShortageContext = line.aggregate_shortage
+            && aggregateShortageQuantity > 0
+            && Math.abs(aggregateShortageQuantity - lineShortageQuantity) > 0.000001;
           return (
             <div
               key={lineKey}
@@ -328,55 +341,92 @@ function ProductionIngredientSnapshotEditor({
                 <Badge className={line.sufficient ? 'bg-emerald-600' : 'bg-red-600'}>
                   {line.sufficient
                     ? 'Sufficient'
-                    : `${line.aggregate_shortage ? 'Meal short' : 'Short'} ${formatRecipeQuantity(line.shortage, line.inventory_unit)} ${line.inventory_unit}`}
+                    : `${lineShortageQuantity > 0 ? 'Short' : 'Meal short'} ${formatRecipeQuantity(displayShortageQuantity, displayShortageUnit)} ${displayShortageUnit}`}
                 </Badge>
               </div>
 
               <div className="mt-4 grid gap-3 2xl:grid-cols-[minmax(0,1fr)_minmax(260px,0.45fr)]">
-                <div className="grid gap-3 lg:grid-cols-3">
-                  <div>
-                    <Label className="text-xs text-slate-500">Ingredient used for this production</Label>
-                    <IngredientSearchCombobox
-                      value={line.ingredient_id || ''}
-                      selectedIngredient={ingredients.find((ingredient) => String(ingredient.id) === String(line.ingredient_id)) || null}
-                      siteId={inventorySiteId}
-                      placeholder="Search replacement ingredient..."
-                      className="mt-1"
-                      onValueChange={(value, ingredient) => onLineIngredientChange?.(lineKey, value, ingredient)}
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-slate-500">Production quantity</Label>
-                    <StandardDecimalInput
-                      value={line.raw_quantity}
-                      unit={line.unit}
-                      precision={getRecipeQuantityPrecision(line.unit)}
-                      min={0}
-                      allowZero
-                      allowEmpty={false}
-                      label={`${line.ingredient_name} quantity`}
-                      onValueChange={(value) => onLineQuantityChange?.(lineKey, value)}
-                      className="mt-1 bg-white"
-                    />
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                    <p className="text-xs uppercase tracking-wide text-slate-500">Store availability</p>
-                    <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                      <div>
-                        <p className="text-slate-500">On hand</p>
-                        <p className="font-semibold text-slate-900">{formatRecipeQuantity(line.on_hand_stock, line.inventory_unit)}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">Reserved</p>
-                        <p className="font-semibold text-slate-900">{formatRecipeQuantity(line.reserved_stock, line.inventory_unit)}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">Available</p>
-                        <p className="font-semibold text-slate-900">{formatRecipeQuantity(line.available_stock, line.inventory_unit)}</p>
+                <div className="grid gap-3">
+                  <div className="grid gap-3 xl:grid-cols-[minmax(220px,1fr)_minmax(180px,0.75fr)_minmax(260px,0.9fr)]">
+                    <div>
+                      <Label className="text-xs text-slate-500">Ingredient used for this production</Label>
+                      <IngredientSearchCombobox
+                        value={line.ingredient_id || ''}
+                        selectedIngredient={ingredients.find((ingredient) => String(ingredient.id) === String(line.ingredient_id)) || null}
+                        siteId={inventorySiteId}
+                        placeholder="Search replacement ingredient..."
+                        className="mt-1"
+                        onValueChange={(value, ingredient) => onLineIngredientChange?.(lineKey, value, ingredient)}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-slate-500">Production quantity{line.unit ? ` (${line.unit})` : ''}</Label>
+                      <StandardDecimalInput
+                        value={line.raw_quantity}
+                        unit={line.unit}
+                        precision={getRecipeQuantityPrecision(line.unit)}
+                        min={0}
+                        allowZero
+                        allowEmpty={false}
+                        label={`${line.ingredient_name} quantity`}
+                        onValueChange={(value) => onLineQuantityChange?.(lineKey, value)}
+                        className="mt-1 bg-white"
+                      />
+                      <p className="mt-1 text-xs text-slate-500">Recipe unit: {line.unit || 'unit'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Store availability</p>
+                      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                        <div>
+                          <p className="text-slate-500">Required</p>
+                          <p className="font-semibold text-slate-900">
+                            {formatRecipeQuantity(line.inventory_required_quantity ?? line.raw_quantity, line.inventory_unit || line.unit)} {line.inventory_unit || line.unit}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500">Available</p>
+                          <p className="font-semibold text-slate-900">{formatRecipeQuantity(line.available_stock, line.inventory_unit)} {line.inventory_unit}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500">On hand</p>
+                          <p className="font-semibold text-slate-900">{formatRecipeQuantity(line.on_hand_stock, line.inventory_unit)} {line.inventory_unit}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500">Reserved</p>
+                          <p className="font-semibold text-slate-900">{formatRecipeQuantity(line.reserved_stock, line.inventory_unit)} {line.inventory_unit}</p>
+                        </div>
                       </div>
                     </div>
-                    <p className="mt-2 text-xs text-slate-500">{line.inventory_unit}</p>
                   </div>
+
+                  {conversionSummary ? (
+                    <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-950">
+                      <p className="font-semibold">
+                        Inventory requirement: {formatRecipeQuantity(conversionSummary.production_quantity, conversionSummary.production_unit)} {conversionSummary.production_unit}
+                        {' '}requires {formatRecipeQuantity(conversionSummary.inventory_required_quantity, conversionSummary.inventory_unit)} {inventoryRequirementUnit}.
+                      </p>
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-indigo-800">
+                        {conversionSummary.package_quantity ? (
+                          <span>
+                            Package basis: 1 {conversionSummary.inventory_unit} = {formatRecipeQuantity(conversionSummary.package_quantity, conversionSummary.package_unit)} {conversionSummary.package_unit}.
+                          </span>
+                        ) : null}
+                        <span>
+                          Available {formatRecipeQuantity(conversionSummary.available_quantity, conversionSummary.inventory_unit)} {conversionSummary.inventory_unit}.
+                        </span>
+                        {finiteProductionNumber(conversionSummary.shortage_quantity, 0) > 0 ? (
+                          <span className="text-red-700">
+                            Line short {formatRecipeQuantity(conversionSummary.shortage_quantity, conversionSummary.inventory_unit)} {conversionSummary.inventory_unit}.
+                          </span>
+                        ) : null}
+                      </div>
+                      {showAggregateShortageContext ? (
+                        <p className="mt-1 text-red-700">
+                          Selected meal total short: {formatRecipeQuantity(aggregateShortageQuantity, displayShortageUnit)} {displayShortageUnit}.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
@@ -541,7 +591,6 @@ export default function Production() {
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [formData, setFormData] = useState({
     site_id: '',
-    fulfillment_store_id: '',
     production_date: format(new Date(), 'yyyy-MM-dd'),
     meal_type: 'lunch',
     menu_type: 'general',
@@ -552,7 +601,7 @@ export default function Production() {
     notes: ''
   });
   const [calculatedIngredients, setCalculatedIngredients] = useState([]);
-  const [inventoryCheck, setInventoryCheck] = useState([]);
+  const singleRecipeSnapshot = useRef({ key: '', lines: [] });
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [selectedProduction, setSelectedProduction] = useState(null);
   const [editingProduction, setEditingProduction] = useState(null);
@@ -562,10 +611,8 @@ export default function Production() {
   const [estimatedCostPerServing, setEstimatedCostPerServing] = useState(0);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewAction, setReviewAction] = useState('');
-  const [reviewFulfillmentStoreId, setReviewFulfillmentStoreId] = useState('');
   const [completionOpen, setCompletionOpen] = useState(false);
   const [completionProduction, setCompletionProduction] = useState(null);
-  const [completionFulfillmentStoreId, setCompletionFulfillmentStoreId] = useState('');
   const [selectedConsumptionReport, setSelectedConsumptionReport] = useState(null);
   const [reportLoadingId, setReportLoadingId] = useState('');
   const [historyProduction, setHistoryProduction] = useState(null);
@@ -580,7 +627,7 @@ export default function Production() {
   const [issueMealView, setIssueMealView] = useState('all');
   const [issueItems, setIssueItems] = useState([]);
   const [activeIssueItemKey, setActiveIssueItemKey] = useState('');
-  const [issueFulfillmentStoreId, setIssueFulfillmentStoreId] = useState('');
+  const [issueSnapshotSiteId, setIssueSnapshotSiteId] = useState('');
   const [issueNotes, setIssueNotes] = useState('');
   const [issueSnapshots, setIssueSnapshots] = useState({});
   const [issueSuggestions, setIssueSuggestions] = useState({});
@@ -588,17 +635,17 @@ export default function Production() {
 
   const queryClient = useQueryClient();
 
-  const { data: sites = [], error: sitesError } = useQuery({
+  const { data: sites = [], error: sitesError, isPending: sitesLoading } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
 
-  const { data: recipes = [], error: recipesError } = useQuery({
+  const { data: recipes = [], error: recipesError, isPending: recipesLoading } = useQuery({
     queryKey: ['recipes'],
     queryFn: () => base44.entities.Recipe.list()
   });
 
-  const { data: ingredients = [], error: ingredientsError } = useQuery({
+  const { data: ingredients = [], error: ingredientsError, isPending: ingredientsLoading } = useQuery({
     queryKey: ['ingredients'],
     queryFn: () => base44.entities.Ingredient.list()
   });
@@ -670,11 +717,8 @@ export default function Production() {
 
   const issueProductionMutation = useMutation({
     mutationFn: async ({ status }) => {
-      const selectedItems = issueItems.filter((item) => (
-        item.selected
-        && !isIssueItemAlreadyIssued(item)
-        && Number(item.production_covers) > 0
-      ));
+      if (issueSubmitDisabledReason) throw new Error(issueSubmitDisabledReason);
+      const selectedItems = selectedIssueSubmitItems;
       if (selectedItems.length === 0) {
         throw new Error('Select at least one menu item that has not already been issued.');
       }
@@ -682,7 +726,7 @@ export default function Production() {
         snapshotsByItemKey: issueSnapshots,
         ingredients,
         inventory,
-        siteId: issueFulfillmentStoreId
+        siteId: issueInventorySiteId
       });
       if (mealGroups.length === 0) {
         throw new Error('Select at least one meal group before issuing production.');
@@ -711,7 +755,7 @@ export default function Production() {
     }
   });
 
-  const { data: inventory = [], error: inventoryError } = useQuery({
+  const { data: inventory = [], error: inventoryError, isFetching: inventoryLoading } = useQuery({
     queryKey: ['inventory'],
     queryFn: () => base44.inventory.getStockOnHand(),
     refetchInterval: 300000
@@ -766,20 +810,29 @@ export default function Production() {
   ), [allowedSiteIds, isAdmin, sites]);
   const productionSiteOptions = useMemo(() => visibleSites.filter((site) => (
     site.is_active !== false
-    && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT
+    && [SITE_HIERARCHY_TYPES.PROJECT, SITE_HIERARCHY_TYPES.STORE].includes(normalizeSiteType(site.type))
   )), [visibleSites]);
-  const selectedProductionSite = useMemo(() => (
-    sites.find((site) => String(site.id) === String(formData.site_id)) || null
-  ), [formData.site_id, sites]);
-  const fulfillmentStoreOptions = useMemo(() => {
-    if (!selectedProductionSite) return [];
-    return visibleSites.filter((site) => (
-      site.is_active !== false
-      &&
-      normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
-      && String(site.parent_site_id || '') === String(selectedProductionSite.id)
-    ));
-  }, [selectedProductionSite, visibleSites]);
+  const formInventoryContext = getProductionInventoryContext({
+    site_id: formData.site_id,
+    fulfillment_store_id: String(editingProduction?.site_id || '') === String(formData.site_id)
+      ? editingProduction?.fulfillment_store_id
+      : undefined
+  }, visibleSites);
+  const formInventorySiteId = formInventoryContext.siteId;
+  const formSnapshotKey = JSON.stringify([
+    formData.site_id, formInventorySiteId, formData.recipe_id,
+    formData.target_servings, editingProduction?.id || ''
+  ]);
+  const reviewInventoryContext = getProductionInventoryContext(selectedProduction || {}, visibleSites);
+  const reviewInventorySiteId = reviewInventoryContext.siteId;
+  const completionInventoryContext = getProductionInventoryContext(completionProduction || {}, visibleSites);
+  const completionInventorySiteId = completionInventoryContext.siteId;
+  const inventoryDataLoading = sitesLoading || recipesLoading || ingredientsLoading || inventoryLoading;
+  const inventoryDataError = sitesError?.message || recipesError?.message || ingredientsError?.message || inventoryError?.message || '';
+  const formInventoryReady = Boolean(formInventorySiteId)
+    && !inventoryDataLoading && !inventoryDataError
+    && singleRecipeSnapshot.current.key === formSnapshotKey
+    && calculatedIngredients.length > 0;
   const canViewAllAccessibleSites = isAdmin || [
     'general_manager',
     'assistant_general_manager',
@@ -787,15 +840,10 @@ export default function Production() {
   ].includes(currentRole);
   const issuePlan = issuePlanResponse?.plan || issueSource?.plan || null;
   const issueSite = sites.find((site) => String(site.id) === String(issueSource?.site_id || issuePlan?.site_id || '')) || null;
-  const issueFulfillmentStoreOptions = useMemo(() => {
-    const siteId = issueSite?.id || issueSource?.site_id || '';
-    if (!siteId) return [];
-    return visibleSites.filter((site) => (
-      site.is_active !== false
-      && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
-      && String(site.parent_site_id || '') === String(siteId)
-    ));
-  }, [issueSite?.id, issueSource?.site_id, visibleSites]);
+  const issueInventoryContext = getProductionInventoryContext({
+    site_id: issueSite?.id || issueSource?.site_id || ''
+  }, visibleSites);
+  const issueInventorySiteId = issueInventoryContext.siteId;
   const issueAlreadyCreatedKeys = useMemo(() => {
     const planId = String(issuePlan?.id || issueSource?.menu_plan_id || '');
     const keys = new Set();
@@ -822,7 +870,10 @@ export default function Production() {
       });
     return keys;
   }, [issuePlan?.id, issueSource?.menu_plan_id, productions]);
-  const activeIssueItem = issueItems.find((item) => item.key === activeIssueItemKey) || issueItems[0] || null;
+  const visibleIssueItems = issueMealView === 'all'
+    ? issueItems
+    : issueItems.filter((item) => item.meal_type === issueMealView);
+  const activeIssueItem = visibleIssueItems.find((item) => item.key === activeIssueItemKey) || visibleIssueItems[0] || null;
   const activeIssueSnapshot = activeIssueItem ? issueSnapshots[activeIssueItem.key] || [] : [];
   const activeIssueSuggestions = activeIssueItem ? issueSuggestions[activeIssueItem.key] || {} : {};
   const activeIssueSuggestionPrefix = activeIssueItem ? `${activeIssueItem.key}|||` : '';
@@ -844,7 +895,7 @@ export default function Production() {
     setIssueSource(routeIssueRequest);
     setIssueMealView(normalizeIssueMealView(routeIssueRequest.meal_view));
     setIssueDialogOpen(true);
-    setIssueFulfillmentStoreId('');
+    setIssueSnapshotSiteId('');
     setIssueNotes('');
     setIssueItems([]);
     setIssueSnapshots({});
@@ -861,23 +912,10 @@ export default function Production() {
   }, [location.state, navigate]);
 
   useEffect(() => {
-    if (!issueDialogOpen) {
+    if (!issueDialogOpen || !issuePlan || recipesLoading || recipesError) {
       return;
     }
-    const currentStoreIsValid = issueFulfillmentStoreOptions.some(
-      (store) => String(store.id) === String(issueFulfillmentStoreId || '')
-    );
-    if (currentStoreIsValid) {
-      return;
-    }
-    setIssueFulfillmentStoreId(issueFulfillmentStoreOptions.length === 1 ? issueFulfillmentStoreOptions[0].id : '');
-  }, [issueDialogOpen, issueFulfillmentStoreId, issueFulfillmentStoreOptions]);
-
-  useEffect(() => {
-    if (!issueDialogOpen || !issuePlan) {
-      return;
-    }
-    const items = buildMenuPlanIssueItems(issuePlan, { mealView: issueMealView, recipes });
+    const items = buildMenuPlanIssueItems(issuePlan, { mealView: 'all', recipes });
     setIssueItems((currentItems) => {
       const currentByKey = new Map(currentItems.map((item) => [item.key, item]));
       return items.map((item) => ({
@@ -886,11 +924,16 @@ export default function Production() {
         production_covers: currentByKey.get(item.key)?.production_covers ?? item.production_covers
       }));
     });
-    setActiveIssueItemKey((current) => (items.some((item) => item.key === current) ? current : items[0]?.key || ''));
-  }, [issueDialogOpen, issueMealView, issuePlan, recipes]);
+    setActiveIssueItemKey((current) => {
+      const visibleItems = issueMealView === 'all'
+        ? items
+        : items.filter((item) => item.meal_type === issueMealView);
+      return visibleItems.some((item) => item.key === current) ? current : visibleItems[0]?.key || '';
+    });
+  }, [issueDialogOpen, issueMealView, issuePlan, recipes, recipesLoading, recipesError]);
 
   useEffect(() => {
-    if (!issueDialogOpen || issueItems.length === 0 || !issueFulfillmentStoreId) {
+    if (!issueDialogOpen || issueItems.length === 0 || !issueInventorySiteId || inventoryDataLoading || inventoryDataError) {
       return;
     }
     setIssueSnapshots((currentSnapshots) => {
@@ -901,7 +944,7 @@ export default function Production() {
           nextSnapshots[item.key] = recalculateProductionIngredientSnapshot(existingLines, {
             ingredients,
             inventory,
-            siteId: issueFulfillmentStoreId
+            siteId: issueInventorySiteId
           }).lines;
           return;
         }
@@ -912,13 +955,14 @@ export default function Production() {
           recipes,
           ingredients,
           inventory,
-          siteId: issueFulfillmentStoreId,
+          siteId: issueInventorySiteId,
           targetServings: item.production_covers
         }).lines;
       });
       return nextSnapshots;
     });
-  }, [ingredients, inventory, issueDialogOpen, issueFulfillmentStoreId, issueItems, recipes]);
+    setIssueSnapshotSiteId(issueInventorySiteId);
+  }, [ingredients, inventory, issueDialogOpen, issueInventorySiteId, issueItems, recipes, inventoryDataLoading, inventoryDataError]);
 
   useEffect(() => {
     if (canViewAllAccessibleSites) {
@@ -936,27 +980,10 @@ export default function Production() {
     }));
   }, [canViewAllAccessibleSites, assignedSiteId, productionSiteOptions]);
 
-  useEffect(() => {
-    if (!formData.site_id) return;
-    const currentStoreIsValid = fulfillmentStoreOptions.some(
-      (store) => String(store.id) === String(formData.fulfillment_store_id)
-    );
-    const nextStoreId = currentStoreIsValid
-      ? formData.fulfillment_store_id
-      : fulfillmentStoreOptions.length === 1
-        ? fulfillmentStoreOptions[0].id
-        : '';
-    if (nextStoreId !== formData.fulfillment_store_id) {
-      setFormData((current) => ({ ...current, fulfillment_store_id: nextStoreId }));
-    }
-  }, [formData.fulfillment_store_id, formData.site_id, fulfillmentStoreOptions]);
-
   const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status, fulfillmentStoreId = '' }) => {
+    mutationFn: async ({ id, status }) => {
       if (status === 'completed') {
-        await base44.inventory.completeProduction(id, {
-          fulfillment_store_id: fulfillmentStoreId || undefined
-        });
+        await base44.inventory.completeProduction(id);
         return;
       }
 
@@ -978,7 +1005,6 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
       setCompletionOpen(false);
       setCompletionProduction(null);
-      setCompletionFulfillmentStoreId('');
       setActionError('');
     },
     onError: (error) => {
@@ -1016,13 +1042,13 @@ export default function Production() {
   });
 
   const resetForm = () => {
+    singleRecipeSnapshot.current = { key: '', lines: [] };
     setFormData({
       site_id: isAdmin
         ? ''
         : (productionSiteOptions.find((site) => String(site.id) === String(assignedSiteId || ''))?.id
           || productionSiteOptions[0]?.id
           || ''),
-      fulfillment_store_id: '',
       production_date: format(new Date(), 'yyyy-MM-dd'),
       meal_type: 'lunch',
       menu_type: 'general',
@@ -1034,32 +1060,33 @@ export default function Production() {
     });
     setEditingProduction(null);
     setCalculatedIngredients([]);
-    setInventoryCheck([]);
     setEstimatedBatchCost(0);
     setEstimatedCostPerServing(0);
-    setReviewFulfillmentStoreId('');
-    setCompletionFulfillmentStoreId('');
     setSingleRecipeSuggestions({});
     setSingleRecipeSuggestionLoadingLine('');
   };
 
   // Calculate required ingredients and check inventory when recipe or servings change
   useEffect(() => {
+    if (inventoryDataLoading || inventoryDataError) return;
     if (
       formData.recipe_id
       && formData.target_servings
       && formData.site_id
-      && formData.fulfillment_store_id
+      && formInventorySiteId
     ) {
       const recipe = recipes.find(r => r.id === formData.recipe_id);
-      const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
+      const inventorySiteId = formInventorySiteId;
       const editingFromSameSnapshot = editingProduction
         && String(editingProduction.recipe_id || '') === String(formData.recipe_id)
         && Number(editingProduction.target_servings || 0) === Number(formData.target_servings || 0)
         && Array.isArray(editingProduction.ingredients_used)
         && editingProduction.ingredients_used.length > 0;
-      const snapshot = editingFromSameSnapshot
-        ? recalculateProductionIngredientSnapshot(editingProduction.ingredients_used, {
+      const savedLines = singleRecipeSnapshot.current.key === formSnapshotKey
+        ? singleRecipeSnapshot.current.lines
+        : editingFromSameSnapshot ? editingProduction.ingredients_used : null;
+      const snapshot = savedLines
+        ? recalculateProductionIngredientSnapshot(savedLines, {
           ingredients,
           inventory,
           siteId: inventorySiteId
@@ -1073,18 +1100,21 @@ export default function Production() {
           targetServings: formData.target_servings
         });
       const servingCount = Math.max(1, finiteProductionNumber(formData.target_servings, 0));
+      singleRecipeSnapshot.current = { key: formSnapshotKey, lines: snapshot.lines };
       setCalculatedIngredients(snapshot.lines);
-      setInventoryCheck(snapshot.lines);
       setEstimatedBatchCost(snapshot.estimatedBatchCost || 0);
       setEstimatedCostPerServing(snapshot.estimatedCostPerServing ?? Number(((snapshot.estimatedBatchCost || 0) / servingCount).toFixed(2)));
     } else {
+      singleRecipeSnapshot.current = { key: '', lines: [] };
       setCalculatedIngredients([]);
-      setInventoryCheck([]);
       setEstimatedBatchCost(0);
       setEstimatedCostPerServing(0);
     }
   }, [
-    formData.fulfillment_store_id,
+    formSnapshotKey,
+    formInventorySiteId,
+    inventoryDataLoading,
+    inventoryDataError,
     formData.recipe_id,
     formData.target_servings,
     formData.site_id,
@@ -1209,7 +1239,7 @@ export default function Production() {
 
   const buildSubmitData = (status) => {
     const site = visibleSites.find((s) => s.id === formData.site_id) || sites.find((s) => s.id === formData.site_id);
-    const fulfillmentStore = sites.find((s) => s.id === formData.fulfillment_store_id);
+    const fulfillmentStore = formInventoryContext.site;
     const recipe = recipes.find(r => r.id === formData.recipe_id);
     const productionOverrides = buildProductionOverrideAudit(calculatedIngredients);
 
@@ -1254,36 +1284,22 @@ export default function Production() {
     }
     if (
       !formData.site_id
-      || !formData.fulfillment_store_id
       || !formData.production_date
       || !formData.recipe_id
     ) {
-      setActionError('Complete the project/site, fulfillment store, production date, recipe, and servings before saving.');
+      setActionError('Complete the production site, production date, recipe, and servings before saving.');
       return;
     }
-    if (normalizeSiteType(selectedProductionSite?.type) !== SITE_HIERARCHY_TYPES.PROJECT) {
-      setActionError('Select a Project first, then choose its fulfillment Store.');
+    if (!formInventoryReady) {
+      setActionError(formInventoryContext.error || inventoryDataError || 'Wait for the recipe ingredients and inventory check before saving.');
       return;
     }
     setActionError('');
     createMutation.mutate(buildSubmitData(status));
   };
 
-  const getProductionStoreOptions = (production) => {
-    const productionSite = sites.find((site) => String(site.id) === String(production?.site_id || ''));
-    if (!productionSite) return [];
-    if (normalizeSiteType(productionSite.type) === SITE_HIERARCHY_TYPES.STORE) {
-      return productionSite.is_active === false ? [] : [productionSite];
-    }
-    return visibleSites.filter((site) => (
-      site.is_active !== false
-      && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
-      && String(site.parent_site_id || '') === String(productionSite.id)
-    ));
-  };
-
   const buildProductionInventoryCheck = (production, fulfillmentStoreId = '') => {
-    const inventorySiteId = fulfillmentStoreId || production?.fulfillment_store_id;
+    const inventorySiteId = fulfillmentStoreId || getProductionInventoryContext(production || {}, visibleSites).siteId;
     if (!inventorySiteId) return [];
     const siteInventory = inventory.filter((item) => String(item.site_id) === String(inventorySiteId || ''));
 
@@ -1326,7 +1342,7 @@ export default function Production() {
   const buildApprovedReservationPreview = (production, targetServings) => {
     const revisedServings = Number(targetServings);
     const currentServings = Number(production?.target_servings);
-    const inventorySiteId = production?.fulfillment_store_id;
+    const inventorySiteId = getProductionInventoryContext(production || {}, visibleSites).siteId;
     if (
       !production
       || !inventorySiteId
@@ -1397,15 +1413,15 @@ export default function Production() {
 
   const updateSingleRecipeLines = (updater) => {
     const nextLines = typeof updater === 'function' ? updater(calculatedIngredients) : updater;
-    const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
+    const inventorySiteId = formInventorySiteId;
     const snapshot = recalculateProductionIngredientSnapshot(nextLines, {
       ingredients,
       inventory,
       siteId: inventorySiteId
     });
     const servingCount = Math.max(1, finiteProductionNumber(formData.target_servings, 0));
+    singleRecipeSnapshot.current = { key: formSnapshotKey, lines: snapshot.lines };
     setCalculatedIngredients(snapshot.lines);
-    setInventoryCheck(snapshot.lines);
     setEstimatedBatchCost(snapshot.estimatedBatchCost || 0);
     setEstimatedCostPerServing(Number(((snapshot.estimatedBatchCost || 0) / servingCount).toFixed(2)));
   };
@@ -1460,7 +1476,7 @@ export default function Production() {
   const addSingleIngredientLine = ({ ingredient_id: ingredientId, ingredient: ingredientRecord = null, quantity, unit }) => {
     const selectedIngredient = ingredientRecord || ingredients.find((ingredient) => String(ingredient.id) === String(ingredientId));
     if (!selectedIngredient) return;
-    const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
+    const inventorySiteId = formInventorySiteId;
     const addedLine = buildProductionIngredientLine({
       sourceLine: {
         line_id: `added-${selectedIngredient.id}-${Date.now()}`,
@@ -1516,7 +1532,7 @@ export default function Production() {
       ingredients,
       inventory,
       siteId,
-      limit: 4
+      limit: 8
     });
     if (fallbackSuggestions.length === 0) {
       return [];
@@ -1527,8 +1543,12 @@ export default function Production() {
         prompt: [
           'Suggest replacement ingredients for a production-only recipe snapshot in a food production system.',
           'Only choose from the available inventory candidates. Do not invent ingredients.',
+          'Compare the full item name, including descriptors and package details, not only the first word or brand.',
           'Prefer culinary similarity, compatible units, and enough available stock. Mention allergy/dietary concerns when likely.',
-          `Short ingredient: ${line.ingredient_name}, required ${formatRecipeQuantity(line.raw_quantity, line.unit)} ${line.unit}, shortage ${formatRecipeQuantity(line.shortage, line.inventory_unit)} ${line.inventory_unit}.`,
+          `Short ingredient: ${line.ingredient_name}. This dish line requires ${formatRecipeQuantity(line.raw_quantity, line.unit)} ${line.unit}.`,
+          line.aggregate_shortage
+            ? `Selected-meal aggregate shortage context: ${formatRecipeQuantity(line.aggregate_shortage_quantity ?? line.shortage, line.aggregate_inventory_unit || line.inventory_unit)} ${line.aggregate_inventory_unit || line.inventory_unit}. Size the replacement for this dish line, not the whole aggregate shortage.`
+            : `Shortage: ${formatRecipeQuantity(line.shortage, line.inventory_unit)} ${line.inventory_unit}.`,
           `Available candidates: ${fallbackSuggestions.map((candidate) => `${candidate.ingredient_id} | ${candidate.ingredient_name} | ${formatRecipeQuantity(candidate.available_quantity, candidate.unit)} ${candidate.unit} available`).join('; ')}`
         ].join('\n'),
         response_json_schema: {
@@ -1566,7 +1586,7 @@ export default function Production() {
 
   const requestSingleRecipeSuggestions = async (lineKey) => {
     const line = calculatedIngredients.find((entry, index) => getProductionIngredientLineKey(entry, index) === lineKey);
-    const inventorySiteId = formData.fulfillment_store_id || formData.site_id;
+    const inventorySiteId = formInventorySiteId;
     if (!line || !inventorySiteId) return;
     setSingleRecipeSuggestionLoadingLine(lineKey);
     const suggestions = await loadReplacementSuggestions(line, inventorySiteId);
@@ -1597,7 +1617,7 @@ export default function Production() {
     const snapshot = recalculateProductionIngredientSnapshot(nextLines, {
       ingredients,
       inventory,
-      siteId: issueFulfillmentStoreId
+      siteId: issueInventorySiteId
     });
     setIssueSnapshots((current) => ({ ...current, [itemKey]: snapshot.lines }));
   };
@@ -1609,13 +1629,17 @@ export default function Production() {
   };
 
   const updateIssueLineQuantity = (itemKey, lineKey, value) => {
+    const productionQuantity = finiteProductionNumber(value, 0);
     updateIssueItemSnapshot(itemKey, (currentLines) => currentLines.map((line, index) => (
       getProductionIngredientLineKey(line, index) === lineKey
         ? {
           ...line,
-          raw_quantity: finiteProductionNumber(value, 0),
+          raw_quantity: productionQuantity,
+          production_override_action: productionQuantity > 0 ? '' : 'zeroed',
           production_override_source: 'chef',
-          production_override_reason: 'Chef adjusted quantity for this production.'
+          production_override_reason: productionQuantity > 0
+            ? 'Chef adjusted quantity for this production.'
+            : 'Chef zeroed this ingredient for this production.'
         }
         : line
     )));
@@ -1632,6 +1656,7 @@ export default function Production() {
           ingredient_name: selectedIngredient.name || line.ingredient_name,
           unit: selectedIngredient.unit || line.unit,
           inventory_unit: selectedIngredient.unit || line.inventory_unit,
+          production_override_action: '',
           production_override_source: 'chef',
           production_override_reason: 'Chef selected replacement ingredient for this production.'
         }
@@ -1681,7 +1706,7 @@ export default function Production() {
       },
       ingredient: selectedIngredient,
       inventory,
-      siteId: issueFulfillmentStoreId
+      siteId: issueInventorySiteId
     });
     updateIssueItemSnapshot(itemKey, (currentLines) => [...currentLines, addedLine]);
   };
@@ -1694,9 +1719,9 @@ export default function Production() {
 
   const requestIssueSuggestions = async (itemKey, lineKey, lineOverride = null) => {
     const line = lineOverride || (issueSnapshots[itemKey] || []).find((entry, index) => getProductionIngredientLineKey(entry, index) === lineKey);
-    if (!line || !issueFulfillmentStoreId) return;
+    if (!line || !issueInventorySiteId) return;
     setIssueSuggestionLoadingKey(`${itemKey}|||${lineKey}`);
-    const suggestions = await loadReplacementSuggestions(line, issueFulfillmentStoreId);
+    const suggestions = await loadReplacementSuggestions(line, issueInventorySiteId);
     setIssueSuggestions((current) => ({
       ...current,
       [itemKey]: {
@@ -1708,21 +1733,28 @@ export default function Production() {
   };
 
   const applyIssueSuggestion = (itemKey, lineKey, suggestion) => {
+    const suggestedIngredient = ingredients.find((ingredient) => String(ingredient.id) === String(suggestion?.ingredient_id || ''));
+    if (!suggestedIngredient) {
+      setActionError('This replacement cannot be applied because its Ingredient master record is missing. Choose another replacement from the Ingredient list.');
+      return;
+    }
     updateIssueItemSnapshot(itemKey, (currentLines) => currentLines.map((line, index) => (
       getProductionIngredientLineKey(line, index) === lineKey
         ? {
           ...line,
-          ingredient_id: suggestion.ingredient_id,
-          ingredient_name: suggestion.ingredient_name,
+          ingredient_id: suggestedIngredient.id,
+          ingredient_name: suggestedIngredient.name || suggestion.ingredient_name,
           raw_quantity: finiteProductionNumber(suggestion.suggested_quantity, line.raw_quantity),
-          unit: suggestion.unit || line.unit,
-          inventory_unit: suggestion.unit || line.inventory_unit,
+          unit: suggestedIngredient.unit || suggestion.unit || line.unit,
+          inventory_unit: suggestedIngredient.unit || suggestion.unit || line.inventory_unit,
+          production_override_action: '',
           production_override_source: suggestion.source === 'ai' ? 'ai_suggestion' : 'inventory_similarity',
           production_override_reason: suggestion.reason || 'Replacement selected for this production.',
           ai_suggestion_reason: suggestion.reason || ''
         }
         : line
     )));
+    setActionError('');
     setIssueSuggestions((current) => ({
       ...current,
       [itemKey]: { ...(current[itemKey] || {}), [lineKey]: [] }
@@ -1732,8 +1764,6 @@ export default function Production() {
   const handleIssueMealViewChange = (nextMealView) => {
     const normalizedMealView = normalizeIssueMealView(nextMealView);
     setIssueMealView(normalizedMealView);
-    setIssueSnapshots({});
-    setIssueSuggestions({});
   };
 
   const updateIssueCovers = (itemKey, value) => {
@@ -1748,7 +1778,7 @@ export default function Production() {
       recipes,
       ingredients,
       inventory,
-      siteId: issueFulfillmentStoreId,
+      siteId: issueInventorySiteId,
       targetServings: productionCovers
     });
     setIssueSnapshots((current) => ({ ...current, [itemKey]: snapshot.lines }));
@@ -1780,7 +1810,7 @@ export default function Production() {
     const firstItem = group.items[0] || {};
     const recipe = recipes.find((entry) => String(entry.id) === String(firstItem.recipe_id)) || {};
     const site = issueSite || visibleSites.find((entry) => String(entry.id) === String(group.site_id || firstItem.site_id));
-    const fulfillmentStore = sites.find((entry) => String(entry.id) === String(issueFulfillmentStoreId));
+    const fulfillmentStore = issueInventoryContext.site;
     const lines = group.snapshot_lines || [];
     const estimatedBatchCost = Number((group.estimatedBatchCost || 0).toFixed(2));
     const servingCount = Math.max(1, finiteProductionNumber(group.production_covers, 0));
@@ -1869,8 +1899,8 @@ export default function Production() {
       setActionError('Review notes are required when requesting changes or rejecting production.');
       return;
     }
-    if (action === 'approve' && !reviewFulfillmentStoreId) {
-      setActionError('Select the fulfillment Store before approving this production request.');
+    if (action === 'approve' && (reviewInventoryContext.error || inventoryDataLoading || inventoryDataError)) {
+      setActionError(reviewInventoryContext.error || inventoryDataError || 'Wait for the production inventory check before approving.');
       return;
     }
 
@@ -1909,7 +1939,7 @@ export default function Production() {
         if (operation.type === 'area_approval') {
           await base44.productionWorkflow.approveForArea(operation.production.id, {
             notes: reviewNotes || null,
-            fulfillment_store_id: reviewFulfillmentStoreId
+            fulfillment_store_id: reviewInventorySiteId
           });
           continue;
         }
@@ -1922,7 +1952,7 @@ export default function Production() {
               ? 'rejected'
               : 'changes_requested',
           ...(action === 'reject' ? { rejection_reason: reviewNotes.trim() } : {}),
-          ...(action === 'approve' ? { fulfillment_store_id: reviewFulfillmentStoreId } : {})
+          ...(action === 'approve' ? { fulfillment_store_id: reviewInventorySiteId } : {})
         });
       }
       queryClient.invalidateQueries({ queryKey: ['productions'] });
@@ -1936,7 +1966,6 @@ export default function Production() {
       setShowApprovalDialog(false);
       setSelectedProduction(null);
       setReviewNotes('');
-      setReviewFulfillmentStoreId('');
       setActionError('');
     } catch (error) {
       setActionError(error.message || 'Unable to review the production request.');
@@ -1946,17 +1975,6 @@ export default function Production() {
   };
 
   const openApprovalDialog = (production) => {
-    const storeOptions = getProductionStoreOptions(production);
-    const fulfillmentStoreId = storeOptions.some(
-      (store) => String(store.id) === String(production.fulfillment_store_id || '')
-    )
-      ? production.fulfillment_store_id
-      : storeOptions.length === 1
-        ? storeOptions[0].id
-        : '';
-
-    setReviewFulfillmentStoreId(fulfillmentStoreId);
-    setInventoryCheck(buildProductionInventoryCheck(production, fulfillmentStoreId));
     setActionError('');
     setSelectedProduction(production);
     setReviewNotes('');
@@ -1972,7 +1990,6 @@ export default function Production() {
     setEditingProduction(production);
     setFormData({
       site_id: production.site_id || '',
-      fulfillment_store_id: production.fulfillment_store_id || '',
       production_date: production.production_date || format(new Date(), 'yyyy-MM-dd'),
       meal_type: production.meal_type || 'lunch',
       menu_type: menuType,
@@ -1988,16 +2005,7 @@ export default function Production() {
   };
 
   const openCompletionDialog = (production) => {
-    const storeOptions = getProductionStoreOptions(production);
-    const fulfillmentStoreId = storeOptions.some(
-      (store) => String(store.id) === String(production.fulfillment_store_id || '')
-    )
-      ? production.fulfillment_store_id
-      : storeOptions.length === 1
-        ? storeOptions[0].id
-        : '';
     setCompletionProduction(production);
-    setCompletionFulfillmentStoreId(fulfillmentStoreId);
     setActionError('');
     setCompletionOpen(true);
   };
@@ -2151,6 +2159,8 @@ export default function Production() {
     || issuePlanError?.message
     || '';
   const selectedIsAreaReview = isAreaApprovalReview(selectedProduction);
+  const reviewInventoryReady = Boolean(reviewInventorySiteId) && !inventoryDataLoading && !inventoryDataError;
+  const reviewInventoryCheck = reviewInventoryReady ? buildProductionInventoryCheck(selectedProduction) : [];
   const inventoryActionState = getProductionInventoryState(inventoryAction || {});
   const inventoryActionPreview = inventoryActionMode === 'adjust'
     ? buildApprovedReservationPreview(inventoryAction, inventoryActionServings)
@@ -2159,12 +2169,6 @@ export default function Production() {
   const inventoryActionReservedLineCount = inventoryActionState.lines.filter(
     (line) => Number(line.reserved_quantity ?? line.committed_quantity ?? 0) > 0
   ).length;
-  const selectedReviewStoreOptions = selectedProduction
-    ? getProductionStoreOptions(selectedProduction)
-    : [];
-  const completionStoreOptions = completionProduction
-    ? getProductionStoreOptions(completionProduction)
-    : [];
   const completionRecipe = recipes.find(
     (recipe) => String(recipe.id) === String(completionProduction?.recipe_id || '')
   ) || {};
@@ -2221,23 +2225,32 @@ export default function Production() {
   const siteOptions = canViewAllAccessibleSites
     ? [{ id: 'all', name: 'All Sites' }, ...productionSiteOptions]
     : productionSiteOptions;
-  const selectedIssueSubmitItems = issueItems.filter((item) => (
+  const selectedIssueSubmitItems = visibleIssueItems.filter((item) => (
     item.selected
     && !isIssueItemAlreadyIssued(item)
     && Number(item.production_covers) > 0
   ));
+  const issueInventoryCheckState = getMenuIssueInventoryCheckState({
+    siteId: issueInventorySiteId,
+    snapshotSiteId: issueSnapshotSiteId,
+    isLoading: inventoryDataLoading || issuePlanLoading,
+    error: inventoryDataError || issuePlanError?.message || (!sitesLoading ? issueInventoryContext.error : ''),
+    items: selectedIssueSubmitItems,
+    snapshotsByItemKey: issueSnapshots
+  });
+  const issueInventoryReady = issueInventoryCheckState.ready;
   const selectedIssueMealGroups = buildMenuIssueMealGroups(selectedIssueSubmitItems, {
     snapshotsByItemKey: issueSnapshots,
     ingredients,
     inventory,
-    siteId: issueFulfillmentStoreId
+    siteId: issueInventorySiteId
   });
   const selectedIssueDailyLines = aggregateProductionIngredientLines(
     selectedIssueMealGroups.flatMap((group) => group.snapshot_lines || []),
     {
       ingredients,
       inventory,
-      siteId: issueFulfillmentStoreId
+      siteId: issueInventorySiteId
     }
   );
   const selectedIssueDailyShortages = selectedIssueDailyLines.filter((line) => !line.sufficient);
@@ -2265,13 +2278,13 @@ export default function Production() {
     return {
       ...line,
       sufficient: false,
-      shortage: aggregateShortage.shortage ?? line.shortage,
-      inventory_unit: aggregateShortage.inventory_unit || aggregateShortage.unit || line.inventory_unit || line.unit,
       on_hand_stock: aggregateShortage.on_hand_stock ?? line.on_hand_stock,
       reserved_stock: aggregateShortage.reserved_stock ?? line.reserved_stock,
       available_stock: aggregateShortage.available_stock ?? line.available_stock,
       current_stock: aggregateShortage.current_stock ?? aggregateShortage.available_stock ?? line.current_stock,
       aggregate_shortage: true,
+      aggregate_shortage_quantity: aggregateShortage.shortage ?? 0,
+      aggregate_inventory_unit: aggregateShortage.inventory_unit || aggregateShortage.unit || line.inventory_unit || line.unit,
       aggregate_required_quantity: aggregateShortage.raw_quantity ?? aggregateShortage.required_quantity,
       aggregate_source_recipe_names: aggregateShortage.source_recipe_names || []
     };
@@ -2282,11 +2295,9 @@ export default function Production() {
     : 0;
   const issueSubmitDisabledReason = !can('create_production_request')
     ? 'You need production creation permission to issue production.'
-    : !issueFulfillmentStoreId
-      ? 'Select the fulfillment Store before issuing production.'
-      : selectedIssueMealGroups.length === 0
-        ? 'Select at least one planned meal item that has not already been issued.'
-        : '';
+    : selectedIssueMealGroups.length === 0
+      ? 'Select at least one planned meal item that has not already been issued.'
+      : issueInventoryCheckState.message;
 
   return (
     <>
@@ -2316,7 +2327,6 @@ export default function Production() {
             ...current,
             production_date: selectedDate,
             site_id: selectedSite === 'all' ? '' : selectedSite,
-            fulfillment_store_id: ''
           }));
           setFormOpen(true);
         }}
@@ -2355,15 +2365,14 @@ export default function Production() {
               </div>
             ) : null}
             <form onSubmit={(event) => handleSubmit(event, editingProduction ? editingProduction.status || 'draft' : 'draft')} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
-                  <Label htmlFor="site">Project / Production Site *</Label>
+                  <Label htmlFor="site">Production Site *</Label>
                   <Select
                     value={formData.site_id}
                     onValueChange={(value) => setFormData({
                       ...formData,
-                      site_id: value,
-                      fulfillment_store_id: ''
+                      site_id: value
                     })}
                   >
                     <SelectTrigger id="site" className="mt-1">
@@ -2375,33 +2384,9 @@ export default function Production() {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-
-                <div>
-                  <Label htmlFor="fulfillment_store">Fulfillment Store *</Label>
-                  <Select
-                    value={formData.fulfillment_store_id}
-                    onValueChange={(value) => setFormData({ ...formData, fulfillment_store_id: value })}
-                    disabled={!formData.site_id || fulfillmentStoreOptions.length === 0}
-                  >
-                    <SelectTrigger id="fulfillment_store" className="mt-1">
-                      <SelectValue placeholder={
-                        !formData.site_id
-                          ? 'Select a project first'
-                          : fulfillmentStoreOptions.length === 0
-                            ? 'No store configured under this project'
-                            : 'Select fulfillment store'
-                      } />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {fulfillmentStoreOptions.map((store) => (
-                        <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {formData.site_id && fulfillmentStoreOptions.length === 0 ? (
-                    <p className="mt-1 text-xs text-red-600">
-                      Add a Store under this Project before creating production.
+                  {formData.site_id ? (
+                    <p className={`mt-2 text-xs ${formInventoryContext.error ? 'text-amber-700' : 'text-slate-500'}`}>
+                      {sitesLoading ? 'Loading production site...' : formInventoryContext.error || `Ingredients will be taken from ${formInventoryContext.site?.name}.`}
                     </p>
                   ) : null}
                 </div>
@@ -2562,11 +2547,17 @@ export default function Production() {
               ) : null}
 
               {/* Calculated Ingredients with Inventory Check */}
-              {calculatedIngredients.length > 0 && (
+              {formData.recipe_id && !formInventoryReady ? (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="status">
+                  {inventoryDataError || (inventoryDataLoading ? 'Loading production inventory...' : formInventoryContext.error)
+                    || 'Enter production covers and wait for the ingredient requirements to be calculated.'}
+                </p>
+              ) : null}
+              {formInventoryReady && (
                 <ProductionIngredientSnapshotEditor
                   lines={calculatedIngredients}
                   ingredients={ingredients}
-                  inventorySiteId={formData.fulfillment_store_id || formData.site_id}
+                  inventorySiteId={formInventorySiteId}
                   suggestionsByLine={singleRecipeSuggestions}
                   suggestionLoadingLine={singleRecipeSuggestionLoadingLine}
                   estimatedBatchCost={estimatedBatchCost}
@@ -2580,7 +2571,7 @@ export default function Production() {
                   onApplySuggestion={applySingleRecipeSuggestion}
                 />
               )}
-              {calculatedIngredients.length > 0 && (
+              {formInventoryReady && (
                 <>
                   {calculatedIngredients.some(ing => !ing.sufficient) && (
                     <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
@@ -2612,7 +2603,7 @@ export default function Production() {
                   type="button"
                   variant="outline"
                   className="border-slate-300"
-                  disabled={createMutation.isPending}
+                  disabled={createMutation.isPending || !formInventoryReady}
                   onClick={(event) => handleSubmit(event, 'draft')}
                 >
                   {createMutation.isPending ? 'Saving...' : editingProduction ? 'Save Draft' : 'Create Draft'}
@@ -2620,7 +2611,7 @@ export default function Production() {
                 <Button 
                   type="button" 
                   className="bg-emerald-600 hover:bg-emerald-700"
-                  disabled={createMutation.isPending}
+                  disabled={createMutation.isPending || !formInventoryReady}
                   onClick={(event) => handleSubmit(event, 'pending_approval')}
                 >
                   {createMutation.isPending ? 'Submitting...' : editingProduction ? 'Save & Submit' : 'Create & Submit'}
@@ -2672,11 +2663,14 @@ export default function Production() {
               </div>
             ) : (
               <div className="space-y-5">
-                <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
+                <div className="space-y-3">
                   <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-3">
                     <div className="rounded-xl bg-white px-3 py-2">
-                      <p className="text-xs uppercase tracking-wide text-slate-500">Project / site</p>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Production site</p>
                       <p className="mt-1 break-words font-semibold text-slate-900">{issueSite?.name || issuePlan.site_name || issueSource?.site_name || 'Selected project'}</p>
+                      {issueInventoryContext.site ? (
+                        <p className="mt-2 text-xs text-slate-500">Ingredients are taken from {issueInventoryContext.site.name}.</p>
+                      ) : null}
                     </div>
                     <div className="rounded-xl bg-white px-3 py-2">
                       <p className="text-xs uppercase tracking-wide text-slate-500">Production date</p>
@@ -2688,34 +2682,6 @@ export default function Production() {
                         {issueMealView === 'all' ? 'Breakfast, Lunch, Dinner' : PRODUCTION_ISSUE_MEAL_LABELS[issueMealView]}
                       </p>
                     </div>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <Label htmlFor="issue-fulfillment-store">Fulfillment Store *</Label>
-                    <Select
-                      value={issueFulfillmentStoreId}
-                      onValueChange={(value) => {
-                        setIssueFulfillmentStoreId(value);
-                        setIssueSnapshots({});
-                        setIssueSuggestions({});
-                      }}
-                      disabled={issueFulfillmentStoreOptions.length === 0}
-                    >
-                      <SelectTrigger id="issue-fulfillment-store" className="mt-2 bg-white">
-                        <SelectValue placeholder={
-                          issueFulfillmentStoreOptions.length === 0
-                            ? 'No store configured'
-                            : 'Select fulfillment store'
-                        } />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {issueFulfillmentStoreOptions.map((store) => (
-                          <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {issueFulfillmentStoreOptions.length === 0 ? (
-                      <p className="mt-2 text-xs text-red-600">Configure an active Store under this Project before issuing production.</p>
-                    ) : null}
                   </div>
                 </div>
 
@@ -2761,7 +2727,9 @@ export default function Production() {
                 </div>
                   {selectedIssueMealGroups.length > 0 ? (
                     <div className={`mt-3 rounded-xl border px-3 py-2.5 ${
-                      selectedIssueDailyShortages.length > 0
+                      !issueInventoryReady
+                        ? 'border-amber-200 bg-amber-50 text-amber-900'
+                        : selectedIssueDailyShortages.length > 0
                         ? 'border-red-200 bg-red-50 text-red-900'
                         : 'border-emerald-200 bg-emerald-50 text-emerald-900'
                     }`}>
@@ -2769,16 +2737,18 @@ export default function Production() {
                         <div>
                           <p className="text-sm font-semibold">Selected-day store check</p>
                           <p className="mt-1 text-xs">
-                            Aggregates all selected Breakfast, Lunch, and Dinner ingredient demand against the selected fulfillment Store before creating the meal review requests.
+                            {issueInventoryReady
+                              ? `Combined ingredient demand is checked against ${issueInventoryContext.site?.name || 'this production site'} inventory.`
+                              : issueInventoryCheckState.message}
                           </p>
                         </div>
-                        <Badge className={selectedIssueDailyShortages.length > 0 ? 'bg-red-600' : 'bg-emerald-600'}>
-                          {selectedIssueDailyShortages.length > 0
+                        <Badge className={!issueInventoryReady ? 'bg-amber-600' : selectedIssueDailyShortages.length > 0 ? 'bg-red-600' : 'bg-emerald-600'}>
+                          {!issueInventoryReady ? 'Not checked' : selectedIssueDailyShortages.length > 0
                             ? `${selectedIssueDailyShortages.length} shortage${selectedIssueDailyShortages.length === 1 ? '' : 's'}`
                             : 'No shortages'}
                         </Badge>
                       </div>
-                      {selectedIssueDailyShortages.length > 0 ? (
+                      {issueInventoryReady && selectedIssueDailyShortages.length > 0 ? (
                         <div className="mt-2 grid gap-2 md:grid-cols-2">
                           {selectedIssueDailyShortages.slice(0, 4).map((line) => {
                             const sourceItemKeys = (Array.isArray(line.source_menu_plan_item_keys)
@@ -2829,12 +2799,12 @@ export default function Production() {
                                 {group.items.length} dish{group.items.length === 1 ? '' : 'es'} · {formatRecipeQuantity(group.production_covers, 'servings')} covers
                               </p>
                             </div>
-                            <Badge className={group.shortageCount > 0 ? 'bg-red-600' : 'bg-emerald-600'}>
-                              {group.shortageCount > 0 ? `${group.shortageCount} short` : 'No shortages'}
+                            <Badge className={!issueInventoryReady ? 'bg-amber-600' : group.shortageCount > 0 ? 'bg-red-600' : 'bg-emerald-600'}>
+                              {!issueInventoryReady ? 'Not checked' : group.shortageCount > 0 ? `${group.shortageCount} short` : 'No shortages'}
                             </Badge>
                           </div>
                           <p className="mt-2 text-xs text-slate-500">
-                            Est. cost {formatCurrency(group.estimatedBatchCost)}
+                            Est. cost {issueInventoryReady ? formatCurrency(group.estimatedBatchCost) : '—'}
                           </p>
                         </div>
                       ))}
@@ -2862,11 +2832,11 @@ export default function Production() {
                       </div>
                     </div>
 
-                    {issueItems.length === 0 ? (
+                    {visibleIssueItems.length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                         No saved menu items with servings were found for this meal scope.
                       </div>
-                    ) : issueItems.map((item) => {
+                    ) : visibleIssueItems.map((item) => {
                       const alreadyIssued = isIssueItemAlreadyIssued(item);
                       const itemCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
                       const isActive = activeIssueItem?.key === item.key;
@@ -2897,7 +2867,7 @@ export default function Production() {
                                 {alreadyIssued ? (
                                   <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">Already issued</Badge>
                                 ) : null}
-                                {itemShortageCount > 0 ? (
+                                {issueInventoryReady && itemShortageCount > 0 ? (
                                   <Badge className="bg-red-600">{itemShortageCount} short</Badge>
                                 ) : null}
                               </div>
@@ -2928,13 +2898,17 @@ export default function Production() {
                   </div>
 
                   <div className="min-w-0 2xl:sticky 2xl:top-2 2xl:self-start">
-                    {activeIssueItem ? (
+                    {!issueInventoryReady ? (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-8 text-sm text-amber-800" role="status">
+                        {issueInventoryCheckState.message}
+                      </div>
+                    ) : activeIssueItem ? (
                       <ProductionIngredientSnapshotEditor
                         title={`${activeIssueItem.meal_label}: ${activeIssueItem.recipe_name}`}
                         description="Chef changes here are production-only. The original recipe remains untouched."
                         lines={activeIssueSnapshotForEditor}
                         ingredients={ingredients}
-                        inventorySiteId={issueFulfillmentStoreId}
+                        inventorySiteId={issueInventorySiteId}
                         suggestionsByLine={activeIssueSuggestions}
                         suggestionLoadingLine={activeIssueSuggestionLoadingLine}
                         estimatedBatchCost={activeIssueBatchCost}
@@ -3070,33 +3044,12 @@ export default function Production() {
                 <ApprovalHistoryList production={selectedProduction} />
               </div>
 
-              <div>
-                <Label htmlFor="review_fulfillment_store">Fulfillment Store (required for approval)</Label>
-                <Select
-                  value={reviewFulfillmentStoreId}
-                  onValueChange={(value) => {
-                    setReviewFulfillmentStoreId(value);
-                    setInventoryCheck(buildProductionInventoryCheck(selectedProduction, value));
-                    setActionError('');
-                  }}
-                  disabled={Boolean(selectedProduction?.fulfillment_store_id) || selectedReviewStoreOptions.length === 0}
-                >
-                  <SelectTrigger id="review_fulfillment_store" className="mt-1">
-                    <SelectValue placeholder={selectedReviewStoreOptions.length ? 'Select fulfillment store' : 'No accessible Store under this Project'} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {selectedReviewStoreOptions.map((store) => (
-                      <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {canApproveSelected && !reviewFulfillmentStoreId ? (
-                  <p className="mt-1 text-xs text-amber-700">Select a fulfillment Store to approve. You can still return or reject the request with a reason.</p>
-                ) : null}
-              </div>
-
               <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
                 <h4 className="font-medium text-blue-900 mb-3">Inventory Check</h4>
+                <p className="mb-3 text-sm text-slate-600">
+                  {inventoryDataError || (inventoryDataLoading ? 'Loading production inventory...' : reviewInventoryContext.error)
+                    || `Ingredients are supplied by ${reviewInventoryContext.site?.name}.`}
+                </p>
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -3111,7 +3064,7 @@ export default function Production() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {inventoryCheck.map((ing, idx) => (
+                      {reviewInventoryCheck.map((ing, idx) => (
                         <TableRow key={idx}>
                           <TableCell className="font-mono text-xs text-slate-600">{ing.item_code}</TableCell>
                           <TableCell>{ing.ingredient_name}</TableCell>
@@ -3133,7 +3086,7 @@ export default function Production() {
                 </div>
               </div>
 
-              {inventoryCheck.some(ing => !ing.sufficient) && (
+              {reviewInventoryCheck.some(ing => !ing.sufficient) && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5" />
@@ -3194,8 +3147,8 @@ export default function Production() {
                     className="bg-green-600 hover:bg-green-700"
                     disabled={
                       Boolean(reviewAction)
-                      || !reviewFulfillmentStoreId
-                      || (selectedIsAreaReview && inventoryCheck.some((ingredient) => !ingredient.sufficient))
+                      || !reviewInventoryReady
+                      || (selectedIsAreaReview && reviewInventoryCheck.some((ingredient) => !ingredient.sufficient))
                     }
                   >
                     <CheckCircle2 className="w-4 h-4 mr-2" />
@@ -3395,7 +3348,6 @@ export default function Production() {
             setCompletionOpen(open);
             if (!open) {
               setCompletionProduction(null);
-              setCompletionFulfillmentStoreId('');
               setActionError('');
             }
           }}
@@ -3464,29 +3416,9 @@ export default function Production() {
                 Automatic completion is unavailable because this approved production snapshot does not contain both a valid yielded weight and portion size. Update the recipe and create a new production request.
               </div>
             ) : null}
-            <div>
-              <Label htmlFor="completion_fulfillment_store">Inventory Fulfillment Store *</Label>
-              <Select
-                value={completionFulfillmentStoreId}
-                onValueChange={(value) => {
-                  setCompletionFulfillmentStoreId(value);
-                  setActionError('');
-                }}
-                disabled={Boolean(completionProduction?.fulfillment_store_id) || completionStoreOptions.length === 0}
-              >
-                <SelectTrigger id="completion_fulfillment_store" className="mt-1">
-                  <SelectValue placeholder={completionStoreOptions.length ? 'Select fulfillment store' : 'No accessible Store under this Project'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {completionStoreOptions.map((store) => (
-                    <SelectItem key={store.id} value={store.id}>{store.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {!completionFulfillmentStoreId ? (
-                <p className="mt-1 text-xs text-red-600">Select the Store whose inventory will be consumed.</p>
-              ) : null}
-            </div>
+            <p className={`text-sm ${completionInventoryContext.error ? 'text-amber-700' : 'text-slate-600'}`}>
+              {completionInventoryContext.error || `Production inventory: ${completionInventoryContext.site?.name}.`}
+            </p>
             <div className="rounded-lg border border-slate-200">
               <Table>
                 <TableHeader>
@@ -3541,13 +3473,14 @@ export default function Production() {
               <Button
                 className="bg-emerald-700 hover:bg-emerald-800"
                 disabled={updateStatusMutation.isPending
-                  || !completionFulfillmentStoreId
+                  || !completionInventorySiteId
+                  || inventoryDataLoading
+                  || Boolean(inventoryDataError)
                   || completionDerivedServings == null
                   || completionRawReconciliation.length === 0}
                 onClick={() => updateStatusMutation.mutate({
                   id: completionProduction.id,
-                  status: 'completed',
-                  fulfillmentStoreId: completionFulfillmentStoreId
+                  status: 'completed'
                 })}
               >
                 {updateStatusMutation.isPending ? 'Completing...' : 'Complete Automatically'}

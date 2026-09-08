@@ -14,6 +14,7 @@ import {
 assert.equal(getItemCode({ item_code: ' ITEM-01 ', ingredient_code: 'ING-01', sku: 'SKU-01' }), 'ITEM-01');
 assert.equal(getItemCode({ item_code: ' ', ingredient_code: ' ING-01 ', sku: 'SKU-01' }), 'ING-01');
 assert.equal(getItemCode({ sku: ' SKU-01 ' }), 'SKU-01');
+assert.equal(getItemCode({ d365_item_id: ' D365-ITEM-01 ' }), 'D365-ITEM-01');
 assert.equal(getItemCode({ ingredient_code: 'ING-01', data: { item_code: 'ITEM-NESTED' } }), 'ITEM-NESTED');
 assert.equal(getItemCode({ data: { sku: 'SKU-NESTED' } }), 'SKU-NESTED');
 assert.equal(getItemCode({}), '—');

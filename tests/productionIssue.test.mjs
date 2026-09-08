@@ -6,6 +6,7 @@ import {
   buildMenuIssueMealGroups,
   buildMenuPlanIssueItems,
   buildProductionIngredientLine,
+  buildProductionInventoryConversionSummary,
   buildProductionIngredientSnapshot,
   buildProductionIngredientsForSubmit,
   buildProductionOverrideAudit,
@@ -159,6 +160,28 @@ assert.deepEqual(
   groupedDailyLines[0].source_menu_plan_item_keys.sort(),
   groupedBreakfastItems.map((item) => item.key).sort()
 );
+const zeroedDailyLines = aggregateProductionIngredientLines([
+  {
+    ...mealGroups[0].snapshot_lines[0],
+    raw_quantity: 0,
+    planned_quantity: 0,
+    required_quantity: 0,
+    source_menu_plan_item_keys: [groupedBreakfastItems[0].key],
+    production_override_action: 'zeroed'
+  },
+  {
+    ...mealGroups[0].snapshot_lines[0],
+    raw_quantity: 10,
+    planned_quantity: 10,
+    required_quantity: 10,
+    source_menu_plan_item_keys: [groupedBreakfastItems[1].key]
+  }
+], {
+  ingredients,
+  inventory: groupedInventory,
+  siteId: 'store-2'
+});
+assert.deepEqual(zeroedDailyLines[0].source_menu_plan_item_keys, [groupedBreakfastItems[1].key]);
 
 const snapshot = buildProductionIngredientSnapshot({
   recipe: recipes[0],
@@ -174,6 +197,66 @@ assert.equal(snapshot.lines[0].shortage, 9);
 assert.equal(snapshot.lines[0].sufficient, false);
 assert.equal(snapshot.estimatedBatchCost, 120);
 
+const processingAidSnapshot = buildProductionIngredientSnapshot({
+  recipe: {
+    id: 'boiled-eggs',
+    name: 'Boiled Eggs',
+    servings: 1,
+    ingredients: [
+      { ingredient_id: 'chickpeas', ingredient_name: 'Chickpeas', quantity: 1, unit: 'kg' },
+      { ingredient_id: 'chickpeas', ingredient_name: 'Chickpeas rinse water', quantity: 0.5, unit: 'kg', exempt_processing_aid: true }
+    ]
+  },
+  ingredients,
+  targetServings: 1
+});
+assert.equal(processingAidSnapshot.lines.length, 2);
+assert.equal(processingAidSnapshot.lines.find((line) => line.exempt_processing_aid === true).yielded_quantity, 0);
+assert.equal(buildProductionIngredientsForSubmit(processingAidSnapshot.lines)[1].exempt_processing_aid, true);
+
+const waterBottleIngredient = {
+  id: 'nova-water',
+  name: '(TAFGA) NOVA WATER 24/0.55-0.6LTR',
+  supplier_item_name: '(TAFGA) NOVA WATER 24/0.55-0.6LTR',
+  unit: 'EA',
+  cost_per_unit: 0.64
+};
+const waterBottleLine = buildProductionIngredientLine({
+  sourceLine: {
+    ingredient_id: 'nova-water',
+    ingredient_name: '(TAFGA) NOVA WATER 24/0.55-0.6LTR',
+    raw_quantity: 64,
+    unit: 'l'
+  },
+  ingredient: waterBottleIngredient,
+  inventory: [
+    {
+      site_id: 'store-1',
+      ingredient_id: 'nova-water',
+      ingredient_name: '(TAFGA) NOVA WATER 24/0.55-0.6LTR',
+      quantity: 96,
+      unit: 'EA'
+    }
+  ],
+  siteId: 'store-1'
+});
+assert.equal(waterBottleLine.inventory_required_quantity, 116.363636);
+assert.equal(waterBottleLine.shortage, 20.363636);
+assert.equal(waterBottleLine.inventory_conversion_summary.inventory_unit, 'EA');
+assert.equal(waterBottleLine.inventory_conversion_summary.package_quantity, 0.55);
+assert.deepEqual(
+  buildProductionInventoryConversionSummary({
+    ingredient: waterBottleIngredient,
+    rawQuantity: 64,
+    unit: 'l',
+    inventoryUnit: 'EA',
+    requiredInventoryQty: 116.363636,
+    availableStock: 96,
+    shortage: 20.363636
+  }),
+  waterBottleLine.inventory_conversion_summary
+);
+
 const replacementSuggestions = buildInventoryReplacementSuggestions({
   line: snapshot.lines[0],
   ingredients,
@@ -181,6 +264,111 @@ const replacementSuggestions = buildInventoryReplacementSuggestions({
   siteId: 'store-1'
 });
 assert.equal(replacementSuggestions[0].ingredient_id, 'yellow-peas');
+
+const fullNameSuggestions = buildInventoryReplacementSuggestions({
+  line: {
+    ingredient_id: 'salt-source',
+    ingredient_name: 'TAFGA REHAN SALT IODIZED 24/700G',
+    raw_quantity: 10,
+    shortage: 4,
+    unit: 'EA',
+    inventory_unit: 'EA'
+  },
+  ingredients: [
+    { id: 'salt-source', name: 'TAFGA REHAN SALT IODIZED 24/700G', category: 'dry grocery', unit: 'EA' },
+    { id: 'salt-match', name: 'AL OSRA IODIZED SALT FINE 12/700G', category: 'dry grocery', unit: 'EA' },
+    { id: 'same-first-word', name: 'TAFGA TOMATO PASTE 6/#10', category: 'dry grocery', unit: 'EA' }
+  ],
+  inventory: [
+    { site_id: 'store-3', ingredient_id: 'same-first-word', ingredient_name: 'TAFGA TOMATO PASTE 6/#10', quantity: 100, unit: 'EA' },
+    { site_id: 'store-3', ingredient_id: 'salt-match', ingredient_name: 'AL OSRA IODIZED SALT FINE 12/700G', quantity: 100, unit: 'EA' }
+  ],
+  siteId: 'store-3',
+  limit: 2
+});
+assert.equal(fullNameSuggestions[0].ingredient_id, 'salt-match');
+
+const aggregateShortageReplacementSuggestions = buildInventoryReplacementSuggestions({
+  line: {
+    ingredient_id: 'salt-source',
+    ingredient_name: 'TAFGA REHAN SALT IODIZED 24/700G',
+    raw_quantity: 0.6,
+    shortage: 15.5,
+    aggregate_shortage: true,
+    unit: 'EA',
+    inventory_unit: 'EA'
+  },
+  ingredients: [
+    { id: 'salt-source', name: 'TAFGA REHAN SALT IODIZED 24/700G', category: 'dry grocery', unit: 'EA' },
+    { id: 'salt-match', name: 'AL OSRA IODIZED SALT FINE 12/700G', category: 'dry grocery', unit: 'EA' }
+  ],
+  inventory: [
+    { site_id: 'store-3', ingredient_id: 'salt-match', ingredient_name: 'AL OSRA IODIZED SALT FINE 12/700G', quantity: 1, unit: 'EA' }
+  ],
+  siteId: 'store-3',
+  limit: 1
+});
+assert.equal(aggregateShortageReplacementSuggestions[0].suggested_quantity, 0.6);
+
+const suggestionsSkipMissingIngredientRecords = buildInventoryReplacementSuggestions({
+  line: {
+    ingredient_id: 'salt-source',
+    ingredient_name: 'TAFGA REHAN SALT IODIZED 24/700G',
+    raw_quantity: 1,
+    shortage: 1,
+    unit: 'EA',
+    inventory_unit: 'EA'
+  },
+  ingredients: [
+    { id: 'salt-source', name: 'TAFGA REHAN SALT IODIZED 24/700G', category: 'dry grocery', unit: 'EA' },
+    { id: 'salt-match', name: 'AL OSRA IODIZED SALT FINE 12/700G', category: 'dry grocery', unit: 'EA' }
+  ],
+  inventory: [
+    {
+      site_id: 'store-3',
+      ingredient_id: 'ingredient_0f5aacc8-7245-445d-9d61-3749a54f96fe',
+      ingredient_name: 'Stale Inventory Ingredient',
+      quantity: 100,
+      unit: 'EA'
+    },
+    { site_id: 'store-3', ingredient_id: 'salt-match', ingredient_name: 'AL OSRA IODIZED SALT FINE 12/700G', quantity: 1, unit: 'EA' }
+  ],
+  siteId: 'store-3',
+  limit: 2
+});
+assert.deepEqual(
+  suggestionsSkipMissingIngredientRecords.map((suggestion) => suggestion.ingredient_id),
+  ['salt-match']
+);
+
+const recalculatedAggregateReplacement = recalculateProductionIngredientSnapshot([{
+  line_id: 'salt-line',
+  ingredient_id: 'salt-match',
+  ingredient_name: 'AL OSRA IODIZED SALT FINE 12/700G',
+  raw_quantity: 0.6,
+  unit: 'EA',
+  inventory_unit: 'EA',
+  original_ingredient_id: 'salt-source',
+  original_ingredient_name: 'TAFGA REHAN SALT IODIZED 24/700G',
+  original_raw_quantity: 0.6,
+  original_unit: 'EA',
+  aggregate_shortage: true,
+  shortage: 15.5,
+  sufficient: false
+}], {
+  ingredients: [
+    { id: 'salt-source', name: 'TAFGA REHAN SALT IODIZED 24/700G', category: 'dry grocery', unit: 'EA' },
+    { id: 'salt-match', name: 'AL OSRA IODIZED SALT FINE 12/700G', category: 'dry grocery', unit: 'EA' }
+  ],
+  inventory: [
+    { site_id: 'store-3', ingredient_id: 'salt-match', ingredient_name: 'AL OSRA IODIZED SALT FINE 12/700G', quantity: 1, unit: 'EA' }
+  ],
+  siteId: 'store-3'
+});
+assert.equal(recalculatedAggregateReplacement.lines[0].sufficient, true);
+assert.equal(recalculatedAggregateReplacement.lines[0].shortage, 0);
+assert.equal(recalculatedAggregateReplacement.lines[0].production_override_action, 'replaced');
+assert.equal('aggregate_shortage' in recalculatedAggregateReplacement.lines[0], false);
 
 const replacedLine = {
   ...snapshot.lines[0],

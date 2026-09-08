@@ -46,6 +46,15 @@ export default function BulkUploadTemplates() {
               <CardContent>
                 <p className="mb-3 text-sm text-slate-500">{module.headers.length} columns{module.required.length ? ` · Required: ${module.required.join(', ')}` : ' · No mandatory fields'}</p>
                 <div className="mb-4 line-clamp-3 text-xs text-slate-400">{module.headers.join(', ')}</div>
+                {module.key === 'ingredients' && (
+                  <div className="mb-4 space-y-2 text-xs text-slate-500">
+                    <p>Includes Basic Info, Weight &amp; Cooking, and Nutrition fields. Legacy columns are still accepted.</p>
+                    <p>Conversion example: unit = l, conversion_unit = g, conversion_factor = 920 means 1 litre = 920 grams. Factors must be positive. Raw and cooked weights are in grams per base unit.</p>
+                    <p>Use pipes for multiple aliases or allergens, such as maize|sweetcorn. Nutrition values are per 100 g; missing nutrition is treated as zero in recipe calculations.</p>
+                    <p>Use Keep existing data to update matching ingredient codes without replacing their records. Blank optional fields do not clear existing data. Enter 0 for zero nutrition, or [] to clear aliases or allergens.</p>
+                    <p>When both raw and cooked weights are supplied, omitted yield and shrinkage are calculated automatically.</p>
+                  </div>
+                )}
                 <Button variant="outline" onClick={() => download(module)} disabled={downloading === module.key}>
                   <Download className="mr-2 h-4 w-4" />{downloading === module.key ? 'Downloading…' : 'Download CSV template'}
                 </Button>

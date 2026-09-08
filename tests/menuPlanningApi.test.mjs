@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import './menuRecipeLinks.test.mjs';
 
 import {
   buildApiObjectResponse,

@@ -2,6 +2,7 @@ import { isIngredientUnitCompatible, quantityInIngredientBaseUnit } from './ingr
 import { expandRecipeIngredients } from './recipeComposition.js';
 import { calculateRecipeServingWeight } from './recipeWeight.js';
 import { roundStandardDecimal } from './recipeNumbers.js';
+import { ingredientForRecipeLine } from './recipeLineWeight.js';
 
 export const RECIPE_COSTING_METHODS = Object.freeze({
   average_cost: 'Average cost',
@@ -37,6 +38,7 @@ export function resolveIngredientItemCost(ingredient = {}, costingMethod = 'aver
 }
 
 export function calculateRecipeIngredientLineCost(line = {}, ingredient = {}, costingMethod = 'average_cost') {
+  ingredient = ingredientForRecipeLine(line, ingredient);
   const itemCost = resolveIngredientItemCost(ingredient, costingMethod);
   const isCompatible = isIngredientUnitCompatible(
     line.unit || ingredient.unit,

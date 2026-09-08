@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SOURCE_NAME_OPTIONS } from '../../shared/sourceNames.js';
 import { getMenuCategoryOptions, MENU_CUISINE_OPTIONS } from '../../shared/menuCategories.js';
+import { normalizeSiteType, SITE_HIERARCHY_TYPES } from '../../shared/siteHierarchy.js';
 
 const IMPORT_MODES = [
   { value: 'keep_existing', label: 'Keep existing data', description: 'Adds valid new records and skips duplicates.' },
@@ -97,7 +98,8 @@ export default function BulkUploadCenter() {
   const queryClient = useQueryClient();
   const [moduleKey, setModuleKey] = useState('');
   const [importMode, setImportMode] = useState('keep_existing');
-  const [siteId, setSiteId] = useState('all');
+  const [projectId, setProjectId] = useState('');
+  const [storeId, setStoreId] = useState('');
   const [sourceName, setSourceName] = useState('');
   const [recipeType, setRecipeType] = useState('general');
   const [menuCuisine, setMenuCuisine] = useState('general');
@@ -123,7 +125,18 @@ export default function BulkUploadCenter() {
   const isRecipeModule = selectedModule?.entity === 'Recipe';
   const isMenuPlanModule = selectedModule?.entity === 'MenuPlan';
   const menuCategoryOptions = useMemo(() => getMenuCategoryOptions(menuCuisine), [menuCuisine]);
-  const isSiteScoped = selectedModule?.headers?.includes('site_id') || (isStockUpdateOnly && selectedModule?.entity === 'Ingredient');
+  const requiresStoreScope = Boolean(selectedModule) && selectedModule.entity !== 'Site';
+  const projects = useMemo(
+    () => sites.filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT),
+    [sites]
+  );
+  const storesForProject = useMemo(
+    () => sites.filter((site) => (
+      normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
+      && String(site.parent_site_id || '') === String(projectId)
+    )),
+    [sites, projectId]
+  );
   const requiresSourceName = ['Ingredient', 'Inventory'].includes(selectedModule?.entity) && importMode !== 'delete_existing';
   const selectedModeDescription = selectedModule?.entity === 'Inventory'
     ? {
@@ -140,8 +153,21 @@ export default function BulkUploadCenter() {
     : selectedMode?.description;
 
   useEffect(() => {
-    if (!isSiteScoped) setSiteId('all');
-  }, [isSiteScoped]);
+    if (!requiresStoreScope) {
+      setProjectId('');
+      setStoreId('');
+      return;
+    }
+    if (projectId && !projects.some((project) => String(project.id) === String(projectId))) {
+      setProjectId('');
+    }
+  }, [projectId, projects, requiresStoreScope]);
+
+  useEffect(() => {
+    if (storeId && !storesForProject.some((store) => String(store.id) === String(storeId))) {
+      setStoreId('');
+    }
+  }, [storeId, storesForProject]);
 
   useEffect(() => {
     if (importMode === 'update_stock_only' && selectedModule && !isStockUploadModule) {
@@ -186,13 +212,14 @@ export default function BulkUploadCenter() {
   const submitMutation = useMutation({
     mutationFn: () => {
       if (!isAdmin) throw new Error('Only administrators can perform bulk uploads.');
-      const selectedSite = sites.find((site) => site.id === siteId);
+      const selectedStore = sites.find((site) => String(site.id) === String(storeId));
       return base44.utilities.submitBulkUpload({
         module: moduleKey,
         import_mode: importMode,
         file: importMode === 'delete_existing' ? null : file,
-        site_id: isSiteScoped && siteId !== 'all' ? siteId : '',
-        site_name: selectedSite?.name || '',
+        project_id: requiresStoreScope ? projectId : '',
+        site_id: requiresStoreScope ? storeId : '',
+        site_name: selectedStore?.name || '',
         source_name: requiresSourceName ? sourceName : '',
         recipe_type: isRecipeModule ? recipeType : '',
         menu_cuisine: isMenuPlanModule ? menuCuisine : '',
@@ -218,9 +245,8 @@ export default function BulkUploadCenter() {
     if (!isAdmin) return setErrorMessage('Only administrators can perform bulk uploads.');
     if (!moduleKey) return setErrorMessage('Select a module.');
     if (isStockUpdateOnly && !isStockUploadModule) return setErrorMessage('Update stock only is available for Inventory and Ingredients uploads.');
-    if (isStockUpdateOnly && selectedModule?.entity === 'Ingredient' && siteId === 'all') {
-      return setErrorMessage('Select a project scope before updating stock from an Ingredients file.');
-    }
+    if (requiresStoreScope && !projectId) return setErrorMessage('Select a Project before uploading.');
+    if (requiresStoreScope && !storeId) return setErrorMessage('Select a Store before uploading.');
     if (importMode !== 'delete_existing' && !file) return setErrorMessage('Select a CSV file.');
     if (detectedModuleKey && detectedModuleKey !== moduleKey) {
       const detectedModule = modules.find((item) => item.key === detectedModuleKey);
@@ -283,17 +309,35 @@ export default function BulkUploadCenter() {
               </Select>
               <p className="mt-1 text-xs text-slate-500">{selectedModeDescription}</p>
             </div>
-            {isSiteScoped && (
-              <div>
-                <Label>Project scope</Label>
-                <Select value={siteId} onValueChange={setSiteId}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All authorized projects</SelectItem>
-                    {sites.map((site) => <SelectItem key={site.id} value={site.id}>{site.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
+            {requiresStoreScope && (
+              <>
+                <div>
+                  <Label>Project *</Label>
+                  <Select value={projectId} onValueChange={(value) => {
+                    setProjectId(String(value));
+                    setStoreId('');
+                    setErrorMessage('');
+                  }}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder="Select project" /></SelectTrigger>
+                    <SelectContent>
+                      {projects.map((project) => <SelectItem key={project.id} value={String(project.id)}>{project.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Store *</Label>
+                  <Select value={storeId} onValueChange={(value) => {
+                    setStoreId(String(value));
+                    setErrorMessage('');
+                  }} disabled={!projectId}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder={projectId ? 'Select store' : 'Select project first'} /></SelectTrigger>
+                    <SelectContent>
+                      {storesForProject.map((store) => <SelectItem key={store.id} value={String(store.id)}>{store.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-xs text-slate-500">All records in this upload are assigned to the selected store.</p>
+                </div>
+              </>
             )}
             {importMode !== 'delete_existing' && (
               <div>
@@ -317,7 +361,11 @@ export default function BulkUploadCenter() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="mt-1 text-xs text-slate-500">Assigned automatically to every record in this upload.</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {selectedModule?.entity === 'Ingredient'
+                    ? 'Used when source_name is blank in the CSV. A row may specify D365 or Cash instead.'
+                    : 'Assigned automatically to every record in this upload.'}
+                </p>
               </div>
             ) : null}
             {isRecipeModule ? (
@@ -382,7 +430,7 @@ export default function BulkUploadCenter() {
               <Alert variant="destructive" className="lg:col-span-2">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Destructive operation</AlertTitle>
-                <AlertDescription>{selectedModeDescription} This action is restricted to data within your authorized project scope.</AlertDescription>
+                <AlertDescription>{selectedModeDescription} This action is restricted to the selected Store within your authorized Project.</AlertDescription>
               </Alert>
             )}
             {fileModuleNotice && <div className="rounded-lg bg-blue-50 p-3 text-sm text-blue-700 lg:col-span-2">{fileModuleNotice}</div>}

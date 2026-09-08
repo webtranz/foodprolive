@@ -8,9 +8,11 @@ import nodemailer from 'nodemailer';
 import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
+import { calculateRecipeNutrition } from '../shared/recipeNutrition.js';
 import { roundStandardDecimal } from '../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import { toBusinessDateTimeParts } from '../shared/businessDate.js';
+import { resolveMenuRecipeLinks } from '../shared/menuRecipeLinks.js';
 import {
   assertBulkUploadAdministrator,
   isBulkInventoryUpload
@@ -468,6 +470,9 @@ async function decorateRecipesWithServingWeights(records = []) {
       : Number(recipe.target_selling_price);
     const decorated = {
       ...recipe,
+      // Rebuild derived values on reads too: imported and older recipes must
+      // not need a manual edit/save to acquire nutrition and allergen details.
+      ...calculateRecipeNutrition(recipe, recipeCatalog, ingredients),
       total_cost: totalCost,
       cost_per_serving: costPerServing,
       cost_per_100g: costPer100g,
@@ -533,6 +538,11 @@ function invalidateEntityDataCaches(entity) {
 }
 
 async function decorateEntityRecords(entity, records = [], user = null) {
+  if (entity === 'MenuPlan' && records.length) {
+    const scope = await getLocationScope(user);
+    const recipes = await scopeEntityRecords(user, 'Recipe', await listDocuments('Recipe', { limit: 5000 }));
+    return records.map((plan) => resolveMenuRecipeLinks(plan, recipes, scope.sites));
+  }
   if (entity === 'Recipe') {
     return decorateRecipesWithServingWeights(records);
   }
@@ -1294,7 +1304,7 @@ async function findScopedOperationalMenuPlan(user, siteId, planDate, options = {
       .filter((record) => normalizeMenuCuisine(record.cuisine_type, 'general') === cuisineType)
       .filter((record) => normalizeMenuCategory(record.menu_category, 'senior') === menuCategory)
   );
-  return scopedRecords[0] || null;
+  return (await decorateEntityRecords('MenuPlan', scopedRecords.slice(0, 1), user))[0] || null;
 }
 
 async function listScopedOperationalMenuPlansForWeek(user, siteId, weekStart, options = {}) {
@@ -1311,7 +1321,7 @@ async function listScopedOperationalMenuPlansForWeek(user, siteId, weekStart, op
 
   return {
     ...range,
-    plans: await scopeEntityRecords(user, 'MenuPlan', weeklyRecords)
+    plans: await decorateEntityRecords('MenuPlan', await scopeEntityRecords(user, 'MenuPlan', weeklyRecords), user)
   };
 }
 
@@ -4419,14 +4429,36 @@ app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrat
         request.file = undefined;
       }
       const scope = await getLocationScope(request.user);
+      let requestedProjectId = String(request.body?.project_id || '').trim() || null;
       const requestedSiteId = String(request.body?.site_id || '').trim() || null;
-      if (requestedSiteId && !scope.unrestricted && !scope.accessibleSiteIds.has(requestedSiteId)) {
+      const requiresStoreScope = definition.entity !== 'Site';
+      const scopeSites = Array.isArray(scope.sites) ? scope.sites : [];
+      const selectedStore = scopeSites.find((site) => String(site.id) === requestedSiteId);
+      if (!requestedProjectId && selectedStore && normalizeSiteType(selectedStore.type) === SITE_HIERARCHY_TYPES.STORE) {
+        requestedProjectId = String(selectedStore.parent_site_id || '').trim() || null;
+      }
+      const selectedProject = scopeSites.find((site) => String(site.id) === requestedProjectId);
+      if (requiresStoreScope && (!requestedProjectId || !requestedSiteId)) {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Select a Project and Store before uploading.' });
+      }
+      if (requestedProjectId && !scope.unrestricted && !scope.accessibleSiteIds.has(requestedProjectId)) {
         await cleanupUploadedFile();
         return response.status(403).json({ message: 'You do not have access to the selected project.' });
       }
-      if (importMode === 'update_stock_only' && definition.entity === 'Ingredient' && !requestedSiteId) {
+      if (requestedSiteId && !scope.unrestricted && !scope.accessibleSiteIds.has(requestedSiteId)) {
         await cleanupUploadedFile();
-        return response.status(400).json({ message: 'Select a project scope before updating stock from an Ingredients file.' });
+        return response.status(403).json({ message: 'You do not have access to the selected store.' });
+      }
+      if (requiresStoreScope && (
+        !selectedProject
+        || normalizeSiteType(selectedProject.type) !== SITE_HIERARCHY_TYPES.PROJECT
+        || !selectedStore
+        || normalizeSiteType(selectedStore.type) !== SITE_HIERARCHY_TYPES.STORE
+        || String(selectedStore.parent_site_id || '') !== requestedProjectId
+      )) {
+        await cleanupUploadedFile();
+        return response.status(400).json({ message: 'Select a Store that belongs to the selected Project.' });
       }
       const batchSize = Math.min(
         Math.max(Number(process.env.BULK_UPLOAD_BATCH_SIZE || 500), 50),
@@ -4446,7 +4478,7 @@ app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrat
         batch_size: batchSize,
         actor: request.user,
         site_id: requestedSiteId,
-        site_name: String(request.body?.site_name || '').trim() || null,
+        site_name: selectedStore?.name || null,
         source_name: sourceNameRequired ? sourceName : null,
         options: {
           ...(recipeTypeRequired ? { recipe_type: recipeType } : {}),
@@ -4470,7 +4502,8 @@ app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrat
           source_name: sourceNameRequired ? sourceName : null,
           recipe_type: recipeTypeRequired ? recipeType : null,
           menu_cuisine: menuPlanOptionsRequired ? menuCuisine : null,
-          menu_category: menuPlanOptionsRequired ? menuCategory : null
+          menu_category: menuPlanOptionsRequired ? menuCategory : null,
+          project_id: requestedProjectId
         }
       });
       enqueueBulkUpload(job.id);
@@ -6584,20 +6617,23 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
       return response.status(403).json({ message: 'You do not have access to this production record' });
     }
     const requestedFulfillmentStoreId = String(request.body?.fulfillment_store_id || '').trim();
-    if (!production.fulfillment_store_id && !requestedFulfillmentStoreId) {
-      return response.status(400).json({ message: 'Select the fulfillment Store before completing this legacy production record' });
-    }
+    const productionInventorySite = resolveProductionFulfillmentStore({
+      ...production,
+      fulfillment_store_id: production.fulfillment_store_id || requestedFulfillmentStoreId
+    }, scope.sites);
     if (
-      requestedFulfillmentStoreId
-      && !scope.unrestricted
-      && !scope.accessibleSiteIds.has(requestedFulfillmentStoreId)
+      !scope.unrestricted
+      && !scope.accessibleSiteIds.has(String(productionInventorySite.id))
     ) {
-      return response.status(403).json({ message: 'You do not have access to the selected fulfillment Store' });
+      return response.status(403).json({ message: 'You do not have access to this production site inventory' });
     }
-    // Completion accepts only the selected legacy fulfillment Store. Raw
-    // reconciliation and finished yield are always recalculated server-side.
+    if (requestedFulfillmentStoreId && requestedFulfillmentStoreId !== String(productionInventorySite.id)) {
+      return response.status(409).json({ message: 'The production inventory location cannot be changed at completion' });
+    }
+    // Resolve inventory from the production location, including legacy records.
+    // Raw reconciliation and finished yield are recalculated server-side.
     const result = await completeProduction(request.params.id, request.user, {
-      fulfillment_store_id: requestedFulfillmentStoreId || undefined
+      fulfillment_store_id: productionInventorySite.id
     });
     if (result.mutated) {
       recordChanged('Production');

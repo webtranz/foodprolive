@@ -233,8 +233,10 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
         </div>
 
         <div className="mt-3 grid gap-1.5">
-          <ProductionDetailRow label="Project" value={item.production.site_name || 'Not assigned'} />
-          <ProductionDetailRow label="Store" value={item.production.fulfillment_store_name || 'Not assigned'} tone="cyan" />
+          <ProductionDetailRow label="Production site" value={item.production.site_name || 'Not assigned'} />
+          {item.production.fulfillment_store_id && String(item.production.fulfillment_store_id) !== String(item.production.site_id) ? (
+            <ProductionDetailRow label="Inventory" value={item.production.fulfillment_store_name || 'Not assigned'} tone="cyan" />
+          ) : null}
           {materialRequest ? (
             <ProductionDetailRow
               label="Material request"

@@ -88,10 +88,25 @@ const defaultYield = calculateRecipeServingWeight({
 assert.equal(defaultYield.is_complete, true);
 assert.equal(defaultYield.grams_per_serving, 500);
 
+const boiledEggsWithWaterAid = calculateRecipeServingWeight({
+  id: 'boiled-eggs',
+  servings: 1,
+  ingredients: [
+    { ingredient_id: 'egg', ingredient_name: 'Egg', quantity: 1, unit: 'pieces' },
+    { ingredient_id: 'water', ingredient_name: 'Water', quantity: 0.4, unit: 'l', exempt_processing_aid: true }
+  ]
+}, [], [
+  { id: 'egg', name: 'Egg', unit: 'pieces', raw_weight_per_unit: 50, cooked_weight_per_unit: 50 },
+  { id: 'water', name: 'Water', unit: 'l' }
+]);
+assert.equal(boiledEggsWithWaterAid.is_complete, true);
+assert.equal(boiledEggsWithWaterAid.raw_total_grams, 50);
+assert.equal(boiledEggsWithWaterAid.cooked_total_grams, 50);
+
 const emptyRecipe = calculateRecipeServingWeight({ id: 'empty', servings: 1 }, [], []);
 assert.equal(emptyRecipe.is_complete, false);
 assert.equal(emptyRecipe.grams_per_serving, null);
-assert.match(emptyRecipe.warnings[0], /no ingredients/i);
+assert.match(emptyRecipe.warnings[0], /no non-exempt ingredients/i);
 
 const shrinkageAdjusted = calculateYieldAdjustedQuantity(10, { shrinkage_percent: 20 });
 assert.equal(shrinkageAdjusted.required_raw_quantity, 12.5);
@@ -130,3 +145,19 @@ assert.deepEqual(resolveIngredientYield({ cooking_yield_percent: 0, shrinkage_pe
 });
 
 console.log('Recipe serving weight tests passed.');
+
+const weigh = (quantity, unit, ingredient) => calculateRecipeServingWeight({
+  servings: 1, ingredients: [{ ingredient_id: 'test', quantity, unit }]
+}, [], [{ ...ingredient, id: 'test' }]);
+assert.equal(weigh(2500, 'g', { unit: 'KG', raw_weight_per_unit: 1, cooked_weight_per_unit: 0.89 }).grams_per_serving, 2225);
+assert.equal(weigh(2.5, 'kg', { unit: 'KG', raw_weight_per_unit: 1000, cooked_weight_per_unit: 890 }).grams_per_serving, 2225);
+assert.equal(weigh(300, 'ml', { unit: 'EA', name: 'Sauce 12/600ML', raw_weight_per_unit: 1, cooked_weight_per_unit: 1 }).grams_per_serving, 300);
+assert.equal(weigh(0.3, 'l', { unit: 'EA', name: 'Sauce 12/600ML', raw_weight_per_unit: 1, cooked_weight_per_unit: 1 }).grams_per_serving, 300);
+assert.equal(weigh(1, 'EA', { unit: 'EA', name: 'Sauce 12/600ML', raw_weight_per_unit: 1, cooked_weight_per_unit: 1 }).grams_per_serving, 600);
+assert.equal(weigh(1, 'CS', { unit: 'CS', name: 'Pasta 24/450G', raw_weight_per_unit: 1, cooked_weight_per_unit: 1 }).grams_per_serving, 10800);
+assert.equal(weigh(1, 'PAK', { unit: 'PAK', name: 'Tea 12/50/1.3G', raw_weight_per_unit: 1, cooked_weight_per_unit: 1 }).grams_per_serving, 65);
+assert.equal(weigh(1, 'BDL', { unit: 'BDL', name: 'Mint', raw_weight_per_unit: 1, cooked_weight_per_unit: 0.85 }).grams_per_serving, 68);
+assert.equal(weigh(1, 'l', { unit: 'l', density_g_per_ml: 0.92 }).grams_per_serving, 920);
+assert.equal(weigh(12, 'pieces', { unit: 'PAK', name: 'Eggs 12/30 CT', package_base_quantity: 30, package_base_unit: 'pieces', raw_weight_per_unit: 1500, cooked_weight_per_unit: 1500 }).grams_per_serving, 600);
+assert.equal(weigh(12, 'pieces', { unit: 'PAK', name: 'Eggs 12/30 CT', package_base_quantity: 30, package_base_unit: 'pieces', raw_weight_per_unit: 1, cooked_weight_per_unit: 1 }).grams_per_serving, null);
+console.log('Legacy yield ratios, package staging, liquids, bundles, and count-weight tests passed.');

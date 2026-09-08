@@ -4,6 +4,7 @@ import { isIngredientUnitCompatible, normalizeIngredientUnit } from '../shared/i
 import { inferPackageFields } from '../shared/packageUnits.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../shared/siteHierarchy.js';
 import { normalizeProductionMenuScope } from '../shared/menuCategories.js';
+import { normalizeSourceName } from '../shared/sourceNames.js';
 
 const commonSiteFields = ['site_id', 'site_name'];
 
@@ -24,7 +25,7 @@ export const utilityModules = Object.freeze({
     label: 'Ingredients',
     entity: 'Ingredient',
     required: ['name'],
-    headers: ['item_code', 'name', 'ingredient_code', 'sku', 'alias', 'supplier_item_name', 'unit', 'category', 'cuisine_type', 'cost_per_unit', 'package_base_quantity', 'package_base_unit', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'sodium_per_100g', 'sugar_per_100g', 'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'allergens', 'is_active']
+    headers: ['item_code', 'name', 'source_name', 'ingredient_code', 'sku', 'alias', 'aliases', 'supplier_item_name', 'unit', 'conversion_unit', 'conversion_factor', 'category', 'cuisine_type', 'cost_per_unit', 'supplier', 'package_base_quantity', 'package_base_unit', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'fiber_per_100g', 'sodium_per_100g', 'sugar_per_100g', 'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'allergens', 'is_active']
   },
   recipes: {
     label: 'Recipes',
@@ -104,9 +105,9 @@ const JSON_FIELDS = new Set([
 ]);
 const BOOLEAN_FIELDS = new Set(['is_active', 'preventable', 'high_value']);
 const NUMBER_FIELDS = new Set([
-  'capacity', 'cost_per_unit', 'package_base_quantity', 'package_pack_count',
+  'capacity', 'cost_per_unit', 'conversion_factor', 'package_base_quantity', 'package_pack_count',
   'package_inner_count', 'package_size_quantity', 'calories_per_100g', 'protein_per_100g',
-  'carbs_per_100g', 'fat_per_100g', 'sodium_per_100g', 'sugar_per_100g',
+  'carbs_per_100g', 'fat_per_100g', 'fiber_per_100g', 'sodium_per_100g', 'sugar_per_100g',
   'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit',
   'cooked_weight_per_unit', 'servings', 'portion_size_grams', 'prep_time_minutes', 'cook_time_minutes',
   'quantity', 'unit_cost', 'average_unit_cost', 'reorder_level',
@@ -122,7 +123,12 @@ const HEADER_ALIASES = Object.freeze({
   },
   ingredients: {
     ingredient_name: 'name',
+    item_name: 'name',
     product_name: 'name',
+    sku_code: 'sku',
+    base_unit: 'unit',
+    conversion_units_per_base_unit: 'conversion_factor',
+    'aliases_/_alternative_names': 'aliases',
     item: 'item_code',
     item_duplicate: 'ingredient_code',
     item_group: 'category',
@@ -140,6 +146,7 @@ const HEADER_ALIASES = Object.freeze({
     carb: 'carbs_per_100g',
     carbs: 'carbs_per_100g',
     fat: 'fat_per_100g',
+    fiber: 'fiber_per_100g',
     sodium: 'sodium_per_100g',
     sugar: 'sugar_per_100g',
     quantity: 'quantity',
@@ -193,6 +200,14 @@ export function createTemplateCsv(moduleKey) {
   return `${definition.headers.join(',')}\n`;
 }
 
+export function resolveBulkUploadSourceName(job = {}, payload = {}) {
+  const selectedSource = normalizeSourceName(job.source_name, '');
+  const rowSource = normalizeSourceName(payload.source_name, '');
+  return job.entity_name === 'Ingredient'
+    ? rowSource || selectedSource
+    : selectedSource || rowSource;
+}
+
 export function parseCsvLine(line) {
   const values = [];
   let current = '';
@@ -224,6 +239,21 @@ function normalizeHeader(value) {
 function parseCell(field, value) {
   const trimmed = String(value ?? '').trim();
   if (!trimmed) return undefined;
+  if (field === 'aliases') {
+    if (/^[\[{]/.test(trimmed)) {
+      let aliases;
+      try {
+        aliases = JSON.parse(trimmed);
+      } catch {
+        throw new Error('aliases must be a comma/pipe-separated list or a JSON array of strings');
+      }
+      if (!Array.isArray(aliases) || aliases.some((alias) => typeof alias !== 'string')) {
+        throw new Error('aliases must be a comma/pipe-separated list or a JSON array of strings');
+      }
+      return aliases.map((alias) => alias.trim()).filter(Boolean);
+    }
+    return trimmed.split(/[|,]/).map((alias) => alias.trim()).filter(Boolean);
+  }
   if (field === 'allergens') {
     if (/^(none|no|n\/a|na|null)$/i.test(trimmed)) return [];
     try {
@@ -246,6 +276,9 @@ function parseCell(field, value) {
   if (NUMBER_FIELDS.has(field)) {
     const number = Number(trimmed);
     if (!Number.isFinite(number)) throw new Error(`${field} must be a number`);
+    if (field === 'conversion_factor' && number <= 0) {
+      throw new Error('conversion_factor must be greater than zero');
+    }
     return number;
   }
   return trimmed;
@@ -260,6 +293,19 @@ function buildHeaderMap(moduleKey, definition) {
   return new Map(entries);
 }
 
+function normalizeIngredientUploadUnit(value) {
+  const trimmed = String(value || '').trim();
+  const standardUnits = new Set(['kg', 'g', 'l', 'ml', 'pieces']);
+  const displayLabel = trimmed.match(/^(.*?)\s*\(([^)]+)\)$/);
+  if (displayLabel) {
+    const symbol = normalizeIngredientUnit(displayLabel[2]);
+    if (standardUnits.has(symbol) && normalizeIngredientUnit(displayLabel[1]) === symbol) return symbol;
+  }
+  const normalized = normalizeIngredientUnit(trimmed);
+  // Keep canonical legacy spellings such as EA and custom units unchanged.
+  return standardUnits.has(normalized) || normalized !== trimmed.toLowerCase() ? normalized : trimmed;
+}
+
 function normalizeMappedPayload(moduleKey, payload) {
   if (moduleKey === 'recipes' && payload.recipe_type && !payload.cuisine_type) {
     payload.cuisine_type = payload.recipe_type;
@@ -271,6 +317,18 @@ function normalizeMappedPayload(moduleKey, payload) {
     payload.item_code = payload.ingredient_code || payload.sku || undefined;
   }
   if (moduleKey === 'ingredients') {
+    ['unit', 'conversion_unit', 'package_base_unit'].forEach((field) => {
+      if (payload[field]) payload[field] = normalizeIngredientUploadUnit(payload[field]);
+    });
+    if (payload.raw_weight_per_unit > 0 && payload.cooked_weight_per_unit > 0) {
+      const yieldPercent = Number(((payload.cooked_weight_per_unit / payload.raw_weight_per_unit) * 100).toFixed(1));
+      if (Number.isFinite(yieldPercent)) {
+        if (payload.cooking_yield_percent === undefined) payload.cooking_yield_percent = yieldPercent;
+        if (payload.shrinkage_percent === undefined) {
+          payload.shrinkage_percent = Number((100 - payload.cooking_yield_percent).toFixed(1));
+        }
+      }
+    }
     Object.assign(payload, inferPackageFields(payload));
   }
   if (moduleKey === 'inventory' && !payload.unit_cost && payload.unit_price) {
@@ -306,7 +364,14 @@ export function mapCsvRow(moduleKey, headers, values) {
     const imageError = validateRecipeImageReference(normalizedPayload.image_url);
     if (imageError) throw new Error(imageError);
   }
-  return validateEntityPayload(definition.entity, normalizedPayload);
+  const validatedPayload = validateEntityPayload(definition.entity, normalizedPayload);
+  if (moduleKey === 'ingredients') {
+    // Blank upload cells must not replace existing values with create-time defaults.
+    ['source_name', 'allergens', 'is_active'].forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(normalizedPayload, field)) delete validatedPayload[field];
+    });
+  }
+  return validatedPayload;
 }
 
 export function validateCsvHeaders(moduleKey, headers) {

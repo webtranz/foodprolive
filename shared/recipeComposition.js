@@ -1,4 +1,10 @@
 import { convertIngredientQuantity } from './ingredientUnits.js';
+import {
+  ingredientForRecipeLine,
+  isExemptProcessingAid,
+  recipeLineProcessingAidField
+} from './recipeLineWeight.js';
+import { accumulateRecipeLineWeight, finishRecipeLineWeight } from './recipeWeightAggregation.js';
 
 const SUB_RECIPE_UNITS = new Set(['batch', 'servings']);
 
@@ -104,7 +110,7 @@ export function expandRecipeIngredients(
 
   const aggregated = new Map();
   expanded.forEach((line) => {
-    const ingredient = ingredientMap.get(String(line.ingredient_id));
+    const ingredient = ingredientForRecipeLine(line, ingredientMap.get(String(line.ingredient_id)));
     const targetUnit = ingredient?.unit || line.unit || 'unit';
     const normalizedQuantity = convertIngredientQuantity(
       line.quantity,
@@ -112,17 +118,20 @@ export function expandRecipeIngredients(
       targetUnit,
       ingredient
     );
-    const key = `${line.ingredient_id}::${targetUnit}`;
+    const processingAid = isExemptProcessingAid(line);
+    const key = `${line.ingredient_id}::${targetUnit}::${processingAid ? 'processing_aid' : 'food'}`;
     const current = aggregated.get(key) || {
       ingredient_id: line.ingredient_id,
       ingredient_name: ingredient?.name || line.ingredient_name || 'Unnamed ingredient',
       quantity: 0,
       unit: targetUnit,
       quantity_basis: 'raw',
+      ...recipeLineProcessingAidField(line),
       source_recipe_ids: new Set(),
       source_recipe_names: new Set()
     };
     current.quantity += normalizedQuantity;
+    accumulateRecipeLineWeight(current, line, ingredient, line.quantity);
     if (line.source_recipe_id) current.source_recipe_ids.add(line.source_recipe_id);
     if (line.source_recipe_name) current.source_recipe_names.add(line.source_recipe_name);
     aggregated.set(key, current);
@@ -130,7 +139,7 @@ export function expandRecipeIngredients(
 
   return {
     ingredients: [...aggregated.values()].map((line) => ({
-      ...line,
+      ...finishRecipeLineWeight(line, line.quantity),
       quantity: Number(line.quantity.toFixed(6)),
       source_recipe_ids: [...line.source_recipe_ids],
       source_recipe_names: [...line.source_recipe_names]

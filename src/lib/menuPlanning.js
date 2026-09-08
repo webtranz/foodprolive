@@ -83,6 +83,11 @@ export function buildDailyMenuState(plan) {
 
     nextState[mealType] = matchingMeals.map((meal) => ({
       recipe_id: meal.recipe_id || '',
+      ...(meal.recipe_link_status && meal.recipe_link_status !== 'linked' ? {
+        recipe_link_status: meal.recipe_link_status,
+        recipe_code: meal.recipe_code || '',
+        recipe_name: meal.recipe_name || ''
+      } : {}),
       expected_servings: meal.expected_servings ? String(meal.expected_servings) : ''
     }));
   });
@@ -102,9 +107,9 @@ function normalizeCalendarMeal(mealType, meal = {}, recipes = []) {
     recipe_id: recipeId,
     recipe_name: String(meal?.recipe_name || recipe?.name || '').trim(),
     expected_servings: expectedServings,
-    has_recipe: Boolean(recipeId),
+    has_recipe: Boolean(recipeId) && (!meal.recipe_link_status || meal.recipe_link_status === 'linked'),
     has_servings: hasServings,
-    is_complete: Boolean(recipeId) && expectedServings > 0
+    is_complete: Boolean(recipeId) && expectedServings > 0 && (!meal.recipe_link_status || meal.recipe_link_status === 'linked')
   };
 }
 
@@ -199,6 +204,7 @@ export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], ex
         return [{
           meal_type: mealType,
           recipe_id: recipe.id,
+          recipe_code: recipe.recipe_code || '',
           recipe_name: recipe.name || '',
           expected_servings: servings,
           cost_per_serving: costPerServing,
@@ -248,7 +254,7 @@ export function validateDailyMenuState(formState) {
   CORE_MENU_MEAL_TYPES.forEach((mealType) => {
     const rows = Array.isArray(formState?.[mealType]) ? formState[mealType] : [];
     rows.forEach((row, index) => {
-      const hasRecipe = Boolean(row.recipe_id);
+      const hasRecipe = Boolean(row.recipe_id) && (!row.recipe_link_status || row.recipe_link_status === 'linked');
       const hasServings = row.expected_servings !== '' && row.expected_servings !== null && typeof row.expected_servings !== 'undefined';
       const rowLabel = rows.length > 1 ? `${mealType[0].toUpperCase()}${mealType.slice(1)} item ${index + 1}` : `${mealType[0].toUpperCase()}${mealType.slice(1)}`;
 

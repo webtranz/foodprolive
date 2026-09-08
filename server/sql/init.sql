@@ -235,6 +235,31 @@ SET data = data || jsonb_build_object('source_name', 'D365'),
 WHERE entity_name IN ('Ingredient', 'Inventory')
   AND COALESCE(data->>'source_name', '') = '';
 
+-- Inventory records are linked to the Ingredient master. Backfill their Item
+-- Code from that source so legacy stock, lots, and stock history display the
+-- same stable identifier as newly uploaded inventory.
+UPDATE entity_records AS target
+SET data = target.data || jsonb_build_object(
+      'item_code', COALESCE(
+        NULLIF(BTRIM(ingredient.data->>'item_code'), ''),
+        NULLIF(BTRIM(ingredient.data->>'ingredient_code'), ''),
+        NULLIF(BTRIM(ingredient.data->>'sku'), ''),
+        NULLIF(BTRIM(ingredient.data->>'d365_item_id'), '')
+      )
+    ),
+    updated_at = NOW()
+FROM entity_records AS ingredient
+WHERE target.entity_name IN ('Inventory', 'InventoryLot', 'InventoryTransaction')
+  AND ingredient.entity_name = 'Ingredient'
+  AND target.data->>'ingredient_id' = ingredient.id
+  AND COALESCE(BTRIM(target.data->>'item_code'), '') = ''
+  AND COALESCE(
+    NULLIF(BTRIM(ingredient.data->>'item_code'), ''),
+    NULLIF(BTRIM(ingredient.data->>'ingredient_code'), ''),
+    NULLIF(BTRIM(ingredient.data->>'sku'), ''),
+    NULLIF(BTRIM(ingredient.data->>'d365_item_id'), '')
+  ) IS NOT NULL;
+
 CREATE OR REPLACE FUNCTION notify_foodpro_bulk_job_change()
 RETURNS TRIGGER AS $$
 BEGIN

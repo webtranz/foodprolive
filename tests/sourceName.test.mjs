@@ -31,7 +31,8 @@ assert.match(bulkUploadCenter, /Select Source Name: D365 or Cash before uploadin
 assert.match(bulkUploadCenter, /source_name: requiresSourceName \? sourceName : ''/);
 
 const bulkUploadWorker = read('server/bulkUploadWorker.js');
-assert.match(bulkUploadWorker, /source_name: getJobSourceName\(job\)/);
+assert.match(bulkUploadWorker, /source_name: resolveBulkUploadSourceName\(job, staged\.payload\)/);
+assert.match(bulkUploadWorker, /const sourceName = resolveBulkUploadSourceName\(job, staged\.payload\)/);
 assert.match(bulkUploadWorker, /job\.entity_name === 'Ingredient'/);
 
 console.log('sourceName tests passed');

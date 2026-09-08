@@ -926,11 +926,12 @@ export const base44 = {
     downloadTemplate(moduleKey) {
       return apiBlobRequest(`/api/utilities/templates/${encodeURIComponent(moduleKey)}`);
     },
-    submitBulkUpload({ module, import_mode, file, site_id, site_name, source_name, recipe_type, menu_cuisine, menu_category }) {
+    submitBulkUpload({ module, import_mode, file, project_id, site_id, site_name, source_name, recipe_type, menu_cuisine, menu_category }) {
       const formData = new FormData();
       formData.append('module', module);
       formData.append('import_mode', import_mode || 'keep_existing');
       if (file) formData.append('file', file);
+      if (project_id) formData.append('project_id', project_id);
       if (site_id) formData.append('site_id', site_id);
       if (site_name) formData.append('site_name', site_name);
       if (source_name) formData.append('source_name', source_name);

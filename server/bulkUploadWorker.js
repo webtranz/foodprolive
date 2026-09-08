@@ -19,6 +19,7 @@ import {
   getUtilityModule,
   buildIngredientPayloadFromInventoryUpload,
   mapCsvRow,
+  resolveBulkUploadSourceName,
   parseCsvLine,
   resolveBulkInventoryIngredient,
   resolveBulkInventoryStore,
@@ -294,7 +295,7 @@ async function applyStockSnapshotUploadRow({ job, staged, user, context, client 
   });
   const canonicalUnit = resolveBulkInventoryUnit(ingredient, staged.payload.unit);
   const canonicalQuantity = resolveBulkCanonicalQuantity(staged.payload, ingredient, canonicalUnit);
-  const sourceName = getJobSourceName(job) || staged.payload.source_name || undefined;
+  const sourceName = resolveBulkUploadSourceName(job, staged.payload) || undefined;
   const metadata = {
     ...(staged.payload.metadata && typeof staged.payload.metadata === 'object'
       ? staged.payload.metadata
@@ -317,6 +318,7 @@ async function applyStockSnapshotUploadRow({ job, staged, user, context, client 
     site_name: site.name || null,
     ingredient_id: ingredient.id,
     ingredient_name: ingredient.name,
+    item_code: ingredient.item_code || ingredient.ingredient_code || ingredient.sku || ingredient.d365_item_id || staged.payload.item_code,
     unit: canonicalUnit,
     min_stock_level: staged.payload.min_stock_level,
     max_stock_level: staged.payload.max_stock_level,
@@ -328,6 +330,7 @@ async function applyStockSnapshotUploadRow({ job, staged, user, context, client 
     site_name: site.name || null,
     ingredient_id: ingredient.id,
     ingredient_name: ingredient.name,
+    item_code: ingredient.item_code || ingredient.ingredient_code || ingredient.sku || ingredient.d365_item_id || staged.payload.item_code,
     unit: canonicalUnit,
     stock_date: staged.payload.stock_date || null,
     received_date: staged.payload.stock_date || null,
@@ -668,7 +671,12 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
           ? await ensureRecipeIngredientsExist({
             payload: {
               ...staged.payload,
-              ...(recipeType ? { cuisine_type: recipeType } : {})
+              ...(recipeType ? { cuisine_type: recipeType } : {}),
+              ...(job.site_id ? {
+                site_scope: 'specific',
+                site_ids: [job.site_id],
+                site_names: job.site_name ? [job.site_name] : []
+              } : {})
             },
             user,
             context,
@@ -677,7 +685,7 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
           : (job.entity_name === 'Ingredient'
             ? {
                 ...staged.payload,
-                source_name: getJobSourceName(job) || staged.payload.source_name || undefined
+                source_name: resolveBulkUploadSourceName(job, staged.payload) || undefined
               }
             : (job.entity_name === 'MenuPlan'
               ? {
@@ -696,7 +704,12 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
         if (job.entity_name === 'Recipe') {
           recipePayloadForDuplicateRecovery = {
             ...staged.payload,
-            ...(recipeType ? { cuisine_type: recipeType } : {})
+            ...(recipeType ? { cuisine_type: recipeType } : {}),
+            ...(job.site_id ? {
+              site_scope: 'specific',
+              site_ids: [job.site_id],
+              site_names: job.site_name ? [job.site_name] : []
+            } : {})
           };
         }
         if (job.entity_name === 'Production') {

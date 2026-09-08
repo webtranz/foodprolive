@@ -9,6 +9,14 @@ import { calculateYieldOutputQuantity } from '../../shared/ingredientYield.js';
 import { getItemCode } from '../../shared/itemCode.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 import {
+  clearRecipeLineWeight,
+  ingredientForRecipeLine,
+  isExemptProcessingAid,
+  recipeLineProcessingAidField,
+  recipeLineWeightFields
+} from '../../shared/recipeLineWeight.js';
+import { accumulateRecipeLineWeight, finishRecipeLineWeight } from '../../shared/recipeWeightAggregation.js';
+import {
   getRecipeQuantityPrecision,
   roundStandardDecimal
 } from '../../shared/recipeNumbers.js';
@@ -21,10 +29,77 @@ export const PRODUCTION_ISSUE_MEAL_LABELS = {
   dinner: 'Dinner'
 };
 
+export function getMenuIssueInventoryCheckState({
+  siteId = '',
+  snapshotSiteId = '',
+  isLoading = false,
+  error = '',
+  items = [],
+  snapshotsByItemKey = {}
+} = {}) {
+  if (error) return { ready: false, message: error };
+  if (isLoading) return { ready: false, message: 'Loading production inventory and ingredients...' };
+  if (!siteId) return { ready: false, message: 'Inventory cannot be checked until the production site is available.' };
+  if (items.length === 0) return { ready: false, message: 'Select a planned dish to check inventory.' };
+  if (String(siteId) !== String(snapshotSiteId)
+    || items.some((item) => !Array.isArray(snapshotsByItemKey[item.key]))) {
+    return { ready: false, message: 'Calculating ingredient requirements for this production site...' };
+  }
+  if (items.some((item) => snapshotsByItemKey[item.key].length === 0)) {
+    return { ready: false, message: 'A selected dish has no ingredient details. Check its recipe before issuing production.' };
+  }
+  return { ready: true, message: '' };
+}
+
 export function finiteProductionNumber(value, fallback = 0) {
   if (value === null || typeof value === 'undefined' || value === '') return fallback;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+export function buildProductionInventoryConversionSummary({
+  ingredient = {},
+  rawQuantity = 0,
+  unit = '',
+  inventoryUnit = '',
+  requiredInventoryQty = 0,
+  availableStock = 0,
+  shortage = 0
+} = {}) {
+  const productionUnit = unit || ingredient.unit || '';
+  const stockUnit = inventoryUnit || ingredient.unit || productionUnit;
+  const normalizedProductionUnit = normalizeIngredientUnit(productionUnit);
+  const normalizedStockUnit = normalizeIngredientUnit(stockUnit);
+  const productionQuantity = finiteProductionNumber(rawQuantity, 0);
+  const inventoryRequiredQuantity = finiteProductionNumber(requiredInventoryQty, 0);
+
+  if (!productionQuantity || !normalizedProductionUnit || !normalizedStockUnit || normalizedProductionUnit === normalizedStockUnit) {
+    return null;
+  }
+  if (!Number.isFinite(inventoryRequiredQuantity) || inventoryRequiredQuantity <= 0) {
+    return null;
+  }
+  if (!isIngredientUnitCompatible(productionUnit, stockUnit, ingredient)) {
+    return null;
+  }
+
+  const packageQuantity = convertIngredientQuantity(1, stockUnit, productionUnit, ingredient);
+  const hasPackageSize = Number.isFinite(packageQuantity)
+    && packageQuantity > 0
+    && Math.abs(packageQuantity - 1) > 0.000001;
+  const productionPrecision = getRecipeQuantityPrecision(productionUnit);
+  const stockPrecision = getRecipeQuantityPrecision(stockUnit);
+
+  return {
+    production_quantity: roundStandardDecimal(productionQuantity, productionPrecision),
+    production_unit: productionUnit,
+    inventory_required_quantity: roundStandardDecimal(inventoryRequiredQuantity, stockPrecision),
+    inventory_unit: stockUnit,
+    package_quantity: hasPackageSize ? roundStandardDecimal(packageQuantity, productionPrecision) : null,
+    package_unit: hasPackageSize ? productionUnit : '',
+    available_quantity: roundStandardDecimal(availableStock, stockPrecision),
+    shortage_quantity: roundStandardDecimal(shortage, stockPrecision)
+  };
 }
 
 export function normalizeIssueMealType(value) {
@@ -134,7 +209,7 @@ export function buildMenuPlanIssueItems(plan, { mealView = 'all', recipes = [] }
     const mealType = normalizeIssueMealType(meal?.meal_type);
     const recipeId = String(meal?.recipe_id || '').trim();
     const expectedServings = finiteProductionNumber(meal?.expected_servings, 0);
-    if (!mealType || !recipeId || expectedServings <= 0) {
+    if (!mealType || !recipeId || expectedServings <= 0 || (meal.recipe_link_status && meal.recipe_link_status !== 'linked')) {
       return [];
     }
     if (selectedMealView !== 'all' && selectedMealView !== mealType) {
@@ -177,7 +252,8 @@ export function buildProductionIngredientLine({
   override = {}
 } = {}) {
   const ingredientId = sourceLine.ingredient_id || ingredient?.id || '';
-  const ingredientData = ingredient || {};
+  const ingredientData = ingredientForRecipeLine(sourceLine, ingredient || {});
+  const processingAid = isExemptProcessingAid(sourceLine);
   const rawQuantity = Math.max(0, lineQuantity(sourceLine));
   const unit = sourceLine.unit || ingredientData.unit || sourceLine.inventory_unit || 'unit';
   const inventoryRow = findInventoryRow(inventory, siteId, ingredientId);
@@ -188,7 +264,14 @@ export function buildProductionIngredientLine({
   const stockQuantities = getInventoryQuantities(inventoryRow);
   const availableStock = stockQuantities.available_quantity;
   const shortage = Math.max(0, requiredInventoryQty - availableStock);
-  const yieldOutput = calculateYieldOutputQuantity(rawQuantity, ingredientData);
+  const yieldOutput = processingAid
+    ? {
+        yielded_quantity: 0,
+        yield_multiplier: 0,
+        yield_percent: 0,
+        yield_source: 'exempt_processing_aid'
+      }
+    : calculateYieldOutputQuantity(rawQuantity, ingredientData);
   const unitCost = finiteProductionNumber(
     sourceLine.unit_cost
       ?? ingredientData.cost_per_unit
@@ -204,8 +287,10 @@ export function buildProductionIngredientLine({
   const originalIngredientName = isAddedOverride ? '' : (getLineOriginalIngredientName(sourceLine) || sourceLine.ingredient_name || ingredientData.name || 'Ingredient');
   const originalUnit = isAddedOverride ? unit : (getLineOriginalUnit(sourceLine) || unit);
   const line = {
-    ...sourceLine,
+    ...clearRecipeLineWeight(sourceLine),
     ...override,
+    ...recipeLineProcessingAidField(sourceLine),
+    ...recipeLineWeightFields(sourceLine),
     line_id: sourceLine.line_id || `line-${ingredientId || 'ingredient'}-${index}`,
     item_code: getItemCode(ingredientData, getItemCode(sourceLine)),
     ingredient_id: ingredientId,
@@ -220,6 +305,16 @@ export function buildProductionIngredientLine({
     available_stock: roundStandardDecimal(availableStock, getRecipeQuantityPrecision(inventoryUnit)),
     current_stock: roundStandardDecimal(availableStock, getRecipeQuantityPrecision(inventoryUnit)),
     shortage: roundStandardDecimal(shortage, getRecipeQuantityPrecision(inventoryUnit)),
+    inventory_required_quantity: roundStandardDecimal(requiredInventoryQty, getRecipeQuantityPrecision(inventoryUnit)),
+    inventory_conversion_summary: buildProductionInventoryConversionSummary({
+      ingredient: ingredientData,
+      rawQuantity,
+      unit,
+      inventoryUnit,
+      requiredInventoryQty,
+      availableStock,
+      shortage
+    }),
     unit,
     inventory_unit: inventoryUnit,
     cost_quantity: Number(costQuantity.toFixed(4)),
@@ -238,9 +333,14 @@ export function buildProductionIngredientLine({
   };
 
   const derivedAction = deriveProductionLineOverrideAction(line);
+  const snapshotLine = { ...line };
+  delete snapshotLine.aggregate_shortage;
+  delete snapshotLine.aggregate_required_quantity;
+  delete snapshotLine.aggregate_source_recipe_names;
+
   return {
-    ...line,
-    production_override_action: line.production_override_action || derivedAction || ''
+    ...snapshotLine,
+    production_override_action: snapshotLine.production_override_action || derivedAction || ''
   };
 }
 
@@ -254,7 +354,8 @@ export function aggregateProductionIngredientLines(lines = [], {
   (Array.isArray(lines) ? lines : []).forEach((line, index) => {
     const ingredientId = String(line?.ingredient_id || '').trim();
     if (!ingredientId) return;
-    const ingredient = findIngredient(ingredients, ingredientId) || {};
+    const ingredient = ingredientForRecipeLine(line, findIngredient(ingredients, ingredientId) || {});
+    const processingAid = isExemptProcessingAid(line);
     const sourceUnit = line?.unit || line?.inventory_unit || ingredient.unit || 'unit';
     let targetUnit = ingredient.unit || line?.inventory_unit || sourceUnit || 'unit';
     let aggregateQuantity = lineQuantity(line);
@@ -269,14 +370,16 @@ export function aggregateProductionIngredientLines(lines = [], {
     } catch {
       targetUnit = sourceUnit;
     }
+    if (aggregateQuantity <= 0) return;
 
-    const groupKey = `${ingredientId}::${targetUnit}`;
+    const groupKey = `${ingredientId}::${targetUnit}::${processingAid ? 'processing_aid' : 'food'}`;
     const current = groupedLines.get(groupKey) || {
       line_id: `aggregate-${ingredientId}-${groupedLines.size}`,
       ingredient_id: ingredientId,
       ingredient_name: line?.ingredient_name || ingredient.name || 'Ingredient',
       raw_quantity: 0,
       unit: targetUnit,
+      ...recipeLineProcessingAidField(line),
       estimated_cost: 0,
       source_recipe_names: new Set(),
       source_menu_plan_item_keys: new Set(),
@@ -285,6 +388,7 @@ export function aggregateProductionIngredientLines(lines = [], {
     };
 
     current.raw_quantity += aggregateQuantity;
+    accumulateRecipeLineWeight(current, line, ingredient, lineQuantity(line));
     current.estimated_cost += finiteProductionNumber(line?.estimated_cost, 0);
     current.aggregate_line_count += 1;
     current.source_line_ids.add(getProductionIngredientLineKey(line, index));
@@ -312,7 +416,8 @@ export function aggregateProductionIngredientLines(lines = [], {
     const ingredient = findIngredient(ingredients, group.ingredient_id);
     const aggregateLine = buildProductionIngredientLine({
       sourceLine: {
-        ...group,
+        ...finishRecipeLineWeight(group, group.raw_quantity),
+        ...recipeLineProcessingAidField(group),
         raw_quantity: group.raw_quantity,
         planned_quantity: group.raw_quantity,
         required_quantity: group.raw_quantity,
@@ -522,10 +627,12 @@ export function buildProductionIngredientsForSubmit(lines = []) {
     const action = deriveProductionLineOverrideAction(line);
     const isAdded = action === 'added';
     return {
+      ...recipeLineWeightFields(line),
       item_code: line.item_code === '—' ? '' : line.item_code,
       ingredient_id: line.ingredient_id,
       ingredient_name: line.ingredient_name,
       source_recipe_names: Array.isArray(line.source_recipe_names) ? line.source_recipe_names : [],
+      ...recipeLineProcessingAidField(line),
       line_id: getProductionIngredientLineKey(line, index),
       quantity_basis: 'production_snapshot_override_v1',
       raw_quantity: line.raw_quantity,
@@ -562,6 +669,95 @@ function tokenize(value) {
     .filter((token) => token.length >= 3);
 }
 
+function normalizeSimilarityName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function tokenizeSimilarityName(value) {
+  return normalizeSimilarityName(value)
+    .split(' ')
+    .filter((token) => token.length >= 2);
+}
+
+function buildBigrams(value) {
+  const normalized = normalizeSimilarityName(value);
+  if (normalized.length < 2) return [];
+  return Array.from(
+    { length: normalized.length - 1 },
+    (_, index) => normalized.slice(index, index + 2)
+  );
+}
+
+function diceCoefficient(left, right) {
+  const leftBigrams = buildBigrams(left);
+  const rightBigrams = buildBigrams(right);
+  if (leftBigrams.length === 0 || rightBigrams.length === 0) return 0;
+  const rightCounts = new Map();
+  rightBigrams.forEach((bigram) => {
+    rightCounts.set(bigram, (rightCounts.get(bigram) || 0) + 1);
+  });
+  const intersection = leftBigrams.reduce((sum, bigram) => {
+    const count = rightCounts.get(bigram) || 0;
+    if (count <= 0) return sum;
+    rightCounts.set(bigram, count - 1);
+    return sum + 1;
+  }, 0);
+  return (2 * intersection) / (leftBigrams.length + rightBigrams.length);
+}
+
+function longestCommonTokenRun(leftTokens, rightTokens) {
+  let longest = 0;
+  leftTokens.forEach((leftToken, leftIndex) => {
+    rightTokens.forEach((rightToken, rightIndex) => {
+      if (leftToken !== rightToken) return;
+      let length = 0;
+      while (
+        leftTokens[leftIndex + length]
+        && rightTokens[rightIndex + length]
+        && leftTokens[leftIndex + length] === rightTokens[rightIndex + length]
+      ) {
+        length += 1;
+      }
+      longest = Math.max(longest, length);
+    });
+  });
+  return longest;
+}
+
+function fullNameSimilarityScore(sourceName, candidateName) {
+  const sourceTokens = tokenizeSimilarityName(sourceName);
+  const candidateTokens = tokenizeSimilarityName(candidateName);
+  if (sourceTokens.length === 0 || candidateTokens.length === 0) return 0;
+  const uniqueSourceTokens = new Set(sourceTokens);
+  const uniqueCandidateTokens = new Set(candidateTokens);
+  const overlapCount = [...uniqueSourceTokens].filter((token) => uniqueCandidateTokens.has(token)).length;
+  const sourceCoverage = overlapCount / uniqueSourceTokens.size;
+  const candidateCoverage = overlapCount / uniqueCandidateTokens.size;
+  const orderedCoverage = longestCommonTokenRun(sourceTokens, candidateTokens)
+    / Math.max(sourceTokens.length, candidateTokens.length);
+  const characterSimilarity = diceCoefficient(sourceName, candidateName);
+  const normalizedSource = normalizeSimilarityName(sourceName);
+  const normalizedCandidate = normalizeSimilarityName(candidateName);
+  const phraseBonus = normalizedSource.includes(normalizedCandidate)
+    || normalizedCandidate.includes(normalizedSource)
+    ? 10
+    : 0;
+  const leadingOnlyPenalty = sourceTokens[0] === candidateTokens[0] && sourceCoverage < 0.35 ? -12 : 0;
+  return Math.max(0, Math.round(
+    (sourceCoverage * 45)
+    + (candidateCoverage * 20)
+    + (orderedCoverage * 20)
+    + (characterSimilarity * 15)
+    + phraseBonus
+    + leadingOnlyPenalty
+  ));
+}
+
 function collectCategoryTokens(record = {}) {
   return tokenize([
     record.category,
@@ -582,27 +778,31 @@ export function buildInventoryReplacementSuggestions({
 } = {}) {
   if (!line) return [];
   const sourceIngredient = findIngredient(ingredients, line.ingredient_id) || {};
-  const sourceNameTokens = new Set(tokenize(`${line.ingredient_name || ''} ${sourceIngredient.name || ''}`));
+  const sourceFullName = `${line.ingredient_name || ''} ${sourceIngredient.name || ''}`;
   const sourceCategoryTokens = new Set(collectCategoryTokens(sourceIngredient));
   const sourceUnit = line.inventory_unit || line.unit || sourceIngredient.unit || '';
+  const requiredLineQuantity = finiteProductionNumber(line.raw_quantity, 0);
   const neededQuantity = Math.max(
-    finiteProductionNumber(line.shortage, 0),
-    finiteProductionNumber(line.raw_quantity, 0)
+    line.aggregate_shortage ? 0 : finiteProductionNumber(line.shortage, 0),
+    requiredLineQuantity
   );
 
   return inventory
     .filter((row) => sameId(row.site_id, siteId))
     .map((row) => {
-      const candidateIngredient = findIngredient(ingredients, row.ingredient_id) || {};
+      const candidateIngredient = findIngredient(ingredients, row.ingredient_id);
+      if (!candidateIngredient?.id) {
+        return null;
+      }
       const stock = getInventoryQuantities(row);
       const available = finiteProductionNumber(stock.available_quantity, 0);
       if (available <= 0 || sameId(row.ingredient_id, line.ingredient_id)) {
         return null;
       }
 
-      const candidateTokens = new Set(tokenize(`${row.ingredient_name || ''} ${candidateIngredient.name || ''}`));
+      const candidateFullName = `${row.ingredient_name || ''} ${candidateIngredient.name || ''}`;
       const candidateCategoryTokens = new Set(collectCategoryTokens(candidateIngredient));
-      const nameScore = [...sourceNameTokens].filter((token) => candidateTokens.has(token)).length * 8;
+      const nameScore = fullNameSimilarityScore(sourceFullName, candidateFullName);
       const categoryScore = [...sourceCategoryTokens].filter((token) => candidateCategoryTokens.has(token)).length * 12;
       const unitCompatible = isIngredientUnitCompatible(
         sourceUnit,

@@ -62,7 +62,21 @@ export function resolveProductionFulfillmentStore(production = {}, siteCatalog =
 
   throw workflowError(
     directStores.length > 1
-      ? 'Select the Store that will fulfill this production request.'
-      : 'Create an active Store under this Project before creating production.'
+      ? 'Select the Store as the production site. This Project has multiple inventory stores.'
+      : 'This Project has no active inventory store. Select an active Store as the production site.'
   );
+}
+
+// The production location determines its inventory. Existing project requests
+// retain their recorded store so reservations and consumption stay together.
+export function getProductionInventoryContext(production = {}, siteCatalog = []) {
+  if (!production?.site_id) {
+    return { site: null, siteId: '', error: 'Select a production site.' };
+  }
+  try {
+    const site = resolveProductionFulfillmentStore(production, siteCatalog);
+    return { site, siteId: String(site.id), error: '' };
+  } catch (error) {
+    return { site: null, siteId: '', error: error.message };
+  }
 }

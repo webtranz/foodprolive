@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertCircle, Calendar, ChevronLeft, ChevronRight, Factory, GripVertical, Plus, RefreshCw, Save, ShoppingCart, Trash2, Users } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+import { recipeMatchesMenuSite } from '../../shared/menuRecipeLinks.js';
 import { usePermissions } from '@/components/auth/usePermissions';
 import {
   getMenuCategoryLabel,
@@ -55,18 +56,6 @@ function normalizeRecipeCuisine(value) {
   const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (['filipino', 'philippines', 'phillipines', 'philipino'].includes(normalized)) return 'philippines';
   return normalized || 'general';
-}
-
-function recipeMatchesSite(recipe, siteId) {
-  if (!siteId) {
-    return true;
-  }
-
-  if (!recipe.site_scope || recipe.site_scope === 'global') {
-    return true;
-  }
-
-  return Array.isArray(recipe.site_ids) && recipe.site_ids.includes(siteId);
 }
 
 function isOperationalMenuPlan(plan) {
@@ -304,12 +293,12 @@ export default function MenuPlanning() {
 
   const availableRecipes = useMemo(() => (
     recipes
-      .filter((recipe) => recipeMatchesSite(recipe, selectedSite))
+      .filter((recipe) => recipeMatchesMenuSite(recipe, selectedSite, sites))
       .filter((recipe) => (
         normalizeRecipeCuisine(recipe.cuisine_type) === selectedMenuCuisine
         || (Array.isArray(selectedPlan?.meals) && selectedPlan.meals.some((meal) => meal.recipe_id === recipe.id))
       ))
-  ), [recipes, selectedSite, selectedMenuCuisine, selectedPlan?.meals]);
+  ), [recipes, selectedSite, sites, selectedMenuCuisine, selectedPlan?.meals]);
 
   const sortedAvailableRecipes = useMemo(() => (
     [...availableRecipes].sort((left, right) => {
@@ -368,6 +357,7 @@ export default function MenuPlanning() {
       return CORE_MENU_MEAL_TYPES.includes(mealType)
         && visibleMealTypes.includes(mealType)
         && meal.recipe_id
+        && (!meal.recipe_link_status || meal.recipe_link_status === 'linked')
         && Number.isFinite(servings)
         && servings > 0;
     });
@@ -440,6 +430,7 @@ export default function MenuPlanning() {
         entryIndex === index
           ? {
               ...entry,
+              ...(field === 'recipe_id' ? { recipe_link_status: undefined, recipe_code: '', recipe_name: '' } : {}),
               [field]: value
             }
           : entry
@@ -901,7 +892,7 @@ export default function MenuPlanning() {
                         {String(selectedPlan.status || 'planned').replace(/_/g, ' ')}
                       </Badge>
                       <Badge variant="outline">
-                        {selectedPlan.total_expected_servings || 0} servings
+                        {summarizeMenuCalendarDay({ plan: selectedPlan }).total_expected_servings} servings
                       </Badge>
                     </div>
                   ) : null}
@@ -1397,6 +1388,11 @@ export default function MenuPlanning() {
                                                     ))}
                                                   </SelectContent>
                                                 </Select>
+                                                {recipeRow.recipe_link_status && recipeRow.recipe_link_status !== 'linked' && (
+                                                  <p role="alert" className="mt-2 break-words text-sm text-red-700">
+                                                    {recipeRow.recipe_name || recipeRow.recipe_code || recipeRow.recipe_id || 'Recipe'}: {recipeRow.recipe_link_status === 'ambiguous' ? 'Multiple matching recipes. Select the correct recipe.' : 'Matching recipe unavailable for this store. Upload or select the recipe.'}
+                                                  </p>
+                                                )}
                                               </div>
 
                                               <div>

@@ -19,20 +19,58 @@ import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierar
 
 function formatNutritionRows(recipe) {
   return [
-    { label: 'Calories', total: recipe.total_calories || 0, perPortion: recipe.calories_per_serving || 0, unit: 'kcal' },
-    { label: 'Protein', total: recipe.total_protein || 0, perPortion: recipe.protein_per_serving || 0, unit: 'g' },
-    { label: 'Carbohydrates', total: recipe.total_carbs || 0, perPortion: recipe.carbs_per_serving || 0, unit: 'g' },
-    { label: 'Fat', total: recipe.total_fat || 0, perPortion: recipe.fat_per_serving || 0, unit: 'g' },
-    { label: 'Sodium', total: recipe.total_sodium || 0, perPortion: recipe.sodium_per_serving || 0, unit: 'mg' },
-    { label: 'Sugar', total: recipe.total_sugar || 0, perPortion: recipe.sugar_per_serving || 0, unit: 'g' }
-  ];
+    { key: 'calories', label: 'Calories', unit: 'kcal' },
+    { key: 'protein', label: 'Protein', unit: 'g' },
+    { key: 'carbs', label: 'Carbohydrates', unit: 'g' },
+    { key: 'fat', label: 'Fat', unit: 'g' },
+    { key: 'sodium', label: 'Sodium', unit: 'mg' },
+    { key: 'sugar', label: 'Sugar', unit: 'g' }
+  ].map((metric) => ({
+    ...metric,
+    total: recipe[`total_${metric.key}`] ?? null,
+    perPortion: recipe[`${metric.key}_per_serving`] ?? null
+  }));
+}
+
+function formatNutritionStatus(recipe) {
+  return recipe.nutrition_complete === true
+    ? 'Nutrition complete'
+    : 'Nutrition incomplete — awaiting ingredient nutrition or weight data.';
+}
+
+function formatAllergenStatus(recipe) {
+  return recipe.allergens_complete === true
+    ? 'Allergen information complete'
+    : 'Allergen information incomplete — awaiting ingredient allergen data.';
+}
+
+function formatSourceWarnings(warnings) {
+  if (!Array.isArray(warnings)) return '';
+  const summary = warnings.slice(0, 3).join(' ');
+  return warnings.length > 3 ? `${summary} +${warnings.length - 3} more source data gaps.` : summary;
+}
+
+function formatAllergenSummary(recipe) {
+  const allergens = Array.isArray(recipe.allergens) ? recipe.allergens : [];
+  if (recipe.allergens_complete !== true) {
+    return [allergens.join(', '), formatAllergenStatus(recipe)].filter(Boolean).join('. ');
+  }
+  return allergens.length > 0 ? allergens.join(', ') : 'No allergens declared in the ingredient or recipe data.';
+}
+
+function exportNutritionRecipes(recipes) {
+  downloadCSV(recipes.map((recipe) => ({
+    ...recipe,
+    ...Object.fromEntries(formatNutritionRows(recipe).flatMap((row) => [
+      [`total_${row.key}`, row.total ?? 'Unknown'],
+      [`${row.key}_per_serving`, row.perPortion ?? 'Unknown']
+    ])),
+    nutrition_status: formatNutritionStatus(recipe),
+    allergen_status: formatAllergenSummary(recipe)
+  })), 'nutrition_recipes');
 }
 
 function exportNutritionLabel(recipe) {
-  const allergens = Array.isArray(recipe.allergens) && recipe.allergens.length > 0
-    ? recipe.allergens.join(', ')
-    : 'No tagged allergens';
-
   downloadPDF({
     title: `${recipe.name} Nutrition Label`,
     subtitle: `Generated on ${format(new Date(), 'PPP')} for Tamimi Global Catering system`,
@@ -45,16 +83,19 @@ function exportNutritionLabel(recipe) {
           `Category: ${recipe.category || 'N/A'}`,
           `Cuisine: ${recipe.cuisine_type || 'N/A'}`,
           `Servings: ${recipe.servings || 1}`,
-          `Allergens: ${allergens}`
-        ]
+          formatNutritionStatus(recipe),
+          recipe.nutrition_complete !== true ? formatSourceWarnings(recipe.nutrition_warnings) : '',
+          `Allergens: ${formatAllergenSummary(recipe)}`,
+          recipe.allergens_complete !== true ? formatSourceWarnings(recipe.allergens_warnings) : ''
+        ].filter(Boolean)
       },
       {
         heading: 'Per Portion',
-        lines: formatNutritionRows(recipe).map((row) => `${row.label}: ${row.perPortion} ${row.unit}`)
+        lines: formatNutritionRows(recipe).map((row) => `${row.label}: ${row.perPortion === null ? 'Unknown' : `${row.perPortion} ${row.unit}`}`)
       },
       {
         heading: 'Whole Recipe',
-        lines: formatNutritionRows(recipe).map((row) => `${row.label}: ${row.total} ${row.unit}`)
+        lines: formatNutritionRows(recipe).map((row) => `${row.label}: ${row.total === null ? 'Unknown' : `${row.total} ${row.unit}`}`)
       }
     ]
   });
@@ -237,7 +278,7 @@ export default function NutritionAllergen() {
         >
           <Button
             variant="outline"
-            onClick={() => downloadCSV(filteredRecipes, 'nutrition_recipes')}
+            onClick={() => exportNutritionRecipes(filteredRecipes)}
           >
             <Download className="mr-2 h-4 w-4" />
             Export CSV
@@ -355,11 +396,16 @@ export default function NutritionAllergen() {
                         {formatNutritionRows(recipe).map((row) => (
                           <div key={row.label} className="rounded-lg bg-slate-50 p-3">
                             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{row.label}</p>
-                            <p className="mt-1 text-lg font-bold text-slate-900">{row.perPortion} {row.unit}</p>
-                            <p className="text-xs text-slate-500">Per portion · total {row.total} {row.unit}</p>
+                            <p className="mt-1 text-lg font-bold text-slate-900">{row.perPortion ?? '—'} {row.unit}</p>
+                            <p className="text-xs text-slate-500">Per portion · total {row.total ?? '—'} {row.unit}</p>
                           </div>
                         ))}
                       </div>
+                      {recipe.nutrition_complete !== true && (
+                        <p className="text-sm text-amber-800">
+                          {formatNutritionStatus(recipe)}{' '}{formatSourceWarnings(recipe.nutrition_warnings)}
+                        </p>
+                      )}
                       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                         <div className="mb-2 flex items-center gap-2 text-amber-800">
                           <ShieldAlert className="h-4 w-4" />
@@ -373,8 +419,13 @@ export default function NutritionAllergen() {
                               </Badge>
                             ))}
                           </div>
-                        ) : (
-                          <p className="text-sm text-slate-600">No tagged allergens on this recipe.</p>
+                        ) : recipe.allergens_complete === true ? (
+                          <p className="text-sm text-slate-600">No allergens declared in the ingredient or recipe data.</p>
+                        ) : null}
+                        {recipe.allergens_complete !== true && (
+                          <p className="mt-2 text-sm text-amber-800">
+                            {formatAllergenStatus(recipe)}{' '}{formatSourceWarnings(recipe.allergens_warnings)}
+                          </p>
                         )}
                       </div>
                     </CardContent>

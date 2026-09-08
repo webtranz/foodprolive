@@ -15,6 +15,7 @@ import {
 import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 import { calculateYieldOutputQuantity } from '../shared/ingredientYield.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
+import { isExemptProcessingAid, recipeLineWeightFields } from '../shared/recipeLineWeight.js';
 import { buildAutomaticProductionYieldSummary } from '../shared/productionReconciliation.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import { normalizeProductionMenuScope } from '../shared/menuCategories.js';
@@ -153,8 +154,10 @@ export function buildAutomaticProductionCompletionPlan({
       error.status = 409;
       throw error;
     }
-    const ingredientIds = production.ingredients_used.map((line) => normalizeText(line?.ingredient_id));
-    if (new Set(ingredientIds).size !== ingredientIds.length) {
+    const ingredientKeys = production.ingredients_used.map((line) => (
+      `${normalizeText(line?.ingredient_id)}::${isExemptProcessingAid(line) ? 'processing_aid' : 'food'}`
+    ));
+    if (new Set(ingredientKeys).size !== ingredientKeys.length) {
       const error = new Error('The frozen production recipe snapshot contains duplicate ingredient IDs');
       error.status = 409;
       throw error;
@@ -229,6 +232,7 @@ export function buildAutomaticProductionCompletionPlan({
         0
       );
       return {
+        ...recipeLineWeightFields(line),
         ingredient_id: line.ingredient_id,
         item_code: getItemCodeFromRecords([ingredient, line], null),
         ingredient_name: ingredient.name || line.ingredient_name,
@@ -586,6 +590,7 @@ async function ensureInventoryRecord({
   site_name,
   ingredient_id,
   ingredient_name,
+  item_code,
   unit,
   min_stock_level,
   max_stock_level,
@@ -596,6 +601,14 @@ async function ensureInventoryRecord({
   const maxLevelProvided = typeof max_stock_level !== 'undefined';
   const valuationMethodProvided = typeof valuation_method !== 'undefined';
   const identity = await validateInventoryIdentity({ site_id, ingredient_id, unit }, executor);
+  const resolvedItemCode = String(
+    item_code
+      || identity.ingredient.item_code
+      || identity.ingredient.ingredient_code
+      || identity.ingredient.sku
+      || identity.ingredient.d365_item_id
+      || ''
+  ).trim();
   const settings = validateInventorySettings({ min_stock_level, max_stock_level, valuation_method });
   const canonicalUnit = identity.unit;
   if (executor) {
@@ -622,6 +635,7 @@ async function ensureInventoryRecord({
     const settingsPatch = {
       site_name: identity.site.name || site_name || existing.site_name || null,
       ingredient_name: identity.ingredient.name || ingredient_name || existing.ingredient_name || null,
+      item_code: resolvedItemCode || existing.item_code || null,
       unit: canonicalUnit,
       source_name: sourceName,
       ...(minLevelProvided ? { min_stock_level: settings.min ?? 0 } : {}),
@@ -737,6 +751,7 @@ async function ensureInventoryRecord({
     site_name: identity.site.name || site_name,
     ingredient_id,
     ingredient_name: identity.ingredient.name || ingredient_name,
+    item_code: resolvedItemCode || null,
     quantity: 0,
     available_quantity: 0,
     reserved_quantity: 0,

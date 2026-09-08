@@ -16,6 +16,9 @@ const UNIT_ALIASES = {
   litres: 'l',
   liter: 'l',
   liters: 'l',
+  ltr: 'l',
+  ltrs: 'l',
+  lt: 'l',
   millilitre: 'ml',
   millilitres: 'ml',
   milliliter: 'ml',
@@ -50,6 +53,112 @@ const WEIGHT_IN_GRAMS = { kg: 1000, g: 1 };
 const VOLUME_IN_MILLILITRES = { l: 1000, ml: 1 };
 const COUNT_IN_PIECES = { pieces: 1 };
 
+function positiveConversionNumber(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+// Describe units without crossing dimensions. Guessed packages are not evidence
+// for a new weight conversion, even when older quantity paths accept them.
+function establishedUnitMeasure(unit, ingredient) {
+  if (unit in WEIGHT_IN_GRAMS) return { dimension: 'mass', quantity: WEIGHT_IN_GRAMS[unit] };
+  if (unit in VOLUME_IN_MILLILITRES) return { dimension: 'volume', quantity: VOLUME_IN_MILLILITRES[unit] };
+  if (unit in COUNT_IN_PIECES) return { dimension: 'count', quantity: 1 };
+  const base = packageBaseQuantityForUnit(ingredient, unit);
+  if (!base) return null;
+  const source = ingredient.package_parse_source || base.source;
+  const name = ingredient.supplier_item_name || ingredient.ingredient_name || ingredient.name || ingredient.item_name || '';
+  if (source === 'default_bundle_weight'
+    || (source === 'item_name_package' && !/\d\s*(?:KG|KGS|G|GM|GMS|GRAMS|LTR|L|LT|LITRE|LITER|ML|CT|CNT|COUNT|COUNTS|OZ|Z)\b/i.test(name))) return null;
+  const canonical = packageMeasureToCanonical(base.quantity, base.unit);
+  if (!(canonical.quantity > 0) || !Number.isFinite(canonical.quantity)) return null;
+  if (canonical.unit === 'kg') return { dimension: 'mass', quantity: canonical.quantity * 1000 };
+  if (canonical.unit === 'l') return { dimension: 'volume', quantity: canonical.quantity * 1000 };
+  if (canonical.unit === 'pieces') return { dimension: 'count', quantity: canonical.quantity };
+  return null;
+}
+
+function sameMeasureConversion(fromUnit, toUnit, ingredient) {
+  if (fromUnit === toUnit) return 1;
+  const from = establishedUnitMeasure(fromUnit, ingredient);
+  const to = establishedUnitMeasure(toUnit, ingredient);
+  return from && to && from.dimension === to.dimension ? from.quantity / to.quantity : null;
+}
+
+function configuredConversionFactor(fromUnit, toUnit, ingredient) {
+  const baseUnit = normalizeIngredientUnit(ingredient.unit);
+  const conversionUnit = normalizeIngredientUnit(ingredient.conversion_unit);
+  const factor = positiveConversionNumber(ingredient.conversion_factor);
+  if (!baseUnit || !conversionUnit || baseUnit === conversionUnit || factor === null) return null;
+  if (fromUnit === baseUnit && toUnit === conversionUnit) return factor;
+  if (fromUnit === conversionUnit && toUnit === baseUnit) return 1 / factor;
+
+  // Chain scales around the saved relation: e.g. ml -> L -> g -> kg.
+  const sourceToBase = sameMeasureConversion(fromUnit, baseUnit, ingredient);
+  const conversionToTarget = sameMeasureConversion(conversionUnit, toUnit, ingredient);
+  const forward = sourceToBase !== null && conversionToTarget !== null
+    ? sourceToBase * factor * conversionToTarget : null;
+  if (forward > 0 && Number.isFinite(forward)) return forward;
+  const sourceToConversion = sameMeasureConversion(fromUnit, conversionUnit, ingredient);
+  const baseToTarget = sameMeasureConversion(baseUnit, toUnit, ingredient);
+  const reverse = sourceToConversion !== null && baseToTarget !== null
+    ? sourceToConversion / factor * baseToTarget : null;
+  return reverse > 0 && Number.isFinite(reverse) ? reverse : null;
+}
+
+function densityConversionFactor(fromUnit, toUnit, ingredient) {
+  const density = positiveConversionNumber(ingredient.density_g_per_ml ?? ingredient.density_grams_per_ml);
+  if (density === null) return null;
+  const from = establishedUnitMeasure(fromUnit, ingredient);
+  const to = establishedUnitMeasure(toUnit, ingredient);
+  if (!from || !to) return null;
+  if (from.dimension === 'volume' && to.dimension === 'mass') return from.quantity * density / to.quantity;
+  if (from.dimension === 'mass' && to.dimension === 'volume') return from.quantity / density / to.quantity;
+  return null;
+}
+
+/** Established ingredient-level cross-unit weight; never assumes water density. */
+export function ingredientWeightConversion(quantity, unit, ingredient = {}) {
+  if (typeof quantity !== 'number' && typeof quantity !== 'string') return null;
+  if (typeof quantity === 'string' && !quantity.trim()) return null;
+  const numeric = Number(quantity);
+  const normalizedUnit = normalizeIngredientUnit(unit || ingredient.unit);
+  if (!Number.isFinite(numeric) || numeric < 0 || !normalizedUnit) return null;
+  // Physical weight units already have an exact conversion in weight calculators.
+  if (normalizedUnit in WEIGHT_IN_GRAMS) return null;
+  const configured = configuredConversionFactor(normalizedUnit, 'g', ingredient);
+  const density = configured === null ? densityConversionFactor(normalizedUnit, 'g', ingredient) : null;
+  const factor = configured ?? density;
+  const grams = factor === null ? null : numeric * factor;
+  return grams !== null && Number.isFinite(grams)
+    ? { grams, source: configured !== null ? 'ingredient_conversion' : 'ingredient_density' }
+    : null;
+}
+
+function recipeScopedGramsPerUnit(unit, ingredient = {}) {
+  const grams = Number(ingredient.recipe_weight_per_unit_grams);
+  const definedUnit = normalizeIngredientUnit(ingredient.recipe_weight_unit);
+  if (!(grams > 0) || !Number.isFinite(grams) || !definedUnit) return null;
+  if (unit === definedUnit) return grams;
+  if (unit in WEIGHT_IN_GRAMS) return WEIGHT_IN_GRAMS[unit];
+  const scale = sameMeasureConversion(unit, definedUnit, ingredient);
+  if (scale !== null) return scale * grams;
+  const base = packageBaseQuantityForUnit(ingredient, unit);
+  if (base) {
+    const canonical = packageMeasureToCanonical(base.quantity, base.unit);
+    if (canonical.unit === 'kg') return canonical.quantity * 1000;
+    if (canonical.unit === 'pieces' && definedUnit === 'pieces') return canonical.quantity * grams;
+  }
+  return null;
+}
+
+function recipeScopedConversion(fromUnit, toUnit, ingredient) {
+  const fromGrams = recipeScopedGramsPerUnit(fromUnit, ingredient);
+  const toGrams = recipeScopedGramsPerUnit(toUnit, ingredient);
+  return fromGrams > 0 && toGrams > 0 ? fromGrams / toGrams : null;
+}
+
 function finiteNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -75,19 +184,16 @@ export function convertIngredientQuantity(quantity, fromUnit, toUnit, ingredient
     return numericQuantity;
   }
 
-  const baseUnit = normalizeIngredientUnit(ingredient?.unit);
-  const conversionUnit = normalizeIngredientUnit(ingredient?.conversion_unit);
-  const conversionFactor = finiteNumber(ingredient?.conversion_factor, 0);
-
-  if (conversionFactor > 0 && baseUnit && conversionUnit) {
-    if (sourceUnit === conversionUnit && targetUnit === baseUnit) {
-      return numericQuantity / conversionFactor;
-    }
-    if (sourceUnit === baseUnit && targetUnit === conversionUnit) {
-      return numericQuantity * conversionFactor;
-    }
+  const recipeConversion = recipeScopedConversion(sourceUnit, targetUnit, ingredient);
+  if (recipeConversion !== null) return numericQuantity * recipeConversion;
+  const baseUnit = normalizeIngredientUnit(ingredient.unit);
+  const conversionUnit = normalizeIngredientUnit(ingredient.conversion_unit);
+  const conversionFactor = positiveConversionNumber(ingredient.conversion_factor);
+  if (conversionFactor !== null && baseUnit && conversionUnit && baseUnit !== conversionUnit) {
+    // Retain direct division precision used by existing stock/cost calculations.
+    if (sourceUnit === conversionUnit && targetUnit === baseUnit) return numericQuantity / conversionFactor;
+    if (sourceUnit === baseUnit && targetUnit === conversionUnit) return numericQuantity * conversionFactor;
   }
-
   if (sourceUnit in WEIGHT_IN_GRAMS && targetUnit in WEIGHT_IN_GRAMS) {
     return (numericQuantity * WEIGHT_IN_GRAMS[sourceUnit]) / WEIGHT_IN_GRAMS[targetUnit];
   }
@@ -95,6 +201,11 @@ export function convertIngredientQuantity(quantity, fromUnit, toUnit, ingredient
   if (sourceUnit in VOLUME_IN_MILLILITRES && targetUnit in VOLUME_IN_MILLILITRES) {
     return (numericQuantity * VOLUME_IN_MILLILITRES[sourceUnit]) / VOLUME_IN_MILLILITRES[targetUnit];
   }
+
+  const configuredConversion = configuredConversionFactor(sourceUnit, targetUnit, ingredient);
+  if (configuredConversion !== null) return numericQuantity * configuredConversion;
+  const densityConversion = densityConversionFactor(sourceUnit, targetUnit, ingredient);
+  if (densityConversion !== null) return numericQuantity * densityConversion;
 
   const sourcePackage = packageBaseQuantityForUnit(ingredient, sourceUnit);
   const targetPackage = packageBaseQuantityForUnit(ingredient, targetUnit);
@@ -162,13 +273,9 @@ export function isIngredientUnitCompatible(sourceUnit, targetUnit, ingredient = 
   const source = normalizeIngredientUnit(sourceUnit);
   const target = normalizeIngredientUnit(targetUnit);
   if (!source || !target || source === target) return true;
-  const baseUnit = normalizeIngredientUnit(ingredient?.unit);
-  const conversionUnit = normalizeIngredientUnit(ingredient?.conversion_unit);
-  const conversionFactor = finiteNumber(ingredient?.conversion_factor, 0);
-  if (conversionFactor > 0 && baseUnit && conversionUnit) {
-    if (source === conversionUnit && target === baseUnit) return true;
-    if (source === baseUnit && target === conversionUnit) return true;
-  }
+  if (recipeScopedConversion(source, target, ingredient) !== null) return true;
+  if (configuredConversionFactor(source, target, ingredient) !== null) return true;
+  if (densityConversionFactor(source, target, ingredient) !== null) return true;
   if (source in WEIGHT_IN_GRAMS && target in WEIGHT_IN_GRAMS) return true;
   if (source in VOLUME_IN_MILLILITRES && target in VOLUME_IN_MILLILITRES) return true;
   if (source in COUNT_IN_PIECES && target in COUNT_IN_PIECES) return true;

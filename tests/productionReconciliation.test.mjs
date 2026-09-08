@@ -85,6 +85,41 @@ test('automatic summary corrects a kg-as-g portion anomaly and ignores zero-quan
   assert.match(summary.warnings[0], /unit scale/);
 });
 
+test('processing aids remain consumed but are excluded from production finished weight', () => {
+  const summary = buildAutomaticProductionYieldSummary({
+    production: {
+      target_servings: 10,
+      yield_adjustment_version: 2,
+      quantity_semantics: 'raw_recipe_to_yielded_output_v2',
+      portion_size_source: 'yield_calculated',
+      ingredients_used: [
+        {
+          ingredient_id: chicken.id,
+          planned_quantity: 5,
+          unit: 'EA',
+          yield_multiplier: 0.8
+        },
+        {
+          ingredient_id: 'water',
+          planned_quantity: 0.4,
+          unit: 'l',
+          exempt_processing_aid: true
+        }
+      ]
+    },
+    recipe,
+    ingredients: [chicken, { id: 'water', name: 'Water', unit: 'l' }]
+  });
+
+  const waterLine = summary.line_weights.find((line) => line.ingredient_id === 'water');
+  assert.equal(waterLine.raw_weight_grams, 400);
+  assert.equal(waterLine.yielded_weight_grams, 0);
+  assert.equal(waterLine.yield_source, 'exempt_processing_aid');
+  assert.equal(summary.recipe_raw_weight_grams, 4500);
+  assert.equal(summary.expected_finished_weight_grams, 3600);
+  assert.equal(summary.portion_size_grams, 360);
+});
+
 test('v2 completion reconciles frozen raw demand and calculates output without operator values', () => {
   const plan = buildAutomaticProductionCompletionPlan({
     production: {
@@ -289,6 +324,7 @@ test('completion implementation does not read client raw actuals or finished-yie
   const routeEnd = indexSource.indexOf('\napp.', routeStart + 1);
   const route = indexSource.slice(routeStart, routeEnd);
   assert.ok(routeStart >= 0 && routeEnd > routeStart);
-  assert.match(route, /fulfillment_store_id: requestedFulfillmentStoreId \|\| undefined/);
+  assert.match(route, /const productionInventorySite = resolveProductionFulfillmentStore\(/);
+  assert.match(route, /fulfillment_store_id: productionInventorySite\.id/);
   assert.doesNotMatch(route, /completeProduction\([^;]*request\.body/);
 });

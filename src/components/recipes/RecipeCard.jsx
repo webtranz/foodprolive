@@ -8,6 +8,8 @@ import { formatCurrency } from '@/lib/currency';
 import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
+import { convertIngredientQuantity } from '../../../shared/ingredientUnits.js';
+import { getInventoryQuantities } from '@/lib/inventoryAvailability';
 
 const CATEGORY_COLORS = {
   breakfast: 'bg-amber-100 text-amber-700',
@@ -19,12 +21,33 @@ const CATEGORY_COLORS = {
   side: 'bg-slate-100 text-slate-700'
 };
 
-export default function RecipeCard({ recipe, recipes = [], ingredients = [], onEdit, onDelete }) {
+export default function RecipeCard({ recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, onEdit, onDelete }) {
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
   const allergens = Array.isArray(recipe.allergens) ? recipe.allergens : [];
+  const nutritionWarnings = Array.isArray(recipe.nutrition_warnings) ? recipe.nutrition_warnings : [];
+  const allergenWarnings = Array.isArray(recipe.allergens_warnings) ? recipe.allergens_warnings : [];
   const subRecipes = Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [];
   const siteNames = Array.isArray(recipe.site_names) ? recipe.site_names.filter(Boolean) : [];
   const isGlobalRecipe = !recipe.site_scope || recipe.site_scope === 'global' || siteNames.length === 0;
+  const ingredientMap = useMemo(
+    () => new Map(ingredients.map((ingredient) => [ingredient.id, ingredient])),
+    [ingredients]
+  );
+  const availableStockByIngredient = useMemo(() => inventory.reduce((totals, stock) => {
+    const ingredientId = String(stock?.ingredient_id || '');
+    const ingredient = ingredientMap.get(ingredientId);
+    if (!ingredientId || !ingredient) return totals;
+    const availableQuantity = getInventoryQuantities(stock).available_quantity;
+    const baseUnit = ingredient.unit || stock.unit || 'unit';
+    const normalizedQuantity = convertIngredientQuantity(
+      availableQuantity,
+      stock.unit || baseUnit,
+      baseUnit,
+      ingredient
+    );
+    totals.set(ingredientId, (totals.get(ingredientId) || 0) + normalizedQuantity);
+    return totals;
+  }, new Map()), [ingredientMap, inventory]);
   const servingWeight = useMemo(
     () => calculateRecipeServingWeight(recipe, recipes, ingredients),
     [ingredients, recipe, recipes]
@@ -35,18 +58,12 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
   );
   const savedPortionSize = Number(recipe.portion_size_grams);
   const hasSavedPortionSize = Number.isFinite(savedPortionSize) && savedPortionSize > 0;
-  const displayServingWeight = hasSavedPortionSize ? savedPortionSize : servingWeight.grams_per_serving;
-  const formattedServingWeight = hasSavedPortionSize || servingWeight.is_complete
+  const displayServingWeight = servingWeight.grams_per_serving;
+  const formattedServingWeight = servingWeight.is_complete
     ? formatRecipeQuantity(displayServingWeight, 'g')
     : '—';
   const servingCount = Number(recipe.servings) || 1;
-  const ingredientMap = useMemo(
-    () => new Map(ingredients.map((ingredient) => [ingredient.id, ingredient])),
-    [ingredients]
-  );
-  const servingWeightTitle = hasSavedPortionSize
-    ? 'Saved portion size per serving'
-    : servingWeight.is_complete
+  const servingWeightTitle = servingWeight.is_complete
       ? 'Yield-adjusted cooked weight per serving'
     : servingWeight.warnings.join(' ') || 'Add ingredient weights and units to calculate grams per serving.';
 
@@ -108,8 +125,8 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
           <div className="flex items-center gap-1 text-slate-600">
             <Users className="w-4 h-4 text-slate-400" />
             <span>{formatRecipeQuantity(servingCount, 'servings')} serving{servingCount === 1 ? '' : 's'}</span>
-            <span className={hasSavedPortionSize || servingWeight.is_complete ? 'font-medium text-emerald-700' : 'text-slate-400'} title={servingWeightTitle}>
-              · {formattedServingWeight} g
+            <span className={servingWeight.is_complete ? 'font-medium text-emerald-700' : 'text-amber-700'} title={servingWeightTitle}>
+              · {servingWeight.is_complete ? `${formattedServingWeight} g calculated` : 'Weight incomplete'}
             </span>
           </div>
           
@@ -120,13 +137,18 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
             </div>
           )}
           
-          {recipe.calories_per_serving > 0 && (
-            <div className="flex items-center gap-1 text-orange-600">
-              <Flame className="w-4 h-4" />
-              <span>{recipe.calories_per_serving} cal</span>
-            </div>
-          )}
+          <div className="flex items-center gap-1 text-orange-600">
+            <Flame className="w-4 h-4" />
+            <span>{recipe.calories_per_serving ?? '—'} cal</span>
+          </div>
         </div>
+
+        {hasSavedPortionSize && (
+          <p className="mt-2 text-xs text-slate-500">Portion target: {formatRecipeQuantity(savedPortionSize, 'g')} g</p>
+        )}
+        {!servingWeight.is_complete && (
+          <p className="mt-2 text-xs text-amber-700 break-words">{servingWeight.warnings.join(' ')}</p>
+        )}
 
         {costSnapshot.has_cost ? (
           <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 text-xs">
@@ -137,22 +159,27 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
           </div>
         ) : null}
 
-        {(recipe.protein_per_serving || recipe.carbs_per_serving || recipe.fat_per_serving || recipe.sodium_per_serving || recipe.sugar_per_serving) && (
-          <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-            <div><span className="font-semibold">Protein:</span> {recipe.protein_per_serving || 0}g</div>
-            <div><span className="font-semibold">Carbs:</span> {recipe.carbs_per_serving || 0}g</div>
-            <div><span className="font-semibold">Fat:</span> {recipe.fat_per_serving || 0}g</div>
-            <div className="flex items-center gap-1"><Droplets className="h-3 w-3 text-cyan-600" /> {recipe.sodium_per_serving || 0} mg sodium</div>
-            <div className="col-span-2 flex items-center gap-1"><Candy className="h-3 w-3 text-pink-500" /> {recipe.sugar_per_serving || 0} g sugar</div>
-          </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+          <div><span className="font-semibold">Protein:</span> {recipe.protein_per_serving ?? '—'} g</div>
+          <div><span className="font-semibold">Carbs:</span> {recipe.carbs_per_serving ?? '—'} g</div>
+          <div><span className="font-semibold">Fat:</span> {recipe.fat_per_serving ?? '—'} g</div>
+          <div className="flex items-center gap-1"><Droplets className="h-3 w-3 text-cyan-600" /> {recipe.sodium_per_serving ?? '—'} mg sodium</div>
+          <div className="col-span-2 flex items-center gap-1"><Candy className="h-3 w-3 text-pink-500" /> {recipe.sugar_per_serving ?? '—'} g sugar</div>
+        </div>
+        {recipe.nutrition_complete !== true && (
+          <p className="mt-2 text-xs text-amber-800 break-words">
+            Nutrition incomplete — awaiting ingredient nutrition or weight data.
+            {' '}{nutritionWarnings.slice(0, 3).join(' ')}
+            {nutritionWarnings.length > 3 && ` +${nutritionWarnings.length - 3} more source data gaps.`}
+          </p>
         )}
 
-        {allergens.length > 0 && (
-          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-amber-800">
-              <ShieldAlert className="h-3.5 w-3.5" />
-              Allergen warning
-            </div>
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-amber-800">
+            <ShieldAlert className="h-3.5 w-3.5" />
+            Allergen warning
+          </div>
+          {allergens.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {allergens.map((allergen) => (
                 <Badge key={allergen} variant="outline" className="border-amber-300 bg-white text-amber-700">
@@ -160,8 +187,17 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
                 </Badge>
               ))}
             </div>
-          </div>
-        )}
+          ) : recipe.allergens_complete === true ? (
+            <p className="text-xs text-slate-600">No allergens declared in the ingredient or recipe data.</p>
+          ) : null}
+          {recipe.allergens_complete !== true && (
+            <p className="mt-2 text-xs text-amber-800 break-words">
+              Allergen information incomplete — awaiting ingredient allergen data.
+              {' '}{allergenWarnings.slice(0, 3).join(' ')}
+              {allergenWarnings.length > 3 && ` +${allergenWarnings.length - 3} more source data gaps.`}
+            </p>
+          )}
+        </div>
 
         {recipe.ingredients && recipe.ingredients.length > 0 && (
           <div className="mt-3 pt-3 border-t border-slate-100">
@@ -170,10 +206,19 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], onE
               {recipe.ingredients.slice(0, 3).map((line, index) => {
                 const ingredient = ingredientMap.get(line.ingredient_id);
                 const unit = line.unit || ingredient?.unit || '';
+                const stockUnit = ingredient?.unit || unit;
+                const availableStock = availableStockByIngredient.get(String(line.ingredient_id || '')) || 0;
                 return (
-                  <p key={`${line.ingredient_id || line.ingredient_name}-${index}`} className="truncate text-xs text-slate-500">
-                    {line.ingredient_name || ingredient?.name || 'Ingredient'} · {formatRecipeQuantity(line.quantity, unit)} {unit}
-                  </p>
+                  <div key={`${line.ingredient_id || line.ingredient_name}-${index}`} className="flex items-center justify-between gap-2 text-xs">
+                    <p className="min-w-0 truncate text-slate-500">
+                      {line.ingredient_name || ingredient?.name || 'Ingredient'} · {formatRecipeQuantity(line.quantity, unit)} {unit}
+                    </p>
+                    {inventoryLoaded ? (
+                      <span className={availableStock > 0 ? 'shrink-0 font-medium text-emerald-700' : 'shrink-0 font-medium text-red-600'}>
+                        {formatRecipeQuantity(availableStock, stockUnit)} {stockUnit} available
+                      </span>
+                    ) : null}
+                  </div>
                 );
               })}
               {recipe.ingredients.length > 3 ? <p className="text-xs text-slate-400">+{recipe.ingredients.length - 3} more</p> : null}
