@@ -2239,7 +2239,7 @@ export default function Production() {
   const issueSubmitDisabledReason = !can('create_production_request')
     ? 'You need production creation permission to issue production.'
     : selectedIssueMealGroups.length === 0
-      ? 'Select at least one planned meal item that has not already been issued.'
+      ? 'Enter production covers greater than zero for at least one planned meal item that has not already been issued.'
       : issueInventoryCheckState.message;
 
   return (
@@ -2827,7 +2827,7 @@ export default function Production() {
                               unit="servings"
                               precision={0}
                               min={0}
-                              allowZero={false}
+                              allowZero
                               allowEmpty={false}
                               label={`${item.recipe_name} production covers`}
                               disabled={alreadyIssued}

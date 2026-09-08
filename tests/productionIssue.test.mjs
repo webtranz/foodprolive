@@ -97,7 +97,8 @@ const menuPlan = {
 const breakfastItems = buildMenuPlanIssueItems(menuPlan, { mealView: 'breakfast', recipes });
 assert.equal(breakfastItems.length, 1);
 assert.equal(breakfastItems[0].meal_type, 'breakfast');
-assert.equal(breakfastItems[0].production_covers, 30);
+assert.equal(breakfastItems[0].expected_servings, 30);
+assert.equal(breakfastItems[0].production_covers, 0);
 
 const allItems = buildMenuPlanIssueItems(menuPlan, { mealView: 'all', recipes });
 assert.deepEqual(allItems.map((item) => item.meal_type), ['breakfast', 'lunch']);
@@ -121,6 +122,10 @@ const groupedInventory = [
   }
 ];
 const groupedBreakfastItems = buildMenuPlanIssueItems(groupedBreakfastPlan, { mealView: 'breakfast', recipes });
+const groupedProductionItems = groupedBreakfastItems.map((item) => ({
+  ...item,
+  production_covers: item.expected_servings
+}));
 const groupedSnapshots = Object.fromEntries(groupedBreakfastItems.map((item) => [
   item.key,
   buildProductionIngredientSnapshot({
@@ -129,7 +134,7 @@ const groupedSnapshots = Object.fromEntries(groupedBreakfastItems.map((item) => 
     ingredients,
     inventory: groupedInventory,
     siteId: 'store-2',
-    targetServings: item.production_covers
+    targetServings: item.expected_servings
   }).lines
 ]));
 assert.equal(groupedSnapshots[groupedBreakfastItems[0].key][0].sufficient, true);
@@ -140,7 +145,7 @@ const groupedLines = aggregateProductionIngredientLines(
 );
 assert.equal(groupedLines[0].raw_quantity, 20);
 assert.equal(groupedLines[0].shortage, 2);
-const mealGroups = buildMenuIssueMealGroups(groupedBreakfastItems, {
+const mealGroups = buildMenuIssueMealGroups(groupedProductionItems, {
   snapshotsByItemKey: groupedSnapshots,
   ingredients,
   inventory: groupedInventory,

@@ -231,7 +231,7 @@ export function buildMenuPlanIssueItems(plan, { mealView = 'all', recipes = [] }
       recipe_id: recipeId,
       recipe_name: meal?.recipe_name || recipe.name || 'Selected recipe',
       expected_servings: expectedServings,
-      production_covers: expectedServings,
+      production_covers: 0,
       planned_total_cost: finiteProductionNumber(meal?.total_cost, 0),
       cost_per_serving: finiteProductionNumber(meal?.cost_per_serving, 0),
       selected: true
