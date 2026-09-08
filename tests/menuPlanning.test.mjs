@@ -190,7 +190,7 @@ const cases = [
     run() {
       assert.deepEqual(
         createMealEntryFromRecipe({ id: 'recipe-breakfast', servings: 18 }),
-        { recipe_id: 'recipe-breakfast', expected_servings: '18' }
+        { recipe_id: 'recipe-breakfast', expected_servings: '0' }
       );
     }
   },

@@ -1399,7 +1399,7 @@ export default function MenuPlanning() {
                                                 <Label>Expected Servings</Label>
                                                 <Input
                                                   type="number"
-                                                  min="1"
+                                                  min="0"
                                                   className="mt-2 bg-white"
                                                   value={recipeRow.expected_servings}
                                                   onChange={(event) => setMealValue(mealType, index, 'expected_servings', event.target.value)}

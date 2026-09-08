@@ -4,7 +4,7 @@ export const CORE_MENU_MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 export const createEmptyMealEntry = () => ({ recipe_id: '', expected_servings: '' });
 export const createMealEntryFromRecipe = (recipe) => ({
   recipe_id: recipe?.id || '',
-  expected_servings: recipe?.servings ? String(recipe.servings) : ''
+  expected_servings: '0'
 });
 
 function safeNumber(value, fallback = '') {
