@@ -414,9 +414,9 @@ assert.equal(reservationAwareDashboard.shortages[0].shortage_quantity, 1);
 assert.deepEqual(reservationAwareDashboard.shortages[0].production_ids, ['unreserved-demand']);
 assert.equal(reservationAwareDashboard.items.find((item) => item.id === 'fully-reserved').shortages.length, 0);
 
-const legacySingleStoreDashboard = buildProductionPlanningDashboard({
+const projectOwnStoreDashboard = buildProductionPlanningDashboard({
   productions: [{
-    id: 'legacy-single-store',
+    id: 'project-own-store',
     site_id: 'project-a',
     site_name: 'Project A',
     meal_type: 'lunch',
@@ -431,6 +431,8 @@ const legacySingleStoreDashboard = buildProductionPlanningDashboard({
   ],
   inventory: [{ site_id: 'store-a', ingredient_id: 'rice', quantity: 10, unit: 'kg' }]
 });
-assert.equal(legacySingleStoreDashboard.shortages.length, 0);
+assert.equal(projectOwnStoreDashboard.shortages.length, 1);
+assert.equal(projectOwnStoreDashboard.shortages[0].site_id, 'project-a');
+assert.equal(projectOwnStoreDashboard.shortages[0].shortage_quantity, 5);
 
 console.log('Production planning dashboard tests passed.');

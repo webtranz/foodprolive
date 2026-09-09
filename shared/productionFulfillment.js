@@ -20,7 +20,7 @@ export function resolveProductionFulfillmentStore(production = {}, siteCatalog =
     : null;
 
   if (production.fulfillment_store_id && !requestedStore) {
-    throw workflowError('The selected fulfillment store no longer exists.');
+    throw workflowError('The selected inventory site no longer exists.');
   }
 
   if (productionSiteType === SITE_HIERARCHY_TYPES.STORE) {
@@ -40,6 +40,10 @@ export function resolveProductionFulfillmentStore(production = {}, siteCatalog =
     throw workflowError('The selected production Project is inactive.');
   }
 
+  if (!requestedStore || String(requestedStore.id) === String(productionSite.id)) {
+    return productionSite;
+  }
+
   const directStores = siteCatalog.filter((site) => (
     normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
     && String(site.parent_site_id || '') === String(productionSite.id)
@@ -51,20 +55,12 @@ export function resolveProductionFulfillmentStore(production = {}, siteCatalog =
       (store) => String(store.id) === String(requestedStore.id)
     );
     if (!isValidChildStore) {
-      throw workflowError('The fulfillment store must be an active Store under the selected Project.');
+      throw workflowError('The selected inventory site must be an active Store under the selected Project.');
     }
     return requestedStore;
   }
 
-  if (directStores.length === 1) {
-    return directStores[0];
-  }
-
-  throw workflowError(
-    directStores.length > 1
-      ? 'Select the Store as the production site. This Project has multiple inventory stores.'
-      : 'This Project has no active inventory store. Select an active Store as the production site.'
-  );
+  return productionSite;
 }
 
 // The production location determines its inventory. Existing project requests

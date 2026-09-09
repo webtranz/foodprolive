@@ -102,7 +102,7 @@ const cases = [
     }
   },
   {
-    name: 'production fulfillment resolves only an active Store under the selected Project',
+    name: 'production inventory resolves to the selected Project or Store without a separate fulfillment step',
     run() {
       const sites = [
         { id: 'area-west', type: 'area', is_active: true },
@@ -122,17 +122,17 @@ const cases = [
         resolveProductionFulfillmentStore({ site_id: 'store-a' }, sites).id,
         'store-a'
       );
-      assert.throws(
-        () => resolveProductionFulfillmentStore({ site_id: 'project-a' }, sites),
-        /Select the Store/
+      assert.equal(
+        resolveProductionFulfillmentStore({ site_id: 'project-a' }, sites).id,
+        'project-a'
       );
       assert.throws(
         () => resolveProductionFulfillmentStore({ site_id: 'project-a', fulfillment_store_id: 'store-c' }, sites),
-        /must be an active Store under the selected Project/
+        /inventory site must be an active Store under the selected Project/
       );
       assert.throws(
         () => resolveProductionFulfillmentStore({ site_id: 'project-a', fulfillment_store_id: 'store-inactive' }, sites),
-        /must be an active Store under the selected Project/
+        /inventory site must be an active Store under the selected Project/
       );
       assert.throws(
         () => resolveProductionFulfillmentStore({ site_id: 'area-west' }, sites),

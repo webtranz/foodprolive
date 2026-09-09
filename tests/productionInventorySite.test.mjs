@@ -40,13 +40,13 @@ test('the store checks its own stock and retains zeroed ingredient edits', () =>
   assert.equal(edited.lines[0].production_override_action, 'zeroed');
 });
 
-test('legacy projects resolve a single store automatically and retain a previously recorded store', () => {
-  assert.equal(getProductionInventoryContext({ site_id: 'project' }, sites).siteId, 'camp-store');
+test('projects and stores use their own inventory site while retaining a previously recorded store', () => {
+  assert.equal(getProductionInventoryContext({ site_id: 'project' }, sites).siteId, 'project');
   const multipleStores = [...sites, { id: 'second-store', type: 'store', parent_site_id: 'project', is_active: true }];
   assert.equal(getProductionInventoryContext({ site_id: 'project', fulfillment_store_id: 'camp-store' }, multipleStores).siteId, 'camp-store');
   const ambiguous = getProductionInventoryContext({ site_id: 'project' }, multipleStores);
-  assert.equal(ambiguous.siteId, '');
-  assert.match(ambiguous.error, /multiple inventory stores/);
+  assert.equal(ambiguous.siteId, 'project');
+  assert.equal(ambiguous.error, '');
 });
 
 test('missing, inactive, inaccessible, and different stores are not used as fallbacks', () => {

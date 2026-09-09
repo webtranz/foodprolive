@@ -813,9 +813,19 @@ export default function Production() {
   ].includes(currentRole);
   const issuePlan = issuePlanResponse?.plan || issueSource?.plan || null;
   const issueSite = sites.find((site) => String(site.id) === String(issueSource?.site_id || issuePlan?.site_id || '')) || null;
-  const issueInventoryContext = getProductionInventoryContext({
-    site_id: issueSite?.id || issueSource?.site_id || ''
-  }, visibleSites);
+  const issueInventoryContext = useMemo(() => {
+    if (!issueSite) {
+      return { site: null, siteId: '', error: 'Select a production site.' };
+    }
+    const siteType = normalizeSiteType(issueSite.type);
+    if (siteType === SITE_HIERARCHY_TYPES.AREA) {
+      return { site: null, siteId: '', error: 'Production must be assigned to a Project or Store, not an Area.' };
+    }
+    if (issueSite.is_active === false) {
+      return { site: null, siteId: '', error: 'The selected production site is inactive.' };
+    }
+    return { site: issueSite, siteId: String(issueSite.id), error: '' };
+  }, [issueSite]);
   const issueInventorySiteId = issueInventoryContext.siteId;
   const issueAlreadyCreatedKeys = useMemo(() => {
     const planId = String(issuePlan?.id || issueSource?.menu_plan_id || '');
@@ -1779,7 +1789,7 @@ export default function Production() {
     const firstItem = group.items[0] || {};
     const recipe = recipes.find((entry) => String(entry.id) === String(firstItem.recipe_id)) || {};
     const site = issueSite || visibleSites.find((entry) => String(entry.id) === String(group.site_id || firstItem.site_id));
-    const fulfillmentStore = issueInventoryContext.site;
+    const productionStore = issueInventoryContext.site || site;
     const lines = group.snapshot_lines || [];
     const estimatedBatchCost = Number((group.estimatedBatchCost || 0).toFixed(2));
     const servingCount = Math.max(1, finiteProductionNumber(group.production_covers, 0));
@@ -1815,8 +1825,8 @@ export default function Production() {
     return {
       site_id: site?.id || group.site_id || firstItem.site_id || '',
       site_name: site?.name || group.site_name || firstItem.site_name || '',
-      fulfillment_store_id: fulfillmentStore?.id || '',
-      fulfillment_store_name: fulfillmentStore?.name || '',
+      fulfillment_store_id: productionStore?.id || '',
+      fulfillment_store_name: productionStore?.name || '',
       production_date: group.plan_date || firstItem.plan_date || issueSource?.plan_date || format(new Date(), 'yyyy-MM-dd'),
       meal_type: group.meal_type,
       menu_type: group.menu_type || issueSource?.menu_type || 'general',
@@ -2612,7 +2622,7 @@ export default function Production() {
                       <p className="text-xs uppercase tracking-wide text-slate-500">Production site</p>
                       <p className="mt-1 break-words font-semibold text-slate-900">{issueSite?.name || issuePlan.site_name || issueSource?.site_name || 'Selected project'}</p>
                       {issueInventoryContext.site ? (
-                        <p className="mt-2 text-xs text-slate-500">Ingredients are taken from {issueInventoryContext.site.name}.</p>
+                        <p className="mt-2 text-xs text-slate-500">Inventory and finished production stay in this same site.</p>
                       ) : null}
                     </div>
                     <div className="rounded-xl bg-white px-3 py-2">
@@ -2681,7 +2691,7 @@ export default function Production() {
                           <p className="text-sm font-semibold">Selected-day store check</p>
                           <p className="mt-1 text-xs">
                             {issueInventoryReady
-                              ? `Combined ingredient demand is checked against ${issueInventoryContext.site?.name || 'this production site'} inventory.`
+                              ? `Combined ingredient demand is checked against this same production site inventory.`
                               : issueInventoryCheckState.message}
                           </p>
                         </div>
