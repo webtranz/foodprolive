@@ -8,10 +8,34 @@ const UNIT_ALIASES = {
   kilogram: 'kg',
   kilograms: 'kg',
   kgs: 'kg',
+  pound: 'lb',
+  pounds: 'lb',
+  lb: 'lb',
+  lbs: 'lb',
+  ounce: 'oz',
+  ounces: 'oz',
+  oz: 'oz',
+  'cubic meter': 'm3',
+  'cubic meters': 'm3',
+  'cubic metre': 'm3',
+  'cubic metres': 'm3',
+  'cubic mtr': 'm3',
+  'cubic mtrs': 'm3',
   gram: 'g',
   grams: 'g',
   gm: 'g',
   gms: 'g',
+  cubic_meter: 'm3',
+  cubic_meters: 'm3',
+  cubic_metre: 'm3',
+  cubic_metres: 'm3',
+  cubic_mtr: 'm3',
+  cubic_mtrs: 'm3',
+  cbm: 'm3',
+  cum: 'm3',
+  m3: 'm3',
+  'm^3': 'm3',
+  'm³': 'm3',
   litre: 'l',
   litres: 'l',
   liter: 'l',
@@ -49,8 +73,8 @@ const UNIT_ALIASES = {
   cs: 'cs'
 };
 
-const WEIGHT_IN_GRAMS = { kg: 1000, g: 1 };
-const VOLUME_IN_MILLILITRES = { l: 1000, ml: 1 };
+const WEIGHT_IN_GRAMS = { kg: 1000, g: 1, lb: 453.59237, oz: 28.349523125 };
+const VOLUME_IN_MILLILITRES = { m3: 1000000, l: 1000, ml: 1 };
 const COUNT_IN_PIECES = { pieces: 1 };
 
 function positiveConversionNumber(value) {

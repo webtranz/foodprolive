@@ -295,11 +295,11 @@ function buildHeaderMap(moduleKey, definition) {
 
 function normalizeIngredientUploadUnit(value) {
   const trimmed = String(value || '').trim();
-  const standardUnits = new Set(['kg', 'g', 'l', 'ml', 'pieces']);
+  const standardUnits = new Set(['kg', 'g', 'lb', 'oz', 'm3', 'l', 'ml', 'pieces', 'ea']);
   const displayLabel = trimmed.match(/^(.*?)\s*\(([^)]+)\)$/);
   if (displayLabel) {
     const symbol = normalizeIngredientUnit(displayLabel[2]);
-    if (standardUnits.has(symbol) && normalizeIngredientUnit(displayLabel[1]) === symbol) return symbol;
+    if (standardUnits.has(symbol)) return symbol;
   }
   const normalized = normalizeIngredientUnit(trimmed);
   // Keep canonical legacy spellings such as EA and custom units unchanged.

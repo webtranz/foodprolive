@@ -24,9 +24,13 @@ const CATEGORIES = [
 const UNITS = [
   { value: 'kg', label: 'Kilograms (kg)' },
   { value: 'g', label: 'Grams (g)' },
+  { value: 'lb', label: 'Pounds (lb)' },
+  { value: 'oz', label: 'Ounces (oz)' },
   { value: 'l', label: 'Liters (l)' },
   { value: 'ml', label: 'Milliliters (ml)' },
-  { value: 'pieces', label: 'Pieces' }
+  { value: 'm3', label: 'Cubic Meter (m3)' },
+  { value: 'pieces', label: 'Pieces' },
+  { value: 'ea', label: 'CT (Each)' }
 ];
 
 const NO_CONVERSION_UNIT = '__no_conversion__';

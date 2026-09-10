@@ -12,8 +12,8 @@ export const D365_QUANTITY_SEMANTICS = Object.freeze({
   SNAPSHOT: 'snapshot'
 });
 
-const WEIGHT_UNITS = new Set(['kg', 'g']);
-const VOLUME_UNITS = new Set(['l', 'ml']);
+const WEIGHT_UNITS = new Set(['kg', 'g', 'lb', 'oz']);
+const VOLUME_UNITS = new Set(['m3', 'l', 'ml']);
 
 function normalizeText(value) {
   return String(value ?? '').trim();

@@ -23,6 +23,10 @@ assert.equal(convertIngredientQuantity(1000, 'ml', 'l'), 1);
 assert.equal(convertIngredientQuantity(0.3, 'l', 'ml'), 300);
 assert.equal(convertIngredientQuantity(300, 'ml', 'l'), 0.3);
 assert.equal(convertIngredientQuantity(2.5, 'kg', 'g'), 2500);
+assert.equal(convertIngredientQuantity(1, 'm3', 'l'), 1000);
+assert.equal(convertIngredientQuantity(1, 'cubic mtr', 'ml'), 1000000);
+assert.equal(convertIngredientQuantity(1, 'lb', 'g'), 453.59237);
+assert.equal(convertIngredientQuantity(16, 'oz', 'lb'), 1);
 assert.equal(convertIngredientQuantity(12, 'pieces', 'pieces'), 12);
 assert.equal(convertIngredientQuantity(12, 'ct', 'pieces'), 12);
 
@@ -137,6 +141,30 @@ assert.deepEqual(inferPackageFields({
   package_size_quantity: 600,
   package_size_unit: 'ml',
   package_base_quantity: 0.6,
+  package_base_unit: 'l',
+  package_parse_source: 'item_name_package'
+});
+assert.deepEqual(inferPackageFields({
+  name: 'IMPORTED CHEESE 10/5LB',
+  unit: 'EA'
+}), {
+  package_pack_count: 10,
+  package_inner_count: 1,
+  package_size_quantity: 5,
+  package_size_unit: 'lb',
+  package_base_quantity: 2.26796185,
+  package_base_unit: 'kg',
+  package_parse_source: 'item_name_package'
+});
+assert.deepEqual(inferPackageFields({
+  name: 'OIL TANK 1/1M3',
+  unit: 'EA'
+}), {
+  package_pack_count: 1,
+  package_inner_count: 1,
+  package_size_quantity: 1,
+  package_size_unit: 'm3',
+  package_base_quantity: 1000,
   package_base_unit: 'l',
   package_parse_source: 'item_name_package'
 });

@@ -107,7 +107,22 @@ test('legacy ingredient headers and direct package/custom unit spellings remain 
   for (const unit of ['EA', 'PAK', 'BDL', 'CS', 'Scoop-Large']) {
     assert.equal(mapIngredient({ name: 'Unit preservation', unit }).unit, unit);
   }
-  for (const [unit, expected] of [['Kilograms (kg)', 'kg'], ['Grams (g)', 'g'], ['Liters (l)', 'l'], ['Milliliters (ml)', 'ml'], ['Pieces', 'pieces'], ['gms', 'g'], ['ltr', 'l']]) {
+  for (const [unit, expected] of [
+    ['Kilograms (kg)', 'kg'],
+    ['Grams (g)', 'g'],
+    ['Pounds (lb)', 'lb'],
+    ['Ounces (oz)', 'oz'],
+    ['Liters (l)', 'l'],
+    ['Milliliters (ml)', 'ml'],
+    ['Cubic Meter (m3)', 'm3'],
+    ['CT (Each)', 'ea'],
+    ['Pieces', 'pieces'],
+    ['gms', 'g'],
+    ['ltr', 'l'],
+    ['cubic mtr', 'm3'],
+    ['pounds', 'lb'],
+    ['ounces', 'oz']
+  ]) {
     assert.equal(mapIngredient({ name: 'Unit alias', unit }).unit, expected);
   }
 });

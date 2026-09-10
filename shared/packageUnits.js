@@ -3,6 +3,10 @@ const UNIT_ALIASES = Object.freeze({
   kilogram: 'kg',
   kilograms: 'kg',
   kgs: 'kg',
+  lb: 'lb',
+  lbs: 'lb',
+  pound: 'lb',
+  pounds: 'lb',
   g: 'g',
   gm: 'g',
   gms: 'g',
@@ -15,6 +19,11 @@ const UNIT_ALIASES = Object.freeze({
   litres: 'l',
   ltr: 'l',
   lt: 'l',
+  m3: 'm3',
+  'm^3': 'm3',
+  'm³': 'm3',
+  cbm: 'm3',
+  cum: 'm3',
   ml: 'ml',
   milliliter: 'ml',
   milliliters: 'ml',
@@ -47,9 +56,10 @@ export const PACKAGING_UNIT_LABELS = Object.freeze({
 export const PACKAGE_UNITS = new Set(Object.keys(PACKAGING_UNIT_LABELS));
 
 const WEIGHT_TO_KG = Object.freeze({ kg: 1, g: 0.001 });
-const VOLUME_TO_L = Object.freeze({ l: 1, ml: 0.001 });
+const VOLUME_TO_L = Object.freeze({ m3: 1000, l: 1, ml: 0.001 });
 const COUNT_TO_PIECES = Object.freeze({ pieces: 1 });
 const OUNCE_TO_KG = 0.028349523125;
+const POUND_TO_KG = 0.45359237;
 const DEFAULT_BUNDLE_WEIGHT_KG = 0.08;
 
 function number(value, fallback = null) {
@@ -88,7 +98,7 @@ export function normalizeInventoryUnitLabel(unit) {
 export function parsePackageDescriptor(name = '') {
   const text = String(name || '').toUpperCase();
   const numericPattern = String.raw`\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?`;
-  const measurePattern = String.raw`KG|KGS|G|GM|GMS|GRAMS|LTR|L|LT|LITRE|LITER|ML|CT|CNT|COUNT|COUNTS|OZ|Z`;
+  const measurePattern = String.raw`KG|KGS|LB|LBS|POUND|POUNDS|G|GM|GMS|GRAMS|M3|CBM|CUM|LTR|L|LT|LITRE|LITER|ML|CT|CNT|COUNT|COUNTS|OZ|Z`;
   const matches = [...text.matchAll(new RegExp(String.raw`\b(${numericPattern})\s*\/\s*(?=(?:${numericPattern}\s*\/\s*)*${numericPattern}\s*(${measurePattern})\b)`, 'g'))];
   const tailWithUnit = text.match(new RegExp(String.raw`((?:${numericPattern}\s*\/\s*)+)(${numericPattern})\s*(${measurePattern})\b`));
   const tailWithoutUnit = tailWithUnit
@@ -179,6 +189,9 @@ export function packageMeasureToCanonical(quantity, unit) {
   }
   if (normalized === 'oz') {
     return { quantity: round(numeric * OUNCE_TO_KG), unit: 'kg' };
+  }
+  if (normalized === 'lb') {
+    return { quantity: round(numeric * POUND_TO_KG), unit: 'kg' };
   }
   return { quantity: numeric, unit: normalized };
 }
