@@ -4048,7 +4048,49 @@ function hasPositiveInventoryBalance(record = {}) {
   ].some((value) => Math.max(0, Number(value) || 0) > 0.000001);
 }
 
-async function buildDeleteImpact(entity, existing) {
+function formatDeleteQuantity(value, unit = '') {
+  const numeric = Number(value || 0);
+  const formatted = Number.isFinite(numeric)
+    ? Number(numeric.toFixed(6)).toLocaleString(undefined, { maximumFractionDigits: 6 })
+    : String(value || 0);
+  return `${formatted}${unit ? ` ${unit}` : ''}`;
+}
+
+function summarizeInventoryDeleteEffects(existing = {}, lots = [], transactions = []) {
+  const unit = existing.unit || lots.find((lot) => lot.unit)?.unit || '';
+  const lotOnHand = lots.reduce((sum, lot) => sum + Math.max(0, Number(lot.remaining_quantity || 0)), 0);
+  const onHand = Math.max(0, Number(existing.on_hand_quantity ?? existing.quantity ?? lotOnHand ?? 0) || 0);
+  const reserved = Math.max(0, Number(existing.reserved_quantity || 0) || 0);
+  const available = Math.max(0, Number(existing.available_quantity ?? (onHand - reserved)) || 0);
+  const positiveLots = lots.filter((lot) => Math.max(0, Number(lot.remaining_quantity || 0)) > 0.000001);
+  const reservedLots = lots.filter((lot) => Math.max(0, Number(lot.reserved_quantity || 0)) > 0.000001);
+
+  return {
+    stock_removed: {
+      on_hand_quantity: onHand,
+      reserved_quantity: reserved,
+      available_quantity: available,
+      unit
+    },
+    lots_changed: lots.length,
+    positive_lots_zeroed: positiveLots.length,
+    reserved_lots_cleared: reservedLots.length,
+    transactions_preserved: transactions.length,
+    effects: [
+      `The inventory balance will be removed from ${existing.site_name || 'this site'}.`,
+      `Current on-hand stock will become 0 from ${formatDeleteQuantity(onHand, unit)}.`,
+      positiveLots.length
+        ? `${positiveLots.length} active batch/lot record${positiveLots.length === 1 ? '' : 's'} will be marked admin-deleted and zeroed.`
+        : 'No active batch quantity needs to be zeroed.',
+      reservedLots.length
+        ? `${reservedLots.length} lot reservation${reservedLots.length === 1 ? '' : 's'} will be cleared.`
+        : 'No lot reservations need to be cleared.',
+      `${transactions.length} existing inventory transaction${transactions.length === 1 ? '' : 's'} will remain in history for troubleshooting.`
+    ]
+  };
+}
+
+async function buildDeleteImpact(entity, existing, executor = undefined) {
   if (!['Ingredient', 'Inventory'].includes(entity)) {
     return {
       entity,
@@ -4062,16 +4104,17 @@ async function buildDeleteImpact(entity, existing) {
   const ingredientId = entity === 'Ingredient' ? existing.id : existing.ingredient_id;
   const siteId = entity === 'Inventory' ? existing.site_id : '';
   const linkageCandidates = [];
+  let inventoryEffects = null;
 
   if (entity === 'Ingredient') {
     const [inventory, lots, transactions, recipes, productions, materialRequests, foodWaste] = await Promise.all([
-      listDocuments('Inventory', { filters: { ingredient_id: ingredientId }, limit: 10000 }),
-      listDocuments('InventoryLot', { filters: { ingredient_id: ingredientId }, limit: 10000 }),
-      listDocuments('InventoryTransaction', { filters: { ingredient_id: ingredientId }, limit: 10000 }),
-      listDocuments('Recipe', { limit: 10000 }),
-      listDocuments('Production', { limit: 10000 }),
-      listDocuments('MaterialRequest', { limit: 10000 }),
-      listDocuments('FoodWaste', { limit: 10000 })
+      listDocuments('Inventory', { filters: { ingredient_id: ingredientId }, limit: 10000 }, executor),
+      listDocuments('InventoryLot', { filters: { ingredient_id: ingredientId }, limit: 10000 }, executor),
+      listDocuments('InventoryTransaction', { filters: { ingredient_id: ingredientId }, limit: 10000 }, executor),
+      listDocuments('Recipe', { limit: 10000 }, executor),
+      listDocuments('Production', { limit: 10000 }, executor),
+      listDocuments('MaterialRequest', { limit: 10000 }, executor),
+      listDocuments('FoodWaste', { limit: 10000 }, executor)
     ]);
     linkageCandidates.push(
       makeDeleteImpactLinkage('Inventory records', inventory, (item) => `${item.site_name || item.site_id || 'Site'} · ${item.ingredient_name || existing.name || ingredientId}`),
@@ -4084,11 +4127,12 @@ async function buildDeleteImpact(entity, existing) {
     );
   } else {
     const [lots, transactions, productions, materialRequests] = await Promise.all([
-      listDocuments('InventoryLot', { filters: { site_id: siteId, ingredient_id: ingredientId }, limit: 10000 }),
-      listDocuments('InventoryTransaction', { filters: { site_id: siteId, ingredient_id: ingredientId }, limit: 10000 }),
-      listDocuments('Production', { limit: 10000 }),
-      listDocuments('MaterialRequest', { limit: 10000 })
+      listDocuments('InventoryLot', { filters: { site_id: siteId, ingredient_id: ingredientId }, limit: 10000 }, executor),
+      listDocuments('InventoryTransaction', { filters: { site_id: siteId, ingredient_id: ingredientId }, limit: 10000 }, executor),
+      listDocuments('Production', { limit: 10000 }, executor),
+      listDocuments('MaterialRequest', { limit: 10000 }, executor)
     ]);
+    inventoryEffects = summarizeInventoryDeleteEffects(existing, lots, transactions);
     linkageCandidates.push(
       hasPositiveInventoryBalance(existing)
         ? {
@@ -4110,10 +4154,97 @@ async function buildDeleteImpact(entity, existing) {
     id: existing.id,
     has_linkages: linkages.length > 0,
     linkages,
+    ...(inventoryEffects || {}),
     warning: linkages.length > 0
-      ? 'Linked records were found. Review them before deleting; the server will block deletion if the record is part of protected history.'
+      ? entity === 'Inventory'
+        ? 'Linked records were found. Admin deletion will remove the inventory balance and zero active lots, while keeping transaction history for troubleshooting.'
+        : 'Linked records were found. Review them before deleting; the server will block deletion if the record is part of protected history.'
       : 'No obvious linked records were found. Deletion is still checked again when confirmed.'
   };
+}
+
+function toDateOnly(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+  return date.toISOString().slice(0, 10);
+}
+
+async function deleteInventoryRecordAsAdmin(existing, user) {
+  return withTransaction(async (client) => {
+    const lockedInventory = await findDocument('Inventory', existing.id, client, true);
+    if (!lockedInventory) return { removed: false };
+
+    const filters = {
+      site_id: lockedInventory.site_id,
+      ingredient_id: lockedInventory.ingredient_id
+    };
+    const [lots, transactions] = await Promise.all([
+      listDocuments('InventoryLot', { filters, limit: 10000 }, client),
+      listDocuments('InventoryTransaction', { filters, limit: 10000 }, client)
+    ]);
+    const impact = {
+      ...(await buildDeleteImpact('Inventory', lockedInventory, client)),
+      deleted_at: new Date().toISOString()
+    };
+    const stockRemoved = impact.stock_removed || {};
+    const unit = stockRemoved.unit || lockedInventory.unit || '';
+    const onHand = Math.max(0, Number(stockRemoved.on_hand_quantity || 0));
+    const reserved = Math.max(0, Number(stockRemoved.reserved_quantity || 0));
+    const available = Math.max(0, Number(stockRemoved.available_quantity || 0));
+    const deletionDate = toDateOnly();
+
+    await Promise.all(lots.map((lot) => updateDocument('InventoryLot', lot.id, {
+      remaining_quantity: 0,
+      reserved_quantity: 0,
+      status: 'admin_deleted',
+      admin_deleted_at: impact.deleted_at,
+      admin_deleted_by: user?.email || user?.full_name || 'admin',
+      admin_delete_reason: 'Inventory record deleted by administrator',
+      admin_deleted_inventory_id: lockedInventory.id,
+      previous_remaining_quantity: lot.remaining_quantity ?? lot.quantity ?? 0,
+      previous_reserved_quantity: lot.reserved_quantity ?? 0
+    }, client)));
+
+    if (onHand > 0 || reserved > 0 || available > 0 || lots.length > 0) {
+      await createDocument('InventoryTransaction', {
+        site_id: lockedInventory.site_id,
+        site_name: lockedInventory.site_name,
+        ingredient_id: lockedInventory.ingredient_id,
+        ingredient_name: lockedInventory.ingredient_name,
+        transaction_type: 'admin_inventory_delete',
+        quantity: onHand > 0 ? -onHand : 0,
+        unit,
+        transaction_date: deletionDate,
+        reference_id: lockedInventory.id,
+        reference_type: 'admin_inventory_delete',
+        notes: `Admin deleted inventory record. Removed ${formatDeleteQuantity(onHand, unit)} on hand, cleared ${formatDeleteQuantity(reserved, unit)} reserved, and marked ${lots.length} lot${lots.length === 1 ? '' : 's'} as admin-deleted.`,
+        performed_by: user?.email || user?.full_name || 'admin',
+        reason_code: 'admin_inventory_delete',
+        source: 'admin_cleanup',
+        source_type: 'admin_cleanup',
+        balance_before: onHand,
+        balance_after: 0,
+        opening_quantity: onHand,
+        consumption_quantity: onHand,
+        remaining_quantity: 0,
+        metadata: {
+          deleted_inventory_id: lockedInventory.id,
+          stock_removed: stockRemoved,
+          lot_ids: lots.map((lot) => lot.id),
+          transaction_history_count_before_delete: transactions.length
+        }
+      }, client);
+    }
+
+    const removed = await deleteDocument('Inventory', lockedInventory.id, client);
+    return {
+      removed,
+      impact,
+      lots_changed: lots.length,
+      transactions_preserved: transactions.length,
+      transaction_logged: onHand > 0 || reserved > 0 || available > 0 || lots.length > 0
+    };
+  });
 }
 
 app.get('/api/entities/:entity/:id/delete-impact', requireAuth, async (request, response, next) => {
@@ -4155,6 +4286,45 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
     }
     if (entity === 'MenuPlan' && isSpecialEventPlan(existing)) {
       return response.status(400).json({ message: 'Special events must be deleted from the event planning module.' });
+    }
+    if (entity === 'Inventory' && hasAdminAccess(request.user)) {
+      authorizeEntityAction(request.user, entity, 'delete', null, existing);
+      const deletion = await deleteInventoryRecordAsAdmin(existing, request.user);
+      if (!deletion.removed) {
+        return response.status(404).json({ message: 'Record not found' });
+      }
+      invalidateEntityAccessCaches(entity);
+      recordChanged('Inventory');
+      recordChanged('InventoryLot');
+      recordChanged('InventoryTransaction');
+      await auditAction({
+        user: request.user,
+        action: 'INVENTORY_ADMIN_DELETE',
+        entity,
+        entityId: request.params.id,
+        siteId: existing.site_id,
+        siteName: existing.site_name,
+        details: {
+          friendly_summary: `${request.user.full_name || request.user.email || 'An administrator'} deleted inventory item ${getItemCodeFromRecords([existing], '') || existing.ingredient_id || request.params.id} · ${existing.ingredient_name || 'Unnamed ingredient'} from ${existing.site_name || 'this site'}.`,
+          friendly_changes: [
+            ...(deletion.impact?.effects || []),
+            deletion.transaction_logged
+              ? 'A stock movement entry was added to show the removed balance.'
+              : 'No stock movement entry was needed because there was no balance or active lot quantity.',
+            'The original inventory transaction history was preserved for reverse troubleshooting.'
+          ],
+          deleted_record: existing,
+          inventory_delete_impact: deletion.impact,
+          lots_changed: deletion.lots_changed,
+          transactions_preserved: deletion.transactions_preserved,
+          transaction_logged: deletion.transaction_logged
+        }
+      });
+      return response.json({
+        success: true,
+        admin_inventory_delete: true,
+        impact: deletion.impact
+      });
     }
     let relatedInventoryLots = [];
     let relatedInventoryTransactions = [];

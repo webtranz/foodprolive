@@ -16,6 +16,79 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
+function humanize(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function recordName(record = {}) {
+  return record.name
+    || record.ingredient_name
+    || record.recipe_name
+    || record.site_name
+    || record.reference_number
+    || record.production_number
+    || record.id
+    || '';
+}
+
+function formatDetailValue(value) {
+  if (value === null || typeof value === 'undefined' || value === '') return 'blank';
+  if (typeof value === 'number') return Number.isFinite(value)
+    ? Number(value.toFixed(6)).toLocaleString(undefined, { maximumFractionDigits: 6 })
+    : 'not available';
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? '' : 's'}`;
+  if (typeof value === 'object') return recordName(value) || 'updated details';
+  return String(value);
+}
+
+function summarizeFieldChanges(before = {}, after = {}) {
+  const ignored = new Set(['updated_date', 'created_date', 'last_login', 'password_hash']);
+  return Array.from(new Set([...Object.keys(before || {}), ...Object.keys(after || {})]))
+    .filter((field) => !ignored.has(field))
+    .filter((field) => {
+      const previous = before?.[field];
+      const next = after?.[field];
+      if (typeof previous === 'object' || typeof next === 'object') return false;
+      return JSON.stringify(previous ?? null) !== JSON.stringify(next ?? null);
+    })
+    .slice(0, 8)
+    .map((field) => `${humanize(field)} changed from ${formatDetailValue(before?.[field])} to ${formatDetailValue(after?.[field])}.`);
+}
+
+function buildAuditNarrative(log) {
+  const details = log.details || {};
+  const actor = log.actor_name || log.actor_email || 'System';
+  const entity = humanize(log.entity || 'record');
+  const action = humanize(log.action || 'activity');
+  const site = log.site_name || log.site_id || 'Global';
+
+  const summary = details.friendly_summary
+    || `${actor} performed ${action}${entity ? ` on ${entity}` : ''}${log.entity_id ? ` ${log.entity_id}` : ''} at ${site}.`;
+
+  const bullets = [];
+  if (Array.isArray(details.friendly_changes)) bullets.push(...details.friendly_changes);
+  if (Array.isArray(details.inventory_delete_impact?.effects)) bullets.push(...details.inventory_delete_impact.effects);
+  if (details.deleted_record) bullets.push(`Deleted record: ${recordName(details.deleted_record) || log.entity_id || 'record'}.`);
+  if (details.created_record) bullets.push(`Created record: ${recordName(details.created_record) || log.entity_id || 'record'}.`);
+  if (details.before && details.after) bullets.push(...summarizeFieldChanges(details.before, details.after));
+  if (details.module && details.rows !== undefined) bullets.push(`${details.rows} row${Number(details.rows) === 1 ? '' : 's'} were included in ${humanize(details.module)}.`);
+  if (!bullets.length && details.input) {
+    const fields = Object.keys(details.input).filter((key) => !['password', 'token'].includes(String(key).toLowerCase())).slice(0, 8);
+    if (fields.length) bullets.push(`Fields involved: ${fields.map(humanize).join(', ')}.`);
+  }
+
+  return {
+    summary,
+    bullets: Array.from(new Set(bullets)).slice(0, 12)
+  };
+}
+
 export default function AuditLogs() {
   const [search, setSearch] = useState('');
   const [action, setAction] = useState('');
@@ -34,7 +107,7 @@ export default function AuditLogs() {
 
   return (
     <div className="p-4 md:p-8">
-      <PageHeader title="Audit Logs" description="Security-safe history of sign-ins, record changes, report access, and background jobs." />
+      <PageHeader title="Audit Logs" description="Plain-language history of sign-ins, record changes, report access, and background jobs for reverse troubleshooting." />
       <Card className="mb-5">
         <CardContent className="p-4">
           <form onSubmit={applyFilters} className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_220px_auto]">
@@ -60,17 +133,37 @@ export default function AuditLogs() {
                   <div className="max-h-[68vh] overflow-auto">
                     <Table>
                       <TableHeader className="sticky top-0 bg-white">
-                        <TableRow><TableHead>Date</TableHead><TableHead>Actor</TableHead><TableHead>Action</TableHead><TableHead>Entity</TableHead><TableHead>Project</TableHead><TableHead>Details</TableHead></TableRow>
+                        <TableRow><TableHead>Date</TableHead><TableHead>Actor</TableHead><TableHead>Action</TableHead><TableHead>Entity</TableHead><TableHead>Project</TableHead><TableHead>What happened</TableHead></TableRow>
                       </TableHeader>
                       <TableBody>{logs.map((log) => (
                         <TableRow key={log.id}>
                           <TableCell className="whitespace-nowrap align-top text-xs">{formatDate(log.created_at)}</TableCell>
                           <TableCell className="align-top"><div className="font-medium">{log.actor_name || 'System'}</div><div className="text-xs text-slate-500">{log.actor_email || log.role || '—'}</div></TableCell>
-                          <TableCell className="align-top"><Badge variant="outline">{log.action}</Badge></TableCell>
+                          <TableCell className="align-top"><Badge variant="outline">{humanize(log.action)}</Badge></TableCell>
                           <TableCell className="align-top"><div>{log.entity}</div><div className="max-w-36 truncate text-xs text-slate-500">{log.entity_id || '—'}</div></TableCell>
                           <TableCell className="align-top text-sm">{log.site_name || log.site_id || 'Global'}</TableCell>
-                          <TableCell className="max-w-80 align-top text-xs">
-                            <details><summary className="cursor-pointer text-emerald-700">View details</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-2 text-[11px] text-slate-100">{JSON.stringify(log.details || {}, null, 2)}</pre></details>
+                          <TableCell className="min-w-[420px] max-w-[720px] align-top text-sm">
+                            {(() => {
+                              const narrative = buildAuditNarrative(log);
+                              return (
+                                <div className="space-y-2">
+                                  <p className="font-medium text-slate-900">{narrative.summary}</p>
+                                  {narrative.bullets.length ? (
+                                    <ul className="list-disc space-y-1 pl-5 text-slate-600">
+                                      {narrative.bullets.map((item) => (
+                                        <li key={item}>{item}</li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <p className="text-xs text-slate-500">No additional change details were recorded.</p>
+                                  )}
+                                  <details>
+                                    <summary className="cursor-pointer text-xs font-medium text-emerald-700">Technical data</summary>
+                                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-2 text-[11px] text-slate-100">{JSON.stringify(log.details || {}, null, 2)}</pre>
+                                  </details>
+                                </div>
+                              );
+                            })()}
                           </TableCell>
                         </TableRow>
                       ))}</TableBody>

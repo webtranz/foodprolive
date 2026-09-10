@@ -147,8 +147,20 @@ function DeleteImpactDetails({ impact, loading, error }) {
   return (
     <div className="space-y-3">
       <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-800">
-        Linked records were found. Deletion may be blocked to protect stock history, production, procurement, and reports.
+        {impact.entity === 'Inventory'
+          ? 'Linked records were found. Admin deletion will remove the inventory balance and keep the history for troubleshooting.'
+          : 'Linked records were found. Deletion may be blocked to protect stock history, production, procurement, and reports.'}
       </p>
+      {Array.isArray(impact.effects) && impact.effects.length > 0 ? (
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+          <p className="font-semibold">This delete will make these changes:</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {impact.effects.map((effect) => (
+              <li key={effect}>{effect}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-3">
         {(impact.linkages || []).map((linkage) => (
           <div key={linkage.area} className="text-sm">
@@ -2092,7 +2104,7 @@ export default function Inventory() {
                     Delete "{getItemCodeFromRecords([deleteDialog.item?._ing, deleteDialog.item])} · {deleteDialog.item?.ingredient_name || '—'}" for {deleteDialog.item?.site_name || 'this site'}?
                   </p>
                   <p className="text-xs text-slate-500">
-                    Inventory with stock, batches, reservations, or transactions should normally be cleared through stock movements. This delete is for admin cleanup of empty/unlinked records only.
+                    This admin cleanup will remove the current inventory balance, mark active lots as admin-deleted, and keep transaction history for audit troubleshooting.
                   </p>
                   <DeleteImpactDetails
                     impact={deleteDialog.impact}
