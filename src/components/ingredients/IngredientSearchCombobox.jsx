@@ -46,6 +46,20 @@ function indexedLabel(count) {
   return `${formatNumber(count || 0)} active SKUs indexed`;
 }
 
+function ingredientHoverText(ingredient) {
+  if (!ingredient) return '';
+  const details = [
+    getItemCode(ingredient),
+    ingredient.name || 'Unnamed item',
+    ingredient.category ? `Category: ${ingredient.category}` : '',
+    ingredient.unit ? `Unit: ${ingredient.unit}` : '',
+    typeof ingredient.current_stock !== 'undefined'
+      ? `Stock: ${formatNumber(ingredient.current_stock || 0, 2)} ${ingredient.stock_unit || ingredient.unit || ''}`.trim()
+      : ''
+  ].filter(Boolean);
+  return details.join(' · ');
+}
+
 export default function IngredientSearchCombobox({
   value = '',
   onValueChange,
@@ -98,6 +112,9 @@ export default function IngredientSearchCombobox({
   const selectedLabel = selectedIngredient
     ? `${getItemCode(selectedIngredient)} · ${selectedIngredient.name || 'Unnamed item'}`
     : (value ? 'Selected ingredient' : '');
+  const selectedHoverText = selectedIngredient
+    ? ingredientHoverText(selectedIngredient)
+    : (selectedLabel || placeholder);
 
   const resultDescription = useMemo(() => {
     if (query.isError) return 'Ingredient search unavailable';
@@ -132,10 +149,11 @@ export default function IngredientSearchCombobox({
           role="combobox"
           aria-expanded={open}
           aria-label="Select ingredient"
+          title={selectedHoverText}
           disabled={disabled}
           className={cn('h-10 w-full justify-between bg-white px-3 font-normal', !selectedLabel && 'text-muted-foreground', className)}
         >
-          <span className="min-w-0 truncate text-left">{selectedLabel || placeholder}</span>
+          <span className="min-w-0 truncate text-left" title={selectedHoverText}>{selectedLabel || placeholder}</span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
@@ -199,20 +217,22 @@ export default function IngredientSearchCombobox({
               <CommandGroup>
                 {items.map((ingredient) => {
                   const allergens = allergenList(ingredient);
+                  const hoverText = ingredientHoverText(ingredient);
                   return (
                     <CommandItem
                       key={ingredient.id}
                       value={ingredient.id}
                       onSelect={() => chooseIngredient(ingredient)}
+                      title={hoverText}
                       className="min-h-[58px] px-3 py-2"
                     >
                       <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 md:grid-cols-[110px_minmax(180px,1.5fr)_120px_60px_95px_100px_100px]">
                         <div className="min-w-0">
-                          <div className="truncate text-xs font-semibold text-slate-700 md:text-sm"><HighlightedText value={getItemCode(ingredient)} query={visibleSearch} /></div>
-                          <div className="truncate text-sm font-medium text-slate-900 md:hidden"><HighlightedText value={ingredient.name || '—'} query={visibleSearch} /></div>
+                          <div className="truncate text-xs font-semibold text-slate-700 md:text-sm" title={getItemCode(ingredient)}><HighlightedText value={getItemCode(ingredient)} query={visibleSearch} /></div>
+                          <div className="truncate text-sm font-medium text-slate-900 md:hidden" title={ingredient.name || '—'}><HighlightedText value={ingredient.name || '—'} query={visibleSearch} /></div>
                         </div>
-                        <span className="hidden truncate font-medium text-slate-900 md:block"><HighlightedText value={ingredient.name || '—'} query={visibleSearch} /></span>
-                        <span className="hidden truncate text-xs text-slate-600 md:block"><HighlightedText value={ingredient.category || '—'} query={visibleSearch} /></span>
+                        <span className="hidden truncate font-medium text-slate-900 md:block" title={ingredient.name || '—'}><HighlightedText value={ingredient.name || '—'} query={visibleSearch} /></span>
+                        <span className="hidden truncate text-xs text-slate-600 md:block" title={ingredient.category || '—'}><HighlightedText value={ingredient.category || '—'} query={visibleSearch} /></span>
                         <span className="hidden text-xs text-slate-600 md:block">{ingredient.unit || '—'}</span>
                         <span className={cn('hidden text-xs font-medium md:block', Number(ingredient.current_stock) <= 0 ? 'text-red-600' : 'text-slate-700')}>
                           {formatNumber(ingredient.current_stock || 0, 2)} {ingredient.stock_unit || ingredient.unit || ''}

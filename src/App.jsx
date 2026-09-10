@@ -13,6 +13,7 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { usePermissions } from '@/components/auth/usePermissions';
 import { canAccessPage } from '@/lib/pageAccess';
 import Login from '@/pages/Login';
+import OverflowTitleProvider from '@/components/ui/overflow-title-provider';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -90,6 +91,7 @@ function App() {
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
+          <OverflowTitleProvider />
           <NavigationTracker />
           <Routes>
             <Route path="/login" element={<Login />} />

@@ -802,7 +802,10 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
               </Button>
             </div>
 
-            <p className="mb-3 text-sm text-slate-600">
+            <p
+              className="mb-3 text-sm text-slate-600"
+              title={`Weight per unit is the raw weight in grams of one selected unit (one piece, EA, or PAK), not the entire line. It scales with quantity and production covers without changing the ingredient master. ${canEditLineWeights ? 'Enter a verified weight where conversion is missing; leave blank to use the ingredient settings.' : 'Only administrators can define or change this weight.'} Mark Exempt Processing Aid for items fully consumed during preparation, or enter a % exempt during prep when only part of the line should be removed from finished recipe weight.`}
+            >
               Weight per unit is the raw weight in grams of one selected unit (one piece, EA, or PAK), not the entire line.
               It scales with quantity and production covers without changing the ingredient master.
               {canEditLineWeights ? ' Enter a verified weight where conversion is missing; leave blank to use the ingredient settings.' : ' Only administrators can define or change this weight.'}
@@ -840,12 +843,30 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                       }
                     : null
                 );
+                const itemCodeDisplay = getItemCode(costRow?.ingredient || selectedIngredient || ingredientLine);
+                const itemNameDisplay = selectedIngredient
+                  ? `${getItemCode(selectedIngredient)} · ${selectedIngredient.name || 'Selected ingredient'}`
+                  : ingredientLine.ingredient_name || 'Select ingredient';
+                const expectedOutputDisplay = costRow?.processingAid
+                  ? 'Excluded'
+                  : costRow?.yieldedQuantity == null
+                    ? '—'
+                    : `${formatRecipeQuantity(costRow.yieldedQuantity, ingredientLine.unit)} ${ingredientLine.unit || ''}`.trim();
+                const stockImpactDisplay = costRow?.ingredient
+                  ? `Uses ${formatRecipeQuantity(costRow.quantityInBaseUnit, costRow.ingredient.unit)} ${costRow.ingredient.unit || ''} from stock`
+                  : '—';
+                const stockAvailabilityDisplay = costRow?.currentStock !== null && typeof costRow?.currentStock !== 'undefined'
+                  ? Number(costRow.shortage) > 0
+                    ? `Short ${formatRecipeQuantity(costRow.shortage, costRow.ingredient?.unit)} ${costRow.ingredient?.unit || ''}`.trim()
+                    : `${formatRecipeQuantity(costRow.currentStock, costRow.ingredient?.unit)} ${costRow.ingredient?.unit || ''} available`.trim()
+                  : '';
+                const validationMessage = costRow?.validationError || (Number(costRow?.shortage) > 0 ? 'Insufficient stock' : numericStatus.notice || 'Valid');
                 return (
                   <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[90px_minmax(190px,1.4fr)_88px_70px_130px_68px_105px_95px_95px_105px_125px_235px_36px]">
                   <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Code</p>
-                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-medium text-slate-700">
-                      {getItemCode(costRow?.ingredient || selectedIngredient || ingredientLine)}
+                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-medium text-slate-700" title={itemCodeDisplay}>
+                      {itemCodeDisplay}
                     </div>
                   </div>
                   <div className="md:col-span-2 xl:col-span-1">
@@ -855,6 +876,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                       selectedIngredient={selectedIngredient}
                       siteId={formData.site_scope === 'specific' ? formData.site_ids[0] || '' : ''}
                       onValueChange={(_value, ingredient) => selectIngredient(index, ingredient)}
+                      placeholder={itemNameDisplay || 'Search ingredient, SKU, category or alias…'}
                     />
                   </div>
                   <div>
@@ -923,12 +945,8 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                         : costRow?.prepExemptPercent > 0
                           ? 'border-blue-200 bg-blue-50 text-blue-800'
                         : 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                    )}>
-                      {costRow?.processingAid
-                        ? 'Excluded'
-                        : costRow?.yieldedQuantity == null
-                        ? '—'
-                        : `${formatRecipeQuantity(costRow.yieldedQuantity, ingredientLine.unit)} ${ingredientLine.unit || ''}`}
+                    )} title={expectedOutputDisplay}>
+                      {expectedOutputDisplay}
                     </div>
                     {costRow?.prepExemptPercent > 0 && !costRow?.processingAid ? (
                       <p className="mt-1 text-[11px] text-blue-600">
@@ -938,14 +956,14 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                   </div>
                   <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Cost</p>
-                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700">
+                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700" title={costRow?.unitCost == null ? 'Item cost unavailable' : `Item cost: ${formatCurrency(costRow.unitCost)} per ${costRow?.ingredient?.unit || ingredientLine.unit}`}>
                       {costRow?.unitCost == null ? '—' : formatCurrency(costRow.unitCost)}
                     </div>
                     <p className="mt-1 text-[11px] text-slate-500">per {costRow?.ingredient?.unit || ingredientLine.unit}</p>
                   </div>
                   <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Line Cost</p>
-                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-900">
+                    <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-900" title={costRow?.amount == null ? 'Line cost unavailable' : `Line cost: ${formatCurrency(costRow.amount)}`}>
                       {costRow?.amount == null ? '—' : formatCurrency(costRow.amount)}
                     </div>
                   </div>
@@ -954,7 +972,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     <div className={cn(
                       'flex h-10 items-center rounded-md border bg-white px-2 text-sm font-medium',
                       Number(costRow?.shortage) > 0 ? 'border-red-300 text-red-700' : 'border-slate-200 text-slate-700'
-                    )}>
+                    )} title={[stockImpactDisplay, stockAvailabilityDisplay].filter(Boolean).join(' · ')}>
                       {costRow?.ingredient
                         ? `↓ ${formatRecipeQuantity(costRow.quantityInBaseUnit, costRow.ingredient.unit)} ${costRow.ingredient.unit || ''}`
                         : '—'}
@@ -976,10 +994,10 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                         : numericStatus.notice
                           ? 'border-amber-200 text-amber-700'
                           : 'border-emerald-200 text-emerald-700'
-                    )}>
+                    )} title={validationMessage}>
                       {costRow?.validationError || Number(costRow?.shortage) > 0 ? <CircleAlert className="h-4 w-4 shrink-0" /> : <CircleCheck className="h-4 w-4 shrink-0" />}
                       <span className="line-clamp-2">
-                        {costRow?.validationError || (Number(costRow?.shortage) > 0 ? 'Insufficient stock' : numericStatus.notice || 'Valid')}
+                        {validationMessage}
                       </span>
                     </div>
                   </div>
