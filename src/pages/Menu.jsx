@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
 import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
+import { normalizeAllergenTags } from '../../shared/allergens.js';
 
 const CUISINE_TYPES = [
   { value: 'continental', label: 'Continental', icon: 'C' },
@@ -215,7 +216,9 @@ export default function Menu() {
                       </Card>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {recipes.map((recipe) => (
+                        {recipes.map((recipe) => {
+                          const recipeAllergens = normalizeAllergenTags(recipe.allergens);
+                          return (
                           <Card key={recipe.id} className="hover:shadow-lg transition-shadow">
                             <CardHeader>
                               <div className="flex items-start justify-between">
@@ -266,14 +269,14 @@ export default function Menu() {
                                   ) : null}
                                 </div>
                               ) : null}
-                              {Array.isArray(recipe.allergens) && recipe.allergens.length > 0 ? (
+                              {recipeAllergens.length > 0 ? (
                                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
                                   <div className="mb-2 flex items-center gap-1 text-xs font-semibold text-amber-800">
                                     <ShieldAlert className="w-3 h-3" />
                                     Allergen warning
                                   </div>
                                   <div className="flex flex-wrap gap-1">
-                                    {recipe.allergens.map((allergen) => (
+                                    {recipeAllergens.map((allergen) => (
                                       <Badge key={allergen} variant="outline" className="border-amber-300 bg-white text-[11px] text-amber-700">
                                         {allergen}
                                       </Badge>
@@ -283,7 +286,8 @@ export default function Menu() {
                               ) : null}
                             </CardContent>
                           </Card>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

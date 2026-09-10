@@ -429,6 +429,16 @@ test('nested legacy tags contribute warnings without becoming root legacy candid
   assert.equal(removed.allergens_complete, true);
 });
 
+test('stringified allergen arrays are flattened and deduplicated', () => {
+  const result = calculate(
+    recipe({ declared_allergens: ['["egg"]'], allergens: ['["egg"]'] }),
+    [ingredient({ allergens: ['egg', '["milk"]', 'fish', '["mollusc"]'] })]
+  );
+  assert.deepEqual(result.allergens, ['egg', 'fish', 'milk', 'mollusc']);
+  assert.deepEqual(result.declared_allergens, ['egg']);
+  assert.deepEqual(result.legacy_allergens, []);
+});
+
 test('empty recipes and invalid servings are explicitly incomplete', () => {
   assertUnknownNutrition(calculate(recipe({ ingredients: [] })));
   for (const servings of [0, -1, undefined, null, '']) {

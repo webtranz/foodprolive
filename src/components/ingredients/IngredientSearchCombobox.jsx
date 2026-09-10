@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber } from '@/lib/currency';
 import { splitHighlightedIngredientText } from '../../../shared/ingredientSearch.js';
 import { getItemCode } from '../../../shared/itemCode.js';
+import { normalizeAllergenTags } from '../../../shared/allergens.js';
 
 function useDebouncedValue(value, delay = 250) {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -37,8 +38,7 @@ function HighlightedText({ value, query }) {
 }
 
 function allergenList(ingredient) {
-  if (Array.isArray(ingredient.allergens)) return ingredient.allergens.filter(Boolean);
-  return ingredient.allergens ? [ingredient.allergens] : [];
+  return normalizeAllergenTags(ingredient?.allergens);
 }
 
 function indexedLabel(count) {

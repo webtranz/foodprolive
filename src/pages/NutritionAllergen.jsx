@@ -16,6 +16,7 @@ import { Download, FileText, Plus, ShieldAlert, UtensilsCrossed, Users } from 'l
 import { format } from 'date-fns';
 import { downloadCSV, downloadPDF } from '@/components/utils/exportData';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
+import { normalizeAllergenTags } from '../../shared/allergens.js';
 
 function formatNutritionRows(recipe) {
   return [
@@ -51,7 +52,7 @@ function formatSourceWarnings(warnings) {
 }
 
 function formatAllergenSummary(recipe) {
-  const allergens = Array.isArray(recipe.allergens) ? recipe.allergens : [];
+  const allergens = normalizeAllergenTags(recipe.allergens);
   if (recipe.allergens_complete !== true) {
     return [allergens.join(', '), formatAllergenStatus(recipe)].filter(Boolean).join('. ');
   }
@@ -172,7 +173,7 @@ export default function NutritionAllergen() {
   const allergenSummary = useMemo(() => {
     const counts = new Map();
     filteredRecipes.forEach((recipe) => {
-      (recipe.allergens || []).forEach((allergen) => {
+      normalizeAllergenTags(recipe.allergens).forEach((allergen) => {
         counts.set(allergen, (counts.get(allergen) || 0) + 1);
       });
     });
@@ -199,7 +200,7 @@ export default function NutritionAllergen() {
         accumulator.fat += Number(meal.total_fat || 0);
         accumulator.sodium += Number(meal.total_sodium || 0);
         accumulator.sugar += Number(meal.total_sugar || 0);
-        (meal.allergens || []).forEach((allergen) => accumulator.allergens.add(allergen));
+        normalizeAllergenTags(meal.allergens).forEach((allergen) => accumulator.allergens.add(allergen));
         return accumulator;
       }, { calories: 0, protein: 0, carbs: 0, fat: 0, sodium: 0, sugar: 0, allergens: new Set() });
 
@@ -377,7 +378,9 @@ export default function NutritionAllergen() {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                {filteredRecipes.map((recipe) => (
+                {filteredRecipes.map((recipe) => {
+                  const recipeAllergens = normalizeAllergenTags(recipe.allergens);
+                  return (
                   <Card key={recipe.id} className="border-slate-100 shadow-sm">
                     <CardHeader className="flex flex-row items-start justify-between space-y-0">
                       <div>
@@ -411,9 +414,9 @@ export default function NutritionAllergen() {
                           <ShieldAlert className="h-4 w-4" />
                           <span className="font-semibold">Allergen warning</span>
                         </div>
-                        {Array.isArray(recipe.allergens) && recipe.allergens.length > 0 ? (
+                        {recipeAllergens.length > 0 ? (
                           <div className="flex flex-wrap gap-2">
-                            {recipe.allergens.map((allergen) => (
+                            {recipeAllergens.map((allergen) => (
                               <Badge key={allergen} variant="outline" className="border-amber-300 bg-white text-amber-700">
                                 {allergen}
                               </Badge>
@@ -430,7 +433,8 @@ export default function NutritionAllergen() {
                       </div>
                     </CardContent>
                   </Card>
-                ))}
+                  );
+                })}
               </div>
             )}
           </TabsContent>
@@ -535,7 +539,9 @@ export default function NutritionAllergen() {
                     <div>
                       <p className="mb-2 text-sm font-medium text-slate-700">Meals</p>
                       <div className="space-y-2">
-                        {(plan.meals || []).map((meal, index) => (
+                        {(plan.meals || []).map((meal, index) => {
+                          const mealAllergens = normalizeAllergenTags(meal.allergens);
+                          return (
                           <div key={`${plan.id}-${index}`} className="rounded-lg border border-slate-200 p-3">
                             <div className="flex items-center justify-between gap-3">
                               <div>
@@ -545,7 +551,7 @@ export default function NutritionAllergen() {
                                 </p>
                               </div>
                               <div className="flex flex-wrap gap-1">
-                                {(meal.allergens || []).map((allergen) => (
+                                {mealAllergens.map((allergen) => (
                                   <Badge key={allergen} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
                                     {allergen}
                                   </Badge>
@@ -553,7 +559,8 @@ export default function NutritionAllergen() {
                               </div>
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                     {plan.allergens.length > 0 ? (

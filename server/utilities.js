@@ -5,6 +5,7 @@ import { inferPackageFields } from '../shared/packageUnits.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../shared/siteHierarchy.js';
 import { normalizeProductionMenuScope } from '../shared/menuCategories.js';
 import { normalizeSourceName } from '../shared/sourceNames.js';
+import { normalizeAllergenTags } from '../shared/allergens.js';
 
 const commonSiteFields = ['site_id', 'site_name'];
 
@@ -255,13 +256,7 @@ function parseCell(field, value) {
     return trimmed.split(/[|,]/).map((alias) => alias.trim()).filter(Boolean);
   }
   if (field === 'allergens') {
-    if (/^(none|no|n\/a|na|null)$/i.test(trimmed)) return [];
-    try {
-      const parsed = JSON.parse(trimmed);
-      return Array.isArray(parsed) ? parsed : [parsed].filter(Boolean);
-    } catch {
-      return trimmed.split(/[|,]/).map((item) => item.trim()).filter(Boolean);
-    }
+    return normalizeAllergenTags(trimmed);
   }
   if (JSON_FIELDS.has(field)) {
     try {

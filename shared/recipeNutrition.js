@@ -2,6 +2,7 @@ import { calculateFrozenProductionLineWeight } from './productionReconciliation.
 import { isExemptProcessingAid, recipeLineRetainedFraction, recipeLineWeightFields } from './recipeLineWeight.js';
 import { ingredientWeightConversion, normalizeIngredientUnit } from './ingredientUnits.js';
 import { PACKAGE_UNITS, packageBaseQuantityForUnit, packageMeasureToCanonical } from './packageUnits.js';
+import { normalizeAllergenTags } from './allergens.js';
 
 const NUTRIENTS = ['calories', 'protein', 'carbs', 'fat', 'sodium', 'sugar'];
 const VOLUME_MILLILITRES = { l: 1000, ml: 1 };
@@ -114,13 +115,14 @@ export function calculateRecipeNutrition(recipe = {}, recipes = [], ingredients 
 
   function collectTags(value, label, required = true) {
     if (!Array.isArray(value)) {
+      if (typeof value === 'string' && value.trim()) return normalizeAllergenTags(value);
       if (required || value !== undefined) allergenWarnings.add(`Allergen tags are unavailable for ${label}.`);
       return [];
     }
-    if (value.some((tag) => typeof tag !== 'string' || !tag.trim())) {
+    if (Array.isArray(value) && value.some((tag) => tag == null || (typeof tag === 'string' && !tag.trim()))) {
       allergenWarnings.add(`Some allergen tags are invalid for ${label}.`);
     }
-    return value.filter((tag) => typeof tag === 'string' && tag.trim()).map((tag) => tag.trim());
+    return normalizeAllergenTags(value);
   }
 
   function declarations(current) {

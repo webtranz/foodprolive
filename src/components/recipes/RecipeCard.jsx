@@ -9,6 +9,7 @@ import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 import { convertIngredientQuantity } from '../../../shared/ingredientUnits.js';
+import { normalizeAllergenTags } from '../../../shared/allergens.js';
 import { getInventoryQuantities } from '@/lib/inventoryAvailability';
 
 const CATEGORY_COLORS = {
@@ -23,7 +24,7 @@ const CATEGORY_COLORS = {
 
 export default function RecipeCard({ recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, onEdit, onDelete }) {
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
-  const allergens = Array.isArray(recipe.allergens) ? recipe.allergens : [];
+  const allergens = normalizeAllergenTags(recipe.allergens);
   const nutritionWarnings = Array.isArray(recipe.nutrition_warnings) ? recipe.nutrition_warnings : [];
   const allergenWarnings = Array.isArray(recipe.allergens_warnings) ? recipe.allergens_warnings : [];
   const subRecipes = Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [];

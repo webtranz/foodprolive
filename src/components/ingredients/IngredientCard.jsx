@@ -7,6 +7,7 @@ import { MoreVertical, Pencil, Trash2, Flame, Scale, TrendingDown, Droplets, Can
 import { getItemCode } from '../../../shared/itemCode.js';
 import { formatCurrency } from '@/lib/currency';
 import { normalizeSourceName } from '../../../shared/sourceNames.js';
+import { normalizeAllergenTags } from '../../../shared/allergens.js';
 
 const CATEGORY_COLORS = {
   proteins: 'bg-red-100 text-red-700',
@@ -26,7 +27,7 @@ const formatQuantity = (value) => Number(value || 0).toLocaleString(undefined, {
 });
 
 export default function IngredientCard({ ingredient, onEdit, onDelete }) {
-  const allergens = Array.isArray(ingredient.allergens) ? ingredient.allergens : [];
+  const allergens = normalizeAllergenTags(ingredient.allergens);
   const stock = ingredient.stock_summary || {};
 
   return (

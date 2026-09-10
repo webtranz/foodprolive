@@ -33,6 +33,7 @@ import { getItemCode, getItemCodeFromRecords, putItemCodeAndNameFirst } from '..
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 import { getInventoryQuantities } from '@/lib/inventoryAvailability';
 import { DEFAULT_SOURCE_NAME, SOURCE_NAME_OPTIONS, normalizeSourceName } from '../../shared/sourceNames.js';
+import { normalizeAllergenTags } from '../../shared/allergens.js';
 
 const CATEGORY_COLORS = {
   proteins_meat: 'bg-red-100 text-red-700',
@@ -630,16 +631,16 @@ export default function Ingredients() {
                             </span>
                           </TableCell>
                           <TableCell>
-                            {Array.isArray(ing.allergens) && ing.allergens.length > 0 ? (
+                            {normalizeAllergenTags(ing.allergens).length > 0 ? (
                               <div className="flex flex-wrap gap-1">
-                                {ing.allergens.slice(0, 3).map((allergen) => (
+                                {normalizeAllergenTags(ing.allergens).slice(0, 3).map((allergen) => (
                                   <Badge key={allergen} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
                                     {allergen}
                                   </Badge>
                                 ))}
-                                {ing.allergens.length > 3 ? (
+                                {normalizeAllergenTags(ing.allergens).length > 3 ? (
                                   <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                                    +{ing.allergens.length - 3}
+                                    +{normalizeAllergenTags(ing.allergens).length - 3}
                                   </Badge>
                                 ) : null}
                               </div>

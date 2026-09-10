@@ -96,6 +96,14 @@ assert.deepEqual(
   mapCsvRow('ingredients', ['ingredient_name', 'allergens'], ['No Allergen Item', 'none']).allergens,
   []
 );
+assert.deepEqual(
+  mapCsvRow('ingredients', ['ingredient_name', 'allergens'], ['Malformed Allergen Item', '[""milk""]|fish|["mollusc"]']).allergens,
+  ['milk', 'fish', 'mollusc']
+);
+assert.deepEqual(
+  mapCsvRow('recipes', ['name', 'allergens'], ['Boiled Eggs', '[""egg""]']).allergens,
+  ['egg']
+);
 const compactNutritionIngredient = mapCsvRow(
   'ingredients',
   ['item', 'product_name', 'unit', 'unit_price', 'CAL.', 'PROTIEN', 'CAR', 'YIELD', 'allergens'],
