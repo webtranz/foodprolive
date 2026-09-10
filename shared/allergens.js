@@ -8,11 +8,15 @@ function normalizeAllergenText(value) {
 
 function parseMaybeJsonArray(value) {
   const text = String(value || '').trim();
-  if (!text || !/^\[.*\]$/.test(text)) return null;
+  if (!text) return null;
+
+  const unwrapped = text.replace(/^["'\s]+|["'\s]+$/g, '');
+  if (!/^\[.*\]$/.test(unwrapped)) return null;
 
   const attempts = [
-    text,
-    text.replace(/""/g, '"')
+    unwrapped,
+    unwrapped.replace(/""/g, '"'),
+    unwrapped.replace(/\\"/g, '"')
   ];
 
   for (const attempt of attempts) {
@@ -51,7 +55,7 @@ export function normalizeAllergenTags(value) {
     }
 
     const trimmed = candidate.trim();
-    if (!trimmed || /^(none|no|n\/a|na|null)$/i.test(trimmed)) return;
+    if (!trimmed || /^(none|no|n\/a|na|null|no allergen|no allergens|no tagged allergens|no allergens declared)$/i.test(trimmed)) return;
 
     const jsonArray = parseMaybeJsonArray(trimmed);
     if (jsonArray) {

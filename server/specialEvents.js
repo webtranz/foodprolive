@@ -1,3 +1,5 @@
+import { normalizeAllergenTags } from '../shared/allergens.js';
+
 function numericMatch(input, fallback = 0) {
   const value = Number(input);
   return Number.isFinite(value) ? value : fallback;
@@ -80,7 +82,7 @@ export function buildSpecialEventMeals(mealTypes = [], expectedParticipants = 0,
         fat_per_serving: numericMatch(existing?.fat_per_serving, 0),
         sodium_per_serving: numericMatch(existing?.sodium_per_serving, 0),
         sugar_per_serving: numericMatch(existing?.sugar_per_serving, 0),
-        allergens: Array.isArray(existing?.allergens) ? existing.allergens : []
+        allergens: normalizeAllergenTags(existing?.allergens)
       };
     });
 }

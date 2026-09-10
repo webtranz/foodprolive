@@ -187,6 +187,14 @@ assert.equal(recipe.name, 'Secure Recipe');
 assert.equal(recipe.servings, 4);
 assert.equal(recipe.image_url, 'https://cdn.example.com/recipes/secure.jpg');
 assert.deepEqual(recipe.allergens, ['dairy']);
+
+const encodedAllergenRecipe = mapCsvRow(
+  'recipes',
+  ['name', 'allergens'],
+  ['Encoded Allergen Recipe', '"[\\"fish\\"]"']
+);
+assert.deepEqual(encodedAllergenRecipe.allergens, ['fish']);
+
 assert.throws(
   () => mapCsvRow('recipes', ['name', 'image_url'], ['Unsafe Recipe', 'http://example.com/image.jpg']),
   /HTTPS/

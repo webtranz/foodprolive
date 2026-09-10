@@ -6,6 +6,7 @@ import cors from 'cors';
 import multer from 'multer';
 import nodemailer from 'nodemailer';
 import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
+import { normalizeAllergenTags } from '../shared/allergens.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { calculateRecipeNutrition } from '../shared/recipeNutrition.js';
@@ -1773,7 +1774,7 @@ function buildMenuPlanWritePayload(body = {}, existing = null) {
         fat_per_serving: numericMatch(meal.fat_per_serving, 0),
         sodium_per_serving: numericMatch(meal.sodium_per_serving, 0),
         sugar_per_serving: numericMatch(meal.sugar_per_serving, 0),
-        allergens: Array.isArray(meal.allergens) ? meal.allergens : []
+        allergens: normalizeAllergenTags(meal.allergens)
       }))
     : (Array.isArray(existing?.meals) ? existing.meals : []);
 
