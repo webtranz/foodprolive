@@ -219,6 +219,24 @@ assert.equal(processingAidSnapshot.lines.length, 2);
 assert.equal(processingAidSnapshot.lines.find((line) => line.exempt_processing_aid === true).yielded_quantity, 0);
 assert.equal(buildProductionIngredientsForSubmit(processingAidSnapshot.lines)[1].exempt_processing_aid, true);
 
+const partialPrepExemptionSnapshot = buildProductionIngredientSnapshot({
+  recipe: {
+    id: 'rice',
+    name: 'Rice',
+    servings: 1,
+    ingredients: [
+      { ingredient_id: 'chickpeas', ingredient_name: 'Rice water', quantity: 1, unit: 'kg', prep_exempt_percent: 70 }
+    ]
+  },
+  ingredients,
+  targetServings: 1
+});
+assert.equal(partialPrepExemptionSnapshot.lines.length, 1);
+assert.equal(partialPrepExemptionSnapshot.lines[0].raw_quantity, 1);
+assert.equal(partialPrepExemptionSnapshot.lines[0].yielded_quantity, 0.3);
+assert.equal(partialPrepExemptionSnapshot.lines[0].prep_exempt_percent, 70);
+assert.equal(buildProductionIngredientsForSubmit(partialPrepExemptionSnapshot.lines)[0].prep_exempt_percent, 70);
+
 const waterBottleIngredient = {
   id: 'nova-water',
   name: '(TAFGA) NOVA WATER 24/0.55-0.6LTR',

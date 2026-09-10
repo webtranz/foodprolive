@@ -10,9 +10,11 @@ import { getItemCode } from '../../shared/itemCode.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 import {
   clearRecipeLineWeight,
+  getRecipeLinePrepExemptPercent,
   ingredientForRecipeLine,
   isExemptProcessingAid,
   recipeLineProcessingAidField,
+  recipeLineRetainedFraction,
   recipeLineWeightFields
 } from '../../shared/recipeLineWeight.js';
 import { accumulateRecipeLineWeight, finishRecipeLineWeight } from '../../shared/recipeWeightAggregation.js';
@@ -264,6 +266,8 @@ export function buildProductionIngredientLine({
   const stockQuantities = getInventoryQuantities(inventoryRow);
   const availableStock = stockQuantities.available_quantity;
   const shortage = Math.max(0, requiredInventoryQty - availableStock);
+  const retainedFraction = recipeLineRetainedFraction(sourceLine);
+  const prepExemptPercent = getRecipeLinePrepExemptPercent(sourceLine);
   const yieldOutput = processingAid
     ? {
         yielded_quantity: 0,
@@ -271,7 +275,16 @@ export function buildProductionIngredientLine({
         yield_percent: 0,
         yield_source: 'exempt_processing_aid'
       }
-    : calculateYieldOutputQuantity(rawQuantity, ingredientData);
+    : (() => {
+        const output = calculateYieldOutputQuantity(rawQuantity, ingredientData);
+        return {
+          ...output,
+          yielded_quantity: output.yielded_quantity * retainedFraction,
+          yield_multiplier: output.yield_multiplier,
+          yield_percent: output.yield_percent,
+          yield_source: output.yield_source
+        };
+      })();
   const unitCost = finiteProductionNumber(
     sourceLine.unit_cost
       ?? ingredientData.cost_per_unit
@@ -323,6 +336,8 @@ export function buildProductionIngredientLine({
     yield_percent: Number(yieldOutput.yield_percent.toFixed(2)),
     yield_source: yieldOutput.yield_source,
     shrinkage_percent: finiteProductionNumber(ingredientData.shrinkage_percent, 0),
+    prep_exempt_percent: prepExemptPercent,
+    retained_fraction: roundStandardDecimal(retainedFraction, 4),
     sufficient: availableStock >= requiredInventoryQty,
     unit_cost: Number(unitCost.toFixed(2)),
     estimated_cost: Number(estimatedCost.toFixed(2)),
@@ -356,6 +371,7 @@ export function aggregateProductionIngredientLines(lines = [], {
     if (!ingredientId) return;
     const ingredient = ingredientForRecipeLine(line, findIngredient(ingredients, ingredientId) || {});
     const processingAid = isExemptProcessingAid(line);
+    const prepExemptPercent = getRecipeLinePrepExemptPercent(line);
     const sourceUnit = line?.unit || line?.inventory_unit || ingredient.unit || 'unit';
     let targetUnit = ingredient.unit || line?.inventory_unit || sourceUnit || 'unit';
     let aggregateQuantity = lineQuantity(line);
@@ -372,7 +388,7 @@ export function aggregateProductionIngredientLines(lines = [], {
     }
     if (aggregateQuantity <= 0) return;
 
-    const groupKey = `${ingredientId}::${targetUnit}::${processingAid ? 'processing_aid' : 'food'}`;
+    const groupKey = `${ingredientId}::${targetUnit}::${processingAid ? 'processing_aid' : `prep_${prepExemptPercent}`}`;
     const current = groupedLines.get(groupKey) || {
       line_id: `aggregate-${ingredientId}-${groupedLines.size}`,
       ingredient_id: ingredientId,

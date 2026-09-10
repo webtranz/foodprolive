@@ -2,8 +2,10 @@ import { hasAdministratorAccess } from '../shared/bulkUploadAccess.js';
 import { normalizeIngredientUnit } from '../shared/ingredientUnits.js';
 import {
   clearRecipeLineWeight,
+  getRecipeLinePrepExemptPercent,
   getRecipeLineWeight,
   isExemptProcessingAid,
+  RECIPE_LINE_PREP_EXEMPT_PERCENT_FIELD,
   recipeLineWeightFields,
   recipeLineWeightInUnit
 } from '../shared/recipeLineWeight.js';
@@ -15,6 +17,17 @@ function identity(line) {
 
 function fail(message, status) {
   throw Object.assign(new Error(message), { status });
+}
+
+function normalizePrepExemptPercent(line = {}) {
+  if (isExemptProcessingAid(line)) return null;
+  const supplied = line[RECIPE_LINE_PREP_EXEMPT_PERCENT_FIELD];
+  if (supplied === null || supplied === undefined || supplied === '' || Number(supplied) === 0) return null;
+  const numeric = Number(supplied);
+  if (!Number.isFinite(numeric) || numeric < 1 || numeric > 99.99) {
+    fail('% exempt during prep must be a number from 1 to 99.99.', 400);
+  }
+  return Number(numeric.toFixed(2));
 }
 
 // Runs for normal entity saves and bulk imports. Never trust client audit fields.
@@ -36,6 +49,12 @@ export function prepareRecipeLineWeights(user, lines = [], existingLines = []) {
       fail('Only administrators can define, change, or clear recipe-line weights.', 403);
     }
     const clean = clearRecipeLineWeight(line);
+    const prepExemptPercent = normalizePrepExemptPercent(line);
+    if (prepExemptPercent === null) {
+      delete clean[RECIPE_LINE_PREP_EXEMPT_PERCENT_FIELD];
+    } else {
+      clean[RECIPE_LINE_PREP_EXEMPT_PERCENT_FIELD] = prepExemptPercent;
+    }
     if (weight === null) return clean;
     if (!line.ingredient_id || !line.unit) fail('Select an ingredient and unit before defining its weight.', 400);
     if (unchanged) return { ...clean, ...recipeLineWeightFields(unchanged) };
@@ -57,15 +76,18 @@ export function bindProductionRecipeLineWeights(production, recipe, recipes, ing
   const bind = (lines, definitions, priorLines = []) => lines.map((line) => {
     const clean = clearRecipeLineWeight(line);
     const processingAid = isExemptProcessingAid(line);
+    const prepExemptPercent = getRecipeLinePrepExemptPercent(line);
     const prior = priorLines.find((item) => (
       String(item.ingredient_id) === String(line.ingredient_id)
       && isExemptProcessingAid(item) === processingAid
+      && getRecipeLinePrepExemptPercent(item) === prepExemptPercent
       && getRecipeLineWeight(item) !== null
     ));
     const definition = prior
       || definitions.find((item) => (
         String(item.ingredient_id) === String(line.ingredient_id)
         && isExemptProcessingAid(item) === processingAid
+        && getRecipeLinePrepExemptPercent(item) === prepExemptPercent
       ))
       || definitions.find((item) => String(item.ingredient_id) === String(line.ingredient_id));
     const grams = definition && recipeLineWeightInUnit(definition, ingredientMap.get(String(line.ingredient_id)) || {}, line.unit);

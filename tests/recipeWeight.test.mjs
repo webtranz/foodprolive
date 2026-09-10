@@ -103,6 +103,22 @@ assert.equal(boiledEggsWithWaterAid.is_complete, true);
 assert.equal(boiledEggsWithWaterAid.raw_total_grams, 50);
 assert.equal(boiledEggsWithWaterAid.cooked_total_grams, 50);
 
+const pastaWithRetainedWater = calculateRecipeServingWeight({
+  id: 'pasta',
+  servings: 1,
+  ingredients: [
+    { ingredient_id: 'pasta', ingredient_name: 'Pasta', quantity: 100, unit: 'g' },
+    { ingredient_id: 'water', ingredient_name: 'Water', quantity: 1, unit: 'l', prep_exempt_percent: 70 }
+  ]
+}, [], [
+  { id: 'pasta', name: 'Pasta', unit: 'g', cooking_yield_percent: 100 },
+  { id: 'water', name: 'Water', unit: 'l' }
+]);
+assert.equal(pastaWithRetainedWater.is_complete, true);
+assert.equal(pastaWithRetainedWater.raw_total_grams, 400);
+assert.equal(pastaWithRetainedWater.cooked_total_grams, 400);
+assert.equal(pastaWithRetainedWater.grams_per_serving, 400);
+
 const emptyRecipe = calculateRecipeServingWeight({ id: 'empty', servings: 1 }, [], []);
 assert.equal(emptyRecipe.is_complete, false);
 assert.equal(emptyRecipe.grams_per_serving, null);

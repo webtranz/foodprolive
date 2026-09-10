@@ -1,5 +1,5 @@
 import { calculateFrozenProductionLineWeight } from './productionReconciliation.js';
-import { isExemptProcessingAid, recipeLineWeightFields } from './recipeLineWeight.js';
+import { isExemptProcessingAid, recipeLineRetainedFraction, recipeLineWeightFields } from './recipeLineWeight.js';
 import { ingredientWeightConversion, normalizeIngredientUnit } from './ingredientUnits.js';
 import { PACKAGE_UNITS, packageBaseQuantityForUnit, packageMeasureToCanonical } from './packageUnits.js';
 
@@ -182,16 +182,22 @@ export function calculateRecipeNutrition(recipe = {}, recipes = [], ingredients 
       }
       collectTags(ingredient.allergens, `ingredient ${ingredient.name || name}`)
         .forEach((tag) => allergens.add(tag));
-      if (isExemptProcessingAid(line)) return;
+      const retainedFraction = recipeLineRetainedFraction(line);
+      if (retainedFraction <= 0) return;
       activeIngredientCount += 1;
       if (quantity === null || !Number.isFinite(quantity * multiplier)) return;
-      const grams = rawGrams({ ...line, quantity: quantity * multiplier }, ingredient);
-      if (grams === null) {
+      const grams = rawGrams({ ...line, quantity: quantity * multiplier * retainedFraction }, ingredient);
+      const nutrientValues = Object.fromEntries(
+        NUTRIENTS.map((nutrient) => [nutrient, nutrientNumber(ingredient[`${nutrient}_per_100g`])])
+      );
+      const hasNonZeroNutrition = Object.values(nutrientValues)
+        .some((value) => value === null || value > 0);
+      if (grams === null && hasNonZeroNutrition) {
         nutritionWarnings.add(`Weight unavailable for ingredient ${ingredient.name || name}; a verified gram conversion is required.`);
         allWeightsKnown = false;
       }
       NUTRIENTS.forEach((nutrient) => {
-        const value = nutrientNumber(ingredient[`${nutrient}_per_100g`]);
+        const value = nutrientValues[nutrient];
         if (value === null) {
           totals[nutrient] = null;
           nutritionWarnings.add(`${nutrient[0].toUpperCase()}${nutrient.slice(1)} per 100 g is unavailable for ingredient ${ingredient.name || name}.`);

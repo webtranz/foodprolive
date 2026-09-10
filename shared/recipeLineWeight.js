@@ -10,6 +10,7 @@ export const RECIPE_LINE_WEIGHT_FIELDS = Object.freeze([
 ]);
 
 export const RECIPE_LINE_PROCESSING_AID_FIELD = 'exempt_processing_aid';
+export const RECIPE_LINE_PREP_EXEMPT_PERCENT_FIELD = 'prep_exempt_percent';
 
 export function isExemptProcessingAid(line = {}) {
   const value = line?.[RECIPE_LINE_PROCESSING_AID_FIELD];
@@ -18,8 +19,24 @@ export function isExemptProcessingAid(line = {}) {
   return ['true', '1', 'yes', 'y', 'on'].includes(value.trim().toLowerCase());
 }
 
+export function getRecipeLinePrepExemptPercent(line = {}) {
+  if (isExemptProcessingAid(line)) return 100;
+  const value = line?.[RECIPE_LINE_PREP_EXEMPT_PERCENT_FIELD];
+  if (value === null || value === undefined || value === '') return 0;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.min(99.99, numeric);
+}
+
+export function recipeLineRetainedFraction(line = {}) {
+  const exemptPercent = getRecipeLinePrepExemptPercent(line);
+  return Math.max(0, Math.min(1, (100 - exemptPercent) / 100));
+}
+
 export function recipeLineProcessingAidField(line = {}) {
-  return isExemptProcessingAid(line) ? { [RECIPE_LINE_PROCESSING_AID_FIELD]: true } : {};
+  if (isExemptProcessingAid(line)) return { [RECIPE_LINE_PROCESSING_AID_FIELD]: true };
+  const exemptPercent = getRecipeLinePrepExemptPercent(line);
+  return exemptPercent > 0 ? { [RECIPE_LINE_PREP_EXEMPT_PERCENT_FIELD]: exemptPercent } : {};
 }
 
 export function clearRecipeLineWeight(line = {}) {

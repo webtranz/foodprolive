@@ -38,8 +38,10 @@ import { getIngredientCostSnapshots } from './ingredientSearch.js';
 import { bindProductionRecipeLineWeights, prepareRecipeLineWeights } from './recipeLineWeights.js';
 import {
   ingredientForRecipeLine,
+  getRecipeLinePrepExemptPercent,
   isExemptProcessingAid,
   recipeLineProcessingAidField,
+  recipeLineRetainedFraction,
   recipeLineWeightFields
 } from '../shared/recipeLineWeight.js';
 import {
@@ -357,6 +359,8 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
     : []).map((line, index) => {
     const ingredient = ingredientForRecipeLine(line, ingredientMap.get(String(line?.ingredient_id || '')) || {});
     const processingAid = isExemptProcessingAid(line);
+    const prepExemptPercent = getRecipeLinePrepExemptPercent(line);
+    const retainedFraction = recipeLineRetainedFraction(line);
     const unit = line?.unit || ingredient.unit || line?.inventory_unit || 'unit';
     const rawQuantity = productionLineNumber(line, 0);
     const yieldedQuantity = processingAid
@@ -407,7 +411,9 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
       cost_quantity: Number(costQuantity.toFixed(4)),
       cost_unit: line?.cost_unit || ingredient.unit || unit,
       unit_cost: Number(unitCost.toFixed(2)),
-      estimated_cost: Number(estimatedCost.toFixed(2))
+      estimated_cost: Number(estimatedCost.toFixed(2)),
+      prep_exempt_percent: prepExemptPercent,
+      retained_fraction: Number(retainedFraction.toFixed(4))
     };
     const frozenWeight = calculateFrozenProductionLineWeight(preparedLine, ingredient);
     return {
@@ -426,7 +432,7 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
   );
   const recipeRawWeightGrams = productionIngredients.reduce((total, line) => (
     !isExemptProcessingAid(line) && Number.isFinite(Number(line.raw_weight_grams))
-      ? total + Number(line.raw_weight_grams)
+      ? total + (Number(line.raw_weight_grams) * recipeLineRetainedFraction(line))
       : total
   ), 0);
   const expectedFinishedWeightGrams = productionIngredients.reduce((total, line) => (
@@ -1109,6 +1115,8 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
       }
       const yieldOutput = calculateYieldOutputQuantity(line.quantity, ingredient);
       const processingAid = isExemptProcessingAid(line);
+      const prepExemptPercent = getRecipeLinePrepExemptPercent(line);
+      const retainedFraction = recipeLineRetainedFraction(line);
       const effectiveYieldOutput = processingAid
         ? {
             yielded_quantity: 0,
@@ -1116,7 +1124,13 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
             yield_percent: 0,
             yield_source: 'exempt_processing_aid'
           }
-        : yieldOutput;
+        : {
+            ...yieldOutput,
+            yielded_quantity: yieldOutput.yielded_quantity * retainedFraction,
+            yield_multiplier: yieldOutput.yield_multiplier,
+            yield_percent: yieldOutput.yield_percent,
+            yield_source: yieldOutput.yield_source
+          };
       const rawQuantity = convertIngredientQuantity(
         line.quantity,
         line.unit || unit,
@@ -1162,7 +1176,9 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
         cost_quantity: Number(rawQuantity.toFixed(4)),
         cost_unit: unit,
         unit_cost: Number(unitCost.toFixed(2)),
-        estimated_cost: Number(estimatedCost.toFixed(2))
+        estimated_cost: Number(estimatedCost.toFixed(2)),
+        prep_exempt_percent: prepExemptPercent,
+        retained_fraction: Number(retainedFraction.toFixed(4))
       };
       const frozenWeight = calculateFrozenProductionLineWeight(preparedLine, ingredient);
       return {

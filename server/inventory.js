@@ -15,7 +15,7 @@ import {
 import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 import { calculateYieldOutputQuantity } from '../shared/ingredientYield.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
-import { isExemptProcessingAid, recipeLineWeightFields } from '../shared/recipeLineWeight.js';
+import { getRecipeLinePrepExemptPercent, isExemptProcessingAid, recipeLineWeightFields } from '../shared/recipeLineWeight.js';
 import { buildAutomaticProductionYieldSummary } from '../shared/productionReconciliation.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import { normalizeProductionMenuScope } from '../shared/menuCategories.js';
@@ -155,7 +155,7 @@ export function buildAutomaticProductionCompletionPlan({
       throw error;
     }
     const ingredientKeys = production.ingredients_used.map((line) => (
-      `${normalizeText(line?.ingredient_id)}::${isExemptProcessingAid(line) ? 'processing_aid' : 'food'}`
+      `${normalizeText(line?.ingredient_id)}::${isExemptProcessingAid(line) ? 'processing_aid' : `prep_${getRecipeLinePrepExemptPercent(line)}`}`
     ));
     if (new Set(ingredientKeys).size !== ingredientKeys.length) {
       const error = new Error('The frozen production recipe snapshot contains duplicate ingredient IDs');

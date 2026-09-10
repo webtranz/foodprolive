@@ -1,6 +1,7 @@
 import { convertIngredientQuantity } from './ingredientUnits.js';
 import {
   ingredientForRecipeLine,
+  getRecipeLinePrepExemptPercent,
   isExemptProcessingAid,
   recipeLineProcessingAidField
 } from './recipeLineWeight.js';
@@ -119,7 +120,8 @@ export function expandRecipeIngredients(
       ingredient
     );
     const processingAid = isExemptProcessingAid(line);
-    const key = `${line.ingredient_id}::${targetUnit}::${processingAid ? 'processing_aid' : 'food'}`;
+    const prepExemptPercent = getRecipeLinePrepExemptPercent(line);
+    const key = `${line.ingredient_id}::${targetUnit}::${processingAid ? 'processing_aid' : `prep_${prepExemptPercent}`}`;
     const current = aggregated.get(key) || {
       ingredient_id: line.ingredient_id,
       ingredient_name: ingredient?.name || line.ingredient_name || 'Unnamed ingredient',

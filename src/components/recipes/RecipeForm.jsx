@@ -38,8 +38,10 @@ import {
 import { getItemCode } from '../../../shared/itemCode.js';
 import {
   clearRecipeLineWeight,
+  getRecipeLinePrepExemptPercent,
   getRecipeLineWeight,
-  isExemptProcessingAid
+  isExemptProcessingAid,
+  recipeLineRetainedFraction
 } from '../../../shared/recipeLineWeight.js';
 import { calculateFrozenProductionLineWeight } from '../../../shared/productionReconciliation.js';
 
@@ -131,6 +133,9 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
         ingredients: (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).map((line) => ({
           ...line,
           quantity: Number.isFinite(Number(line.quantity)) ? Number(line.quantity) : null,
+          prep_exempt_percent: getRecipeLinePrepExemptPercent(line) > 0 && getRecipeLinePrepExemptPercent(line) < 100
+            ? getRecipeLinePrepExemptPercent(line)
+            : '',
           exempt_processing_aid: isExemptProcessingAid(line)
         })),
         sub_recipes: (Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : []).map((line) => ({
@@ -260,6 +265,15 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     const yieldOutput = ingredient
       ? calculateYieldOutputQuantity(line.quantity, ingredient)
       : null;
+    const retainedFraction = recipeLineRetainedFraction(line);
+    const prepExemptPercent = getRecipeLinePrepExemptPercent(line);
+    const adjustedYieldOutput = yieldOutput
+      ? {
+          ...yieldOutput,
+          yielded_quantity: yieldOutput.yielded_quantity * retainedFraction,
+          yield_percent: yieldOutput.yield_percent * retainedFraction
+        }
+      : null;
     const hasStock = ingredient && Object.prototype.hasOwnProperty.call(ingredient, 'current_stock');
     const currentStock = hasStock ? Number(ingredient.current_stock) || 0 : null;
     const normalizedUnit = normalizeIngredientUnit(line.unit || ingredient?.unit);
@@ -271,6 +285,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     });
     const validationError = numericValidation[`ingredient-${index}`]?.error
       || numericValidation[`weight-${index}`]?.error
+      || numericValidation[`prep-exempt-${index}`]?.error
       || (!line.ingredient_id ? 'Select an ingredient.' : '')
       || (!quantityValidation.valid ? quantityValidation.error : '')
       || (!SUPPORTED_RECIPE_INGREDIENT_UNITS.has(normalizedUnit) ? 'Choose a supported unit.' : '')
@@ -282,12 +297,13 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       quantityInBaseUnit: Number.isFinite(quantityInBaseUnit) ? quantityInBaseUnit : null,
       unitCost: costing.item_cost,
       amount: costing.line_cost,
-      yieldPercent: yieldOutput?.yield_percent ?? null,
-      yieldedQuantity: yieldOutput?.yielded_quantity ?? null,
+      yieldPercent: adjustedYieldOutput?.yield_percent ?? null,
+      yieldedQuantity: adjustedYieldOutput?.yielded_quantity ?? null,
       currentStock,
       autoWeight: calculateFrozenProductionLineWeight({ planned_quantity: 1, unit: line.unit }, ingredient || {}).raw_weight_grams,
       definedWeight: getRecipeLineWeight(line),
       processingAid: isExemptProcessingAid(line),
+      prepExemptPercent,
       shortage: currentStock === null || !Number.isFinite(quantityInBaseUnit) ? null : Math.max(0, quantityInBaseUnit - currentStock),
       validationError
     };
@@ -305,7 +321,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
   const addIngredient = () => {
     setFormData((prev) => ({
       ...prev,
-      ingredients: [...prev.ingredients, { ingredient_id: '', item_code: '', ingredient_name: '', quantity: null, unit: 'g', exempt_processing_aid: false }]
+      ingredients: [...prev.ingredients, { ingredient_id: '', item_code: '', ingredient_name: '', quantity: null, unit: 'g', exempt_processing_aid: false, prep_exempt_percent: '' }]
     }));
   };
 
@@ -315,7 +331,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       ingredients: prev.ingredients.filter((_, i) => i !== index)
     }));
     setNumericValidation((current) => Object.fromEntries(
-      Object.entries(current).filter(([key]) => !key.startsWith('ingredient-') && !key.startsWith('weight-'))
+      Object.entries(current).filter(([key]) => !key.startsWith('ingredient-') && !key.startsWith('weight-') && !key.startsWith('prep-exempt-'))
     ));
   };
 
@@ -326,6 +342,12 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     setFormData((prev) => {
       const nextIngredients = [...prev.ingredients];
       nextIngredients[index] = { ...nextIngredients[index], [field]: value };
+      if (field === 'exempt_processing_aid' && value === true) {
+        nextIngredients[index].prep_exempt_percent = '';
+      }
+      if (field === 'prep_exempt_percent' && Number(value) > 0) {
+        nextIngredients[index].exempt_processing_aid = false;
+      }
       if (field === 'unit' || field === 'ingredient_id') {
         nextIngredients[index] = clearRecipeLineWeight(nextIngredients[index]);
       }
@@ -784,12 +806,12 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
               Weight per unit is the raw weight in grams of one selected unit (one piece, EA, or PAK), not the entire line.
               It scales with quantity and production covers without changing the ingredient master.
               {canEditLineWeights ? ' Enter a verified weight where conversion is missing; leave blank to use the ingredient settings.' : ' Only administrators can define or change this weight.'}
-              {' '}Mark Exempt Processing Aid for items consumed during preparation but not included in the finished recipe weight.
+              {' '}Mark Exempt Processing Aid for items fully consumed during preparation, or enter a % exempt during prep when only part of the line should be removed from finished recipe weight.
             </p>
-            <div className="min-w-0 max-w-full overflow-x-auto pb-2">
-            <div className="space-y-3 xl:min-w-[1700px]">
+            <div className="max-h-[58vh] min-w-0 max-w-full overflow-auto rounded-lg border border-slate-100 pb-2">
+            <div className="space-y-3 xl:min-w-[1500px]">
               {formData.ingredients.length > 0 ? (
-                <div className="hidden grid-cols-[100px_minmax(210px,1.5fr)_100px_80px_140px_72px_110px_110px_110px_120px_140px_160px_42px] gap-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 xl:grid">
+                <div className="sticky top-0 z-10 hidden grid-cols-[90px_minmax(190px,1.4fr)_88px_70px_130px_68px_105px_95px_95px_105px_125px_235px_36px] gap-2 bg-white/95 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500 backdrop-blur xl:grid">
                   <span>Item Code</span>
                   <span>Item Name</span>
                   <span>Raw Quantity</span>
@@ -801,7 +823,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                   <span>Line Cost</span>
                   <span>Stock Impact</span>
                   <span>Validation</span>
-                  <span>Processing Aid</span>
+                  <span>Prep Exemption</span>
                   <span aria-hidden="true" />
                 </div>
               ) : null}
@@ -819,7 +841,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     : null
                 );
                 return (
-                  <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[100px_minmax(210px,1.5fr)_100px_80px_140px_72px_110px_110px_110px_120px_140px_160px_42px]">
+                  <div key={`${ingredientLine.ingredient_id || 'new'}-${index}`} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-2 xl:grid-cols-[90px_minmax(190px,1.4fr)_88px_70px_130px_68px_105px_95px_95px_105px_125px_235px_36px]">
                   <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Code</p>
                     <div className="flex h-10 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-medium text-slate-700">
@@ -898,6 +920,8 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                       'flex h-10 items-center rounded-md border px-2 text-sm font-semibold',
                       costRow?.processingAid
                         ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : costRow?.prepExemptPercent > 0
+                          ? 'border-blue-200 bg-blue-50 text-blue-800'
                         : 'border-emerald-200 bg-emerald-50 text-emerald-800'
                     )}>
                       {costRow?.processingAid
@@ -906,6 +930,11 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                         ? '—'
                         : `${formatRecipeQuantity(costRow.yieldedQuantity, ingredientLine.unit)} ${ingredientLine.unit || ''}`}
                     </div>
+                    {costRow?.prepExemptPercent > 0 && !costRow?.processingAid ? (
+                      <p className="mt-1 text-[11px] text-blue-600">
+                        {formatNumber(100 - costRow.prepExemptPercent, 2)}% retained
+                      </p>
+                    ) : null}
                   </div>
                   <div>
                     <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Item Cost</p>
@@ -955,24 +984,42 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                     </div>
                   </div>
                   <div className="md:col-span-2 xl:col-span-1">
-                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Processing Aid</p>
-                    <label
-                      htmlFor={`exempt-processing-aid-${index}`}
-                      className={cn(
-                        'flex min-h-10 cursor-pointer items-center gap-2 rounded-md border bg-white px-2 text-xs font-medium',
-                        costRow?.processingAid
-                          ? 'border-amber-200 text-amber-700'
-                          : 'border-slate-200 text-slate-600'
-                      )}
-                    >
-                      <Checkbox
-                        id={`exempt-processing-aid-${index}`}
-                        checked={costRow?.processingAid === true}
-                        onCheckedChange={(checked) => updateIngredient(index, 'exempt_processing_aid', checked === true)}
-                        className="data-[state=checked]:bg-amber-600 data-[state=checked]:text-white"
-                      />
-                      <span>Exempt Processing Aid.</span>
-                    </label>
+                    <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:hidden">Prep Exemption</p>
+                    <div className="grid gap-2 rounded-md border border-slate-200 bg-white p-2">
+                      <label
+                        htmlFor={`exempt-processing-aid-${index}`}
+                        className={cn(
+                          'flex cursor-pointer items-center gap-2 text-xs font-medium',
+                          costRow?.processingAid ? 'text-amber-700' : 'text-slate-600'
+                        )}
+                      >
+                        <Checkbox
+                          id={`exempt-processing-aid-${index}`}
+                          checked={costRow?.processingAid === true}
+                          onCheckedChange={(checked) => updateIngredient(index, 'exempt_processing_aid', checked === true)}
+                          className="data-[state=checked]:bg-amber-600 data-[state=checked]:text-white"
+                        />
+                        <span>Exempt Processing Aid.</span>
+                      </label>
+                      <div className="grid grid-cols-[86px_1fr] items-center gap-2">
+                        <StandardDecimalInput
+                          value={ingredientLine.prep_exempt_percent}
+                          unit="%"
+                          precision={2}
+                          min={1}
+                          max={99.99}
+                          allowZero={false}
+                          allowEmpty
+                          disabled={costRow?.processingAid === true}
+                          label={`Percent exempt during prep for ${ingredientLine.ingredient_name || 'ingredient'}`}
+                          onValueChange={(value) => updateIngredient(index, 'prep_exempt_percent', value)}
+                          onValidationChange={(status) => setNumericValidation((current) => ({ ...current, [`prep-exempt-${index}`]: status }))}
+                          placeholder="1-99.99"
+                          className="h-9 bg-white text-xs disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100"
+                        />
+                        <span className="text-[11px] font-medium leading-tight text-slate-500">% exempt during prep</span>
+                      </div>
+                    </div>
                   </div>
                   <Button
                     type="button"

@@ -131,6 +131,31 @@ test('exempt processing aids are excluded from nutrition weight while their alle
   assert.deepEqual(result.allergens, ['egg', 'sulphites']);
 });
 
+test('partial prep exemption applies only retained weight to nutrition totals', () => {
+  const result = calculate(recipe({
+    ingredients: [
+      line({ ingredient_id: 'water', quantity: 1, unit: 'l', prep_exempt_percent: 70 })
+    ]
+  }), [
+    ingredient({
+      id: 'water',
+      name: 'Water',
+      unit: 'l',
+      density_g_per_ml: 1,
+      calories_per_100g: 100,
+      protein_per_100g: 10,
+      carbs_per_100g: 10,
+      fat_per_100g: 10,
+      sodium_per_100g: 10,
+      sugar_per_100g: 10,
+      allergens: []
+    })
+  ]);
+  assert.equal(result.total_calories, 300);
+  assert.equal(result.total_protein, 30);
+  assert.equal(result.nutrition_complete, true);
+});
+
 test('saved litre-to-gram conversion factors establish nutrition weight across metric units', () => {
   const master = ingredient({ unit: 'l', conversion_unit: 'g', conversion_factor: 920, raw_weight_per_unit: 1 });
   const before = structuredClone(master);
@@ -217,6 +242,24 @@ test('zero defaults for missing nutrients do not turn unknown weights into zero 
   assertUnknownNutrition(result);
   assert.ok(result.nutrition_warnings.some((warning) => /Weight unavailable/.test(warning)));
   assert.deepEqual(result.allergens, ['milk']);
+  assert.equal(result.allergens_complete, true);
+});
+
+test('unknown weight with all missing nutrition contributes zero and does not block recipe nutrition', () => {
+  const master = ingredient(Object.fromEntries([
+    ['unit', 'l'],
+    ['name', 'Chili sauce'],
+    ['allergens', ['soy']],
+    ...nutrients.map((key) => [`${key}_per_100g`, ''])
+  ]));
+  const result = calculate(recipe({ ingredients: [line({ unit: 'ml', quantity: 5 })] }), [master]);
+  for (const nutrient of nutrients) {
+    assert.equal(result[`total_${nutrient}`], 0);
+    assert.equal(result[`${nutrient}_per_serving`], 0);
+  }
+  assert.equal(result.nutrition_complete, true);
+  assert.deepEqual(result.nutrition_warnings, []);
+  assert.deepEqual(result.allergens, ['soy']);
   assert.equal(result.allergens_complete, true);
 });
 

@@ -1,5 +1,10 @@
 import { calculateYieldOutputQuantity } from './ingredientYield.js';
-import { getRecipeLineWeight, isExemptProcessingAid } from './recipeLineWeight.js';
+import {
+  getRecipeLinePrepExemptPercent,
+  getRecipeLineWeight,
+  isExemptProcessingAid,
+  recipeLineRetainedFraction
+} from './recipeLineWeight.js';
 import { convertIngredientQuantity, ingredientWeightConversion, isIngredientUnitCompatible, normalizeIngredientUnit } from './ingredientUnits.js';
 import {
   PACKAGE_UNITS,
@@ -60,6 +65,19 @@ function packageRawWeightGrams(quantity, unit, ingredient = {}) {
 
 export function calculateFrozenProductionLineWeight(line = {}, ingredient = {}) {
   const processingAid = isExemptProcessingAid(line);
+  const prepExemptPercent = getRecipeLinePrepExemptPercent(line);
+  const retainedFraction = recipeLineRetainedFraction(line);
+  const hasPartialPrepExemption = prepExemptPercent > 0 && prepExemptPercent < 100;
+  const adjustedSource = (source) => {
+    if (/prep_exempt_percent|exempt_processing_aid/i.test(String(source || ''))) return source;
+    if (processingAid) return `${source}:exempt_processing_aid`;
+    return hasPartialPrepExemption ? `${source}:prep_exempt_percent` : source;
+  };
+  const adjustedYieldSource = (source) => {
+    if (/prep_exempt_percent|exempt_processing_aid/i.test(String(source || ''))) return source;
+    if (processingAid) return 'exempt_processing_aid';
+    return hasPartialPrepExemption ? `${source}:prep_exempt_percent` : source;
+  };
   const rawQuantity = finiteNumber(
     line.planned_quantity ?? line.raw_quantity ?? line.required_quantity
   );
@@ -78,19 +96,27 @@ export function calculateFrozenProductionLineWeight(line = {}, ingredient = {}) 
     ? frozenRawWeight === 0 && frozenYieldedWeight === 0
     : frozenRawWeight > 0 && frozenYieldedWeight > 0;
   if (hasValidFrozenWeights) {
-    const frozenMultiplier = positiveNumber(line.yield_multiplier)
-      ?? (frozenYieldedWeight / frozenRawWeight);
+    const frozenSource = [
+      line.weight_calculation_source,
+      line.yield_calculation_source,
+      line.yield_source
+    ].filter(Boolean).join(':');
+    const prepExemptionAlreadyApplied = /prep_exempt_percent|exempt_processing_aid/i.test(frozenSource);
+    const frozenYieldedAfterPrep = prepExemptionAlreadyApplied
+      ? frozenYieldedWeight
+      : frozenYieldedWeight * retainedFraction;
+    const frozenMultiplier = frozenRawWeight > 0
+      ? frozenYieldedAfterPrep / frozenRawWeight
+      : positiveNumber(line.yield_multiplier) ?? 0;
     return {
       raw_weight_grams: round(frozenRawWeight),
-      yielded_weight_grams: processingAid ? 0 : round(frozenYieldedWeight),
-      yield_multiplier: processingAid ? 0 : round(frozenMultiplier),
-      yield_percent: processingAid ? 0 : round(frozenMultiplier * 100),
-      source: processingAid
-        ? `${line.weight_calculation_source || 'frozen_weight_snapshot'}:exempt_processing_aid`
-        : line.weight_calculation_source || 'frozen_weight_snapshot',
-      yield_source: processingAid
-        ? 'exempt_processing_aid'
-        : line.yield_calculation_source || line.yield_source || 'frozen_yield_snapshot',
+      yielded_weight_grams: round(frozenYieldedAfterPrep),
+      yield_multiplier: round(frozenMultiplier),
+      yield_percent: round(frozenMultiplier * 100),
+      source: adjustedSource(line.weight_calculation_source || 'frozen_weight_snapshot'),
+      yield_source: adjustedYieldSource(line.yield_calculation_source || line.yield_source || 'frozen_yield_snapshot'),
+      prep_exempt_percent: prepExemptPercent,
+      retained_fraction: round(retainedFraction),
       weight_snapshot_status: 'frozen'
     };
   }
@@ -142,11 +168,13 @@ export function calculateFrozenProductionLineWeight(line = {}, ingredient = {}) 
 
   return {
     raw_weight_grams: round(rawWeightGrams),
-    yielded_weight_grams: processingAid ? 0 : round(rawWeightGrams * multiplier),
-    yield_multiplier: processingAid ? 0 : round(multiplier),
-    yield_percent: processingAid ? 0 : round(multiplier * 100),
-    source: processingAid ? `${weightSource}:exempt_processing_aid` : `${weightSource}:${yieldSource}`,
-    yield_source: processingAid ? 'exempt_processing_aid' : yieldSource,
+    yielded_weight_grams: round(rawWeightGrams * multiplier * retainedFraction),
+    yield_multiplier: round(multiplier * retainedFraction),
+    yield_percent: round(multiplier * retainedFraction * 100),
+    source: adjustedSource(`${weightSource}:${yieldSource}`),
+    yield_source: adjustedYieldSource(yieldSource),
+    prep_exempt_percent: prepExemptPercent,
+    retained_fraction: round(retainedFraction),
     weight_snapshot_status: 'metadata_reconstruction'
   };
 }
@@ -181,6 +209,7 @@ export function buildAutomaticProductionYieldSummary({
         ingredient_id: line?.ingredient_id || null,
         raw_quantity: rawQuantity,
         exempt_processing_aid: isExemptProcessingAid(line),
+        prep_exempt_percent: getRecipeLinePrepExemptPercent(line),
         ...calculateFrozenProductionLineWeight(
           line,
           ingredient
@@ -189,7 +218,9 @@ export function buildAutomaticProductionYieldSummary({
     });
   const outputLines = lines.filter((line) => !line.exempt_processing_aid);
   const measurableLines = outputLines.filter((line) => line.yielded_weight_grams !== null);
-  const rawWeight = measurableLines.reduce((total, line) => total + line.raw_weight_grams, 0);
+  const rawWeight = measurableLines.reduce((total, line) => (
+    total + (line.raw_weight_grams * recipeLineRetainedFraction(line))
+  ), 0);
   const yieldedWeight = measurableLines.reduce((total, line) => total + line.yielded_weight_grams, 0);
   const positiveLines = outputLines.filter((line) => line.raw_quantity > 0);
   const measurablePositiveLines = positiveLines.filter((line) => line.yielded_weight_grams !== null);

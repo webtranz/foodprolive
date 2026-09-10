@@ -1,7 +1,7 @@
 import { convertIngredientQuantity, isIngredientUnitCompatible, normalizeIngredientUnit } from './ingredientUnits.js';
 import { expandRecipeIngredients } from './recipeComposition.js';
 import { calculateFrozenProductionLineWeight } from './productionReconciliation.js';
-import { isExemptProcessingAid, recipeLineWeightFields } from './recipeLineWeight.js';
+import { recipeLineProcessingAidField, recipeLineRetainedFraction, recipeLineWeightFields } from './recipeLineWeight.js';
 
 function finiteNumber(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback;
@@ -23,17 +23,22 @@ function quantityInBaseUnit(quantity, fromUnit, ingredient = {}) {
 function calculateIngredientLineWeight(line = {}, ingredient = {}) {
   const quantity = finiteNumber(line.quantity, 0);
   if (quantity < 0) return null;
+  const retainedFraction = recipeLineRetainedFraction(line);
 
   // Use the same unit/package-first calculation as production. Legacy 1/0.89
   // weight pairs describe yield; they must not turn 1 KG of onion into 1 gram.
   const weight = calculateFrozenProductionLineWeight({
+    ...recipeLineProcessingAidField(line),
     ...recipeLineWeightFields(line),
     ingredient_id: line.ingredient_id,
     planned_quantity: quantity,
     unit: line.unit || ingredient.unit
   }, ingredient);
   if (weight.raw_weight_grams !== null && weight.yielded_weight_grams !== null) {
-    return { rawGrams: weight.raw_weight_grams, cookedGrams: weight.yielded_weight_grams };
+    return {
+      rawGrams: weight.raw_weight_grams * retainedFraction,
+      cookedGrams: weight.yielded_weight_grams
+    };
   }
   const lineUnit = normalizeIngredientUnit(line.unit || ingredient.unit);
   const baseQuantity = quantityInBaseUnit(quantity, lineUnit, ingredient);
@@ -41,7 +46,7 @@ function calculateIngredientLineWeight(line = {}, ingredient = {}) {
   const cookedWeightPerUnit = finiteNumber(ingredient.cooked_weight_per_unit);
 
   if (!(rawWeightPerUnit > 0) && baseQuantity !== null && cookedWeightPerUnit !== null && cookedWeightPerUnit >= 0) {
-    return { rawGrams: null, cookedGrams: baseQuantity * cookedWeightPerUnit };
+    return { rawGrams: null, cookedGrams: baseQuantity * cookedWeightPerUnit * retainedFraction };
   }
   return null;
 }
@@ -59,7 +64,7 @@ export function calculateRecipeServingWeight(recipe, recipes = [], ingredients =
   let weighedLineCount = 0;
 
   expansion.ingredients.forEach((line) => {
-    if (isExemptProcessingAid(line)) return;
+    if (recipeLineRetainedFraction(line) <= 0) return;
     weighedLineCount += 1;
     const ingredient = ingredientMap.get(String(line.ingredient_id || ''));
     if (!ingredient) {
@@ -100,7 +105,7 @@ export function calculateRecipeServingWeight(recipe, recipes = [], ingredients =
       : null,
     cooked_total_grams: isComplete ? roundWeight(cookedTotal) : null,
     yielded_total_grams: isComplete ? roundWeight(cookedTotal) : null,
-    raw_grams_per_serving: isComplete && rawCalculatedLines === expansion.ingredients.length
+    raw_grams_per_serving: isComplete && rawCalculatedLines === weighedLineCount
       ? roundWeight(rawTotal / servings)
       : null,
     grams_per_serving: isComplete ? roundWeight(cookedTotal / servings) : null,

@@ -120,6 +120,43 @@ test('processing aids remain consumed but are excluded from production finished 
   assert.equal(summary.portion_size_grams, 360);
 });
 
+test('partial prep exemptions keep stock demand but reduce finished production weight', () => {
+  const summary = buildAutomaticProductionYieldSummary({
+    production: {
+      target_servings: 10,
+      yield_adjustment_version: 2,
+      quantity_semantics: 'raw_recipe_to_yielded_output_v2',
+      portion_size_source: 'yield_calculated',
+      ingredients_used: [
+        {
+          ingredient_id: chicken.id,
+          planned_quantity: 5,
+          unit: 'EA',
+          yield_multiplier: 0.8
+        },
+        {
+          ingredient_id: 'water',
+          planned_quantity: 1,
+          unit: 'l',
+          prep_exempt_percent: 70
+        }
+      ]
+    },
+    recipe,
+    ingredients: [chicken, { id: 'water', name: 'Water', unit: 'l' }]
+  });
+
+  const waterLine = summary.line_weights.find((line) => line.ingredient_id === 'water');
+  assert.equal(waterLine.raw_weight_grams, 1000);
+  assert.equal(waterLine.yielded_weight_grams, 300);
+  assert.equal(waterLine.prep_exempt_percent, 70);
+  assert.equal(waterLine.retained_fraction, 0.3);
+  assert.match(waterLine.yield_source, /prep_exempt_percent/);
+  assert.equal(summary.recipe_raw_weight_grams, 4800);
+  assert.equal(summary.expected_finished_weight_grams, 3900);
+  assert.equal(summary.portion_size_grams, 390);
+});
+
 test('v2 completion reconciles frozen raw demand and calculates output without operator values', () => {
   const plan = buildAutomaticProductionCompletionPlan({
     production: {

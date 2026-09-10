@@ -62,6 +62,17 @@ test('invalid definitions are rejected and admins can clear a definition', () =>
   assert.equal(getRecipeLineWeight({ ...line, unit: 'PAK' }), null);
 });
 
+test('partial prep exemption is validated and saved independently of admin line weights', () => {
+  const partial = prepareRecipeLineWeights(manager, [{ ...original, prep_exempt_percent: 70.123 }])[0];
+  assert.equal(partial.prep_exempt_percent, 70.12);
+  const full = prepareRecipeLineWeights(manager, [{ ...original, exempt_processing_aid: true, prep_exempt_percent: 70 }])[0];
+  assert.equal(full.exempt_processing_aid, true);
+  assert.equal(full.prep_exempt_percent, undefined);
+  for (const value of [-1, 0.5, 100, 'abc']) {
+    assert.throws(() => prepareRecipeLineWeights(manager, [{ ...original, prep_exempt_percent: value }]), (error) => error.status === 400);
+  }
+});
+
 test('client-supplied frozen totals cannot override a recipe definition', () => {
   const forged = { ...line, raw_weight_grams: 999, yielded_weight_grams: 999 };
   assert.equal(weight({ ...recipe, ingredients: [forged] }).raw_total_grams, 10);
@@ -183,6 +194,9 @@ test('UI exposes an accessible weight field and grey read-only controls for non-
   assert.match(form, /disabled:bg-slate-200/);
   assert.match(form, /if \(!canEditLineWeights\) return/);
   assert.match(form, /Exempt Processing Aid\./);
+  assert.match(form, /% exempt during prep/);
+  assert.match(form, /prep_exempt_percent/);
+  assert.match(form, /max=\{99\.99\}/);
   assert.match(form, /exempt_processing_aid/);
-  assert.match(form, /overflow-x-auto/);
+  assert.match(form, /overflow-auto/);
 });
