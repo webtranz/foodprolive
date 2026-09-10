@@ -3999,6 +3999,148 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
   }
 });
 
+function recordLabel(record = {}) {
+  return record.name
+    || record.ingredient_name
+    || record.recipe_name
+    || record.site_name
+    || record.reference_number
+    || record.production_number
+    || record.id
+    || 'record';
+}
+
+function includesIngredientId(lines, ingredientId) {
+  return (Array.isArray(lines) ? lines : []).some((line) => String(line?.ingredient_id || '') === String(ingredientId));
+}
+
+function productionIncludesIngredient(production = {}, ingredientId, siteId = '') {
+  const stockSiteId = production.fulfillment_store_id || production.site_id || '';
+  if (siteId && String(stockSiteId) !== String(siteId)) return false;
+  if (includesIngredientId(production.ingredients_used, ingredientId)) return true;
+  return (Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [])
+    .some((item) => includesIngredientId(item.ingredients_used, ingredientId));
+}
+
+function requestIncludesIngredient(request = {}, ingredientId, siteId = '') {
+  if (siteId && String(request.site_id || '') !== String(siteId)) return false;
+  if (String(request.ingredient_id || '') === String(ingredientId)) return true;
+  return includesIngredientId(request.items, ingredientId)
+    || includesIngredientId(request.request_items, ingredientId)
+    || includesIngredientId(request.material_items, ingredientId);
+}
+
+function makeDeleteImpactLinkage(area, records = [], examplePicker = recordLabel) {
+  if (!records.length) return null;
+  return {
+    area,
+    count: records.length,
+    examples: records.slice(0, 5).map(examplePicker).filter(Boolean)
+  };
+}
+
+function hasPositiveInventoryBalance(record = {}) {
+  return [
+    record.on_hand_quantity,
+    record.reserved_quantity,
+    record.available_quantity,
+    record.quantity
+  ].some((value) => Math.max(0, Number(value) || 0) > 0.000001);
+}
+
+async function buildDeleteImpact(entity, existing) {
+  if (!['Ingredient', 'Inventory'].includes(entity)) {
+    return {
+      entity,
+      id: existing.id,
+      has_linkages: false,
+      linkages: [],
+      warning: ''
+    };
+  }
+
+  const ingredientId = entity === 'Ingredient' ? existing.id : existing.ingredient_id;
+  const siteId = entity === 'Inventory' ? existing.site_id : '';
+  const linkageCandidates = [];
+
+  if (entity === 'Ingredient') {
+    const [inventory, lots, transactions, recipes, productions, materialRequests, foodWaste] = await Promise.all([
+      listDocuments('Inventory', { filters: { ingredient_id: ingredientId }, limit: 10000 }),
+      listDocuments('InventoryLot', { filters: { ingredient_id: ingredientId }, limit: 10000 }),
+      listDocuments('InventoryTransaction', { filters: { ingredient_id: ingredientId }, limit: 10000 }),
+      listDocuments('Recipe', { limit: 10000 }),
+      listDocuments('Production', { limit: 10000 }),
+      listDocuments('MaterialRequest', { limit: 10000 }),
+      listDocuments('FoodWaste', { limit: 10000 })
+    ]);
+    linkageCandidates.push(
+      makeDeleteImpactLinkage('Inventory records', inventory, (item) => `${item.site_name || item.site_id || 'Site'} · ${item.ingredient_name || existing.name || ingredientId}`),
+      makeDeleteImpactLinkage('Inventory lots / batches', lots, (item) => item.batch_number || `${item.site_name || item.site_id || 'Site'} batch`),
+      makeDeleteImpactLinkage('Inventory transactions', transactions, (item) => item.reference_number || item.reason_code || item.id),
+      makeDeleteImpactLinkage('Recipes', recipes.filter((recipe) => includesIngredientId(recipe.ingredients, ingredientId))),
+      makeDeleteImpactLinkage('Production records', productions.filter((production) => productionIncludesIngredient(production, ingredientId))),
+      makeDeleteImpactLinkage('Material requests', materialRequests.filter((request) => requestIncludesIngredient(request, ingredientId))),
+      makeDeleteImpactLinkage('Food waste records', foodWaste.filter((waste) => String(waste.ingredient_id || '') === String(ingredientId)))
+    );
+  } else {
+    const [lots, transactions, productions, materialRequests] = await Promise.all([
+      listDocuments('InventoryLot', { filters: { site_id: siteId, ingredient_id: ingredientId }, limit: 10000 }),
+      listDocuments('InventoryTransaction', { filters: { site_id: siteId, ingredient_id: ingredientId }, limit: 10000 }),
+      listDocuments('Production', { limit: 10000 }),
+      listDocuments('MaterialRequest', { limit: 10000 })
+    ]);
+    linkageCandidates.push(
+      hasPositiveInventoryBalance(existing)
+        ? {
+            area: 'Current stock balance',
+            count: 1,
+            examples: [`On hand ${existing.on_hand_quantity ?? existing.quantity ?? 0} ${existing.unit || ''}; reserved ${existing.reserved_quantity ?? 0} ${existing.unit || ''}`]
+          }
+        : null,
+      makeDeleteImpactLinkage('Inventory lots / batches', lots, (item) => item.batch_number || item.id),
+      makeDeleteImpactLinkage('Inventory transactions', transactions, (item) => item.reference_number || item.reason_code || item.id),
+      makeDeleteImpactLinkage('Production records', productions.filter((production) => productionIncludesIngredient(production, ingredientId, siteId))),
+      makeDeleteImpactLinkage('Material requests', materialRequests.filter((request) => requestIncludesIngredient(request, ingredientId, siteId)))
+    );
+  }
+
+  const linkages = linkageCandidates.filter(Boolean);
+  return {
+    entity,
+    id: existing.id,
+    has_linkages: linkages.length > 0,
+    linkages,
+    warning: linkages.length > 0
+      ? 'Linked records were found. Review them before deleting; the server will block deletion if the record is part of protected history.'
+      : 'No obvious linked records were found. Deletion is still checked again when confirmed.'
+  };
+}
+
+app.get('/api/entities/:entity/:id/delete-impact', requireAuth, async (request, response, next) => {
+  try {
+    const entity = request.params.entity;
+    ensureKnownEntity(entity);
+    if (!['Ingredient', 'Inventory'].includes(entity)) {
+      return response.status(404).json({ message: 'Delete impact is only available for Ingredient and Inventory records' });
+    }
+    if (!hasAdminAccess(request.user)) {
+      return response.status(403).json({ message: 'Only administrators can review deletion impact' });
+    }
+    const existing = await findDocument(entity, request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Record not found' });
+    }
+    const scopedExisting = (await scopeEntityRecords(request.user, entity, [existing]))[0];
+    if (!scopedExisting) {
+      return response.status(403).json({ message: 'You do not have access to this record' });
+    }
+    authorizeEntityAction(request.user, entity, 'read', null, existing);
+    return response.json(await buildDeleteImpact(entity, existing));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, next) => {
   try {
     const entity = request.params.entity;

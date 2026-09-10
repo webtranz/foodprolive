@@ -19,6 +19,7 @@ import {
   Search,
   SlidersHorizontal,
   TrendingDown,
+  Trash2,
   Upload,
   Wallet
 } from 'lucide-react';
@@ -39,6 +40,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/components/ui/alert-dialog';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -116,6 +127,40 @@ function formatDisplayDate(value) {
     hour: '2-digit',
     minute: '2-digit'
   });
+}
+
+function DeleteImpactDetails({ impact, loading, error }) {
+  if (loading) {
+    return <p className="text-sm text-slate-500">Checking linked records before deletion...</p>;
+  }
+  if (error) {
+    return <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{error}</p>;
+  }
+  if (!impact) return null;
+  if (!impact.has_linkages) {
+    return (
+      <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+        No obvious linked records were found. The server will check again before deleting.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-800">
+        Linked records were found. Deletion may be blocked to protect stock history, production, procurement, and reports.
+      </p>
+      <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-3">
+        {(impact.linkages || []).map((linkage) => (
+          <div key={linkage.area} className="text-sm">
+            <p className="font-semibold text-slate-800">{linkage.area}: {linkage.count}</p>
+            {Array.isArray(linkage.examples) && linkage.examples.length > 0 ? (
+              <p className="text-xs text-slate-500">{linkage.examples.join(', ')}</p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function normalizeLookup(value) {
@@ -606,6 +651,7 @@ export default function Inventory() {
   const { isAdmin, can } = usePermissions();
   const canManageInventory = can('manage_inventory');
   const canTransferInventory = can('transfer_inventory');
+  const canDeleteInventory = isAdmin;
   const [selectedSite, setSelectedSite] = useState('all');
   const [selectedSourceName, setSelectedSourceName] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -619,6 +665,7 @@ export default function Inventory() {
   const [transactionDialog, setTransactionDialog] = useState({ open: false, item: null, type: 'addition' });
   const [editDialog, setEditDialog] = useState({ open: false, item: null });
   const [historyDialog, setHistoryDialog] = useState({ open: false, item: null });
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, item: null, impact: null, error: '', loading: false });
   const [bulkSiteId, setBulkSiteId] = useState('');
   const [bulkSourceName, setBulkSourceName] = useState('');
   const [bulkRows, setBulkRows] = useState([]);
@@ -1086,6 +1133,21 @@ export default function Inventory() {
     }
   });
 
+  const deleteInventoryMutation = useMutation({
+    mutationFn: (id) => base44.entities.Inventory.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['ingredients'] });
+      setDeleteDialog({ open: false, item: null, impact: null, error: '', loading: false });
+    },
+    onError: (error) => {
+      setDeleteDialog((current) => ({
+        ...current,
+        error: error.message || 'Inventory record could not be deleted.'
+      }));
+    }
+  });
+
   const selectedIngredient = selectedStockIngredient || ingredients.find((ingredient) => ingredient.id === stockForm.ingredient_id);
   const parsedBulkImport = useMemo(
     () => buildBulkInventoryRows(bulkRows, stockSites, ingredients, bulkSiteId),
@@ -1118,6 +1180,23 @@ export default function Inventory() {
       notes: stockForm.notes,
       reason_code: 'manual_receipt'
     });
+  };
+
+  const openDeleteDialog = async (item) => {
+    if (!canDeleteInventory) return;
+    setDeleteDialog({ open: true, item, impact: null, error: '', loading: true });
+    try {
+      const impact = await base44.entities.Inventory.deleteImpact(item.id);
+      setDeleteDialog({ open: true, item, impact, error: '', loading: false });
+    } catch (error) {
+      setDeleteDialog({
+        open: true,
+        item,
+        impact: null,
+        error: error.message || 'Could not load deletion warning details.',
+        loading: false
+      });
+    }
   };
 
   const handleBulkFile = async (event) => {
@@ -1475,6 +1554,17 @@ export default function Inventory() {
                                 <Button size="sm" variant="outline" onClick={() => setHistoryDialog({ open: true, item })}>
                                   <History className="h-4 w-4" />
                                 </Button>
+                                {canDeleteInventory ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                    onClick={() => openDeleteDialog(item)}
+                                    title="Delete inventory"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                ) : null}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1985,6 +2075,45 @@ export default function Inventory() {
           onOpenChange={(open) => setEditDialog((current) => ({ ...current, open }))}
           inventoryItem={editDialog.item}
         />
+
+        <AlertDialog open={canDeleteInventory && deleteDialog.open} onOpenChange={(open) => {
+          setDeleteDialog((current) => ({
+            ...current,
+            open,
+            ...(open ? {} : { item: null, impact: null, error: '', loading: false })
+          }));
+        }}>
+          <AlertDialogContent className="max-w-2xl">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Inventory Record</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3">
+                  <p>
+                    Delete "{getItemCodeFromRecords([deleteDialog.item?._ing, deleteDialog.item])} · {deleteDialog.item?.ingredient_name || '—'}" for {deleteDialog.item?.site_name || 'this site'}?
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Inventory with stock, batches, reservations, or transactions should normally be cleared through stock movements. This delete is for admin cleanup of empty/unlinked records only.
+                  </p>
+                  <DeleteImpactDetails
+                    impact={deleteDialog.impact}
+                    loading={deleteDialog.loading}
+                    error={deleteDialog.error}
+                  />
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => deleteDialog.item?.id && deleteInventoryMutation.mutate(deleteDialog.item.id)}
+                disabled={deleteInventoryMutation.isPending || deleteDialog.loading || !deleteDialog.item?.id}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {deleteInventoryMutation.isPending ? 'Deleting...' : 'Delete Inventory'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <Dialog open={historyDialog.open} onOpenChange={(open) => setHistoryDialog((current) => ({ ...current, open }))}>
           <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">

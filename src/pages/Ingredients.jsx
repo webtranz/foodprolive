@@ -25,7 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import StatCard from '@/components/ui/StatCard';
-import { Plus, Search, Package, LayoutGrid, List, Download, AlertTriangle, PlusCircle, MinusCircle, Edit, History, Flame, Beef, Droplet, Candy, ShieldAlert } from 'lucide-react';
+import { Plus, Search, Package, LayoutGrid, List, Download, AlertTriangle, PlusCircle, MinusCircle, Edit, History, Flame, Beef, Droplet, Candy, ShieldAlert, Trash2 } from 'lucide-react';
 import { downloadCSV } from '../components/utils/exportData';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
@@ -72,10 +72,45 @@ const normalizeCategoryKey = (value) => String(value || 'other')
 const formatCategoryLabel = (value) => String(value || 'Other')
   .replace(/_/g, ' ');
 
+function DeleteImpactDetails({ impact, loading, error }) {
+  if (loading) {
+    return <p className="text-sm text-slate-500">Checking linked records before deletion...</p>;
+  }
+  if (error) {
+    return <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{error}</p>;
+  }
+  if (!impact) return null;
+  if (!impact.has_linkages) {
+    return (
+      <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+        No obvious linked records were found. The server will check again before deleting.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-800">
+        Linked records were found. Deletion may be blocked to protect recipes, inventory history, production, and reports.
+      </p>
+      <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-3">
+        {(impact.linkages || []).map((linkage) => (
+          <div key={linkage.area} className="text-sm">
+            <p className="font-semibold text-slate-800">{linkage.area}: {linkage.count}</p>
+            {Array.isArray(linkage.examples) && linkage.examples.length > 0 ? (
+              <p className="text-xs text-slate-500">{linkage.examples.join(', ')}</p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Ingredients() {
-  const { can } = usePermissions();
+  const { can, isAdmin } = usePermissions();
   const canManageIngredients = can('manage_ingredients');
   const canManageInventory = can('manage_inventory');
+  const canDeleteRecords = isAdmin;
   const [activeTab, setActiveTab] = useState('ingredients');
 
   // Ingredients state
@@ -87,6 +122,9 @@ export default function Ingredients() {
   const [editingIngredient, setEditingIngredient] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [ingredientToDelete, setIngredientToDelete] = useState(null);
+  const [ingredientDeleteImpact, setIngredientDeleteImpact] = useState(null);
+  const [ingredientDeleteError, setIngredientDeleteError] = useState('');
+  const [ingredientDeleteLoading, setIngredientDeleteLoading] = useState(false);
 
   // Inventory state
   const [invSearch, setInvSearch] = useState('');
@@ -96,6 +134,7 @@ export default function Ingredients() {
   const [transactionDialog, setTransactionDialog] = useState({ open: false, item: null, type: 'addition' });
   const [editDialog, setEditDialog] = useState({ open: false, item: null });
   const [historyDialog, setHistoryDialog] = useState({ open: false, item: null });
+  const [inventoryDeleteDialog, setInventoryDeleteDialog] = useState({ open: false, item: null, impact: null, error: '', loading: false });
   const [stockForm, setStockForm] = useState({
     site_id: '',
     ingredient_id: '',
@@ -157,13 +196,34 @@ export default function Ingredients() {
   });
   const deleteIngMutation = useMutation({
     mutationFn: (id) => base44.entities.Ingredient.delete(id),
-    onSuccess: () => { invalidateIngredientQueries(); setDeleteDialogOpen(false); setIngredientToDelete(null); }
+    onSuccess: () => {
+      invalidateIngredientQueries();
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setDeleteDialogOpen(false);
+      setIngredientToDelete(null);
+      setIngredientDeleteImpact(null);
+      setIngredientDeleteError('');
+      setIngredientDeleteLoading(false);
+    },
+    onError: (error) => setIngredientDeleteError(error.message || 'Ingredient could not be deleted.')
   });
 
   // Inventory mutations
   const receiveInvMutation = useMutation({
     mutationFn: (data) => base44.inventory.receive(data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['inventory'] }); setStockFormOpen(false); resetStockForm(); }
+  });
+  const deleteInvMutation = useMutation({
+    mutationFn: (id) => base44.entities.Inventory.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['ingredients'] });
+      setInventoryDeleteDialog({ open: false, item: null, impact: null, error: '', loading: false });
+    },
+    onError: (error) => setInventoryDeleteDialog((current) => ({
+      ...current,
+      error: error.message || 'Inventory record could not be deleted.'
+    }))
   });
 
   const resetStockForm = () => {
@@ -291,6 +351,40 @@ export default function Ingredients() {
       updateIngMutation.mutate({ id: editingIngredient.id, data });
     } else {
       createIngMutation.mutate(data);
+    }
+  };
+
+  const openIngredientDeleteDialog = async (ingredient) => {
+    if (!canDeleteRecords) return;
+    setIngredientToDelete(ingredient);
+    setDeleteDialogOpen(true);
+    setIngredientDeleteImpact(null);
+    setIngredientDeleteError('');
+    setIngredientDeleteLoading(true);
+    try {
+      const impact = await base44.entities.Ingredient.deleteImpact(ingredient.id);
+      setIngredientDeleteImpact(impact);
+    } catch (error) {
+      setIngredientDeleteError(error.message || 'Could not load deletion warning details.');
+    } finally {
+      setIngredientDeleteLoading(false);
+    }
+  };
+
+  const openInventoryDeleteDialog = async (item) => {
+    if (!canDeleteRecords) return;
+    setInventoryDeleteDialog({ open: true, item, impact: null, error: '', loading: true });
+    try {
+      const impact = await base44.entities.Inventory.deleteImpact(item.id);
+      setInventoryDeleteDialog({ open: true, item, impact, error: '', loading: false });
+    } catch (error) {
+      setInventoryDeleteDialog({
+        open: true,
+        item,
+        impact: null,
+        error: error.message || 'Could not load deletion warning details.',
+        loading: false
+      });
     }
   };
 
@@ -443,7 +537,7 @@ export default function Ingredients() {
                 {filteredIngredients.map(ing => (
                   <IngredientCard key={ing.id} ingredient={ing}
                     onEdit={canManageIngredients ? (i) => { setEditingIngredient(i); setFormOpen(true); } : undefined}
-                    onDelete={canManageIngredients ? (i) => { setIngredientToDelete(i); setDeleteDialogOpen(true); } : undefined} />
+                    onDelete={canDeleteRecords ? openIngredientDeleteDialog : undefined} />
                 ))}
               </div>
             ) : (
@@ -469,7 +563,7 @@ export default function Ingredients() {
                         <TableHead>Allergens</TableHead>
                         <TableHead>Cost/Unit</TableHead>
                         <TableHead>Yield %</TableHead>
-                        {canManageIngredients ? <TableHead className="w-[80px]">Actions</TableHead> : null}
+                        {canManageIngredients || canDeleteRecords ? <TableHead className="w-[120px]">Actions</TableHead> : null}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -546,9 +640,24 @@ export default function Ingredients() {
                           </TableCell>
                           <TableCell>{ing.cost_per_unit != null ? formatCurrency(ing.cost_per_unit) : '-'}</TableCell>
                           <TableCell>{ing.cooking_yield_percent ? `${ing.cooking_yield_percent}%` : '-'}</TableCell>
-                          {canManageIngredients ? (
+                          {canManageIngredients || canDeleteRecords ? (
                             <TableCell>
-                              <Button variant="ghost" size="sm" onClick={() => { setEditingIngredient(ing); setFormOpen(true); }}>Edit</Button>
+                              <div className="flex gap-1">
+                                {canManageIngredients ? (
+                                  <Button variant="ghost" size="sm" onClick={() => { setEditingIngredient(ing); setFormOpen(true); }}>Edit</Button>
+                                ) : null}
+                                {canDeleteRecords ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                                    onClick={() => openIngredientDeleteDialog(ing)}
+                                  >
+                                    <Trash2 className="mr-1 h-3.5 w-3.5" />
+                                    Delete
+                                  </Button>
+                                ) : null}
+                              </div>
                             </TableCell>
                           ) : null}
                         </TableRow>
@@ -709,6 +818,17 @@ export default function Ingredients() {
                                     <Button variant="outline" size="sm" onClick={() => setEditDialog({ open: true, item })} title="Edit"><Edit className="w-4 h-4" /></Button>
                                   </>
                                 ) : null}
+                                {canDeleteRecords ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                    onClick={() => openInventoryDeleteDialog(item)}
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                ) : null}
                                 <Button variant="outline" size="sm" onClick={() => setHistoryDialog({ open: true, item })} title="History"><History className="w-4 h-4" /></Button>
                               </div>
                             </TableCell>
@@ -742,17 +862,79 @@ export default function Ingredients() {
         />
 
         {/* Delete Ingredient */}
-        <AlertDialog open={canManageIngredients && deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-          <AlertDialogContent>
+        <AlertDialog open={canDeleteRecords && deleteDialogOpen} onOpenChange={(open) => {
+          setDeleteDialogOpen(open);
+          if (!open) {
+            setIngredientToDelete(null);
+            setIngredientDeleteImpact(null);
+            setIngredientDeleteError('');
+            setIngredientDeleteLoading(false);
+          }
+        }}>
+          <AlertDialogContent className="max-w-2xl">
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Ingredient</AlertDialogTitle>
-              <AlertDialogDescription>
-                Are you sure you want to delete "{getItemCode(ingredientToDelete)} · {ingredientToDelete?.name || '—'}"? This action cannot be undone.
+              <AlertDialogDescription asChild>
+                <div className="space-y-3">
+                  <p>
+                    Delete "{getItemCode(ingredientToDelete)} · {ingredientToDelete?.name || '—'}"? This action cannot be undone.
+                  </p>
+                  <DeleteImpactDetails
+                    impact={ingredientDeleteImpact}
+                    loading={ingredientDeleteLoading}
+                    error={ingredientDeleteError}
+                  />
+                </div>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={() => deleteIngMutation.mutate(ingredientToDelete.id)} className="bg-red-600 hover:bg-red-700">Delete</AlertDialogAction>
+              <AlertDialogAction
+                onClick={() => ingredientToDelete?.id && deleteIngMutation.mutate(ingredientToDelete.id)}
+                disabled={deleteIngMutation.isPending || ingredientDeleteLoading || !ingredientToDelete?.id}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {deleteIngMutation.isPending ? 'Deleting...' : 'Delete Ingredient'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={canDeleteRecords && inventoryDeleteDialog.open} onOpenChange={(open) => {
+          setInventoryDeleteDialog((current) => ({
+            ...current,
+            open,
+            ...(open ? {} : { item: null, impact: null, error: '', loading: false })
+          }));
+        }}>
+          <AlertDialogContent className="max-w-2xl">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Inventory Record</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3">
+                  <p>
+                    Delete "{getItemCodeFromRecords([inventoryDeleteDialog.item?._ing, inventoryDeleteDialog.item])} · {inventoryDeleteDialog.item?.ingredient_name || '—'}" for {inventoryDeleteDialog.item?.site_name || 'this site'}?
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Inventory with stock, batches, reservations, or transactions should normally be cleared through stock movements. This delete is for admin cleanup of empty/unlinked records only.
+                  </p>
+                  <DeleteImpactDetails
+                    impact={inventoryDeleteDialog.impact}
+                    loading={inventoryDeleteDialog.loading}
+                    error={inventoryDeleteDialog.error}
+                  />
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => inventoryDeleteDialog.item?.id && deleteInvMutation.mutate(inventoryDeleteDialog.item.id)}
+                disabled={deleteInvMutation.isPending || inventoryDeleteDialog.loading || !inventoryDeleteDialog.item?.id}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {deleteInvMutation.isPending ? 'Deleting...' : 'Delete Inventory'}
+              </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

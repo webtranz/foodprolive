@@ -240,6 +240,9 @@ function createEntityModule(entity) {
         return result;
       });
     },
+    deleteImpact(id) {
+      return apiRequest(`/api/entities/${entity}/${id}/delete-impact`);
+    },
     subscribe(callback) {
       const handler = (event) => callback(event.detail);
       eventBus.addEventListener(entityCacheKey(entity), handler);

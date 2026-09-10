@@ -14,7 +14,15 @@ test('every ingredient mutation refreshes master data, search results, and recip
   const invalidated = [];
   const changes = [];
   const mutations = new Function(
-    'useMutation', 'queryClient', 'setFormOpen', 'setEditingIngredient', 'setDeleteDialogOpen', 'setIngredientToDelete',
+    'useMutation',
+    'queryClient',
+    'setFormOpen',
+    'setEditingIngredient',
+    'setDeleteDialogOpen',
+    'setIngredientToDelete',
+    'setIngredientDeleteImpact',
+    'setIngredientDeleteError',
+    'setIngredientDeleteLoading',
     `${source}\nreturn [createIngMutation, updateIngMutation, deleteIngMutation];`
   )(
     (options) => options,
@@ -22,16 +30,31 @@ test('every ingredient mutation refreshes master data, search results, and recip
     (value) => changes.push(['form', value]),
     (value) => changes.push(['editing', value]),
     (value) => changes.push(['delete', value]),
-    (value) => changes.push(['deleting', value])
+    (value) => changes.push(['deleting', value]),
+    (value) => changes.push(['deleteImpact', value]),
+    (value) => changes.push(['deleteError', value]),
+    (value) => changes.push(['deleteLoading', value])
   );
 
-  mutations.forEach((mutation) => {
+  mutations.forEach((mutation, index) => {
     invalidated.length = 0;
     mutation.onSuccess();
-    assert.deepEqual(invalidated, [['ingredients'], ['ingredient-search'], ['recipes']]);
+    assert.deepEqual(
+      invalidated,
+      index === 2
+        ? [['ingredients'], ['ingredient-search'], ['recipes'], ['inventory']]
+        : [['ingredients'], ['ingredient-search'], ['recipes']]
+    );
   });
   assert.deepEqual(changes, [
-    ['form', false], ['form', false], ['editing', null], ['delete', false], ['deleting', null]
+    ['form', false],
+    ['form', false],
+    ['editing', null],
+    ['delete', false],
+    ['deleting', null],
+    ['deleteImpact', null],
+    ['deleteError', ''],
+    ['deleteLoading', false]
   ]);
 });
 

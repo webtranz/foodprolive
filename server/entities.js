@@ -1249,6 +1249,12 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     throw error;
   }
 
+  if (['Ingredient', 'Inventory'].includes(entity) && action === 'delete' && !hasAdminAccess(user)) {
+    const error = new Error(`Only administrators can delete ${entity} records`);
+    error.status = 403;
+    throw error;
+  }
+
   if (
     ['InventoryLot', 'InventoryTransaction', 'D365Master', 'ERPIntegrationLog'].includes(entity)
     && ['create', 'update', 'delete'].includes(action)
@@ -1267,7 +1273,7 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     throw error;
   }
 
-  if (entity === 'Inventory' && ['create', 'delete'].includes(action)) {
+  if (entity === 'Inventory' && action === 'create') {
     const error = new Error('Inventory balances must be created or removed through auditable stock movements');
     error.status = 409;
     throw error;
