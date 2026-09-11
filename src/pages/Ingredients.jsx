@@ -34,6 +34,7 @@ import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierar
 import { getInventoryQuantities } from '@/lib/inventoryAvailability';
 import { DEFAULT_SOURCE_NAME, SOURCE_NAME_OPTIONS, normalizeSourceName } from '../../shared/sourceNames.js';
 import { normalizeAllergenTags } from '../../shared/allergens.js';
+import { resolveIngredientYield } from '../../shared/ingredientYield.js';
 
 const CATEGORY_COLORS = {
   proteins_meat: 'bg-red-100 text-red-700',
@@ -580,7 +581,16 @@ export default function Ingredients() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredIngredients.map(ing => (
+                      {filteredIngredients.map(ing => {
+                        const yieldDetails = resolveIngredientYield(ing);
+                        const yieldSourceLabel = yieldDetails.source === 'weight_ratio'
+                          ? 'Calculated from raw and cooked weight'
+                          : yieldDetails.source === 'shrinkage_percent'
+                            ? 'Calculated from shrinkage'
+                            : yieldDetails.source === 'cooking_yield_percent'
+                              ? 'From saved cooking yield'
+                              : 'Default yield';
+                        return (
                         <TableRow key={ing.id}>
                           <TableCell className="text-slate-500 text-sm">{getItemCode(ing)}</TableCell>
                           <TableCell className="font-medium">{ing.name}</TableCell>
@@ -652,7 +662,9 @@ export default function Ingredients() {
                             )}
                           </TableCell>
                           <TableCell>{ing.cost_per_unit != null ? formatCurrency(ing.cost_per_unit) : '-'}</TableCell>
-                          <TableCell>{ing.cooking_yield_percent ? `${ing.cooking_yield_percent}%` : '-'}</TableCell>
+                          <TableCell title={yieldSourceLabel}>
+                            {Number.isFinite(yieldDetails.percent) ? `${formatQuantity(yieldDetails.percent)}%` : '-'}
+                          </TableCell>
                           {canManageIngredients || canDeleteRecords ? (
                             <TableCell>
                               <div className="flex gap-1">
@@ -674,7 +686,8 @@ export default function Ingredients() {
                             </TableCell>
                           ) : null}
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </CardContent>

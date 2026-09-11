@@ -24,6 +24,7 @@ import {
 import { formatCurrency } from '@/lib/currency';
 import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
 import { normalizeAllergenTags } from '../../shared/allergens.js';
+import { calculateRecipeNutritionSnapshot } from '../../shared/recipeNutrition.js';
 
 const CUISINE_TYPES = [
   { value: 'continental', label: 'Continental', icon: 'C' },
@@ -110,6 +111,11 @@ export default function Menu() {
     () => Object.fromEntries(allIngredients.map((ingredient) => [ingredient.id, ingredient])),
     [allIngredients]
   );
+
+  const effectiveRecipes = useMemo(() => recipes.map((recipe) => ({
+    ...recipe,
+    ...calculateRecipeNutritionSnapshot(recipe, recipes, allIngredients)
+  })), [allIngredients, recipes]);
 
   const currentCuisine = CUISINE_TYPES.find((cuisine) => cuisine.value === selectedCuisine);
   const productionCostRows = useMemo(() => {
@@ -208,7 +214,7 @@ export default function Menu() {
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {[1, 2, 3].map((index) => <Skeleton key={index} className="h-64" />)}
                       </div>
-                    ) : recipes.length === 0 ? (
+                    ) : effectiveRecipes.length === 0 ? (
                       <Card>
                         <CardContent className="py-12 text-center">
                           <p className="text-slate-500">No recipes available for this cuisine yet</p>
@@ -216,7 +222,7 @@ export default function Menu() {
                       </Card>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {recipes.map((recipe) => {
+                        {effectiveRecipes.map((recipe) => {
                           const recipeAllergens = normalizeAllergenTags(recipe.allergens);
                           return (
                           <Card key={recipe.id} className="hover:shadow-lg transition-shadow">

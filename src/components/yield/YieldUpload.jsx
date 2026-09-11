@@ -5,6 +5,36 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Upload, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
+function normalizeLookup(value) {
+  return String(value || '').trim();
+}
+
+async function findExistingIngredient(ingredient = {}) {
+  const codeFields = ['item_code', 'ingredient_code', 'sku'];
+  for (const field of codeFields) {
+    const value = normalizeLookup(ingredient[field]);
+    if (!value) continue;
+    const matches = await base44.entities.Ingredient.filter({ [field]: value });
+    if (matches.length === 1) return matches[0];
+    const activeMatches = matches.filter((match) => match.is_active !== false);
+    if (activeMatches.length === 1) return activeMatches[0];
+    if (matches.length > 1) {
+      throw new Error(`Multiple existing ingredients match ${field} ${value}`);
+    }
+  }
+
+  const name = normalizeLookup(ingredient.name);
+  if (!name) return null;
+  const matches = await base44.entities.Ingredient.filter({ name });
+  if (matches.length === 1) return matches[0];
+  const activeMatches = matches.filter((match) => match.is_active !== false);
+  if (activeMatches.length === 1) return activeMatches[0];
+  if (matches.length > 1) {
+    throw new Error(`Multiple existing ingredients match name ${name}`);
+  }
+  return matches[0] || null;
+}
+
 export default function YieldUpload({ isAdmin = false, onSuccess }) {
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
@@ -63,15 +93,16 @@ export default function YieldUpload({ isAdmin = false, onSuccess }) {
         // Bulk create/update ingredients
         let created = 0;
         let updated = 0;
+        let failed = 0;
 
         for (const ingredient of ingredients) {
           try {
-            // Check if ingredient exists
-            const existing = await base44.entities.Ingredient.filter({ name: ingredient.name });
+            // Prefer stable item codes so yield uploads do not create duplicates when names differ slightly.
+            const existing = await findExistingIngredient(ingredient);
             
-            if (existing.length > 0) {
+            if (existing) {
               // Update existing
-              await base44.entities.Ingredient.update(existing[0].id, ingredient);
+              await base44.entities.Ingredient.update(existing.id, ingredient);
               updated++;
             } else {
               // Create new
@@ -80,12 +111,13 @@ export default function YieldUpload({ isAdmin = false, onSuccess }) {
             }
           } catch (err) {
             console.error('Error processing ingredient:', ingredient.name, err);
+            failed++;
           }
         }
 
         setResult({
-          success: true,
-          message: `Successfully processed ${created + updated} ingredients (${created} created, ${updated} updated)`
+          success: failed === 0,
+          message: `Processed ${created + updated} ingredients (${created} created, ${updated} updated${failed ? `, ${failed} failed` : ''})`
         });
         
         if (onSuccess) onSuccess();

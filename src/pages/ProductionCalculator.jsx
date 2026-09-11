@@ -14,6 +14,7 @@ import { formatCurrency } from '@/lib/currency';
 import { calculateIngredientCost } from '../../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
 import { calculateYieldOutputQuantity } from '../../shared/ingredientYield.js';
+import { calculateRecipeNutritionSnapshot } from '../../shared/recipeNutrition.js';
 import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
 import { getItemCode } from '../../shared/itemCode.js';
 
@@ -97,13 +98,14 @@ export default function ProductionCalculator() {
     const estimatedServings = calculationMode === 'servings' 
       ? parseFloat(targetServings) 
       : Math.round((recipeData.servings || 1) * multiplier);
+    const nutritionSnapshot = calculateRecipeNutritionSnapshot(recipeData, recipes, ingredients);
     
     setCalculations({
       recipe: recipeData,
       multiplier,
       ingredients: calculatedIngredients,
       totalCost: Math.round(totalCost * 100) / 100,
-      totalCalories: Math.round((recipeData.calories_per_serving || 0) * estimatedServings),
+      totalCalories: Math.round((nutritionSnapshot.calories_per_serving || 0) * estimatedServings),
       estimatedServings,
       costPerServing: estimatedServings > 0 ? Math.round((totalCost / estimatedServings) * 100) / 100 : 0,
       expectedFinishedWeightKg: recipeWeight.cooked_total_grams > 0

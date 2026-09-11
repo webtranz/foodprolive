@@ -20,6 +20,8 @@ import CostReport from '../components/yield/CostReport';
 import { formatCurrency } from '@/lib/currency';
 import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 import { getItemCode, putItemCodeAndNameFirst } from '../../shared/itemCode.js';
+import { resolveIngredientYield } from '../../shared/ingredientYield.js';
+import { calculateRecipeNutritionSnapshot } from '../../shared/recipeNutrition.js';
 
 function averageBy(items, selector) {
   const values = items
@@ -31,6 +33,16 @@ function averageBy(items, selector) {
   }
 
   return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function effectiveYieldPercent(ingredient) {
+  const yieldDetails = resolveIngredientYield(ingredient);
+  return Number.isFinite(yieldDetails.percent) ? yieldDetails.percent : 0;
+}
+
+function effectiveShrinkagePercent(ingredient) {
+  const percent = effectiveYieldPercent(ingredient);
+  return percent > 0 ? Math.max(0, 100 - percent) : 0;
 }
 
 export default function YieldCost() {
@@ -65,9 +77,9 @@ export default function YieldCost() {
   });
 
   // Calculate statistics
-  const avgYield = averageBy(filteredIngredients, (ing) => Number(ing.cooking_yield_percent));
+  const avgYield = averageBy(filteredIngredients, effectiveYieldPercent);
 
-  const avgShrinkage = averageBy(filteredIngredients, (ing) => Number(ing.shrinkage_percent));
+  const avgShrinkage = averageBy(filteredIngredients, effectiveShrinkagePercent);
 
   const avgCost = averageBy(filteredIngredients, (ing) => Number(ing.cost_per_unit));
 
@@ -76,11 +88,13 @@ export default function YieldCost() {
   // Calculate recipe costs
   const recipeCosts = recipes.map(recipe => {
     const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
+    const nutritionSnapshot = calculateRecipeNutritionSnapshot(recipe, recipes, ingredients);
 
     return {
       ...recipe,
       total_cost: costSnapshot.has_cost ? costSnapshot.total_cost : null,
-      cost_per_serving: costSnapshot.has_cost ? costSnapshot.cost_per_serving : null
+      cost_per_serving: costSnapshot.has_cost ? costSnapshot.cost_per_serving : null,
+      calories_per_serving: nutritionSnapshot.calories_per_serving
     };
   }).filter(r => r.total_cost !== null);
 
@@ -265,16 +279,16 @@ export default function YieldCost() {
                             <TableCell className="text-right">{ingredient.raw_weight_per_unit || '-'}</TableCell>
                             <TableCell className="text-right">{ingredient.cooked_weight_per_unit || '-'}</TableCell>
                             <TableCell className="text-right">
-                              {ingredient.cooking_yield_percent ? (
+                              {effectiveYieldPercent(ingredient) ? (
                                 <Badge className="bg-blue-100 text-blue-700">
-                                  {ingredient.cooking_yield_percent}%
+                                  {effectiveYieldPercent(ingredient).toFixed(1)}%
                                 </Badge>
                               ) : '-'}
                             </TableCell>
                             <TableCell className="text-right">
-                              {ingredient.shrinkage_percent ? (
+                              {effectiveShrinkagePercent(ingredient) ? (
                                 <Badge className="bg-red-100 text-red-700">
-                                  {ingredient.shrinkage_percent}%
+                                  {effectiveShrinkagePercent(ingredient).toFixed(1)}%
                                 </Badge>
                               ) : '-'}
                             </TableCell>

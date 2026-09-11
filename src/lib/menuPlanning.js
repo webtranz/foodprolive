@@ -1,4 +1,5 @@
 import { calculateRecipeCostingSnapshot } from '../../shared/recipeCosting.js';
+import { calculateRecipeNutritionSnapshot as calculateSharedRecipeNutritionSnapshot } from '../../shared/recipeNutrition.js';
 
 export const CORE_MENU_MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 export const createEmptyMealEntry = () => ({ recipe_id: '', expected_servings: '' });
@@ -61,6 +62,10 @@ export function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = 
   }
 
   return { cost_per_serving: 0, total_cost: 0, has_cost: false, source: 'missing' };
+}
+
+export function calculateRecipeNutritionSnapshot(recipe, ingredients = [], recipes = []) {
+  return calculateSharedRecipeNutritionSnapshot(recipe, recipes, ingredients);
 }
 
 export function createEmptyDailyMenuState() {
@@ -199,6 +204,7 @@ export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], ex
         }
 
         const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
+        const nutritionSnapshot = calculateRecipeNutritionSnapshot(recipe, ingredients, recipes);
         const costPerServing = costSnapshot.has_cost ? costSnapshot.cost_per_serving : 0;
 
         return [{
@@ -209,13 +215,13 @@ export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], ex
           expected_servings: servings,
           cost_per_serving: costPerServing,
           total_cost: costPerServing * servings,
-          calories_per_serving: safeNumber(recipe.calories_per_serving, 0),
-          protein_per_serving: safeNumber(recipe.protein_per_serving, 0),
-          carbs_per_serving: safeNumber(recipe.carbs_per_serving, 0),
-          fat_per_serving: safeNumber(recipe.fat_per_serving, 0),
-          sodium_per_serving: safeNumber(recipe.sodium_per_serving, 0),
-          sugar_per_serving: safeNumber(recipe.sugar_per_serving, 0),
-          allergens: Array.isArray(recipe.allergens) ? recipe.allergens : []
+          calories_per_serving: safeNumber(nutritionSnapshot.calories_per_serving, 0),
+          protein_per_serving: safeNumber(nutritionSnapshot.protein_per_serving, 0),
+          carbs_per_serving: safeNumber(nutritionSnapshot.carbs_per_serving, 0),
+          fat_per_serving: safeNumber(nutritionSnapshot.fat_per_serving, 0),
+          sodium_per_serving: safeNumber(nutritionSnapshot.sodium_per_serving, 0),
+          sugar_per_serving: safeNumber(nutritionSnapshot.sugar_per_serving, 0),
+          allergens: Array.isArray(nutritionSnapshot.allergens) ? nutritionSnapshot.allergens : []
         }];
       })
   ));

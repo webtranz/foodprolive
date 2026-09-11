@@ -1,0 +1,2 @@
+source_file,output_file,rows,unique_item_codes,min_yield_percent,max_yield_percent
+Ing-Yields.xlsx,artifacts/ingredient-yields/UPLOAD-THIS-INGREDIENT-YIELDS-KBR-384-2026-09-11.csv,67,67,60.0,100.0

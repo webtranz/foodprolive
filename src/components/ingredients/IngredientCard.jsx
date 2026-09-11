@@ -8,6 +8,7 @@ import { getItemCode } from '../../../shared/itemCode.js';
 import { formatCurrency } from '@/lib/currency';
 import { normalizeSourceName } from '../../../shared/sourceNames.js';
 import { normalizeAllergenTags } from '../../../shared/allergens.js';
+import { resolveIngredientYield } from '../../../shared/ingredientYield.js';
 
 const CATEGORY_COLORS = {
   proteins: 'bg-red-100 text-red-700',
@@ -29,6 +30,8 @@ const formatQuantity = (value) => Number(value || 0).toLocaleString(undefined, {
 export default function IngredientCard({ ingredient, onEdit, onDelete }) {
   const allergens = normalizeAllergenTags(ingredient.allergens);
   const stock = ingredient.stock_summary || {};
+  const yieldDetails = resolveIngredientYield(ingredient);
+  const hasYield = Number.isFinite(yieldDetails.percent) && yieldDetails.percent > 0;
 
   return (
     <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 group">
@@ -83,10 +86,10 @@ export default function IngredientCard({ ingredient, onEdit, onDelete }) {
             <span className="text-slate-400">cal/100g</span>
           </div>
 
-          {ingredient.cooking_yield_percent && (
+          {hasYield && (
             <div className="flex items-center gap-2 text-sm">
               <TrendingDown className="w-4 h-4 text-blue-500" />
-              <span className="text-slate-600">{ingredient.cooking_yield_percent}%</span>
+              <span className="text-slate-600">{formatQuantity(yieldDetails.percent)}%</span>
               <span className="text-slate-400">yield</span>
             </div>
           )}

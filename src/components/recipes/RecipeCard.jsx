@@ -7,9 +7,9 @@ import { MoreVertical, Pencil, Trash2, Clock, Users, Flame, ShieldAlert, Candy, 
 import { formatCurrency } from '@/lib/currency';
 import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
+import { calculateRecipeNutritionSnapshot } from '../../../shared/recipeNutrition.js';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 import { convertIngredientQuantity } from '../../../shared/ingredientUnits.js';
-import { normalizeAllergenTags } from '../../../shared/allergens.js';
 import { getInventoryQuantities } from '@/lib/inventoryAvailability';
 
 const CATEGORY_COLORS = {
@@ -22,14 +22,22 @@ const CATEGORY_COLORS = {
   side: 'bg-slate-100 text-slate-700'
 };
 
+function formatNutritionValue(value) {
+  return value === null || value === undefined ? '—' : value;
+}
+
 export default function RecipeCard({ recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, onEdit, onDelete }) {
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
-  const allergens = normalizeAllergenTags(recipe.allergens);
-  const nutritionWarnings = Array.isArray(recipe.nutrition_warnings) ? recipe.nutrition_warnings : [];
-  const allergenWarnings = Array.isArray(recipe.allergens_warnings) ? recipe.allergens_warnings : [];
   const subRecipes = Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [];
   const siteNames = Array.isArray(recipe.site_names) ? recipe.site_names.filter(Boolean) : [];
   const isGlobalRecipe = !recipe.site_scope || recipe.site_scope === 'global' || siteNames.length === 0;
+  const nutritionSnapshot = useMemo(
+    () => calculateRecipeNutritionSnapshot(recipe, recipes, ingredients),
+    [ingredients, recipe, recipes]
+  );
+  const allergens = Array.isArray(nutritionSnapshot.allergens) ? nutritionSnapshot.allergens : [];
+  const nutritionWarnings = Array.isArray(nutritionSnapshot.nutrition_warnings) ? nutritionSnapshot.nutrition_warnings : [];
+  const allergenWarnings = Array.isArray(nutritionSnapshot.allergens_warnings) ? nutritionSnapshot.allergens_warnings : [];
   const ingredientMap = useMemo(
     () => new Map(ingredients.map((ingredient) => [ingredient.id, ingredient])),
     [ingredients]
@@ -140,7 +148,7 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], inv
           
           <div className="flex items-center gap-1 text-orange-600">
             <Flame className="w-4 h-4" />
-            <span>{recipe.calories_per_serving ?? '—'} cal</span>
+            <span>{formatNutritionValue(nutritionSnapshot.calories_per_serving)} cal</span>
           </div>
         </div>
 
@@ -161,13 +169,13 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], inv
         ) : null}
 
         <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-          <div><span className="font-semibold">Protein:</span> {recipe.protein_per_serving ?? '—'} g</div>
-          <div><span className="font-semibold">Carbs:</span> {recipe.carbs_per_serving ?? '—'} g</div>
-          <div><span className="font-semibold">Fat:</span> {recipe.fat_per_serving ?? '—'} g</div>
-          <div className="flex items-center gap-1"><Droplets className="h-3 w-3 text-cyan-600" /> {recipe.sodium_per_serving ?? '—'} mg sodium</div>
-          <div className="col-span-2 flex items-center gap-1"><Candy className="h-3 w-3 text-pink-500" /> {recipe.sugar_per_serving ?? '—'} g sugar</div>
+          <div><span className="font-semibold">Protein:</span> {formatNutritionValue(nutritionSnapshot.protein_per_serving)} g</div>
+          <div><span className="font-semibold">Carbs:</span> {formatNutritionValue(nutritionSnapshot.carbs_per_serving)} g</div>
+          <div><span className="font-semibold">Fat:</span> {formatNutritionValue(nutritionSnapshot.fat_per_serving)} g</div>
+          <div className="flex items-center gap-1"><Droplets className="h-3 w-3 text-cyan-600" /> {formatNutritionValue(nutritionSnapshot.sodium_per_serving)} mg sodium</div>
+          <div className="col-span-2 flex items-center gap-1"><Candy className="h-3 w-3 text-pink-500" /> {formatNutritionValue(nutritionSnapshot.sugar_per_serving)} g sugar</div>
         </div>
-        {recipe.nutrition_complete !== true && (
+        {nutritionSnapshot.nutrition_complete !== true && (
           <p className="mt-2 text-xs text-amber-800 break-words">
             Nutrition incomplete — awaiting ingredient nutrition or weight data.
             {' '}{nutritionWarnings.slice(0, 3).join(' ')}
@@ -188,10 +196,10 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], inv
                 </Badge>
               ))}
             </div>
-          ) : recipe.allergens_complete === true ? (
+          ) : nutritionSnapshot.allergens_complete === true ? (
             <p className="text-xs text-slate-600">No allergens declared in the ingredient or recipe data.</p>
           ) : null}
-          {recipe.allergens_complete !== true && (
+          {nutritionSnapshot.allergens_complete !== true && (
             <p className="mt-2 text-xs text-amber-800 break-words">
               Allergen information incomplete — awaiting ingredient allergen data.
               {' '}{allergenWarnings.slice(0, 3).join(' ')}

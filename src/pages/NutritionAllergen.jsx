@@ -17,6 +17,7 @@ import { format } from 'date-fns';
 import { downloadCSV, downloadPDF } from '@/components/utils/exportData';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 import { normalizeAllergenTags } from '../../shared/allergens.js';
+import { calculateRecipeNutritionSnapshot } from '../../shared/recipeNutrition.js';
 
 function formatNutritionRows(recipe) {
   return [
@@ -127,6 +128,15 @@ export default function NutritionAllergen() {
     queryFn: () => base44.entities.Ingredient.list()
   });
 
+  const effectiveRecipes = useMemo(() => recipes.map((recipe) => ({
+    ...recipe,
+    ...calculateRecipeNutritionSnapshot(recipe, recipes, ingredients)
+  })), [ingredients, recipes]);
+  const effectiveRecipeById = useMemo(
+    () => new Map(effectiveRecipes.map((recipe) => [recipe.id, recipe])),
+    [effectiveRecipes]
+  );
+
   const { data: menuPlans = [] } = useQuery({
     queryKey: ['menuPlans'],
     queryFn: () => base44.entities.MenuPlan.list('-plan_date', 250)
@@ -159,7 +169,7 @@ export default function NutritionAllergen() {
   });
 
   const filteredRecipes = useMemo(() => {
-    return recipes.filter((recipe) => {
+    return effectiveRecipes.filter((recipe) => {
       const recipeMatches = selectedRecipeId === 'all' || recipe.id === selectedRecipeId;
       const siteMatches = selectedSite === 'all'
         || !recipe.site_scope
@@ -168,7 +178,7 @@ export default function NutritionAllergen() {
       const categoryMatches = selectedCategory === 'all' || recipe.category === selectedCategory;
       return recipeMatches && siteMatches && categoryMatches;
     });
-  }, [recipes, selectedRecipeId, selectedSite, selectedCategory]);
+  }, [effectiveRecipes, selectedRecipeId, selectedSite, selectedCategory]);
 
   const allergenSummary = useMemo(() => {
     const counts = new Map();
@@ -185,10 +195,15 @@ export default function NutritionAllergen() {
       .filter((plan) => selectedSite === 'all' || plan.site_id === selectedSite)
       .map((plan) => ({
         ...plan,
-        warnings: (plan.meals || []).filter((meal) => Array.isArray(meal.allergens) && meal.allergens.length > 0)
+        warnings: (plan.meals || [])
+          .map((meal) => {
+            const currentRecipe = effectiveRecipeById.get(meal.recipe_id);
+            return currentRecipe ? { ...meal, allergens: currentRecipe.allergens || [] } : meal;
+          })
+          .filter((meal) => Array.isArray(meal.allergens) && meal.allergens.length > 0)
       }))
       .filter((plan) => plan.warnings.length > 0);
-  }, [menuPlans, selectedSite]);
+  }, [effectiveRecipeById, menuPlans, selectedSite]);
 
   const mealPlanSummaries = useMemo(() => {
     return mealPlans.map((plan) => {
@@ -219,7 +234,7 @@ export default function NutritionAllergen() {
     });
   }, [mealPlans]);
 
-  const categoryOptions = Array.from(new Set(recipes.map((recipe) => recipe.category).filter(Boolean)));
+  const categoryOptions = Array.from(new Set(effectiveRecipes.map((recipe) => recipe.category).filter(Boolean)));
   const projectSites = sites.filter((site) => (
     site.is_active !== false
     && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT
@@ -229,7 +244,7 @@ export default function NutritionAllergen() {
     const site = sites.find((item) => item.id === mealPlanForm.site_id);
     const meals = mealPlanForm.meals
       .map((meal) => {
-        const recipe = recipes.find((item) => item.id === meal.recipe_id);
+        const recipe = effectiveRecipes.find((item) => item.id === meal.recipe_id);
         const portions = Math.max(1, Number(meal.portions) || 1);
         if (!recipe) {
           return null;
@@ -299,7 +314,7 @@ export default function NutritionAllergen() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All recipes</SelectItem>
-                {recipes.map((recipe) => (
+                {effectiveRecipes.map((recipe) => (
                   <SelectItem key={recipe.id} value={recipe.id}>{recipe.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -345,7 +360,7 @@ export default function NutritionAllergen() {
           <Card className="border-slate-100">
             <CardContent className="p-5">
               <p className="text-sm text-slate-500">Recipes with allergen labels</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{recipes.filter((recipe) => (recipe.allergens || []).length > 0).length}</p>
+              <p className="mt-2 text-3xl font-bold text-slate-900">{effectiveRecipes.filter((recipe) => (recipe.allergens || []).length > 0).length}</p>
             </CardContent>
           </Card>
           <Card className="border-slate-100">
@@ -645,7 +660,7 @@ export default function NutritionAllergen() {
                         <SelectValue placeholder="Select recipe" />
                       </SelectTrigger>
                       <SelectContent>
-                        {recipes.map((recipe) => (
+                        {effectiveRecipes.map((recipe) => (
                           <SelectItem key={recipe.id} value={recipe.id}>
                             {recipe.name}
                           </SelectItem>

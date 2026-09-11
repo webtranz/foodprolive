@@ -12,6 +12,7 @@ import { Trash2, Flame, Calculator, RotateCcw } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
 import { getItemCode } from '../../shared/itemCode.js';
+import { calculateRecipeNutritionSnapshot } from '../../shared/recipeNutrition.js';
 
 const MACRO_COLORS = {
   protein: '#10b981',
@@ -44,6 +45,11 @@ export default function CaloriesCalculator() {
     queryFn: () => base44.entities.Recipe.list()
   });
 
+  const effectiveRecipes = useMemo(() => recipes.map((recipe) => ({
+    ...recipe,
+    ...calculateRecipeNutritionSnapshot(recipe, recipes, ingredients)
+  })), [ingredients, recipes]);
+
   const addItem = (type, id) => {
     if (!id) return;
     
@@ -68,7 +74,7 @@ export default function CaloriesCalculator() {
         }]);
       }
     } else if (type === 'recipe') {
-      const recipe = recipes.find(r => r.id === id);
+      const recipe = effectiveRecipes.find(r => r.id === id);
       if (recipe) {
         setSelectedItems([...selectedItems, {
           type: 'recipe',
@@ -190,7 +196,7 @@ export default function CaloriesCalculator() {
                         <SelectValue placeholder="Select recipe" />
                       </SelectTrigger>
                       <SelectContent>
-                        {recipes.map(recipe => (
+                        {effectiveRecipes.map(recipe => (
                           <SelectItem key={recipe.id} value={recipe.id}>
                             {getCalculatorItemCode(recipe, 'recipe')} · {recipe.name || recipe.data?.name} ({recipe.calories_per_serving || recipe.data?.calories_per_serving || 0} cal/serving)
                           </SelectItem>

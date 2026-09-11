@@ -274,3 +274,43 @@ export function calculateRecipeNutrition(recipe = {}, recipes = [], ingredients 
     nutrition_calculation_version: 1
   };
 }
+
+/**
+ * Resolve the nutrition/allergen values that screens should display.
+ *
+ * Recipes with ingredient lines are recalculated from the current ingredient
+ * master so bulk-uploaded yield, weight, nutrition, and allergen changes are
+ * visible immediately. Legacy/manual recipes without ingredient lines retain
+ * their saved values.
+ */
+export function calculateRecipeNutritionSnapshot(recipe = {}, recipes = [], ingredients = []) {
+  const hasRecipeLines = (Array.isArray(recipe?.ingredients) && recipe.ingredients.length > 0)
+    || (Array.isArray(recipe?.sub_recipes) && recipe.sub_recipes.length > 0);
+
+  if (hasRecipeLines) {
+    return calculateRecipeNutrition(recipe, recipes, ingredients);
+  }
+
+  const result = {};
+  NUTRIENTS.forEach((nutrient) => {
+    const total = nonnegativeNumber(recipe?.[`total_${nutrient}`]);
+    const perServing = nonnegativeNumber(recipe?.[`${nutrient}_per_serving`]);
+    result[`total_${nutrient}`] = total;
+    result[`${nutrient}_per_serving`] = perServing;
+  });
+
+  const hasCompleteSavedNutrition = NUTRIENTS.every((nutrient) => result[`${nutrient}_per_serving`] !== null);
+  const allergens = normalizeAllergenTags(recipe?.allergens);
+
+  return {
+    ...result,
+    allergens,
+    declared_allergens: normalizeAllergenTags(recipe?.declared_allergens),
+    legacy_allergens: normalizeAllergenTags(recipe?.legacy_allergens),
+    nutrition_complete: recipe?.nutrition_complete === true || hasCompleteSavedNutrition,
+    nutrition_warnings: Array.isArray(recipe?.nutrition_warnings) ? recipe.nutrition_warnings : [],
+    allergens_complete: recipe?.allergens_complete === true || Array.isArray(recipe?.allergens),
+    allergens_warnings: Array.isArray(recipe?.allergens_warnings) ? recipe.allergens_warnings : [],
+    nutrition_calculation_version: recipe?.nutrition_calculation_version || 1
+  };
+}

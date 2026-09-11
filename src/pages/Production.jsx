@@ -26,6 +26,7 @@ import {
 } from '@/lib/inventoryAvailability';
 import { convertIngredientQuantity } from '../../shared/ingredientUnits.js';
 import { buildAutomaticProductionYieldSummary } from '../../shared/productionReconciliation.js';
+import { calculateRecipeNutritionSnapshot } from '../../shared/recipeNutrition.js';
 import { formatRecipeQuantity, getRecipeQuantityPrecision, roundStandardDecimal } from '../../shared/recipeNumbers.js';
 import { getItemCode } from '../../shared/itemCode.js';
 import {
@@ -1220,6 +1221,7 @@ export default function Production() {
     const site = visibleSites.find((s) => s.id === formData.site_id) || sites.find((s) => s.id === formData.site_id);
     const fulfillmentStore = formInventoryContext.site;
     const recipe = recipes.find(r => r.id === formData.recipe_id);
+    const nutritionSnapshot = calculateRecipeNutritionSnapshot(recipe, recipes, ingredients);
     const productionOverrides = buildProductionOverrideAudit(calculatedIngredients);
 
     return {
@@ -1245,8 +1247,8 @@ export default function Production() {
       ingredients_used: buildProductionIngredientsForSubmit(calculatedIngredients),
       production_overrides: productionOverrides,
       production_override_count: productionOverrides.length,
-      total_calories: recipe?.calories_per_serving 
-        ? recipe.calories_per_serving * Number(formData.target_servings)
+      total_calories: nutritionSnapshot?.calories_per_serving
+        ? nutritionSnapshot.calories_per_serving * Number(formData.target_servings)
         : 0,
       estimated_batch_cost: estimatedBatchCost,
       estimated_cost_per_serving: estimatedCostPerServing,
@@ -1861,8 +1863,9 @@ export default function Production() {
       production_override_count: productionOverrides.length,
       total_calories: group.items.reduce((sum, item) => {
         const itemRecipe = recipes.find((entry) => String(entry.id) === String(item.recipe_id)) || {};
-        return sum + (itemRecipe?.calories_per_serving
-          ? itemRecipe.calories_per_serving * finiteProductionNumber(item.production_covers, 0)
+        const nutritionSnapshot = calculateRecipeNutritionSnapshot(itemRecipe, recipes, ingredients);
+        return sum + (nutritionSnapshot?.calories_per_serving
+          ? nutritionSnapshot.calories_per_serving * finiteProductionNumber(item.production_covers, 0)
           : 0);
       }, 0),
       estimated_batch_cost: estimatedBatchCost,

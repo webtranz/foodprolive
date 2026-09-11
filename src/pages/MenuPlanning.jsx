@@ -25,6 +25,7 @@ import {
   buildDailyMenuState,
   buildMenuPlanMeals,
   calculateRecipeCostSnapshot,
+  calculateRecipeNutritionSnapshot,
   computeBudgetComparison,
   computeMealBudgetStatus,
   CORE_MENU_MEAL_TYPES,
@@ -310,6 +311,13 @@ export default function MenuPlanning() {
       return String(left.name || '').localeCompare(String(right.name || ''));
     })
   ), [availableRecipes]);
+
+  const nutritionByRecipeId = useMemo(() => (
+    new Map(availableRecipes.map((recipe) => [
+      recipe.id,
+      calculateRecipeNutritionSnapshot(recipe, ingredients, availableRecipes)
+    ]))
+  ), [availableRecipes, ingredients]);
 
   const costSummary = useMemo(
     () => summarizeDailyMenuCosts(formData, availableRecipes, ingredients),
@@ -1271,7 +1279,9 @@ export default function MenuPlanning() {
                         <Droppable droppableId="available-recipes" isDropDisabled>
                           {(provided) => (
                             <div ref={provided.innerRef} {...provided.droppableProps} className="space-y-3">
-                              {sortedAvailableRecipes.map((recipe, index) => (
+                              {sortedAvailableRecipes.map((recipe, index) => {
+                                const nutritionSnapshot = nutritionByRecipeId.get(recipe.id) || {};
+                                return (
                                 <Draggable key={`available-${recipe.id}`} draggableId={`available-${recipe.id}`} index={index}>
                                   {(dragProvided, snapshot) => (
                                     <div
@@ -1287,14 +1297,15 @@ export default function MenuPlanning() {
                                           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                                             <Badge variant="outline">{recipe.category || 'uncategorized'}</Badge>
                                             <span>{recipe.servings || 0} default servings</span>
-                                            <span>{recipe.calories_per_serving || 0} cal / serving</span>
+                                            <span>{nutritionSnapshot.calories_per_serving || 0} cal / serving</span>
                                           </div>
                                         </div>
                                       </div>
                                     </div>
                                   )}
                                 </Draggable>
-                              ))}
+                                );
+                              })}
                               {provided.placeholder}
                             </div>
                           )}
@@ -1335,6 +1346,7 @@ export default function MenuPlanning() {
                                   >
                                     {mealRows.map((recipeRow, index) => {
                                       const selectedRecipe = availableRecipes.find((recipe) => recipe.id === recipeRow.recipe_id);
+                                      const selectedNutritionSnapshot = selectedRecipe ? nutritionByRecipeId.get(selectedRecipe.id) : null;
                                       return (
                                         <Draggable key={`${mealType}-${index}-${recipeRow.recipe_id || 'empty'}`} draggableId={`${mealType}-${index}-${recipeRow.recipe_id || `empty-${index}`}`} index={index}>
                                           {(dragProvided, dragSnapshot) => (
@@ -1413,7 +1425,7 @@ export default function MenuPlanning() {
                                                   <div className="mt-2 flex flex-wrap gap-3 text-xs">
                                                     <span>{selectedRecipe.category || 'uncategorized'}</span>
                                                     <span>{selectedRecipe.servings || 0} recipe servings</span>
-                                                    <span>{selectedRecipe.calories_per_serving || 0} cal / serving</span>
+                                                    <span>{selectedNutritionSnapshot?.calories_per_serving || 0} cal / serving</span>
                                                   </div>
                                                   <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-white p-3 text-xs">
                                                     <div>

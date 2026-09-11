@@ -7,6 +7,8 @@ import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
 import { calculateRecipeCostSnapshot } from '@/lib/menuPlanning';
 import { getItemCode } from '../../../shared/itemCode.js';
+import { resolveIngredientYield } from '../../../shared/ingredientYield.js';
+import { calculateRecipeNutritionSnapshot } from '../../../shared/recipeNutrition.js';
 
 function averageBy(items, selector) {
   const values = items
@@ -20,20 +22,35 @@ function averageBy(items, selector) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function effectiveYieldPercent(ingredient) {
+  const yieldDetails = resolveIngredientYield(ingredient);
+  return Number.isFinite(yieldDetails.percent) ? yieldDetails.percent : 0;
+}
+
+function effectiveShrinkagePercent(ingredient) {
+  const percent = effectiveYieldPercent(ingredient);
+  return percent > 0 ? Math.max(0, 100 - percent) : 0;
+}
+
 export default function CostReport({ ingredients = [], recipes = [] }) {
   const generateCostReport = () => {
     const reportData = ingredients.map(ing => ({
+      ...(() => {
+        const yieldPercent = effectiveYieldPercent(ing);
+        return {
+          yield_percent: yieldPercent || 100,
+          shrinkage_percent: effectiveShrinkagePercent(ing),
+          effective_cost: ing.cost_per_unit && yieldPercent
+            ? (ing.cost_per_unit / (yieldPercent / 100)).toFixed(2)
+            : ing.cost_per_unit || 0
+        };
+      })(),
       item_code: getItemCode(ing),
       item_name: ing.name,
       cuisine: ing.cuisine_type,
       category: ing.category,
       unit: ing.unit,
-      cost_per_unit: ing.cost_per_unit || 0,
-      yield_percent: ing.cooking_yield_percent || 100,
-      shrinkage_percent: ing.shrinkage_percent || 0,
-      effective_cost: ing.cost_per_unit && ing.cooking_yield_percent 
-        ? (ing.cost_per_unit / (ing.cooking_yield_percent / 100)).toFixed(2)
-        : ing.cost_per_unit || 0
+      cost_per_unit: ing.cost_per_unit || 0
     }));
 
     downloadCSV(reportData, `cost_report_${format(new Date(), 'yyyy-MM-dd')}`);
@@ -42,10 +59,11 @@ export default function CostReport({ ingredients = [], recipes = [] }) {
   const generateRecipeCostReport = () => {
     const recipeCosts = recipes.map(recipe => {
       const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
+      const nutritionSnapshot = calculateRecipeNutritionSnapshot(recipe, recipes, ingredients);
       const totalCost = costSnapshot.has_cost ? costSnapshot.total_cost : 0;
 
       const servings = Number(recipe.servings) || 0;
-      const caloriesPerServing = Number(recipe.calories_per_serving) || 0;
+      const caloriesPerServing = Number(nutritionSnapshot.calories_per_serving) || 0;
 
       return {
         recipe: recipe.name,
@@ -66,27 +84,30 @@ export default function CostReport({ ingredients = [], recipes = [] }) {
 
   const generateYieldReport = () => {
     const yieldData = ingredients
-      .filter(ing => ing.cooking_yield_percent || ing.shrinkage_percent)
-      .map(ing => ({
+      .filter(ing => effectiveYieldPercent(ing) || ing.shrinkage_percent)
+      .map(ing => {
+        const yieldPercent = effectiveYieldPercent(ing);
+        return ({
         item_code: getItemCode(ing),
         item_name: ing.name,
         cuisine: ing.cuisine_type,
         category: ing.category,
         raw_weight: ing.raw_weight_per_unit || 0,
         cooked_weight: ing.cooked_weight_per_unit || 0,
-        yield_percent: ing.cooking_yield_percent || 0,
-        shrinkage_percent: ing.shrinkage_percent || 0,
+        yield_percent: yieldPercent || 0,
+        shrinkage_percent: effectiveShrinkagePercent(ing),
         cost_per_unit: ing.cost_per_unit || 0,
-        effective_cost_per_kg: ing.cost_per_unit && ing.cooking_yield_percent
-          ? ((ing.cost_per_unit / (ing.cooking_yield_percent / 100)) * 1000 / (ing.raw_weight_per_unit || 1000)).toFixed(2)
+        effective_cost_per_kg: ing.cost_per_unit && yieldPercent
+          ? ((ing.cost_per_unit / (yieldPercent / 100)) * 1000 / (ing.raw_weight_per_unit || 1000)).toFixed(2)
           : 0
-      }));
+      });
+      });
 
     downloadCSV(yieldData, `yield_report_${format(new Date(), 'yyyy-MM-dd')}`);
   };
 
   const totalInventoryValue = ingredients.reduce((sum, ing) => sum + (ing.cost_per_unit || 0), 0);
-  const avgYield = averageBy(ingredients, (ing) => Number(ing.cooking_yield_percent));
+  const avgYield = averageBy(ingredients, effectiveYieldPercent);
 
   return (
     <div className="space-y-4">
