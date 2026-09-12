@@ -973,11 +973,12 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
       productionRecord.status = normalizeProductionStatus(productionRecord.status, 'draft');
     }
     if (!existing && productionRecord.site_id) {
-      const productionProject = (scope.sites || []).find(
+      const productionSite = (scope.sites || []).find(
         (site) => String(site.id) === String(productionRecord.site_id)
       );
-      if (!productionProject || normalizeSiteType(productionProject.type) !== 'project') {
-        const error = new Error('New production requests must be assigned to a Project, with a separate fulfillment Store.');
+      const productionSiteType = normalizeSiteType(productionSite?.type);
+      if (!productionSite || !['project', 'store'].includes(productionSiteType)) {
+        const error = new Error('New production requests must be assigned to a Project or Store.');
         error.status = 400;
         throw error;
       }

@@ -127,6 +127,39 @@ const productionWithoutKitchenStation = await prepareEntityPayload(
 assert.equal(productionWithoutKitchenStation.recipe_id, recipe.id);
 assert.equal(productionWithoutKitchenStation.kitchen_station, undefined);
 
+const storeScope = {
+  unrestricted: true,
+  accessibleSiteIds: new Set(['store-384']),
+  sites: [{ id: 'store-384', name: 'STORE 384', type: 'store', is_active: true }],
+  graph: {
+    byId: new Map([
+      ['store-384', { id: 'store-384', name: 'STORE 384', type: 'store', is_active: true }]
+    ])
+  }
+};
+const storeProduction = await prepareEntityPayload(
+  {},
+  'Production',
+  {
+    site_id: 'store-384',
+    recipe_id: recipe.id,
+    target_servings: 4,
+    production_date: '2026-09-03',
+    meal_type: 'breakfast',
+    menu_type: 'general',
+    menu_category: 'senior',
+    status: 'pending_approval'
+  },
+  null,
+  {
+    scope: storeScope,
+    recipeCatalog: [recipe],
+    ingredientCatalog: []
+  }
+);
+assert.equal(storeProduction.site_id, 'store-384');
+assert.equal(storeProduction.fulfillment_store_id, undefined);
+
 const lockedSnapshotProduction = await prepareEntityPayload(
   {},
   'Production',
