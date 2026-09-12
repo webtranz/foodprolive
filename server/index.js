@@ -10,7 +10,11 @@ import { normalizeAllergenTags } from '../shared/allergens.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { calculateRecipeNutrition } from '../shared/recipeNutrition.js';
-import { roundStandardDecimal } from '../shared/recipeNumbers.js';
+import { formatRecipeQuantity, roundStandardDecimal } from '../shared/recipeNumbers.js';
+import {
+  applyRecipeIngredientUnitSync,
+  recipeUnitSyncKey
+} from '../shared/recipeUnitSync.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import { toBusinessDateTimeParts } from '../shared/businessDate.js';
 import { resolveMenuRecipeLinks } from '../shared/menuRecipeLinks.js';
@@ -3679,6 +3683,131 @@ app.get('/api/ingredients/search', requireAuth, async (request, response, next) 
       stockOnly: ['1', 'true'].includes(String(request.query.stock_only || '').toLowerCase())
     });
     return response.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/recipes/sync-ingredient-units', requireAuth, async (request, response, next) => {
+  try {
+    if (!hasAdminAccess(request.user)) {
+      return response.status(403).json({ message: 'Only administrators can sync recipe ingredient units.' });
+    }
+
+    const requestedChanges = Array.isArray(request.body?.changes) ? request.body.changes : [];
+    const normalizedRequests = requestedChanges
+      .map((change) => ({
+        recipe_id: String(change?.recipe_id || '').trim(),
+        line_index: Number(change?.line_index),
+        ingredient_id: String(change?.ingredient_id || '').trim()
+      }))
+      .filter((change) => change.recipe_id && change.ingredient_id && Number.isInteger(change.line_index) && change.line_index >= 0)
+      .map((change) => ({ ...change, key: recipeUnitSyncKey(change) }));
+
+    if (!normalizedRequests.length) {
+      return response.status(400).json({ message: 'Select at least one recipe line to sync.' });
+    }
+
+    const requestsByRecipe = normalizedRequests.reduce((map, change) => {
+      const bucket = map.get(change.recipe_id) || [];
+      bucket.push(change);
+      map.set(change.recipe_id, bucket);
+      return map;
+    }, new Map());
+
+    const syncResult = await withTransaction(async (client) => {
+      const ingredientCatalog = await listDocuments('Ingredient', { limit: 10000 }, client);
+      const recipeCatalog = await listDocuments('Recipe', { limit: 5000 }, client);
+      const applied = [];
+      const skipped = [];
+
+      for (const [recipeId, selectedChanges] of requestsByRecipe.entries()) {
+        const lockedRecipe = await findDocument('Recipe', recipeId, client, true);
+        if (!lockedRecipe) {
+          skipped.push(...selectedChanges.map((change) => ({
+            ...change,
+            reason: 'Recipe no longer exists.'
+          })));
+          continue;
+        }
+
+        authorizeEntityAction(request.user, 'Recipe', 'update', { ingredients: lockedRecipe.ingredients || [] }, lockedRecipe);
+
+        const selectedKeys = new Set(selectedChanges.map((change) => change.key));
+        const recipeSync = applyRecipeIngredientUnitSync(lockedRecipe, ingredientCatalog, selectedChanges);
+        const appliedKeys = new Set(recipeSync.changes.map((change) => change.key));
+        const skippedKeys = new Set();
+
+        recipeSync.skipped
+          .filter((item) => selectedKeys.has(item.key))
+          .forEach((item) => {
+            skippedKeys.add(item.key);
+            skipped.push(item);
+          });
+
+        selectedChanges.forEach((change) => {
+          if (!appliedKeys.has(change.key) && !skippedKeys.has(change.key)) {
+            skipped.push({
+              ...change,
+              recipe_name: lockedRecipe.name || 'Recipe',
+              reason: 'Recipe line no longer needs syncing or no longer matches the selected ingredient.'
+            });
+          }
+        });
+
+        if (!recipeSync.changes.length) continue;
+
+        const preparedPayload = await prepareEntityPayload(
+          request.user,
+          'Recipe',
+          { ingredients: recipeSync.recipe.ingredients },
+          lockedRecipe,
+          { recipeCatalog, ingredientCatalog }
+        );
+        const savedRecipe = await updateDocument('Recipe', recipeId, preparedPayload, client);
+        applied.push(...recipeSync.changes.map((change) => ({
+          ...change,
+          recipe_name: savedRecipe.name || change.recipe_name
+        })));
+      }
+
+      return {
+        applied,
+        skipped,
+        recipes_changed: new Set(applied.map((change) => change.recipe_id)).size,
+        lines_changed: applied.length
+      };
+    });
+
+    if (syncResult.lines_changed > 0) {
+      invalidateEntityAccessCaches('Recipe');
+      recordChanged('Recipe');
+    }
+
+    await auditAction({
+      user: request.user,
+      action: 'RECIPE_INGREDIENT_UNIT_SYNC',
+      entity: 'Recipe',
+      entityId: null,
+      details: {
+        friendly_summary: `${request.user.full_name || request.user.email || 'An administrator'} synced ingredient units on ${syncResult.recipes_changed} recipe${syncResult.recipes_changed === 1 ? '' : 's'} and ${syncResult.lines_changed} recipe line${syncResult.lines_changed === 1 ? '' : 's'}.`,
+        friendly_changes: [
+          ...syncResult.applied.slice(0, 20).map((change) => (
+            `${change.recipe_name}: ${change.ingredient_name} changed from ${formatRecipeQuantity(change.current_quantity, change.current_unit)} ${change.current_unit} to ${formatRecipeQuantity(change.proposed_quantity, change.proposed_unit)} ${change.proposed_unit}.`
+          )),
+          ...(syncResult.applied.length > 20
+            ? [`${syncResult.applied.length - 20} additional recipe line${syncResult.applied.length - 20 === 1 ? '' : 's'} were also synced.`]
+            : []),
+          ...(syncResult.skipped.length
+            ? [`${syncResult.skipped.length} selected row${syncResult.skipped.length === 1 ? '' : 's'} were skipped because they no longer matched or could not be converted.`]
+            : [])
+        ],
+        applied_changes: syncResult.applied,
+        skipped_changes: syncResult.skipped
+      }
+    });
+
+    return response.json({ success: true, ...syncResult });
   } catch (error) {
     return next(error);
   }

@@ -959,6 +959,14 @@ export const base44 = {
       return apiRequest(`/api/activity/audit-logs${buildQueryString(filters)}`);
     }
   },
+  recipes: {
+    syncIngredientUnits({ changes = [] } = {}) {
+      return apiRequest('/api/recipes/sync-ingredient-units', {
+        method: 'POST',
+        body: JSON.stringify({ changes })
+      });
+    }
+  },
   integrations: {
     Core: {
       UploadFile({ file }) {
