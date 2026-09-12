@@ -30,7 +30,9 @@ const UNITS = [
   { value: 'ml', label: 'Milliliters (ml)' },
   { value: 'm3', label: 'Cubic Meter (m3)' },
   { value: 'pieces', label: 'Pieces' },
-  { value: 'ea', label: 'CT (Each)' }
+  { value: 'ct', label: 'CT (Count)' },
+  { value: 'ea', label: 'EA (Each)' },
+  { value: 'pak', label: 'PAK (Pack)' }
 ];
 
 const NO_CONVERSION_UNIT = '__no_conversion__';
@@ -135,8 +137,14 @@ export default function IngredientForm({ open, onClose, onSubmit, ingredient, is
   }, [ingredient, open]);
 
   const normalizedConversionUnit = normalizeIngredientUnit(formData.conversion_unit);
-  const isStandardConversionUnit = UNITS.some(unit => unit.value === normalizedConversionUnit);
-  const conversionUnit = isStandardConversionUnit ? normalizedConversionUnit : formData.conversion_unit;
+  const isExactStandardConversionUnit = UNITS.some(unit => unit.value === formData.conversion_unit);
+  const isNormalizedStandardConversionUnit = UNITS.some(unit => unit.value === normalizedConversionUnit);
+  const isStandardConversionUnit = isExactStandardConversionUnit || isNormalizedStandardConversionUnit;
+  const conversionUnit = isExactStandardConversionUnit
+    ? formData.conversion_unit
+    : isNormalizedStandardConversionUnit
+      ? normalizedConversionUnit
+      : formData.conversion_unit;
 
   // Auto-calculate yield/shrinkage
   useEffect(() => {

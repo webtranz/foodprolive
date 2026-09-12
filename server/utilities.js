@@ -290,7 +290,10 @@ function buildHeaderMap(moduleKey, definition) {
 
 function normalizeIngredientUploadUnit(value) {
   const trimmed = String(value || '').trim();
-  const standardUnits = new Set(['kg', 'g', 'lb', 'oz', 'm3', 'l', 'ml', 'pieces', 'ea']);
+  const standardUnits = new Set(['kg', 'g', 'lb', 'oz', 'm3', 'l', 'ml', 'pieces', 'ct', 'ea', 'pak']);
+  if (/^ct\s*\(\s*count\s*\)$/i.test(trimmed)) return 'ct';
+  if (/^ea\s*\(\s*each\s*\)$/i.test(trimmed)) return 'ea';
+  if (/^pak\s*\(\s*pack\s*\)$/i.test(trimmed)) return 'pak';
   const displayLabel = trimmed.match(/^(.*?)\s*\(([^)]+)\)$/);
   if (displayLabel) {
     const symbol = normalizeIngredientUnit(displayLabel[2]);
