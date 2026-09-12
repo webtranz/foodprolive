@@ -26,6 +26,18 @@ function formatNutritionValue(value) {
   return value === null || value === undefined ? '—' : value;
 }
 
+function calculateRecipeYieldPercent(weightSnapshot) {
+  const rawWeight = Number(weightSnapshot?.raw_total_grams);
+  const yieldedWeight = Number(weightSnapshot?.yielded_total_grams);
+  if (!Number.isFinite(rawWeight) || rawWeight <= 0 || !Number.isFinite(yieldedWeight)) return null;
+  return (yieldedWeight / rawWeight) * 100;
+}
+
+function formatRecipeYieldPercent(value) {
+  if (!Number.isFinite(value)) return '—';
+  return `${Number(value.toFixed(2)).toLocaleString()}%`;
+}
+
 export default function RecipeCard({ recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, onEdit, onDelete }) {
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
   const subRecipes = Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [];
@@ -71,6 +83,8 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], inv
   const formattedServingWeight = servingWeight.is_complete
     ? formatRecipeQuantity(displayServingWeight, 'g')
     : '—';
+  const recipeYieldPercent = servingWeight.is_complete ? calculateRecipeYieldPercent(servingWeight) : null;
+  const formattedYieldPercent = recipeYieldPercent == null ? null : formatRecipeYieldPercent(recipeYieldPercent);
   const servingCount = Number(recipe.servings) || 1;
   const servingWeightTitle = servingWeight.is_complete
       ? 'Yield-adjusted cooked weight per serving'
@@ -137,6 +151,11 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], inv
             <span className={servingWeight.is_complete ? 'font-medium text-emerald-700' : 'text-amber-700'} title={servingWeightTitle}>
               · {servingWeight.is_complete ? `${formattedServingWeight} g calculated` : 'Weight incomplete'}
             </span>
+            {formattedYieldPercent ? (
+              <span className="font-medium text-blue-700" title="Recipe yield = expected yielded weight ÷ raw recipe weight × 100">
+                · Yield {formattedYieldPercent}
+              </span>
+            ) : null}
           </div>
           
           {totalTime > 0 && (

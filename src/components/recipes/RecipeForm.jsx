@@ -78,6 +78,13 @@ const ALLERGEN_COLORS = {
   sesame: 'bg-rose-100 text-rose-700'
 };
 
+function calculateRecipeYieldPercentFromCost(recipeCost) {
+  const rawWeight = Number(recipeCost?.total_raw_recipe_weight_grams);
+  const yieldedWeight = Number(recipeCost?.expected_yield_weight_grams);
+  if (!Number.isFinite(rawWeight) || rawWeight <= 0 || !Number.isFinite(yieldedWeight)) return null;
+  return (yieldedWeight / rawWeight) * 100;
+}
+
 export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, sites = [], isLoading, canEditLineWeights = false }) {
   const imageInputRef = useRef(null);
   const [formError, setFormError] = useState('');
@@ -314,6 +321,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     ingredientCatalog,
     recipes
   ), [formData, ingredientCatalog, recipe?.id, recipes]);
+  const recipeYieldPercent = calculateRecipeYieldPercentFromCost(recipeCost);
 
   const stockShortageCount = ingredientCostRows.filter((row) => Number(row.shortage) > 0).length;
   const knownStockLineCount = ingredientCostRows.filter((row) => row.currentStock !== null).length;
@@ -1109,6 +1117,8 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
                   Raw recipe weight: {recipeCost.total_raw_recipe_weight_grams == null ? 'Not available' : `${formatRecipeQuantity(recipeCost.total_raw_recipe_weight_grams, 'g')} g`}
                   {' → '}
                   Expected yielded weight: {recipeCost.expected_yield_weight_grams == null ? 'Not available' : `${formatRecipeQuantity(recipeCost.expected_yield_weight_grams, 'g')} g`}
+                  {' · '}
+                  Recipe yield: {recipeYieldPercent == null ? 'Not available' : `${formatNumber(recipeYieldPercent, 2)}%`}
                 </div>
                 <div className="flex items-center gap-2">
                   <Flame className="h-5 w-5 text-orange-500" />
