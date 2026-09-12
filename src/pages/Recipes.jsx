@@ -394,16 +394,17 @@ export default function Recipes() {
             setUnitSyncIngredientSearch('');
           }
         }}>
-          <DialogContent className="max-h-[88vh] max-w-6xl overflow-hidden">
-            <DialogHeader>
+          <DialogContent className="flex max-h-[88vh] max-w-6xl flex-col overflow-hidden">
+            <DialogHeader className="shrink-0">
               <DialogTitle>Sync Recipe Ingredient Units</DialogTitle>
               <DialogDescription>
                 Review recipe lines where the saved recipe unit differs from the current ingredient master unit. Selected rows will be converted safely before saving.
               </DialogDescription>
             </DialogHeader>
 
-            {!unitSyncResult ? (
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+              {!unitSyncResult ? (
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
                   <div className="flex-1">
                     <label htmlFor="unit-sync-ingredient-search" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -440,11 +441,11 @@ export default function Recipes() {
                     ? `Showing ${filteredUnitSyncRows.length} compatible and ${filteredIncompatibleUnitSyncRows.length} incompatible recipe line${filteredUnitSyncRows.length + filteredIncompatibleUnitSyncRows.length === 1 ? '' : 's'} for “${unitSyncIngredientSearch}”.`
                     : `Showing all ${unitSyncRows.length} compatible and ${unitSyncPreview.skipped.length} incompatible recipe line${unitSyncRows.length + unitSyncPreview.skipped.length === 1 ? '' : 's'}.`}
                 </p>
-              </div>
-            ) : null}
+                </div>
+              ) : null}
 
-            {unitSyncResult ? (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+              {unitSyncResult ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
                 <div className="flex items-start gap-2">
                   <CheckCircle2 className="mt-0.5 h-4 w-4" />
                   <div>
@@ -458,13 +459,13 @@ export default function Recipes() {
                     ) : null}
                   </div>
                 </div>
-              </div>
-            ) : unitSyncRows.length === 0 && unitSyncPreview.skipped.length === 0 ? (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                </div>
+              ) : unitSyncRows.length === 0 && unitSyncPreview.skipped.length === 0 ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                 No recipe lines need syncing right now.
-              </div>
-            ) : (
-              <>
+                </div>
+              ) : (
+                <>
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
                   <div>
                     <p className="font-semibold">{filteredUnitSyncRows.length} safe conversion{filteredUnitSyncRows.length === 1 ? '' : 's'} shown</p>
@@ -484,7 +485,7 @@ export default function Recipes() {
                   ) : null}
                 </div>
 
-                <div className="max-h-[48vh] overflow-auto rounded-lg border border-slate-200">
+                <div className="max-h-[34vh] overflow-auto rounded-lg border border-slate-200">
                   <table className="w-full min-w-[920px] text-left text-sm">
                     <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                       <tr>
@@ -586,16 +587,17 @@ export default function Recipes() {
                     </p>
                   )}
                 </div>
-              </>
-            )}
+                </>
+              )}
 
-            {unitSyncMutation.isError ? (
-              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {unitSyncMutation.error?.message || 'Recipe unit sync failed. Please try again.'}
-              </div>
-            ) : null}
+              {unitSyncMutation.isError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {unitSyncMutation.error?.message || 'Recipe unit sync failed. Please try again.'}
+                </div>
+              ) : null}
+            </div>
 
-            <DialogFooter>
+            <DialogFooter className="shrink-0 border-t border-slate-100 pt-3">
               {unitSyncResult ? (
                 <Button onClick={() => setUnitSyncOpen(false)}>Close</Button>
               ) : (
