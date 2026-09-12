@@ -32,6 +32,16 @@ const CATEGORIES = [
   { value: 'side_dish', label: 'Side Dish' }
 ];
 
+function matchesIngredientSearch(row = {}, searchText = '') {
+  const query = String(searchText || '').trim().toLowerCase();
+  if (!query) return true;
+  return [
+    row.ingredient_name,
+    row.item_code,
+    row.ingredient_id
+  ].some((value) => String(value || '').toLowerCase().includes(query));
+}
+
 export default function Recipes() {
   const { allowedSiteIds, isAdmin, currentUser } = useSiteContext();
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,6 +55,8 @@ export default function Recipes() {
   const [unitSyncOpen, setUnitSyncOpen] = useState(false);
   const [selectedUnitSyncKeys, setSelectedUnitSyncKeys] = useState(() => new Set());
   const [unitSyncResult, setUnitSyncResult] = useState(null);
+  const [unitSyncIngredientSearchDraft, setUnitSyncIngredientSearchDraft] = useState('');
+  const [unitSyncIngredientSearch, setUnitSyncIngredientSearch] = useState('');
 
   const queryClient = useQueryClient();
 
@@ -83,8 +95,17 @@ export default function Recipes() {
     [ingredients, recipes]
   );
   const unitSyncRows = unitSyncPreview.changes;
+  const filteredUnitSyncRows = useMemo(
+    () => unitSyncRows.filter((row) => matchesIngredientSearch(row, unitSyncIngredientSearch)),
+    [unitSyncIngredientSearch, unitSyncRows]
+  );
+  const filteredIncompatibleUnitSyncRows = useMemo(
+    () => unitSyncPreview.skipped.filter((row) => matchesIngredientSearch(row, unitSyncIngredientSearch)),
+    [unitSyncIngredientSearch, unitSyncPreview.skipped]
+  );
   const selectedUnitSyncRows = unitSyncRows.filter((row) => selectedUnitSyncKeys.has(row.key));
-  const allUnitSyncRowsSelected = unitSyncRows.length > 0 && selectedUnitSyncRows.length === unitSyncRows.length;
+  const allVisibleUnitSyncRowsSelected = filteredUnitSyncRows.length > 0
+    && filteredUnitSyncRows.every((row) => selectedUnitSyncKeys.has(row.key));
 
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.Recipe.create(data),
@@ -163,6 +184,8 @@ export default function Recipes() {
   const openUnitSyncDialog = () => {
     unitSyncMutation.reset();
     setUnitSyncResult(null);
+    setUnitSyncIngredientSearchDraft('');
+    setUnitSyncIngredientSearch('');
     setSelectedUnitSyncKeys(new Set(unitSyncRows.map((row) => row.key)));
     setUnitSyncOpen(true);
   };
@@ -176,8 +199,28 @@ export default function Recipes() {
     });
   };
 
-  const toggleAllUnitSyncRows = (checked) => {
-    setSelectedUnitSyncKeys(checked ? new Set(unitSyncRows.map((row) => row.key)) : new Set());
+  const toggleAllVisibleUnitSyncRows = (checked) => {
+    setSelectedUnitSyncKeys((current) => {
+      const next = new Set(current);
+      filteredUnitSyncRows.forEach((row) => {
+        if (checked) next.add(row.key);
+        else next.delete(row.key);
+      });
+      return next;
+    });
+  };
+
+  const runUnitSyncIngredientSearch = () => {
+    const searchText = unitSyncIngredientSearchDraft.trim();
+    setUnitSyncIngredientSearch(searchText);
+    const rowsToSelect = unitSyncRows.filter((row) => matchesIngredientSearch(row, searchText));
+    setSelectedUnitSyncKeys(new Set(rowsToSelect.map((row) => row.key)));
+  };
+
+  const clearUnitSyncIngredientSearch = () => {
+    setUnitSyncIngredientSearchDraft('');
+    setUnitSyncIngredientSearch('');
+    setSelectedUnitSyncKeys(new Set(unitSyncRows.map((row) => row.key)));
   };
 
   const applyUnitSync = () => {
@@ -204,8 +247,8 @@ export default function Recipes() {
             <Button
               variant="outline"
               onClick={openUnitSyncDialog}
-              disabled={unitSyncRows.length === 0}
-              title={unitSyncRows.length === 0 ? 'No recipe lines need ingredient unit syncing.' : 'Review recipe lines that can be converted to current ingredient units.'}
+              disabled={unitSyncRows.length === 0 && unitSyncPreview.skipped.length === 0}
+              title={unitSyncRows.length === 0 && unitSyncPreview.skipped.length === 0 ? 'No recipe lines need ingredient unit syncing.' : 'Review recipe lines that can be converted to current ingredient units.'}
             >
               <RefreshCw className="w-4 h-4 mr-2" />
               Sync Ingredient Units
@@ -347,6 +390,8 @@ export default function Recipes() {
           if (!open) {
             setUnitSyncResult(null);
             setSelectedUnitSyncKeys(new Set());
+            setUnitSyncIngredientSearchDraft('');
+            setUnitSyncIngredientSearch('');
           }
         }}>
           <DialogContent className="max-h-[88vh] max-w-6xl overflow-hidden">
@@ -356,6 +401,47 @@ export default function Recipes() {
                 Review recipe lines where the saved recipe unit differs from the current ingredient master unit. Selected rows will be converted safely before saving.
               </DialogDescription>
             </DialogHeader>
+
+            {!unitSyncResult ? (
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
+                  <div className="flex-1">
+                    <label htmlFor="unit-sync-ingredient-search" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Specific ingredient search
+                    </label>
+                    <Input
+                      id="unit-sync-ingredient-search"
+                      value={unitSyncIngredientSearchDraft}
+                      onChange={(event) => setUnitSyncIngredientSearchDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          runUnitSyncIngredientSearch();
+                        }
+                      }}
+                      placeholder="Search by ingredient name, item code, or ingredient ID"
+                      className="mt-1"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" onClick={runUnitSyncIngredientSearch}>
+                      <Search className="mr-2 h-4 w-4" />
+                      Search Ingredient
+                    </Button>
+                    {unitSyncIngredientSearch ? (
+                      <Button type="button" variant="ghost" onClick={clearUnitSyncIngredientSearch}>
+                        Clear
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  {unitSyncIngredientSearch
+                    ? `Showing ${filteredUnitSyncRows.length} compatible and ${filteredIncompatibleUnitSyncRows.length} incompatible recipe line${filteredUnitSyncRows.length + filteredIncompatibleUnitSyncRows.length === 1 ? '' : 's'} for “${unitSyncIngredientSearch}”.`
+                    : `Showing all ${unitSyncRows.length} compatible and ${unitSyncPreview.skipped.length} incompatible recipe line${unitSyncRows.length + unitSyncPreview.skipped.length === 1 ? '' : 's'}.`}
+                </p>
+              </div>
+            ) : null}
 
             {unitSyncResult ? (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
@@ -373,7 +459,7 @@ export default function Recipes() {
                   </div>
                 </div>
               </div>
-            ) : unitSyncRows.length === 0 ? (
+            ) : unitSyncRows.length === 0 && unitSyncPreview.skipped.length === 0 ? (
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                 No recipe lines need syncing right now.
               </div>
@@ -381,19 +467,21 @@ export default function Recipes() {
               <>
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
                   <div>
-                    <p className="font-semibold">{unitSyncRows.length} safe conversion{unitSyncRows.length === 1 ? '' : 's'} found</p>
+                    <p className="font-semibold">{filteredUnitSyncRows.length} safe conversion{filteredUnitSyncRows.length === 1 ? '' : 's'} shown</p>
                     <p className="text-blue-700">Quantities will be converted; units will not be simply relabeled.</p>
                   </div>
-                  <div className="flex items-center gap-2 rounded-md bg-white px-3 py-2">
-                    <Checkbox
-                      checked={allUnitSyncRowsSelected}
-                      onCheckedChange={(checked) => toggleAllUnitSyncRows(checked === true)}
-                      id="select-all-unit-sync"
-                    />
-                    <label htmlFor="select-all-unit-sync" className="cursor-pointer text-sm font-medium">
-                      Select all
-                    </label>
-                  </div>
+                  {filteredUnitSyncRows.length ? (
+                    <div className="flex items-center gap-2 rounded-md bg-white px-3 py-2">
+                      <Checkbox
+                        checked={allVisibleUnitSyncRowsSelected}
+                        onCheckedChange={(checked) => toggleAllVisibleUnitSyncRows(checked === true)}
+                        id="select-all-unit-sync"
+                      />
+                      <label htmlFor="select-all-unit-sync" className="cursor-pointer text-sm font-medium">
+                        Select all shown
+                      </label>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="max-h-[48vh] overflow-auto rounded-lg border border-slate-200">
@@ -409,7 +497,7 @@ export default function Recipes() {
                       </tr>
                     </thead>
                     <tbody>
-                      {unitSyncRows.map((row) => (
+                      {filteredUnitSyncRows.map((row) => (
                         <tr key={row.key} className="border-t border-slate-100">
                           <td className="px-3 py-3 align-top">
                             <Checkbox
@@ -441,28 +529,63 @@ export default function Recipes() {
                           </td>
                         </tr>
                       ))}
+                      {!filteredUnitSyncRows.length ? (
+                        <tr>
+                          <td colSpan={6} className="px-3 py-6 text-center text-sm text-slate-500">
+                            No compatible recipe lines match this ingredient search.
+                          </td>
+                        </tr>
+                      ) : null}
                     </tbody>
                   </table>
                 </div>
 
-                {unitSyncPreview.skipped.length ? (
-                  <details className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                    <summary className="flex cursor-pointer items-center gap-2 font-medium">
-                      <AlertTriangle className="h-4 w-4" />
-                      {unitSyncPreview.skipped.length} recipe line{unitSyncPreview.skipped.length === 1 ? '' : 's'} could not be prepared for sync
-                    </summary>
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
-                      {unitSyncPreview.skipped.slice(0, 10).map((row) => (
-                        <li key={row.key || `${row.recipe_id}-${row.line_index}`}>
-                          {row.recipe_name}: {row.ingredient_name} — {row.reason}
-                        </li>
-                      ))}
-                      {unitSyncPreview.skipped.length > 10 ? (
-                        <li>{unitSyncPreview.skipped.length - 10} more skipped lines are not shown here.</li>
-                      ) : null}
-                    </ul>
-                  </details>
-                ) : null}
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  <div className="mb-2 flex items-center gap-2 font-medium">
+                    <AlertTriangle className="h-4 w-4" />
+                    Incompatible recipe lines ({filteredIncompatibleUnitSyncRows.length})
+                  </div>
+                  {filteredIncompatibleUnitSyncRows.length ? (
+                    <div className="max-h-56 overflow-auto rounded-md border border-amber-200 bg-white">
+                      <table className="w-full min-w-[760px] text-left text-xs">
+                        <thead className="sticky top-0 bg-amber-50 uppercase tracking-wide text-amber-800">
+                          <tr>
+                            <th className="px-3 py-2">Recipe</th>
+                            <th className="px-3 py-2">Ingredient</th>
+                            <th className="px-3 py-2">Current recipe line</th>
+                            <th className="px-3 py-2">Why it cannot sync</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredIncompatibleUnitSyncRows.map((row) => (
+                            <tr key={row.key || `${row.recipe_id}-${row.line_index}`} className="border-t border-amber-100">
+                              <td className="px-3 py-2 align-top">
+                                <p className="font-medium text-slate-900">{row.recipe_name}</p>
+                                <p className="text-slate-500">Line {Number(row.line_index) + 1}</p>
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                <p className="font-medium text-slate-800">{row.ingredient_name}</p>
+                                {row.ingredient_id ? <p className="text-slate-500">{row.ingredient_id}</p> : null}
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                {formatRecipeQuantity(row.current_quantity, row.current_unit)} {row.current_unit || ''}
+                              </td>
+                              <td className="px-3 py-2 align-top text-amber-800">
+                                {row.reason}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-amber-800">
+                      {unitSyncIngredientSearch
+                        ? 'No incompatible recipe lines match this ingredient search.'
+                        : 'No incompatible recipe lines were found.'}
+                    </p>
+                  )}
+                </div>
               </>
             )}
 
