@@ -4417,6 +4417,98 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
     if (entity === 'MenuPlan' && isSpecialEventPlan(existing)) {
       return response.status(400).json({ message: 'Special events must be deleted from the event planning module.' });
     }
+    if (entity === 'Production' && hasAdminAccess(request.user)) {
+      const deletion = await withTransaction(async (client) => {
+        const lockedProduction = await findDocument('Production', request.params.id, client, true);
+        if (!lockedProduction) {
+          const error = new Error('Record not found');
+          error.status = 404;
+          throw error;
+        }
+        const status = normalizeProductionStatus(lockedProduction.status, 'draft');
+        if (!['draft', 'planned', 'changes_requested'].includes(status)) {
+          const error = new Error('Only draft, planned, or returned-for-changes production requests can be deleted. Cancel approved or submitted workflow requests instead.');
+          error.status = 409;
+          throw error;
+        }
+        if (
+          hasProductionInventoryCommitment(lockedProduction)
+          || lockedProduction.consumption_report_id
+          || ['approved', 'in_progress', 'completed', 'pending_procurement'].includes(status)
+        ) {
+          const error = new Error('This production has inventory, procurement, or completion history and cannot be deleted.');
+          error.status = 409;
+          throw error;
+        }
+
+        const linkedMaterialRequests = await listDocuments('MaterialRequest', {
+          filters: { source_production_id: lockedProduction.id },
+          limit: 50
+        }, client);
+        const blockingMaterialRequest = linkedMaterialRequests.find((request) => ![
+          'awaiting_production_approval',
+          'draft',
+          'cancelled',
+          'rejected'
+        ].includes(String(request.status || '').toLowerCase()));
+        if (blockingMaterialRequest) {
+          const error = new Error('The linked material request has already moved into procurement. Cancel the production workflow instead of deleting it.');
+          error.status = 409;
+          throw error;
+        }
+
+        if (linkedMaterialRequests.length > 0 || lockedProduction.linked_material_request_id) {
+          await updateDocument('Production', lockedProduction.id, {
+            linked_material_request_id: null,
+            linked_material_request_number: null,
+            material_request_status: null
+          }, client);
+        }
+        for (const materialRequest of linkedMaterialRequests) {
+          await deleteDocument('MaterialRequest', materialRequest.id, client);
+        }
+        const removed = await deleteDocument('Production', lockedProduction.id, client);
+        if (!removed) {
+          const error = new Error('Record not found');
+          error.status = 404;
+          throw error;
+        }
+        return {
+          deleted_record: lockedProduction,
+          deleted_material_requests: linkedMaterialRequests
+        };
+      });
+
+      invalidateEntityAccessCaches(entity);
+      recordChanged('Production');
+      if (deletion.deleted_material_requests.length > 0) {
+        recordChanged('MaterialRequest');
+      }
+      await auditAction({
+        user: request.user,
+        action: 'PRODUCTION_DRAFT_DELETE',
+        entity,
+        entityId: request.params.id,
+        siteId: deletion.deleted_record.site_id,
+        siteName: deletion.deleted_record.site_name,
+        details: {
+          friendly_summary: `${request.user.full_name || request.user.email || 'An administrator'} deleted draft production request ${deletion.deleted_record.recipe_name || request.params.id}${deletion.deleted_record.site_name ? ` for ${deletion.deleted_record.site_name}` : ''}.`,
+          friendly_changes: [
+            'The draft production request was removed before any stock was reserved, consumed, or completed.',
+            deletion.deleted_material_requests.length > 0
+              ? `${deletion.deleted_material_requests.length} linked draft material request${deletion.deleted_material_requests.length === 1 ? '' : 's'} were removed with it.`
+              : 'No linked material request had to be removed.'
+          ],
+          deleted_record: deletion.deleted_record,
+          deleted_material_requests: deletion.deleted_material_requests
+        }
+      });
+      return response.json({
+        success: true,
+        admin_production_delete: true,
+        deleted_material_request_count: deletion.deleted_material_requests.length
+      });
+    }
     if (entity === 'Inventory' && hasAdminAccess(request.user)) {
       authorizeEntityAction(request.user, entity, 'delete', null, existing);
       const deletion = await deleteInventoryRecordAsAdmin(existing, request.user);

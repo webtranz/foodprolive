@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertCircle, ArrowLeft, Brain, CheckCircle2, ClipboardList, Factory, FileText, History, PackagePlus, Sparkles, Trash2, Wand2, XCircle } from 'lucide-react';
@@ -608,6 +609,7 @@ export default function Production() {
   const [selectedConsumptionReport, setSelectedConsumptionReport] = useState(null);
   const [reportLoadingId, setReportLoadingId] = useState('');
   const [historyProduction, setHistoryProduction] = useState(null);
+  const [deleteProduction, setDeleteProduction] = useState(null);
   const [inventoryAction, setInventoryAction] = useState(null);
   const [inventoryActionMode, setInventoryActionMode] = useState('adjust');
   const [inventoryActionServings, setInventoryActionServings] = useState(null);
@@ -624,8 +626,20 @@ export default function Production() {
   const [issueSnapshots, setIssueSnapshots] = useState({});
   const [issueSuggestions, setIssueSuggestions] = useState({});
   const [issueSuggestionLoadingKey, setIssueSuggestionLoadingKey] = useState('');
+  const [editingIssueProduction, setEditingIssueProduction] = useState(null);
 
   const queryClient = useQueryClient();
+
+  const resetIssueDialogState = () => {
+    setIssueSource(null);
+    setIssueItems([]);
+    setIssueSnapshots({});
+    setIssueSuggestions({});
+    setIssueNotes('');
+    setIssueSnapshotSiteId('');
+    setActiveIssueItemKey('');
+    setEditingIssueProduction(null);
+  };
 
   const { data: sites = [], error: sitesError, isPending: sitesLoading } = useQuery({
     queryKey: ['sites'],
@@ -691,6 +705,12 @@ export default function Production() {
 
   const issueProductionMutation = useMutation({
     mutationFn: async ({ status }) => {
+      if (editingIssueProduction && !can('edit_production_request')) {
+        throw new Error('You need production edit permission to update this menu production request.');
+      }
+      if (status === 'pending_approval' && !can('submit_production_request')) {
+        throw new Error('You need production submission permission to submit this request.');
+      }
       if (issueSubmitDisabledReason) throw new Error(issueSubmitDisabledReason);
       const selectedItems = selectedIssueSubmitItems;
       if (selectedItems.length === 0) {
@@ -705,24 +725,40 @@ export default function Production() {
       if (mealGroups.length === 0) {
         throw new Error('Select at least one meal group before issuing production.');
       }
+      if (editingIssueProduction) {
+        if (mealGroups.length !== 1) {
+          throw new Error('Edit one meal review request at a time. Keep only this meal review selected before saving.');
+        }
+        const group = mealGroups[0];
+        const nextPayload = buildMenuIssueSubmitData(group, status);
+        const currentStatus = String(editingIssueProduction.status || 'draft').trim().toLowerCase() || 'draft';
+        const contentPayload = {
+          ...nextPayload,
+          status: currentStatus
+        };
+        let updated = await base44.entities.Production.update(editingIssueProduction.id, contentPayload);
+        if (status === 'pending_approval' && currentStatus !== 'pending_approval') {
+          updated = await base44.entities.Production.update(editingIssueProduction.id, { status: 'pending_approval' });
+        }
+        return { mode: 'updated', records: [updated] };
+      }
       const created = [];
       for (const group of mealGroups) {
         created.push(await base44.entities.Production.create(buildMenuIssueSubmitData(group, status)));
       }
-      return created;
+      return { mode: 'created', records: created };
     },
-    onSuccess: (created) => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       setIssueDialogOpen(false);
-      setIssueSource(null);
-      setIssueItems([]);
-      setIssueSnapshots({});
-      setIssueSuggestions({});
-      setIssueNotes('');
+      resetIssueDialogState();
       setActionError('');
-      setActionMessage(`${created.length} meal production request${created.length === 1 ? '' : 's'} issued from the menu plan.`);
+      const records = result?.records || [];
+      setActionMessage(result?.mode === 'updated'
+        ? 'Menu production request updated.'
+        : `${records.length} meal production request${records.length === 1 ? '' : 's'} issued from the menu plan.`);
     },
     onError: (error) => {
       setActionError(error.message || 'Unable to issue production from the menu plan.');
@@ -830,12 +866,14 @@ export default function Production() {
   const issueInventorySiteId = issueInventoryContext.siteId;
   const issueAlreadyCreatedKeys = useMemo(() => {
     const planId = String(issuePlan?.id || issueSource?.menu_plan_id || '');
+    const editingProductionId = String(editingIssueProduction?.id || '');
     const keys = new Set();
     productions
       .filter((production) => (
         planId
         && production.source_menu_plan_id
         && String(production.source_menu_plan_id) === planId
+        && String(production.id || '') !== editingProductionId
         && !['cancelled', 'rejected'].includes(String(production.status || '').toLowerCase())
       ))
       .forEach((production) => {
@@ -853,7 +891,7 @@ export default function Production() {
           : []).filter(Boolean).forEach((key) => keys.add(key));
       });
     return keys;
-  }, [issuePlan?.id, issueSource?.menu_plan_id, productions]);
+  }, [editingIssueProduction?.id, issuePlan?.id, issueSource?.menu_plan_id, productions]);
   const visibleIssueItems = issueMealView === 'all'
     ? issueItems
     : issueItems.filter((item) => item.meal_type === issueMealView);
@@ -884,6 +922,7 @@ export default function Production() {
     setIssueItems([]);
     setIssueSnapshots({});
     setIssueSuggestions({});
+    setEditingIssueProduction(null);
     setActionError('');
     setActionMessage('');
     if (routeIssueRequest.plan_date) {
@@ -900,11 +939,23 @@ export default function Production() {
       return;
     }
     const items = buildMenuPlanIssueItems(issuePlan, { mealView: 'all', recipes });
+    const editingItemKeys = new Set([
+      ...(Array.isArray(editingIssueProduction?.source_menu_plan_item_keys)
+        ? editingIssueProduction.source_menu_plan_item_keys
+        : []),
+      ...(Array.isArray(editingIssueProduction?.menu_issue_items)
+        ? editingIssueProduction.menu_issue_items.map((item) => item?.key).filter(Boolean)
+        : []),
+      editingIssueProduction?.source_menu_plan_item_key
+    ].filter(Boolean));
+    const isEditingIssueRequest = Boolean(editingIssueProduction);
     setIssueItems((currentItems) => {
       const currentByKey = new Map(currentItems.map((item) => [item.key, item]));
       return items.map((item) => ({
         ...item,
-        selected: currentByKey.has(item.key) ? currentByKey.get(item.key).selected : true,
+        selected: isEditingIssueRequest
+          ? editingItemKeys.has(item.key)
+          : currentByKey.has(item.key) ? currentByKey.get(item.key).selected : true,
         production_covers: currentByKey.get(item.key)?.production_covers ?? item.production_covers
       }));
     });
@@ -912,9 +963,14 @@ export default function Production() {
       const visibleItems = issueMealView === 'all'
         ? items
         : items.filter((item) => item.meal_type === issueMealView);
-      return visibleItems.some((item) => item.key === current) ? current : visibleItems[0]?.key || '';
+      const preferredItems = isEditingIssueRequest
+        ? visibleItems.filter((item) => editingItemKeys.has(item.key))
+        : visibleItems;
+      return visibleItems.some((item) => item.key === current)
+        ? current
+        : (preferredItems[0] || visibleItems[0])?.key || '';
     });
-  }, [issueDialogOpen, issueMealView, issuePlan, recipes, recipesLoading, recipesError]);
+  }, [editingIssueProduction, issueDialogOpen, issueMealView, issuePlan, recipes, recipesLoading, recipesError]);
 
   useEffect(() => {
     if (!issueDialogOpen || issueItems.length === 0 || !issueInventorySiteId || inventoryDataLoading || inventoryDataError) {
@@ -1022,6 +1078,26 @@ export default function Production() {
     },
     onError: (error) => {
       setActionError(error.message || 'Unable to reconcile the approved production inventory reservation.');
+    }
+  });
+
+  const deleteProductionMutation = useMutation({
+    mutationFn: async (production) => {
+      if (!production?.id) {
+        throw new Error('Select a production request to delete.');
+      }
+      return base44.entities.Production.delete(production.id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      setDeleteProduction(null);
+      setActionError('');
+      setActionMessage('Draft production request deleted.');
+    },
+    onError: (error) => {
+      setActionError(error.message || 'Unable to delete this production request.');
     }
   });
 
@@ -1950,7 +2026,81 @@ export default function Production() {
     setShowApprovalDialog(true);
   };
 
+  const isMenuIssueProduction = (production) => Boolean(
+    production?.production_issue_grouped
+    || production?.source_menu_plan_id
+    || (Array.isArray(production?.menu_issue_items) && production.menu_issue_items.length > 0)
+  );
+
+  const openMenuIssueEditDialog = (production) => {
+    const savedItems = Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [];
+    const itemKeys = Array.isArray(production.source_menu_plan_item_keys)
+      ? production.source_menu_plan_item_keys
+      : [];
+    const mealView = normalizeIssueMealView(production.source_menu_plan_meal_type || production.meal_type || 'all');
+    const menuType = normalizeMenuCuisine(production.menu_type || production.cuisine_type, 'general');
+    const menuCategory = normalizeMenuCategory(production.menu_category, 'senior');
+    const productionDate = production.production_date || selectedDate || format(new Date(), 'yyyy-MM-dd');
+    const seededItems = savedItems.map((item, index) => ({
+      ...item,
+      key: item.key || itemKeys[index] || `${production.source_menu_plan_id || production.id}::${item.meal_type || production.meal_type || 'meal'}::${index}`,
+      site_id: production.site_id || item.site_id || '',
+      site_name: production.site_name || item.site_name || '',
+      plan_date: productionDate,
+      meal_type: item.meal_type || production.meal_type || mealView,
+      meal_label: PRODUCTION_ISSUE_MEAL_LABELS[item.meal_type || production.meal_type || mealView] || 'Meal',
+      menu_type: item.menu_type || menuType,
+      menu_category: item.menu_category || menuCategory,
+      selected: true,
+      production_covers: finiteProductionNumber(item.production_covers ?? item.expected_servings, 0)
+    }));
+    const seededSnapshots = {};
+    seededItems.forEach((item) => {
+      if (Array.isArray(item.ingredients_used) && item.ingredients_used.length > 0) {
+        seededSnapshots[item.key] = item.ingredients_used;
+      }
+    });
+    if (Object.keys(seededSnapshots).length === 0 && Array.isArray(production.ingredients_used) && production.ingredients_used.length > 0) {
+      const fallbackKey = seededItems[0]?.key || production.source_menu_plan_item_key || production.production_issue_group_key || '';
+      if (fallbackKey) {
+        seededSnapshots[fallbackKey] = production.ingredients_used;
+      }
+    }
+
+    setActionError('');
+    setActionMessage('');
+    setEditingIssueProduction(production);
+    setIssueSource({
+      source: 'menu_planning',
+      menu_plan_id: production.source_menu_plan_id || '',
+      site_id: production.site_id || '',
+      site_name: production.site_name || '',
+      plan_date: productionDate,
+      meal_view: mealView,
+      menu_type: menuType,
+      menu_category: menuCategory
+    });
+    setIssueMealView(mealView);
+    setIssueItems(seededItems);
+    setIssueSnapshots(seededSnapshots);
+    setIssueSuggestions({});
+    setIssueSnapshotSiteId('');
+    setIssueNotes(production.notes || '');
+    setActiveIssueItemKey(seededItems[0]?.key || '');
+    setIssueDialogOpen(true);
+    if (productionDate) {
+      setSelectedDate(productionDate);
+    }
+    if (production.site_id) {
+      setSelectedSite(production.site_id);
+    }
+  };
+
   const openEditDialog = (production) => {
+    if (isMenuIssueProduction(production)) {
+      openMenuIssueEditDialog(production);
+      return;
+    }
     const menuType = normalizeMenuCuisine(production.menu_type || production.cuisine_type, 'general');
     const menuCategories = getMenuCategoryOptions(menuType);
     const persistedMenuCategory = normalizeMenuCategory(production.menu_category, 'senior');
@@ -2011,6 +2161,8 @@ export default function Production() {
     const approvalHistory = getProductionApprovalHistory(production);
     const startBlockReason = getProductionStartBlockReason(production);
     const productionInventoryState = getProductionInventoryState(production);
+    const productionStatus = String(production.status || '').toLowerCase();
+    const canDeleteDraftProduction = isAdmin && ['draft', 'planned', 'changes_requested'].includes(productionStatus);
     const startActionLabel = productionInventoryState.is_legacy_consumption
       ? 'Start Production (Legacy Stock Already Deducted)'
       : productionInventoryState.is_reserved
@@ -2035,6 +2187,18 @@ export default function Production() {
           className="justify-center whitespace-normal bg-amber-600 text-xs leading-snug hover:bg-amber-700"
         >
           Submit to Project Manager
+        </Button>
+      ) : null}
+      {canDeleteDraftProduction ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="justify-center whitespace-normal border-red-200 text-xs leading-snug text-red-700 hover:bg-red-50"
+          onClick={() => setDeleteProduction(production)}
+          disabled={deleteProductionMutation.isPending && String(deleteProductionMutation.variables?.id || '') === String(production.id)}
+        >
+          <Trash2 className="mr-1.5 h-4 w-4" />
+          Delete Draft
         </Button>
       ) : null}
       {production.status === 'pending_approval'
@@ -2249,11 +2413,15 @@ export default function Production() {
   const activeIssueCostPerServing = activeIssueItem
     ? Number((activeIssueBatchCost / Math.max(1, finiteProductionNumber(activeIssueItem.production_covers, 0))).toFixed(2))
     : 0;
-  const issueSubmitDisabledReason = !can('create_production_request')
-    ? 'You need production creation permission to issue production.'
-    : selectedIssueMealGroups.length === 0
-      ? 'Enter production covers greater than zero for at least one planned meal item that has not already been issued.'
-      : issueInventoryCheckState.message;
+  const issueSubmitDisabledReason = editingIssueProduction && !can('edit_production_request')
+    ? 'You need production edit permission to update this menu production request.'
+    : !editingIssueProduction && !can('create_production_request')
+      ? 'You need production creation permission to issue production.'
+      : selectedIssueMealGroups.length === 0
+        ? 'Enter production covers greater than zero for at least one planned meal item that has not already been issued.'
+        : issueInventoryCheckState.message;
+  const issueSubmitForApprovalDisabledReason = issueSubmitDisabledReason
+    || (!can('submit_production_request') ? 'You need production submission permission to submit this request.' : '');
 
   return (
     <>
@@ -2583,11 +2751,7 @@ export default function Production() {
           onOpenChange={(open) => {
             setIssueDialogOpen(open);
             if (!open) {
-              setIssueSource(null);
-              setIssueItems([]);
-              setIssueSnapshots({});
-              setIssueSuggestions({});
-              setIssueNotes('');
+              resetIssueDialogState();
               setActionError('');
             }
           }}
@@ -2595,7 +2759,7 @@ export default function Production() {
           <DialogContent className="max-h-[92vh] w-[96vw] max-w-[1500px] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex flex-col gap-2 text-xl sm:flex-row sm:items-center sm:justify-between">
-                <span>Issue Menu Production</span>
+                <span>{editingIssueProduction ? 'Edit Menu Production Draft' : 'Issue Menu Production'}</span>
                 <Badge variant="outline" className="w-fit border-indigo-200 bg-indigo-50 text-indigo-700">
                   Production-only recipe snapshots
                 </Badge>
@@ -2672,9 +2836,13 @@ export default function Production() {
                 <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
                   <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                     <div>
-                      <p className="font-semibold text-indigo-950">Meal review requests to create</p>
+                      <p className="font-semibold text-indigo-950">
+                        {editingIssueProduction ? 'Meal review request to update' : 'Meal review requests to create'}
+                      </p>
                       <p className="mt-1 text-sm text-indigo-800">
-                        One review is created per meal type for this production day. Shortage checks below use the same aggregate demand that will appear on the dashboard.
+                        {editingIssueProduction
+                          ? 'Update the saved planned dishes and production-only recipe snapshots for this existing request.'
+                          : 'One review is created per meal type for this production day. Shortage checks below use the same aggregate demand that will appear on the dashboard.'}
                       </p>
                     </div>
                   <Badge variant="outline" className="w-fit border-indigo-200 bg-white text-indigo-700">
@@ -2908,10 +3076,17 @@ export default function Production() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => navigate('/MenuPlanning')}
+                    onClick={() => {
+                      if (editingIssueProduction) {
+                        setIssueDialogOpen(false);
+                        resetIssueDialogState();
+                        return;
+                      }
+                      navigate('/MenuPlanning');
+                    }}
                   >
                     <ArrowLeft className="mr-2 h-4 w-4" />
-                    Back to Menu Planning
+                    {editingIssueProduction ? 'Cancel Editing' : 'Back to Menu Planning'}
                   </Button>
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -2920,18 +3095,21 @@ export default function Production() {
                       disabled={issueProductionMutation.isPending || Boolean(issueSubmitDisabledReason)}
                       onClick={() => issueProductionMutation.mutate({ status: 'draft' })}
                     >
-                      {issueProductionMutation.isPending ? 'Saving...' : 'Save Meal Drafts'}
+                      {issueProductionMutation.isPending ? 'Saving...' : editingIssueProduction ? 'Save Draft' : 'Save Meal Drafts'}
                     </Button>
                     <Button
                       type="button"
                       className="bg-emerald-600 hover:bg-emerald-700"
-                      disabled={issueProductionMutation.isPending || Boolean(issueSubmitDisabledReason)}
+                      disabled={issueProductionMutation.isPending || Boolean(issueSubmitForApprovalDisabledReason)}
+                      title={issueSubmitForApprovalDisabledReason || undefined}
                       onClick={() => issueProductionMutation.mutate({ status: 'pending_approval' })}
                     >
                       <Factory className="mr-2 h-4 w-4" />
                       {issueProductionMutation.isPending
-                        ? 'Issuing...'
-                        : `Issue & Submit ${selectedIssueMealGroups.length || ''} Meal Review${selectedIssueMealGroups.length === 1 ? '' : 's'}`}
+                        ? 'Submitting...'
+                        : editingIssueProduction
+                          ? 'Save & Submit'
+                          : `Issue & Submit ${selectedIssueMealGroups.length || ''} Meal Review${selectedIssueMealGroups.length === 1 ? '' : 's'}`}
                     </Button>
                   </div>
                 </DialogFooter>
@@ -2939,6 +3117,56 @@ export default function Production() {
             )}
           </DialogContent>
         </Dialog>
+
+        <AlertDialog
+          open={Boolean(deleteProduction)}
+          onOpenChange={(open) => {
+            if (!open && !deleteProductionMutation.isPending) {
+              setDeleteProduction(null);
+            }
+          }}
+        >
+          <AlertDialogContent className="max-w-xl">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Draft Production Request</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-sm text-slate-600">
+                  <p>
+                    Delete “{deleteProduction?.recipe_name || 'this production request'}”
+                    {deleteProduction?.site_name ? ` for ${deleteProduction.site_name}` : ''}?
+                  </p>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                    This is allowed for administrators only while the production is still draft, planned, or returned for changes.
+                    Any linked draft material request will be removed with it.
+                  </div>
+                  {deleteProduction?.linked_material_request_number || materialRequestMap[deleteProduction?.id] ? (
+                    <p>
+                      Linked material request:{' '}
+                      <span className="font-medium text-slate-900">
+                        {deleteProduction?.linked_material_request_number
+                          || materialRequestMap[deleteProduction?.id]?.request_number
+                          || 'Production material request'}
+                      </span>
+                    </p>
+                  ) : null}
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteProductionMutation.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700"
+                disabled={deleteProductionMutation.isPending}
+                onClick={(event) => {
+                  event.preventDefault();
+                  deleteProductionMutation.mutate(deleteProduction);
+                }}
+              >
+                {deleteProductionMutation.isPending ? 'Deleting...' : 'Delete Production'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Approval Dialog */}
         <Dialog
