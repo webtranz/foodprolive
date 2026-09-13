@@ -53,12 +53,6 @@ const MEAL_BADGES = {
   dinner: 'bg-blue-100 text-blue-700 border-blue-200'
 };
 
-function normalizeRecipeCuisine(value) {
-  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (['filipino', 'philippines', 'phillipines', 'philipino'].includes(normalized)) return 'philippines';
-  return normalized || 'general';
-}
-
 function isOperationalMenuPlan(plan) {
   return !String(plan?.event_name || '').trim();
 }
@@ -295,11 +289,7 @@ export default function MenuPlanning() {
   const availableRecipes = useMemo(() => (
     recipes
       .filter((recipe) => recipeMatchesMenuSite(recipe, selectedSite, sites))
-      .filter((recipe) => (
-        normalizeRecipeCuisine(recipe.cuisine_type) === selectedMenuCuisine
-        || (Array.isArray(selectedPlan?.meals) && selectedPlan.meals.some((meal) => meal.recipe_id === recipe.id))
-      ))
-  ), [recipes, selectedSite, sites, selectedMenuCuisine, selectedPlan?.meals]);
+  ), [recipes, selectedSite, sites]);
 
   const sortedAvailableRecipes = useMemo(() => (
     [...availableRecipes].sort((left, right) => {

@@ -1,5 +1,3 @@
-import { normalizeMenuCuisine } from './menuCategories.js';
-
 const text = (value) => String(value ?? '').trim();
 const key = (value) => text(value).toLowerCase().replace(/\s+/g, ' ');
 const legacyKey = (value) => key(value)
@@ -28,9 +26,6 @@ export function recipeMatchesMenuSite(recipe, siteId, sites = []) {
 export function resolveMenuRecipeLinks(plan, recipes = [], sites = []) {
   if (!plan) return plan;
   const eligible = recipes.filter((recipe) => recipeMatchesMenuSite(recipe, plan.site_id, sites));
-  const cuisineRecipes = eligible.filter((recipe) => (
-    normalizeMenuCuisine(recipe.cuisine_type, 'general') === normalizeMenuCuisine(plan.cuisine_type, 'general')
-  ));
   return {
     ...plan,
     meals: (Array.isArray(plan.meals) ? plan.meals : []).map((meal) => {
@@ -39,10 +34,10 @@ export function resolveMenuRecipeLinks(plan, recipes = [], sites = []) {
       const tiers = [
         eligible.filter((recipe) => text(meal.recipe_id) && text(recipe.id) === text(meal.recipe_id)),
         eligible.filter((recipe) => key(recipe.recipe_code) && references.includes(key(recipe.recipe_code))),
-        cuisineRecipes.filter((recipe) => name && key(recipe.name) === name),
+        eligible.filter((recipe) => name && key(recipe.name) === name),
         eligible.filter((recipe) => legacyKey(recipe.recipe_code)
           && references.map(legacyKey).includes(legacyKey(recipe.recipe_code))),
-        cuisineRecipes.filter((recipe) => name && legacyKey(recipe.name) === legacyKey(name))
+        eligible.filter((recipe) => name && legacyKey(recipe.name) === legacyKey(name))
       ];
       const matches = tiers.find((candidates) => candidates.length) || [];
       if (matches.length !== 1) {
