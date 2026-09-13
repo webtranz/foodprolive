@@ -507,6 +507,13 @@ export function getInventoryLotAvailableQuantity(lot = {}, options = {}) {
   ));
 }
 
+export function getInventoryLotReservationAvailableQuantity(lot = {}, { asOfDate = toDateOnly() } = {}) {
+  return roundQuantity(Math.min(
+    getInventoryLotAvailableQuantity(lot, { asOfDate: toDateOnly() }),
+    getInventoryLotAvailableQuantity(lot, { asOfDate })
+  ));
+}
+
 export function sortInventoryLotsForIssue(lots = [], { asOfDate = toDateOnly() } = {}) {
   return (Array.isArray(lots) ? lots : [])
     .filter((lot) => isInventoryLotUsable(lot, { asOfDate }))
@@ -544,6 +551,70 @@ function assertSufficientStock(lots, quantity, allowShortage = true, options = {
     throw error;
   }
   return availableQuantity;
+}
+
+function formatInventoryQuantity(value, unit = '') {
+  const numeric = roundQuantity(value);
+  return `${numeric.toLocaleString(undefined, { maximumFractionDigits: 6 })}${unit ? ` ${unit}` : ''}`;
+}
+
+function buildInsufficientReservationStockError({
+  lots = [],
+  requestedQuantity = 0,
+  asOfDate = toDateOnly(),
+  unit = '',
+  ingredientName = '',
+  ingredientId = '',
+  siteName = ''
+} = {}) {
+  const requiredQuantity = roundQuantity(requestedQuantity);
+  const reservableQuantity = roundQuantity((Array.isArray(lots) ? lots : []).reduce(
+    (sum, lot) => sum + getInventoryLotReservationAvailableQuantity(lot, { asOfDate }),
+    0
+  ));
+  const onHandQuantity = roundQuantity((Array.isArray(lots) ? lots : []).reduce(
+    (sum, lot) => sum + Math.max(0, toNumber(lot?.remaining_quantity, 0)),
+    0
+  ));
+  const reservedQuantity = roundQuantity((Array.isArray(lots) ? lots : []).reduce(
+    (sum, lot) => sum + getInventoryLotReservedQuantity(lot),
+    0
+  ));
+  const itemLabel = ingredientName || ingredientId || 'this item';
+  const storeLabel = siteName ? ` in ${siteName}` : '';
+  const reasons = [];
+  if (!Array.isArray(lots) || lots.length === 0) {
+    reasons.push('no inventory lot/batch records exist for this item');
+  }
+  if (reservedQuantity > 0) {
+    reasons.push(`${formatInventoryQuantity(reservedQuantity, unit)} is already reserved`);
+  }
+  const unusableCount = (Array.isArray(lots) ? lots : []).filter((lot) => (
+    Math.max(0, toNumber(lot?.remaining_quantity, 0)) > QUANTITY_EPSILON
+    && getInventoryLotReservationAvailableQuantity(lot, { asOfDate }) <= QUANTITY_EPSILON
+  )).length;
+  if (unusableCount > 0) {
+    reasons.push(`${unusableCount} lot${unusableCount === 1 ? '' : 's'} are not usable for the reservation date`);
+  }
+  const reasonText = reasons.length ? ` (${reasons.join('; ')}).` : '.';
+  const error = new Error(
+    `Insufficient reservable stock for ${itemLabel}${storeLabel}: required ${formatInventoryQuantity(requiredQuantity, unit)}, reservable ${formatInventoryQuantity(reservableQuantity, unit)} as of ${toDateOnly(asOfDate)}${reasonText}`
+  );
+  error.status = 400;
+  error.code = 'INSUFFICIENT_RESERVABLE_STOCK';
+  error.details = {
+    ingredient_id: ingredientId || null,
+    ingredient_name: ingredientName || null,
+    site_name: siteName || null,
+    unit,
+    required_quantity: requiredQuantity,
+    reservable_quantity: reservableQuantity,
+    on_hand_quantity: onHandQuantity,
+    reserved_quantity: reservedQuantity,
+    as_of_date: toDateOnly(asOfDate),
+    reasons
+  };
+  return error;
 }
 
 async function listInventoryLots(
@@ -1803,10 +1874,24 @@ async function reserveStockWithExecutor({
     { required: true }
   );
   const sortedLots = sortInventoryLotsForIssue(
-    lots.filter((lot) => isInventoryLotUsable(lot, { asOfDate: toDateOnly() })),
+    lots.filter((lot) => getInventoryLotReservationAvailableQuantity(lot, { asOfDate: reservationDate }) > QUANTITY_EPSILON),
     { asOfDate: reservationDate }
   );
-  assertSufficientStock(sortedLots, requestedQuantity, allow_shortage, { asOfDate: reservationDate });
+  const reservableQuantity = sortedLots.reduce(
+    (sum, lot) => sum + getInventoryLotReservationAvailableQuantity(lot, { asOfDate: reservationDate }),
+    0
+  );
+  if (!allow_shortage && reservableQuantity + QUANTITY_EPSILON < requestedQuantity) {
+    throw buildInsufficientReservationStockError({
+      lots,
+      requestedQuantity,
+      asOfDate: reservationDate,
+      unit,
+      ingredientName: ingredient_name,
+      ingredientId: ingredient_id,
+      siteName: site_name
+    });
+  }
 
   let remainingToReserve = requestedQuantity;
   const movementLayers = [];

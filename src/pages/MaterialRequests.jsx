@@ -90,8 +90,38 @@ export default function MaterialRequests() {
     onError: (error) => setActionError(error.message || 'Unable to acknowledge this material request.')
   });
 
+  const aggregateRequestItems = (items = []) => {
+    const grouped = new Map();
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      const unit = item.unit || '';
+      const key = `${item.ingredient_id || item.item_code || item.ingredient_name || 'item'}::${unit}`;
+      const existing = grouped.get(key) || {
+        ...item,
+        required_quantity: 0,
+        request_quantity: 0,
+        current_stock: 0,
+        live_reservable_quantity: 0,
+        live_shortage_quantity: 0,
+        source_line_count: 0
+      };
+      existing.required_quantity += Number(item.required_quantity || 0);
+      existing.request_quantity += Number(item.request_quantity ?? item.required_quantity ?? 0);
+      existing.current_stock = Math.max(existing.current_stock, Number(item.current_stock || 0));
+      existing.live_reservable_quantity = Math.max(
+        existing.live_reservable_quantity,
+        Number(item.live_reservable_quantity ?? item.current_stock ?? 0)
+      );
+      existing.live_shortage_quantity = Math.max(0, existing.request_quantity - existing.live_reservable_quantity);
+      existing.source_line_count += 1;
+      grouped.set(key, existing);
+    });
+    return [...grouped.values()];
+  };
+
+  const formatRequestQuantity = (value, unit) => `${Number(value || 0).toFixed(2)} ${unit || ''}`.trim();
+
   const renderRequestItemsTable = (request) => {
-    const items = request?.items || [];
+    const items = aggregateRequestItems(request?.items || []);
     return (
       <div className="overflow-x-auto">
         <Table>
@@ -100,7 +130,8 @@ export default function MaterialRequests() {
               <TableHead>Item Code</TableHead>
               <TableHead>Item Name</TableHead>
               <TableHead>Required</TableHead>
-              <TableHead>Current Stock</TableHead>
+              <TableHead>Snapshot Stock</TableHead>
+              <TableHead>Live Reservable</TableHead>
               <TableHead>Request Quantity</TableHead>
             </TableRow>
           </TableHeader>
@@ -108,19 +139,41 @@ export default function MaterialRequests() {
             {items.map((item, index) => (
               <TableRow key={`${request.id}-item-${item.id || index}`}>
                 <TableCell className="font-mono text-xs text-slate-600">{resolveRequestItemCode(item)}</TableCell>
-                <TableCell className="font-medium text-slate-900">{item.ingredient_name}</TableCell>
-                <TableCell>{Number(item.required_quantity || 0).toFixed(2)} {item.unit}</TableCell>
-                <TableCell>{Number(item.current_stock || 0).toFixed(2)} {item.unit}</TableCell>
-                <TableCell>{Number(item.request_quantity || 0).toFixed(2)} {item.unit}</TableCell>
+                <TableCell className="font-medium text-slate-900">
+                  {item.ingredient_name}
+                  {item.source_line_count > 1 ? (
+                    <span className="ml-2 text-xs font-normal text-slate-500">
+                      {item.source_line_count} lines combined
+                    </span>
+                  ) : null}
+                </TableCell>
+                <TableCell>{formatRequestQuantity(item.required_quantity, item.unit)}</TableCell>
+                <TableCell>{formatRequestQuantity(item.current_stock, item.unit)}</TableCell>
+                <TableCell>
+                  <div className={item.live_shortage_quantity > 0 ? 'font-semibold text-red-600' : 'text-emerald-700'}>
+                    {formatRequestQuantity(item.live_reservable_quantity, item.unit)}
+                  </div>
+                  {item.live_shortage_quantity > 0 ? (
+                    <div className="mt-1 text-xs text-red-600">
+                      Short {formatRequestQuantity(item.live_shortage_quantity, item.unit)}
+                    </div>
+                  ) : null}
+                </TableCell>
+                <TableCell>{formatRequestQuantity(item.request_quantity, item.unit)}</TableCell>
               </TableRow>
             ))}
             {items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="py-6 text-center text-sm text-slate-500">No request items recorded.</TableCell>
+                <TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">No request items recorded.</TableCell>
               </TableRow>
             ) : null}
           </TableBody>
         </Table>
+        {items.some((item) => item.live_stock_check_date) ? (
+          <p className="mt-2 text-xs text-slate-500">
+            Live reservable stock is calculated from active, unreserved inventory lots for the production/request date.
+          </p>
+        ) : null}
       </div>
     );
   };

@@ -132,7 +132,8 @@ import {
   getExpiryReport,
   getVelocityReports,
   getInventoryValuationReport,
-  listInventoryLots
+  listInventoryLots,
+  getInventoryLotReservationAvailableQuantity
 } from './inventory.js';
 import { getInventoryValueHistoryReport } from './inventoryValueReport.js';
 import {
@@ -5580,6 +5581,60 @@ app.post('/api/pos/webhooks/:sourceId', requireAuth, requireRole(['admin']), asy
   }
 });
 
+function stockCheckDateForMaterialRequest(request = {}) {
+  return String(request.period_start || request.request_date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+}
+
+async function enrichMaterialRequestsWithReservableStock(records = [], scope) {
+  if (!Array.isArray(records) || records.length === 0) return records;
+  const [ingredients, inventoryRows, lots] = await Promise.all([
+    listDocuments('Ingredient', { limit: 10000 }),
+    listDocuments('Inventory', { limit: 10000, location: scope }),
+    listInventoryLots({ includeEmpty: true, location: scope })
+  ]);
+  const ingredientById = new Map(ingredients.map((ingredient) => [String(ingredient?.id || ''), ingredient]));
+  const inventoryByKey = new Map(inventoryRows.map((inventory) => [
+    `${String(inventory?.site_id || '')}::${String(inventory?.ingredient_id || '')}`,
+    inventory
+  ]));
+  const lotsByKey = new Map();
+  lots.forEach((lot) => {
+    const key = `${String(lot?.site_id || '')}::${String(lot?.ingredient_id || '')}`;
+    if (!lotsByKey.has(key)) lotsByKey.set(key, []);
+    lotsByKey.get(key).push(lot);
+  });
+
+  return records.map((record) => {
+    const stockSiteId = String(record.fulfillment_store_id || record.site_id || '');
+    const stockCheckDate = stockCheckDateForMaterialRequest(record);
+    const nextItems = (Array.isArray(record.items) ? record.items : []).map((item) => {
+      const ingredientId = String(item?.ingredient_id || '');
+      const ingredient = ingredientById.get(ingredientId) || {};
+      const inventory = inventoryByKey.get(`${stockSiteId}::${ingredientId}`) || {};
+      const inventoryUnit = inventory.unit || ingredient.unit || item.unit || '';
+      const displayUnit = item.unit || inventoryUnit;
+      const itemLots = lotsByKey.get(`${stockSiteId}::${ingredientId}`) || [];
+      const reservableInInventoryUnit = itemLots.reduce(
+        (sum, lot) => sum + getInventoryLotReservationAvailableQuantity(lot, { asOfDate: stockCheckDate }),
+        0
+      );
+      const reservableQuantity = displayUnit && inventoryUnit
+        ? convertIngredientQuantity(reservableInInventoryUnit, inventoryUnit, displayUnit, ingredient)
+        : reservableInInventoryUnit;
+      const requestQuantity = numericMatch(item.request_quantity ?? item.required_quantity, 0);
+      const liveShortageQuantity = Math.max(0, requestQuantity - reservableQuantity);
+      return {
+        ...item,
+        live_reservable_quantity: Number(reservableQuantity.toFixed(6)),
+        live_shortage_quantity: Number(liveShortageQuantity.toFixed(6)),
+        live_stock_check_date: stockCheckDate,
+        live_stock_source: 'inventory_lots'
+      };
+    });
+    return { ...record, items: nextItems };
+  });
+}
+
 app.get('/api/material-requests', requireAuth, requireAnyPermission(['view_material_request', 'create_material_request', 'acknowledge_material_request', 'manage_procurement', 'approve_procurement']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
@@ -5589,7 +5644,8 @@ app.get('/api/material-requests', requireAuth, requireAnyPermission(['view_mater
       limit,
       location: scope
     });
-    response.json(await enrichRecordsWithIngredientItemCodes(records));
+    const codedRecords = await enrichRecordsWithIngredientItemCodes(records);
+    response.json(await enrichMaterialRequestsWithReservableStock(codedRecords, scope));
   } catch (error) {
     next(error);
   }
