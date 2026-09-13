@@ -271,6 +271,140 @@ async function resolveProjectServiceSite(siteId, executor) {
   return site;
 }
 
+function uniqueNormalizedTexts(values = []) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : [...values || []])
+    .map(normalizeText)
+    .filter((value) => {
+      if (!value || seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+}
+
+function locationAccessibleSiteIds(location = null) {
+  if (!location?.accessibleSiteIds) return [];
+  if (Array.isArray(location.accessibleSiteIds)) return location.accessibleSiteIds;
+  if (typeof location.accessibleSiteIds[Symbol.iterator] === 'function') {
+    return [...location.accessibleSiteIds];
+  }
+  return [location.accessibleSiteIds];
+}
+
+function extendLocationWithMealServiceProductionSites(location = null, siteIds = []) {
+  if (!location || location.unrestricted) return location;
+  return {
+    ...location,
+    accessibleSiteIds: uniqueNormalizedTexts([
+      ...locationAccessibleSiteIds(location),
+      ...siteIds
+    ])
+  };
+}
+
+async function resolveMealServiceProductionScope(siteId, executor, location = null) {
+  const serviceSite = await resolveProjectServiceSite(siteId, executor);
+  // Meal Service is intentionally recorded at Project level, while production
+  // output can be posted to the Project's Store. Once the Project is approved
+  // for the user, include its direct active Stores for produced-item lookup.
+  const childSites = await listDocuments('Site', {
+    filters: { parent_site_id: serviceSite.id },
+    sort: 'name',
+    limit: 10000
+  }, executor || undefined);
+  const productionSiteIds = uniqueNormalizedTexts([
+    serviceSite.id,
+    ...childSites
+      .filter((site) => (
+        site?.is_active !== false
+        && normalizeSiteType(site?.type) === SITE_HIERARCHY_TYPES.STORE
+      ))
+      .map((site) => site.id)
+  ]);
+  return {
+    serviceSite,
+    productionSiteIds,
+    productionLocation: extendLocationWithMealServiceProductionSites(location, productionSiteIds)
+  };
+}
+
+async function listMealServiceProducedItemBatchesForSites({
+  siteIds = [],
+  serviceDate,
+  mealType,
+  menuType = null,
+  menuCategory = null,
+  recipeId = '',
+  sort = 'completed_at',
+  limit = 10000,
+  lock = false,
+  location = null,
+  executor = null
+} = {}) {
+  const rows = [];
+  const seen = new Set();
+  for (const productionSiteId of uniqueNormalizedTexts(siteIds)) {
+    const page = await listDocuments('ProducedItemBatch', {
+      filters: {
+        site_id: productionSiteId,
+        production_date: serviceDate,
+        meal_type: mealType,
+        ...(menuType ? { menu_type: menuType } : {}),
+        ...(menuCategory ? { menu_category: menuCategory } : {}),
+        ...(recipeId ? { recipe_id: recipeId } : {})
+      },
+      sort,
+      limit,
+      lock,
+      location
+    }, executor || undefined);
+    for (const row of page) {
+      const id = normalizeText(row.id);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      rows.push(row);
+    }
+  }
+  return rows.sort(compareBatchFifo);
+}
+
+async function listMealServiceCompletedProductionsForSites({
+  siteIds = [],
+  serviceDate,
+  mealType,
+  menuType = null,
+  menuCategory = null,
+  lock = false,
+  location = null,
+  executor = null
+} = {}) {
+  const rows = [];
+  const seen = new Set();
+  for (const productionSiteId of uniqueNormalizedTexts(siteIds)) {
+    const page = await listDocuments('Production', {
+      filters: {
+        site_id: productionSiteId,
+        production_date: serviceDate,
+        meal_type: mealType,
+        ...(menuType ? { menu_type: menuType } : {}),
+        ...(menuCategory ? { menu_category: menuCategory } : {}),
+        status: 'completed'
+      },
+      sort: 'completed_date',
+      limit: 10000,
+      lock,
+      location
+    }, executor || undefined);
+    for (const row of page) {
+      const id = normalizeText(row.id);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      rows.push(row);
+    }
+  }
+  return rows;
+}
+
 function compareBatchFifo(left, right) {
   const leftTime = normalizeText(left.completed_at || left.production_completed_at || left.created_date);
   const rightTime = normalizeText(right.completed_at || right.production_completed_at || right.created_date);
@@ -538,6 +672,7 @@ function productionFinishedWeight(production = {}, recipe = {}, recipes = [], in
 
 async function backfillProducedItemBatchesForCompletedProductions({
   siteId,
+  productionSiteIds = null,
   serviceDate,
   mealType,
   menuType = null,
@@ -547,23 +682,24 @@ async function backfillProducedItemBatchesForCompletedProductions({
   location = null,
   lock = false
 } = {}) {
+  const resolvedProductionSiteIds = uniqueNormalizedTexts(
+    Array.isArray(productionSiteIds) && productionSiteIds.length
+      ? productionSiteIds
+      : [siteId]
+  );
   const existingProductionIds = new Set(
     batches.map((batch) => normalizeText(batch.production_id)).filter(Boolean)
   );
-  const completedProductions = await listDocuments('Production', {
-    filters: {
-      site_id: siteId,
-      production_date: serviceDate,
-      meal_type: mealType,
-      ...(menuType ? { menu_type: menuType } : {}),
-      ...(menuCategory ? { menu_category: menuCategory } : {}),
-      status: 'completed'
-    },
-    sort: 'completed_date',
-    limit: 10000,
+  const completedProductions = await listMealServiceCompletedProductionsForSites({
+    siteIds: resolvedProductionSiteIds,
+    serviceDate,
+    mealType,
+    menuType,
+    menuCategory,
     lock,
-    location
-  }, executor || undefined);
+    location,
+    executor
+  });
   const missingProductions = completedProductions.filter((production) => (
     normalizeText(production.id)
     && normalizeText(production.recipe_id)
@@ -610,19 +746,16 @@ async function backfillProducedItemBatchesForCompletedProductions({
     }
   }
 
-  return listDocuments('ProducedItemBatch', {
-    filters: {
-      site_id: siteId,
-      production_date: serviceDate,
-      meal_type: mealType,
-      ...(menuType ? { menu_type: menuType } : {}),
-      ...(menuCategory ? { menu_category: menuCategory } : {})
-    },
-    sort: 'completed_at',
-    limit: 10000,
+  return listMealServiceProducedItemBatchesForSites({
+    siteIds: resolvedProductionSiteIds,
+    serviceDate,
+    mealType,
+    menuType,
+    menuCategory,
     lock,
-    location
-  }, executor || undefined);
+    location,
+    executor
+  });
 }
 
 export function resolveMealServicePortionSize(recipe = {}, firstBatch = null) {
@@ -1368,29 +1501,31 @@ async function getServiceContext(payload, executor, {
     payload.menu_type || payload.cuisine_type || payload.menu_cuisine
   );
   const menuCategory = normalizeMealServiceMenuCategory(payload.menu_category, menuType);
-  const site = await resolveProjectServiceSite(siteId, dbExecutor);
-  let batches = await listDocuments('ProducedItemBatch', {
-    filters: {
-      site_id: siteId,
-      production_date: serviceDate,
-      meal_type: mealType,
-      menu_type: menuType,
-      menu_category: menuCategory
-    },
-    sort: 'completed_at',
-    limit: 10000,
+  const {
+    serviceSite: site,
+    productionSiteIds,
+    productionLocation
+  } = await resolveMealServiceProductionScope(siteId, dbExecutor, location);
+  let batches = await listMealServiceProducedItemBatchesForSites({
+    siteIds: productionSiteIds,
+    serviceDate,
+    mealType,
+    menuType,
+    menuCategory,
     lock: lockBatches,
-    location
-  }, dbExecutor);
+    location: productionLocation,
+    executor: dbExecutor
+  });
   batches = await backfillProducedItemBatchesForCompletedProductions({
     siteId,
+    productionSiteIds,
     serviceDate,
     mealType,
     menuType,
     menuCategory,
     batches,
     executor: dbExecutor,
-    location,
+    location: productionLocation,
     lock: lockBatches
   });
   const eligibleBatches = batches.filter((batch) => (
@@ -1472,6 +1607,7 @@ async function getServiceContext(payload, executor, {
     mealType,
     menuType,
     menuCategory,
+    productionSiteIds,
     attendeeCount,
     scopeKey,
     availabilitySnapshot,
@@ -1923,28 +2059,29 @@ export async function getProducedItemAvailability(filters = {}, { executor = nul
   );
   const menuCategory = normalizeMealServiceMenuCategory(filters.menu_category, menuType);
   if (!siteId) throw httpError('Select a location for produced-item availability');
-  await resolveProjectServiceSite(siteId, executor);
-  let batches = await listDocuments('ProducedItemBatch', {
-    filters: {
-      site_id: siteId,
-      production_date: serviceDate,
-      meal_type: mealType,
-      menu_type: menuType,
-      menu_category: menuCategory
-    },
-    sort: 'completed_at',
-    limit: 10000,
-    location
-  }, executor || undefined);
+  const {
+    productionSiteIds,
+    productionLocation
+  } = await resolveMealServiceProductionScope(siteId, executor, location);
+  let batches = await listMealServiceProducedItemBatchesForSites({
+    siteIds: productionSiteIds,
+    serviceDate,
+    mealType,
+    menuType,
+    menuCategory,
+    location: productionLocation,
+    executor
+  });
   batches = await backfillProducedItemBatchesForCompletedProductions({
     siteId,
+    productionSiteIds,
     serviceDate,
     mealType,
     menuType,
     menuCategory,
     batches,
     executor,
-    location
+    location: productionLocation
   });
   const eligibleBatches = batches.filter((batch) => (
     isRoutineMealServiceBatch(batch)
@@ -1978,7 +2115,8 @@ export async function getProducedItemAvailability(filters = {}, { executor = nul
       scope_key: scopeKey,
       menu_type: menuType,
       menu_category: menuCategory,
-      meal_type: mealType
+      meal_type: mealType,
+      production_site_ids: productionSiteIds
     },
     availability_snapshot: availabilitySnapshot,
     confirmed: Boolean(confirmation),
@@ -2009,19 +2147,26 @@ async function updateMealServicePortionSizeWithExecutor(payload, actor, executor
   if (!siteId) throw httpError('Select a location');
   if (!recipeId) throw httpError('Select a prepared dish');
   const portionSize = normalizeManualMealPortionSize(payload.service_portion_size_grams);
-  await resolveProjectServiceSite(siteId, executor);
+  const {
+    productionSiteIds,
+    productionLocation
+  } = await resolveMealServiceProductionScope(siteId, executor, location);
   const scopeKey = buildMealServiceScopeKey({
     site_id: siteId, service_date: serviceDate, meal_type: mealType,
     menu_type: menuType, menu_category: menuCategory
   });
   await acquireMealServiceScopeLock(scopeKey, executor);
-  const batches = (await listDocuments('ProducedItemBatch', {
-    filters: {
-      site_id: siteId, production_date: serviceDate, meal_type: mealType,
-      menu_type: menuType, menu_category: menuCategory, recipe_id: recipeId
-    },
-    sort: 'completed_at', limit: 10000, lock: true, location
-  }, executor)).filter((batch) => isRoutineMealServiceBatch(batch));
+  const batches = (await listMealServiceProducedItemBatchesForSites({
+    siteIds: productionSiteIds,
+    serviceDate,
+    mealType,
+    menuType,
+    menuCategory,
+    recipeId,
+    lock: true,
+    location: productionLocation,
+    executor
+  })).filter((batch) => isRoutineMealServiceBatch(batch));
   if (batches.length === 0) throw httpError('No matching completed production output was found', 404);
   if (batches.some((batch) => (
     normalizeText(batch.status).toLowerCase() !== 'available'

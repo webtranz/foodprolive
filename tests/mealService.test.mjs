@@ -1123,3 +1123,15 @@ test('meal-service availability backfills missing produced batches from complete
   assert.match(serviceSource, /getProducedItemAvailability[\s\S]*backfillProducedItemBatchesForCompletedProductions/);
   assert.match(serviceSource, /getServiceContext[\s\S]*backfillProducedItemBatchesForCompletedProductions/);
 });
+
+test('meal-service project scope includes active child store production output', () => {
+  const serviceSource = source('server/mealService.js');
+
+  assert.match(serviceSource, /resolveMealServiceProductionScope/);
+  assert.match(serviceSource, /parent_site_id: serviceSite\.id/);
+  assert.match(serviceSource, /normalizeSiteType\(site\?\.type\) === SITE_HIERARCHY_TYPES\.STORE/);
+  assert.match(serviceSource, /extendLocationWithMealServiceProductionSites\(location, productionSiteIds\)/);
+  assert.match(serviceSource, /getProducedItemAvailability[\s\S]*productionSiteIds[\s\S]*listMealServiceProducedItemBatchesForSites/);
+  assert.match(serviceSource, /getServiceContext[\s\S]*productionSiteIds[\s\S]*listMealServiceProducedItemBatchesForSites/);
+  assert.match(serviceSource, /updateMealServicePortionSizeWithExecutor[\s\S]*productionSiteIds[\s\S]*listMealServiceProducedItemBatchesForSites/);
+});
