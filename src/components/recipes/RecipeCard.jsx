@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -38,7 +38,24 @@ function formatRecipeYieldPercent(value) {
   return `${Number(value.toFixed(2)).toLocaleString()}%`;
 }
 
+function slugifyRecipeImageName(value) {
+  return String(value || 'recipe')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase()
+    .slice(0, 90) || 'recipe';
+}
+
+function getRecipeCardImageSource(recipe = {}) {
+  const explicitImage = String(recipe.image_url || '').trim();
+  if (explicitImage) return explicitImage;
+  return `/recipe-images/${slugifyRecipeImageName(recipe.name)}.svg`;
+}
+
 export default function RecipeCard({ recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, sites = [], onEdit, onDelete }) {
+  const [imageFailed, setImageFailed] = useState(false);
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
   const subRecipes = Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [];
   const siteIds = Array.isArray(recipe.site_ids) ? recipe.site_ids.filter(Boolean) : [];
@@ -98,14 +115,20 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], inv
   const servingWeightTitle = servingWeight.is_complete
       ? 'Yield-adjusted cooked weight per serving'
     : servingWeight.warnings.join(' ') || 'Add ingredient weights and units to calculate grams per serving.';
+  const recipeImageSource = useMemo(() => getRecipeCardImageSource(recipe), [recipe.image_url, recipe.name]);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [recipeImageSource]);
 
   return (
     <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 group overflow-hidden">
-      {recipe.image_url && (
+      {recipeImageSource && !imageFailed && (
         <div className="h-40 overflow-hidden">
           <img 
-            src={recipe.image_url} 
+            src={recipeImageSource}
             alt={recipe.name}
+            onError={() => setImageFailed(true)}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
         </div>

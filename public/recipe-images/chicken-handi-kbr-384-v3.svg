@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520" role="img" aria-label="Chicken Handi KBR-384   V3">
+  <title>Chicken Handi KBR-384   V3</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fff7ed"/>
+      <stop offset="52%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#ea580c" stop-opacity="0.28"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect width="800" height="520" rx="46" fill="url(#bg)"/>
+  <circle cx="92" cy="72" r="120" fill="#ea580c" opacity="0.10"/>
+  <circle cx="720" cy="420" r="150" fill="#7c2d12" opacity="0.08"/>
+  <g filter="url(#shadow)">
+        <ellipse cx="390" cy="218" rx="110" ry="72" fill="white" opacity="0.92"/>
+        <circle cx="486" cy="180" r="32" fill="white" opacity="0.92"/>
+        <rect x="482" y="182" width="96" height="34" rx="17" fill="white" opacity="0.92" transform="rotate(-18 482 182)"/>
+        <circle cx="576" cy="170" r="19" fill="white" opacity="0.92"/>
+        <circle cx="584" cy="202" r="19" fill="white" opacity="0.92"/>
+        <path d="M338 204 c28 -26 76 -26 104 0" fill="none" stroke="#ea580c" stroke-width="12" stroke-linecap="round" opacity="0.62"/>
+        </g>
+  <rect x="84" y="346" width="632" height="136" rx="30" fill="white" opacity="0.82"/>
+  <text x="400" y="388" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="800" fill="#0f172a">Chicken Handi KBR-384 V3</text><text x="400" y="430" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#7c2d12" opacity="0.82">CHICKEN DISH</text>
+  <text x="400" y="64" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="800" letter-spacing="3" fill="#7c2d12" opacity="0.68">TAMIMI GLOBAL CATERING</text>
+</svg>

@@ -508,7 +508,7 @@ export function buildProductionPlanningDashboard({
           line
         ])
       })),
-      image_url: production.image_url || recipe?.image_url || '',
+      image_url: production.image_url || '',
       meal_type: mealType,
       required_portions: portions,
       portion_size: resolvePortionSize(production, recipe, recipes, ingredients),

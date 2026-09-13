@@ -101,9 +101,13 @@ function titleCase(value) {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+function isRecipeLibraryImage(src) {
+  return String(src || '').includes('/recipe-images/');
+}
+
 function ProductionImage({ src, alt }) {
   const [failed, setFailed] = useState(false);
-  if (!src || failed) {
+  if (!src || failed || isRecipeLibraryImage(src)) {
     return (
       <div className="flex h-16 w-16 flex-none items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-slate-400 sm:h-[72px] sm:w-[72px]">
         <ImageOff className="h-5 w-5" aria-hidden="true" />
