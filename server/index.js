@@ -5,7 +5,10 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import nodemailer from 'nodemailer';
-import { convertIngredientQuantity } from '../shared/ingredientUnits.js';
+import {
+  convertIngredientQuantity,
+  isIngredientUnitCompatible
+} from '../shared/ingredientUnits.js';
 import { normalizeAllergenTags } from '../shared/allergens.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
@@ -133,7 +136,8 @@ import {
   getVelocityReports,
   getInventoryValuationReport,
   listInventoryLots,
-  getInventoryLotReservationAvailableQuantity
+  getInventoryLotReservationAvailableQuantity,
+  areInventoryUnitsEquivalent
 } from './inventory.js';
 import { getInventoryValueHistoryReport } from './inventoryValueReport.js';
 import {
@@ -5594,6 +5598,89 @@ function stockCheckDateForMaterialRequest(request = {}) {
   });
 }
 
+function materialRequestUnit(value) {
+  return String(value || '').trim();
+}
+
+function materialRequestUnitText(value) {
+  const unit = materialRequestUnit(value);
+  return unit || 'missing unit';
+}
+
+function buildMaterialRequestItemIssues({
+  item = {},
+  ingredient = {},
+  inventory = {},
+  requestQuantity = 0,
+  liveShortageQuantity = 0
+} = {}) {
+  const issues = [];
+  const ingredientId = String(item?.ingredient_id || '');
+  const requestUnit = materialRequestUnit(item.unit);
+  const ingredientUnit = materialRequestUnit(ingredient.unit);
+  const inventoryUnit = materialRequestUnit(inventory.unit);
+  const suggestedUnit = inventoryUnit || requestUnit || ingredientUnit;
+
+  if (!ingredientId || !ingredient?.id) {
+    issues.push({
+      code: 'missing_ingredient',
+      severity: 'error',
+      message: 'Ingredient record is missing or inactive for this request line.',
+      repairable: false
+    });
+    return issues;
+  }
+
+  if (!ingredientUnit) {
+    issues.push({
+      code: 'missing_ingredient_unit',
+      severity: 'error',
+      message: `Ingredient master unit is missing. Suggested unit: ${materialRequestUnitText(suggestedUnit)}.`,
+      repairable: Boolean(suggestedUnit),
+      repair_action: 'set_ingredient_unit',
+      suggested_unit: suggestedUnit || null
+    });
+  }
+
+  if (ingredientUnit && inventoryUnit && !areInventoryUnitsEquivalent(inventoryUnit, ingredientUnit)) {
+    issues.push({
+      code: 'inventory_unit_mismatch',
+      severity: 'error',
+      message: `Inventory unit (${inventoryUnit}) does not match ingredient unit (${ingredientUnit}).`,
+      repairable: false
+    });
+  } else if (ingredientUnit && inventoryUnit && inventoryUnit !== ingredientUnit && areInventoryUnitsEquivalent(inventoryUnit, ingredientUnit)) {
+    issues.push({
+      code: 'equivalent_inventory_unit_label',
+      severity: 'warning',
+      message: `Inventory uses ${inventoryUnit}, while the ingredient uses ${ingredientUnit}. These are equivalent count units and can be aligned.`,
+      repairable: true,
+      repair_action: 'align_inventory_unit_label',
+      suggested_unit: ingredientUnit
+    });
+  }
+
+  if (requestUnit && ingredientUnit && !isIngredientUnitCompatible(requestUnit, ingredientUnit, ingredient)) {
+    issues.push({
+      code: 'request_unit_incompatible',
+      severity: 'error',
+      message: `Request unit (${requestUnit}) cannot be converted to ingredient unit (${ingredientUnit}).`,
+      repairable: false
+    });
+  }
+
+  if (requestQuantity > 0 && liveShortageQuantity > 0) {
+    issues.push({
+      code: 'stock_shortage',
+      severity: 'error',
+      message: `Live reservable stock is short by ${Number(liveShortageQuantity.toFixed(6))} ${materialRequestUnitText(requestUnit)}.`,
+      repairable: false
+    });
+  }
+
+  return issues;
+}
+
 async function enrichMaterialRequestsWithReservableStock(records = [], scope) {
   if (!Array.isArray(records) || records.length === 0) return records;
   const [ingredients, inventoryRows, lots] = await Promise.all([
@@ -5632,15 +5719,176 @@ async function enrichMaterialRequestsWithReservableStock(records = [], scope) {
         : reservableInInventoryUnit;
       const requestQuantity = numericMatch(item.request_quantity ?? item.required_quantity, 0);
       const liveShortageQuantity = Math.max(0, requestQuantity - reservableQuantity);
+      const validationIssues = buildMaterialRequestItemIssues({
+        item,
+        ingredient,
+        inventory,
+        requestQuantity,
+        liveShortageQuantity
+      });
       return {
         ...item,
         live_reservable_quantity: Number(reservableQuantity.toFixed(6)),
         live_shortage_quantity: Number(liveShortageQuantity.toFixed(6)),
         live_stock_check_date: stockCheckDate,
-        live_stock_source: 'inventory_lots'
+        live_stock_source: 'inventory_lots',
+        validation_issues: validationIssues,
+        validation_status: validationIssues.some((issue) => issue.severity === 'error')
+          ? 'error'
+          : validationIssues.length > 0 ? 'warning' : 'ok',
+        repairable_issue_count: validationIssues.filter((issue) => issue.repairable).length
       };
     });
     return { ...record, items: nextItems };
+  });
+}
+
+async function repairMaterialRequestUnitIssues({ materialRequestId, ingredientId = null, scope }) {
+  return withTransaction(async (client) => {
+    const materialRequest = await findDocument('MaterialRequest', materialRequestId, client, true);
+    if (!materialRequest || !filterRowsByAccessibleSites([materialRequest], scope).length) {
+      const error = new Error('Material request not found');
+      error.status = 404;
+      throw error;
+    }
+
+    const items = Array.isArray(materialRequest.items) ? materialRequest.items : [];
+    const targetIngredientIds = [...new Set(items
+      .map((item) => String(item?.ingredient_id || '').trim())
+      .filter(Boolean)
+      .filter((id) => !ingredientId || id === String(ingredientId)))]
+      .sort();
+    if (targetIngredientIds.length === 0) {
+      const error = new Error('No matching material request rows were found to repair');
+      error.status = 400;
+      throw error;
+    }
+
+    const stockSiteId = String(materialRequest.fulfillment_store_id || materialRequest.site_id || '').trim();
+    const production = materialRequest.source_production_id
+      ? await findDocument('Production', materialRequest.source_production_id, client, true)
+      : null;
+    const productionLines = Array.isArray(production?.ingredients_used)
+      ? production.ingredients_used.map((line) => ({ ...line }))
+      : [];
+    const requestItems = items.map((item) => ({ ...item }));
+    const repairs = [];
+    let requestChanged = false;
+    let productionChanged = false;
+    let ingredientChanged = false;
+    let inventoryChanged = false;
+
+    for (const currentIngredientId of targetIngredientIds) {
+      const sampleItem = requestItems.find((item) => String(item?.ingredient_id || '') === currentIngredientId) || {};
+      const ingredient = await findDocument('Ingredient', currentIngredientId, client, true);
+      if (!ingredient) {
+        repairs.push({
+          ingredient_id: currentIngredientId,
+          item_code: getItemCodeFromRecords([sampleItem], null),
+          status: 'skipped',
+          message: 'Ingredient record was not found.'
+        });
+        continue;
+      }
+
+      const inventory = stockSiteId
+        ? (await listDocuments('Inventory', {
+          filters: { site_id: stockSiteId, ingredient_id: currentIngredientId },
+          limit: 10,
+          lock: true
+        }, client))[0]
+        : null;
+      let ingredientUnit = materialRequestUnit(ingredient.unit);
+      const inventoryUnit = materialRequestUnit(inventory?.unit);
+      const requestUnit = materialRequestUnit(sampleItem.unit);
+      const suggestedUnit = ingredientUnit || inventoryUnit || requestUnit;
+      const itemCode = getItemCodeFromRecords([ingredient, inventory, sampleItem], null);
+
+      if (!ingredientUnit && suggestedUnit) {
+        await updateDocument('Ingredient', currentIngredientId, {
+          unit: suggestedUnit
+        }, client);
+        ingredientUnit = suggestedUnit;
+        ingredientChanged = true;
+        repairs.push({
+          ingredient_id: currentIngredientId,
+          item_code: itemCode,
+          status: 'repaired',
+          action: 'set_ingredient_unit',
+          message: `Set ingredient unit to ${suggestedUnit}.`
+        });
+      }
+
+      if (
+        inventory
+        && inventoryUnit
+        && ingredientUnit
+        && inventoryUnit !== ingredientUnit
+        && areInventoryUnitsEquivalent(inventoryUnit, ingredientUnit)
+      ) {
+        await updateDocument('Inventory', inventory.id, {
+          unit: ingredientUnit
+        }, client);
+        inventoryChanged = true;
+        repairs.push({
+          ingredient_id: currentIngredientId,
+          item_code: itemCode,
+          status: 'repaired',
+          action: 'align_inventory_unit_label',
+          message: `Aligned inventory unit from ${inventoryUnit} to ${ingredientUnit}.`
+        });
+      }
+
+      if (ingredientUnit) {
+        requestItems.forEach((item) => {
+          if (String(item?.ingredient_id || '') !== currentIngredientId) return;
+          const itemUnit = materialRequestUnit(item.unit);
+          if (!itemUnit || (itemUnit !== ingredientUnit && areInventoryUnitsEquivalent(itemUnit, ingredientUnit))) {
+            item.unit = ingredientUnit;
+            requestChanged = true;
+          }
+        });
+
+        productionLines.forEach((line) => {
+          if (String(line?.ingredient_id || '') !== currentIngredientId) return;
+          const lineUnit = materialRequestUnit(line.unit);
+          if (!lineUnit || (lineUnit !== ingredientUnit && areInventoryUnitsEquivalent(lineUnit, ingredientUnit))) {
+            line.unit = ingredientUnit;
+            productionChanged = true;
+          }
+        });
+      }
+
+      if (!ingredientUnit && !suggestedUnit) {
+        repairs.push({
+          ingredient_id: currentIngredientId,
+          item_code: itemCode,
+          status: 'skipped',
+          message: 'No safe unit suggestion was available for this row.'
+        });
+      }
+    }
+
+    if (requestChanged) {
+      await updateDocument('MaterialRequest', materialRequest.id, { items: requestItems }, client);
+    }
+    if (production && productionChanged) {
+      await updateDocument('Production', production.id, { ingredients_used: productionLines }, client);
+    }
+
+    return {
+      material_request: requestChanged
+        ? await findDocument('MaterialRequest', materialRequest.id, client)
+        : materialRequest,
+      production,
+      repairs,
+      changed: {
+        Ingredient: ingredientChanged,
+        Inventory: inventoryChanged,
+        MaterialRequest: requestChanged,
+        Production: productionChanged
+      }
+    };
   });
 }
 
@@ -5655,6 +5903,43 @@ app.get('/api/material-requests', requireAuth, requireAnyPermission(['view_mater
     });
     const codedRecords = await enrichRecordsWithIngredientItemCodes(records);
     response.json(await enrichMaterialRequestsWithReservableStock(codedRecords, scope));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/material-requests/:id/repair-issues', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const result = await repairMaterialRequestUnitIssues({
+      materialRequestId: request.params.id,
+      ingredientId: request.body?.ingredient_id || null,
+      scope
+    });
+    Object.entries(result.changed || {}).forEach(([entity, changed]) => {
+      if (changed) recordChanged(entity);
+    });
+    const repairedCount = (result.repairs || []).filter((repair) => repair.status === 'repaired').length;
+    await auditAction({
+      user: request.user,
+      action: 'MATERIAL_REQUEST_ADMIN_REPAIR',
+      entity: 'MaterialRequest',
+      entityId: request.params.id,
+      details: {
+        material_request_id: request.params.id,
+        source_production_id: result.production?.id || null,
+        repairs: result.repairs || []
+      }
+    });
+    const [codedRecord] = await enrichRecordsWithIngredientItemCodes([result.material_request]);
+    const [enrichedRecord] = await enrichMaterialRequestsWithReservableStock([codedRecord], scope);
+    response.json({
+      message: repairedCount > 0
+        ? `Resolved ${repairedCount} safe issue${repairedCount === 1 ? '' : 's'}. Try acknowledgement again.`
+        : 'No safe automatic repair was available for the selected row.',
+      repairs: result.repairs || [],
+      material_request: enrichedRecord
+    });
   } catch (error) {
     next(error);
   }

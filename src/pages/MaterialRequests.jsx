@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CheckCircle2, ClipboardList, FileText, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardList, FileText, Loader2, Wrench } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/lib/currency';
 import { getItemCode } from '../../shared/itemCode.js';
@@ -27,13 +27,14 @@ const STATUS_CONFIG = {
 
 export default function MaterialRequests() {
   const queryClient = useQueryClient();
-  const { can } = usePermissions();
+  const { can, isAdmin } = usePermissions();
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [notes, setNotes] = useState('');
   const [dateFilter, setDateFilter] = useState('');
   const [projectFilter, setProjectFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [actionError, setActionError] = useState('');
+  const [actionNotice, setActionNotice] = useState('');
   const canAcknowledge = can('acknowledge_material_request');
 
   const { data: materialRequests = [], isLoading, error: requestsError } = useQuery({
@@ -87,7 +88,25 @@ export default function MaterialRequests() {
       setNotes('');
       setActionError('');
     },
-    onError: (error) => setActionError(error.message || 'Unable to acknowledge this material request.')
+    onError: (error) => {
+      setActionNotice('');
+      setActionError(error.message || 'Unable to acknowledge this material request.');
+    }
+  });
+
+  const repairIssuesMutation = useMutation({
+    mutationFn: ({ id, ingredientId = null }) => base44.materialRequests.repairIssues(id, ingredientId ? { ingredient_id: ingredientId } : {}),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      if (result?.material_request) setSelectedRequest(result.material_request);
+      setActionError('');
+      setActionNotice(result?.message || 'Repair completed. Try acknowledgement again.');
+    },
+    onError: (error) => {
+      setActionNotice('');
+      setActionError(error.message || 'Unable to repair this material request row.');
+    }
   });
 
   const aggregateRequestItems = (items = []) => {
@@ -102,8 +121,10 @@ export default function MaterialRequests() {
         current_stock: 0,
         live_reservable_quantity: 0,
         live_shortage_quantity: 0,
-        source_line_count: 0
+        source_line_count: 0,
+        validation_issues: []
       };
+      const itemIssues = Array.isArray(item.validation_issues) ? item.validation_issues : [];
       existing.required_quantity += Number(item.required_quantity || 0);
       existing.request_quantity += Number(item.request_quantity ?? item.required_quantity ?? 0);
       existing.current_stock = Math.max(existing.current_stock, Number(item.current_stock || 0));
@@ -113,6 +134,13 @@ export default function MaterialRequests() {
       );
       existing.live_shortage_quantity = Math.max(0, existing.request_quantity - existing.live_reservable_quantity);
       existing.source_line_count += 1;
+      const issueMap = new Map((existing.validation_issues || []).map((issue) => [`${issue.code}:${issue.message}`, issue]));
+      itemIssues.forEach((issue) => issueMap.set(`${issue.code}:${issue.message}`, issue));
+      existing.validation_issues = [...issueMap.values()];
+      existing.validation_status = existing.validation_issues.some((issue) => issue.severity === 'error')
+        ? 'error'
+        : existing.validation_issues.length > 0 ? 'warning' : 'ok';
+      existing.repairable_issue_count = existing.validation_issues.filter((issue) => issue.repairable).length;
       grouped.set(key, existing);
     });
     return [...grouped.values()];
@@ -120,8 +148,12 @@ export default function MaterialRequests() {
 
   const formatRequestQuantity = (value, unit) => `${Number(value || 0).toFixed(2)} ${unit || ''}`.trim();
 
-  const renderRequestItemsTable = (request) => {
+  const renderRequestItemsTable = (request, { allowAdminRepair = false } = {}) => {
     const items = aggregateRequestItems(request?.items || []);
+    const hasIssues = items.some((item) => (item.validation_issues || []).length > 0);
+    const showIssueColumn = hasIssues || allowAdminRepair;
+    const showRepairColumn = allowAdminRepair && hasIssues;
+    const columnCount = 6 + (showIssueColumn ? 1 : 0) + (showRepairColumn ? 1 : 0);
     return (
       <div className="overflow-x-auto">
         <Table>
@@ -133,12 +165,21 @@ export default function MaterialRequests() {
               <TableHead>Snapshot Stock</TableHead>
               <TableHead>Live Reservable</TableHead>
               <TableHead>Request Quantity</TableHead>
+              {showIssueColumn ? <TableHead>Row Issue</TableHead> : null}
+              {showRepairColumn ? <TableHead>Admin Fix</TableHead> : null}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {items.map((item, index) => (
-              <TableRow key={`${request.id}-item-${item.id || index}`}>
-                <TableCell className="font-mono text-xs text-slate-600">{resolveRequestItemCode(item)}</TableCell>
+            {items.map((item, index) => {
+              const issues = Array.isArray(item.validation_issues) ? item.validation_issues : [];
+              const hasError = issues.some((issue) => issue.severity === 'error');
+              const hasRepair = issues.some((issue) => issue.repairable);
+              return (
+              <TableRow
+                key={`${request.id}-item-${item.id || index}`}
+                className={hasError ? 'bg-red-50/80' : issues.length > 0 ? 'bg-amber-50/70' : ''}
+              >
+                <TableCell className={`font-mono text-xs ${hasError ? 'text-red-700' : 'text-slate-600'}`}>{resolveRequestItemCode(item)}</TableCell>
                 <TableCell className="font-medium text-slate-900">
                   {item.ingredient_name}
                   {item.source_line_count > 1 ? (
@@ -160,11 +201,54 @@ export default function MaterialRequests() {
                   ) : null}
                 </TableCell>
                 <TableCell>{formatRequestQuantity(item.request_quantity, item.unit)}</TableCell>
+                {showIssueColumn ? (
+                  <TableCell className="min-w-[220px]">
+                    {issues.length > 0 ? (
+                      <div className={hasError ? 'text-red-700' : 'text-amber-700'}>
+                        <div className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          {hasError ? 'Error' : 'Warning'}
+                        </div>
+                        <ul className="space-y-1 text-xs">
+                          {issues.map((issue, issueIndex) => (
+                            <li key={`${issue.code}-${issueIndex}`}>{issue.message}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-emerald-700">OK</span>
+                    )}
+                  </TableCell>
+                ) : null}
+                {showRepairColumn ? (
+                  <TableCell>
+                    {hasRepair ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={repairIssuesMutation.isPending}
+                        onClick={() => repairIssuesMutation.mutate({ id: request.id, ingredientId: item.ingredient_id })}
+                        className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                      >
+                        {repairIssuesMutation.isPending ? (
+                          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Wrench className="mr-2 h-3.5 w-3.5" />
+                        )}
+                        Resolve
+                      </Button>
+                    ) : issues.length > 0 ? (
+                      <span className="text-xs text-slate-500">Manual review</span>
+                    ) : null}
+                  </TableCell>
+                ) : null}
               </TableRow>
-            ))}
+              );
+            })}
             {items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">No request items recorded.</TableCell>
+                <TableCell colSpan={columnCount} className="py-6 text-center text-sm text-slate-500">No request items recorded.</TableCell>
               </TableRow>
             ) : null}
           </TableBody>
@@ -332,6 +416,7 @@ export default function MaterialRequests() {
                             setSelectedRequest(request);
                             setNotes(request.procurement_notes || '');
                             setActionError('');
+                            setActionNotice('');
                           }}
                         >
                           <CheckCircle2 className="mr-2 h-4 w-4" />
@@ -351,6 +436,7 @@ export default function MaterialRequests() {
         if (!open) {
           setSelectedRequest(null);
           setActionError('');
+          setActionNotice('');
         }
       }}>
         <DialogContent className="max-w-4xl">
@@ -360,6 +446,9 @@ export default function MaterialRequests() {
           {actionError ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
           ) : null}
+          {actionNotice ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{actionNotice}</div>
+          ) : null}
           <div className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
               <p><span className="font-medium text-slate-900">Request:</span> {selectedRequest?.request_number}</p>
@@ -368,8 +457,27 @@ export default function MaterialRequests() {
               <p><span className="font-medium text-slate-900">Fulfillment Store:</span> {selectedRequest?.fulfillment_store_name || selectedRequest?.site_name || '-'}</p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <p className="mb-2 text-sm font-semibold text-slate-900">Requested Items</p>
-              {renderRequestItemsTable(selectedRequest)}
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-900">Requested Items</p>
+                {isAdmin && aggregateRequestItems(selectedRequest?.items || []).some((item) => Number(item.repairable_issue_count || 0) > 0) ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={repairIssuesMutation.isPending}
+                    onClick={() => repairIssuesMutation.mutate({ id: selectedRequest.id })}
+                    className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                  >
+                    {repairIssuesMutation.isPending ? (
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Wrench className="mr-2 h-3.5 w-3.5" />
+                    )}
+                    Resolve all safe issues
+                  </Button>
+                ) : null}
+              </div>
+              {renderRequestItemsTable(selectedRequest, { allowAdminRepair: isAdmin })}
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">Procurement Notes</label>
@@ -384,8 +492,11 @@ export default function MaterialRequests() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setSelectedRequest(null)}>Cancel</Button>
             <Button
-              onClick={() => acknowledgeMutation.mutate({ id: selectedRequest.id, notes })}
-              disabled={acknowledgeMutation.isPending}
+              onClick={() => {
+                setActionNotice('');
+                acknowledgeMutation.mutate({ id: selectedRequest.id, notes });
+              }}
+              disabled={acknowledgeMutation.isPending || repairIssuesMutation.isPending}
               className="bg-emerald-600 hover:bg-emerald-700"
             >
               {acknowledgeMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}

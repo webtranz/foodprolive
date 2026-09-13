@@ -58,7 +58,7 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
-function areInventoryUnitsEquivalent(left, right) {
+export function areInventoryUnitsEquivalent(left, right) {
   const leftUnit = normalizeIngredientUnit(left);
   const rightUnit = normalizeIngredientUnit(right);
   if (!leftUnit || !rightUnit) return false;

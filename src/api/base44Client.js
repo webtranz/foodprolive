@@ -533,6 +533,12 @@ export const base44 = {
         method: 'POST',
         body: JSON.stringify(data)
       });
+    },
+    repairIssues(id, data = {}) {
+      return apiRequest(`/api/material-requests/${id}/repair-issues`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
     }
   },
   productionWorkflow: {
