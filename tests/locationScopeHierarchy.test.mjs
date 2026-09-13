@@ -92,6 +92,7 @@ assert.deepEqual(
   filterRecordsByLocation(areaUser, 'Recipe', [
     { id: 'global', site_scope: 'global', site_ids: [] },
     { id: 'area-recipe', site_scope: 'specific', site_ids: ['project-a'] },
+    { id: 'unassigned-recipe', site_scope: 'specific', site_ids: [] },
     { id: 'other-recipe', site_scope: 'specific', site_ids: ['project-b'] }
   ], scope).map((record) => record.id),
   ['global', 'area-recipe']

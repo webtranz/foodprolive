@@ -42,6 +42,62 @@ function matchesIngredientSearch(row = {}, searchText = '') {
   ].some((value) => String(value || '').toLowerCase().includes(query));
 }
 
+function getRecipeSiteIds(recipe = {}) {
+  return (Array.isArray(recipe.site_ids) ? recipe.site_ids : [])
+    .map((siteId) => String(siteId || '').trim())
+    .filter(Boolean);
+}
+
+function isRecipeUnassignedFromProjects(recipe = {}) {
+  return String(recipe.site_scope || '').toLowerCase() === 'specific'
+    && getRecipeSiteIds(recipe).length === 0;
+}
+
+function valueReferencesRecipeId(value, recipeId) {
+  const target = String(recipeId || '');
+  if (!target || value == null) return false;
+  if (Array.isArray(value)) {
+    return value.some((item) => valueReferencesRecipeId(item, target));
+  }
+  if (typeof value !== 'object') return false;
+
+  return Object.entries(value).some(([key, nestedValue]) => {
+    if (key === 'recipe_id' && String(nestedValue || '') === target) return true;
+    if (key === 'recipe_ids' && Array.isArray(nestedValue)) {
+      return nestedValue.some((item) => String(item || '') === target);
+    }
+    return valueReferencesRecipeId(nestedValue, target);
+  });
+}
+
+function describeMenuPlanReference(plan = {}) {
+  const date = plan.plan_date || plan.date || 'undated plan';
+  const site = plan.site_name || plan.project_name || plan.site_id || 'site not shown';
+  const scope = [plan.meal_period, plan.menu_type, plan.menu_category].filter(Boolean).join(' · ');
+  return `${date} · ${site}${scope ? ` · ${scope}` : ''}`;
+}
+
+function getRecipeDeleteImpact(recipe, menuPlans = [], recipes = []) {
+  if (!recipe?.id) {
+    return {
+      menuPlans: [],
+      subRecipes: []
+    };
+  }
+  return {
+    menuPlans: menuPlans
+      .filter((plan) => valueReferencesRecipeId(plan, recipe.id))
+      .map(describeMenuPlanReference),
+    subRecipes: recipes
+      .filter((candidate) => (
+        candidate.id !== recipe.id
+        && (Array.isArray(candidate.sub_recipes) ? candidate.sub_recipes : [])
+          .some((line) => String(line?.recipe_id || '') === String(recipe.id))
+      ))
+      .map((candidate) => candidate.name || candidate.id)
+  };
+}
+
 export default function Recipes() {
   const { allowedSiteIds, isAdmin, currentUser } = useSiteContext();
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,10 +115,17 @@ export default function Recipes() {
   const [unitSyncIngredientSearch, setUnitSyncIngredientSearch] = useState('');
 
   const queryClient = useQueryClient();
+  const canManageRecipeDeletion = hasAdministratorAccess(currentUser || {});
 
   const { data: recipes = [], isLoading } = useQuery({
     queryKey: ['recipes'],
     queryFn: () => base44.entities.Recipe.list()
+  });
+
+  const { data: recipeDeleteMenuPlans = [] } = useQuery({
+    queryKey: ['menuPlans', 'recipeDeleteImpact'],
+    queryFn: () => base44.entities.MenuPlan.list('-plan_date', 5000),
+    enabled: canManageRecipeDeletion
   });
 
   const { data: ingredients = [] } = useQuery({
@@ -89,7 +152,11 @@ export default function Recipes() {
     }
     return sites.filter((site) => allowedSiteIds.includes(site.id));
   }, [allowedSiteIds, isAdmin, sites]);
-  const canSyncIngredientUnits = hasAdministratorAccess(currentUser || {});
+  const canSyncIngredientUnits = canManageRecipeDeletion;
+  const recipeDeleteImpact = useMemo(
+    () => getRecipeDeleteImpact(recipeToDelete, recipeDeleteMenuPlans, recipes),
+    [recipeDeleteMenuPlans, recipeToDelete, recipes]
+  );
   const unitSyncPreview = useMemo(
     () => buildRecipeIngredientUnitSyncPreview({ recipes, ingredients }),
     [ingredients, recipes]
@@ -153,8 +220,9 @@ export default function Recipes() {
     const matchesSearch = recipe.name?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'all' || recipe.category === selectedCategory;
     const matchesCuisine = selectedCuisine === 'all' || recipe.cuisine_type === selectedCuisine;
-    const recipeSiteIds = Array.isArray(recipe.site_ids) ? recipe.site_ids : [];
-    const isGlobalRecipe = !recipe.site_scope || recipe.site_scope === 'global' || recipeSiteIds.length === 0;
+    const recipeSiteIds = getRecipeSiteIds(recipe);
+    const isSpecificRecipe = String(recipe.site_scope || '').toLowerCase() === 'specific';
+    const isGlobalRecipe = !isSpecificRecipe && (!recipe.site_scope || recipe.site_scope === 'global');
     const matchesSite = selectedSite === 'all'
       ? true
       : selectedSite === 'global'
@@ -177,6 +245,7 @@ export default function Recipes() {
   };
 
   const handleDelete = (recipe) => {
+    if (!canManageRecipeDeletion || !isRecipeUnassignedFromProjects(recipe)) return;
     setRecipeToDelete(recipe);
     setDeleteDialogOpen(true);
   };
@@ -364,7 +433,7 @@ export default function Recipes() {
                 inventory={recipeInventory}
                 inventoryLoaded={recipeInventoryLoaded}
                 onEdit={handleEdit}
-                onDelete={handleDelete}
+                onDelete={canManageRecipeDeletion && isRecipeUnassignedFromProjects(recipe) ? handleDelete : null}
               />
             ))}
           </div>
@@ -619,21 +688,69 @@ export default function Recipes() {
         </Dialog>
 
         {/* Delete Confirmation */}
-        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-          <AlertDialogContent>
+        <AlertDialog open={deleteDialogOpen} onOpenChange={(open) => {
+          setDeleteDialogOpen(open);
+          if (!open) {
+            setRecipeToDelete(null);
+            deleteMutation.reset();
+          }
+        }}>
+          <AlertDialogContent className="max-w-2xl">
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Recipe</AlertDialogTitle>
-              <AlertDialogDescription>
-                Are you sure you want to delete "{recipeToDelete?.name}"? This action cannot be undone.
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-left text-slate-600">
+                  <p>
+                    This will permanently delete "{recipeToDelete?.name}". Only administrators can delete recipes, and only after the recipe has been unselected from all project/location availability.
+                  </p>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                    <div className="mb-2 flex items-start gap-2 font-semibold">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      Menu planning linkage warning
+                    </div>
+                    {recipeDeleteImpact.menuPlans.length > 0 ? (
+                      <>
+                        <p>
+                          This recipe is still referenced by {recipeDeleteImpact.menuPlans.length} saved menu planning row{recipeDeleteImpact.menuPlans.length === 1 ? '' : 's'}. After deletion, those rows may no longer resolve to an active recipe and should be reviewed before future production.
+                        </p>
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+                          {recipeDeleteImpact.menuPlans.slice(0, 5).map((reference, index) => (
+                            <li key={`${reference}-${index}`}>{reference}</li>
+                          ))}
+                          {recipeDeleteImpact.menuPlans.length > 5 ? (
+                            <li>+{recipeDeleteImpact.menuPlans.length - 5} more menu planning row{recipeDeleteImpact.menuPlans.length - 5 === 1 ? '' : 's'}</li>
+                          ) : null}
+                        </ul>
+                      </>
+                    ) : (
+                      <p>No saved menu planning rows were found for this recipe.</p>
+                    )}
+                    {recipeDeleteImpact.subRecipes.length > 0 ? (
+                      <p className="mt-2 text-xs">
+                        It is also used as a sub-recipe in {recipeDeleteImpact.subRecipes.length} recipe{recipeDeleteImpact.subRecipes.length === 1 ? '' : 's'}; those recipes may need review.
+                      </p>
+                    ) : null}
+                  </div>
+                  {deleteMutation.isError ? (
+                    <p className="text-sm font-medium text-red-600">
+                      {deleteMutation.error?.message || 'Recipe delete failed.'}
+                    </p>
+                  ) : null}
+                  <p className="font-medium text-red-700">This action cannot be undone.</p>
+                </div>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
               <AlertDialogAction
-                onClick={() => deleteMutation.mutate(recipeToDelete?.id)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  deleteMutation.mutate(recipeToDelete?.id);
+                }}
+                disabled={!recipeToDelete?.id || deleteMutation.isPending}
                 className="bg-red-600 hover:bg-red-700"
               >
-                Delete
+                {deleteMutation.isPending ? 'Deleting…' : 'Delete Recipe'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

@@ -118,7 +118,7 @@ function intersects(left = [], right = []) {
 }
 
 function isGlobalRecipe(record = {}) {
-  return !record.site_scope || record.site_scope === 'global' || normalizeArray(record.site_ids).length === 0;
+  return !record.site_scope || record.site_scope === 'global';
 }
 
 export function hasUnrestrictedLocationAccess(user = {}) {

@@ -141,13 +141,7 @@ function buildLocationClause(parameters, entity, location = null) {
   const globalRecipeAllowed = entity === 'Recipe'
     ? `OR (
       NOT ${hasDirectSite}
-      AND (
-        COALESCE(record.data->>'site_scope', 'global') = 'global'
-        OR (
-          jsonb_typeof(record.data->'site_ids') = 'array'
-          AND jsonb_array_length(record.data->'site_ids') = 0
-        )
-      )
+      AND COALESCE(record.data->>'site_scope', 'global') = 'global'
     )`
     : '';
 

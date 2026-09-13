@@ -46,6 +46,7 @@ import {
   createDocument,
   updateDocument,
   deleteDocument,
+  deleteDocumentRecordOnly,
   deleteSiteSubtree,
   initDatabase,
   getUserByToken,
@@ -4160,6 +4161,79 @@ function requestIncludesIngredient(request = {}, ingredientId, siteId = '') {
     || includesIngredientId(request.material_items, ingredientId);
 }
 
+function getRecipeAssignedSiteIds(recipe = {}) {
+  return (Array.isArray(recipe.site_ids) ? recipe.site_ids : [])
+    .map((siteId) => String(siteId || '').trim())
+    .filter(Boolean);
+}
+
+function isRecipeUnassignedFromProjects(recipe = {}) {
+  return String(recipe.site_scope || '').toLowerCase() === 'specific'
+    && getRecipeAssignedSiteIds(recipe).length === 0;
+}
+
+function valueReferencesRecipeId(value, recipeId) {
+  const target = String(recipeId || '');
+  if (!target || value == null) return false;
+  if (Array.isArray(value)) {
+    return value.some((item) => valueReferencesRecipeId(item, target));
+  }
+  if (typeof value !== 'object') return false;
+
+  return Object.entries(value).some(([key, nestedValue]) => {
+    if (key === 'recipe_id' && String(nestedValue || '') === target) return true;
+    if (key === 'recipe_ids' && Array.isArray(nestedValue)) {
+      return nestedValue.some((item) => String(item || '') === target);
+    }
+    return valueReferencesRecipeId(nestedValue, target);
+  });
+}
+
+function recipeLineReferenceExamples(records = [], recipeId, labeler = recordLabel) {
+  return records
+    .filter((record) => valueReferencesRecipeId(record, recipeId))
+    .map(labeler);
+}
+
+async function buildRecipeDeleteImpact(recipe, executor = undefined) {
+  const [menuPlans, recipes] = await Promise.all([
+    listDocuments('MenuPlan', { limit: 10000 }, executor),
+    listDocuments('Recipe', { limit: 10000 }, executor)
+  ]);
+  const menuPlanExamples = recipeLineReferenceExamples(menuPlans, recipe.id, (plan = {}) => {
+    const date = plan.plan_date || plan.date || 'undated plan';
+    const site = plan.site_name || plan.project_name || plan.site_id || 'site not shown';
+    const scope = [plan.meal_period, plan.menu_type, plan.menu_category].filter(Boolean).join(' · ');
+    return `${date} · ${site}${scope ? ` · ${scope}` : ''}`;
+  });
+  const subRecipeExamples = recipes
+    .filter((candidate) => (
+      candidate.id !== recipe.id
+      && (Array.isArray(candidate.sub_recipes) ? candidate.sub_recipes : [])
+        .some((line) => String(line?.recipe_id || '') === String(recipe.id))
+    ))
+    .map(recordLabel);
+  const linkages = [
+    makeDeleteImpactLinkage('Menu planning rows', menuPlanExamples.map((example) => ({ label: example })), (item) => item.label),
+    makeDeleteImpactLinkage('Recipes using this as a sub-recipe', subRecipeExamples.map((example) => ({ label: example })), (item) => item.label)
+  ].filter(Boolean);
+
+  return {
+    entity: 'Recipe',
+    id: recipe.id,
+    has_linkages: linkages.length > 0,
+    linkages,
+    menu_plan_reference_count: menuPlanExamples.length,
+    menu_plan_examples: menuPlanExamples.slice(0, 10),
+    sub_recipe_reference_count: subRecipeExamples.length,
+    sub_recipe_examples: subRecipeExamples.slice(0, 10),
+    can_delete_after_unassigned: isRecipeUnassignedFromProjects(recipe),
+    warning: linkages.length > 0
+      ? 'This recipe is linked to menu planning or sub-recipes. Admin deletion will remove the recipe record; linked menu plans may no longer resolve this recipe and should be reviewed before future production.'
+      : 'No obvious menu planning or sub-recipe links were found.'
+  };
+}
+
 function makeDeleteImpactLinkage(area, records = [], examplePicker = recordLabel) {
   if (!records.length) return null;
   return {
@@ -4221,6 +4295,10 @@ function summarizeInventoryDeleteEffects(existing = {}, lots = [], transactions 
 }
 
 async function buildDeleteImpact(entity, existing, executor = undefined) {
+  if (entity === 'Recipe') {
+    return buildRecipeDeleteImpact(existing, executor);
+  }
+
   if (!['Ingredient', 'Inventory'].includes(entity)) {
     return {
       entity,
@@ -4381,8 +4459,8 @@ app.get('/api/entities/:entity/:id/delete-impact', requireAuth, async (request, 
   try {
     const entity = request.params.entity;
     ensureKnownEntity(entity);
-    if (!['Ingredient', 'Inventory'].includes(entity)) {
-      return response.status(404).json({ message: 'Delete impact is only available for Ingredient and Inventory records' });
+    if (!['Ingredient', 'Inventory', 'Recipe'].includes(entity)) {
+      return response.status(404).json({ message: 'Delete impact is only available for Ingredient, Inventory, and Recipe records' });
     }
     if (!hasAdminAccess(request.user)) {
       return response.status(403).json({ message: 'Only administrators can review deletion impact' });
@@ -4509,6 +4587,68 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
         deleted_material_request_count: deletion.deleted_material_requests.length
       });
     }
+    if (entity === 'Recipe' && hasAdminAccess(request.user)) {
+      authorizeEntityAction(request.user, entity, 'delete', null, existing);
+      if (!isRecipeUnassignedFromProjects(existing)) {
+        return response.status(409).json({
+          message: 'Unselect this recipe from all project/location availability before deleting it.'
+        });
+      }
+
+      const deletion = await withTransaction(async (client) => {
+        const lockedRecipe = await findDocument('Recipe', request.params.id, client, true);
+        if (!lockedRecipe) {
+          const error = new Error('Record not found');
+          error.status = 404;
+          throw error;
+        }
+        if (!isRecipeUnassignedFromProjects(lockedRecipe)) {
+          const error = new Error('Unselect this recipe from all project/location availability before deleting it.');
+          error.status = 409;
+          throw error;
+        }
+
+        const impact = await buildRecipeDeleteImpact(lockedRecipe, client);
+        const removed = await deleteDocumentRecordOnly('Recipe', lockedRecipe.id, client);
+        if (!removed) {
+          const error = new Error('Record not found');
+          error.status = 404;
+          throw error;
+        }
+        return {
+          deleted_record: lockedRecipe,
+          impact
+        };
+      });
+
+      invalidateEntityAccessCaches(entity);
+      recordChanged('Recipe');
+      await auditAction({
+        user: request.user,
+        action: 'RECIPE_ADMIN_DELETE',
+        entity,
+        entityId: request.params.id,
+        details: {
+          friendly_summary: `${request.user.full_name || request.user.email || 'An administrator'} deleted unassigned recipe ${deletion.deleted_record.name || request.params.id}.`,
+          friendly_changes: [
+            'The recipe had already been removed from all project/location availability before deletion.',
+            deletion.impact.menu_plan_reference_count > 0
+              ? `${deletion.impact.menu_plan_reference_count} menu planning reference${deletion.impact.menu_plan_reference_count === 1 ? '' : 's'} may no longer resolve this recipe and should be reviewed before future production.`
+              : 'No saved menu planning references were found for this recipe.',
+            deletion.impact.sub_recipe_reference_count > 0
+              ? `${deletion.impact.sub_recipe_reference_count} recipe${deletion.impact.sub_recipe_reference_count === 1 ? '' : 's'} used this recipe as a sub-recipe and may now need review.`
+              : 'No sub-recipe usage was found.'
+          ],
+          deleted_record: deletion.deleted_record,
+          recipe_delete_impact: deletion.impact
+        }
+      });
+      return response.json({
+        success: true,
+        admin_recipe_delete: true,
+        impact: deletion.impact
+      });
+    }
     if (entity === 'Inventory' && hasAdminAccess(request.user)) {
       authorizeEntityAction(request.user, entity, 'delete', null, existing);
       const deletion = await deleteInventoryRecordAsAdmin(existing, request.user);
@@ -4573,17 +4713,9 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
       relatedInventoryTransactions
     );
     if (entity === 'Recipe') {
-      const recipes = await listDocuments('Recipe', { limit: 5000 });
-      const referencingRecipe = recipes.find((recipe) => (
-        recipe.id !== existing.id
-        && (Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [])
-          .some((line) => line?.recipe_id === existing.id)
-      ));
-      if (referencingRecipe) {
-        return response.status(409).json({
-          message: `Recipe cannot be deleted because it is used by ${referencingRecipe.name || 'another recipe'}.`
-        });
-      }
+      return response.status(403).json({
+        message: 'Only administrators can delete recipes, and only after the recipe is unselected from all project/location availability.'
+      });
     }
     authorizeEntityAction(request.user, entity, 'delete', null, existing);
     const includeDescendants = ['1', 'true'].includes(

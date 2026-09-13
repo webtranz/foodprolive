@@ -1576,6 +1576,24 @@ async function deleteDocument(entity, id, executor = null) {
   return result.rowCount > 0;
 }
 
+async function deleteDocumentRecordOnly(entity, id, executor = null) {
+  if (!executor) {
+    return withTransaction((client) => deleteDocumentRecordOnly(entity, id, client));
+  }
+
+  ensureKnownEntity(entity);
+  if (entity === 'User') {
+    throw new Error('User records must be deleted through deleteDocument');
+  }
+
+  const result = await query(
+    'DELETE FROM entity_records WHERE entity_name = $1 AND id = $2',
+    [entity, id],
+    executor
+  );
+  return result.rowCount > 0;
+}
+
 async function createToken(userId) {
   const token = crypto.randomBytes(32).toString('hex');
   await query(
@@ -2007,6 +2025,7 @@ export {
   createDocument,
   updateDocument,
   deleteDocument,
+  deleteDocumentRecordOnly,
   deleteSiteSubtree,
   sanitizeUser,
   getUserByToken,

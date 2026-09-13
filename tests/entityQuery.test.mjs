@@ -67,6 +67,7 @@ const globalRecipe = buildEntityListQuery({
 });
 assert.match(globalRecipe.text, /site_scope/);
 assert.match(globalRecipe.text, /= 'global'/);
+assert.doesNotMatch(globalRecipe.text, /jsonb_array_length\(record\.data->'site_ids'\) = 0/);
 
 const dateRange = buildEntityListQuery({
   entity: 'MealServiceAttendance',

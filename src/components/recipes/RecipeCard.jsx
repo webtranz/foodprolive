@@ -41,8 +41,10 @@ function formatRecipeYieldPercent(value) {
 export default function RecipeCard({ recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, onEdit, onDelete }) {
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
   const subRecipes = Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [];
-  const siteNames = Array.isArray(recipe.site_names) ? recipe.site_names.filter(Boolean) : [];
-  const isGlobalRecipe = !recipe.site_scope || recipe.site_scope === 'global' || siteNames.length === 0;
+  const siteIds = Array.isArray(recipe.site_ids) ? recipe.site_ids.filter(Boolean) : [];
+  const isSpecificRecipe = String(recipe.site_scope || '').toLowerCase() === 'specific';
+  const isUnassignedRecipe = isSpecificRecipe && siteIds.length === 0;
+  const isGlobalRecipe = !isSpecificRecipe && (!recipe.site_scope || recipe.site_scope === 'global');
   const nutritionSnapshot = useMemo(
     () => calculateRecipeNutritionSnapshot(recipe, recipes, ingredients),
     [ingredients, recipe, recipes]
@@ -112,7 +114,7 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], inv
                 {recipe.category}
               </Badge>
               <Badge variant="outline" className="text-xs">
-                {isGlobalRecipe ? 'Global' : 'Project-specific'}
+                {isUnassignedRecipe ? 'Unassigned' : isGlobalRecipe ? 'Global' : 'Project-specific'}
               </Badge>
             </div>
           </div>
@@ -127,13 +129,15 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], inv
                 <Pencil className="w-4 h-4 mr-2" />
                 Edit
               </DropdownMenuItem>
-              <DropdownMenuItem 
-                onClick={() => onDelete(recipe)}
-                className="text-red-600"
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete
-              </DropdownMenuItem>
+              {onDelete ? (
+                <DropdownMenuItem
+                  onClick={() => onDelete(recipe)}
+                  className="text-red-600"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
