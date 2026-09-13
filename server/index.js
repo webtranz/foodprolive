@@ -943,6 +943,7 @@ async function reconcileProductionInventoryForWorkflow({
   operation,
   reason = '',
   expectedRevision = null,
+  asOfDate = null,
   targetServings = null
 }) {
   const sites = siteCatalog || await listDocuments('Site', { limit: 5000 }, executor);
@@ -966,7 +967,7 @@ async function reconcileProductionInventoryForWorkflow({
     ingredientCatalog: ingredients,
     inventoryCatalog: inventory,
     fulfillmentStore: store,
-    asOfDate: production.production_date || null,
+    asOfDate: asOfDate || stockReservationDateForProduction(production),
     targetServings: targetServings ?? production.target_servings ?? null
   }, executor);
 }
@@ -4376,6 +4377,12 @@ function toDateOnly(value = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
+function stockReservationDateForProduction(production = {}) {
+  const today = toDateOnly();
+  const productionDate = production?.production_date ? toDateOnly(production.production_date) : today;
+  return productionDate > today ? productionDate : today;
+}
+
 async function deleteInventoryRecordAsAdmin(existing, user) {
   return withTransaction(async (client) => {
     const lockedInventory = await findDocument('Inventory', existing.id, client, true);
@@ -5582,7 +5589,9 @@ app.post('/api/pos/webhooks/:sourceId', requireAuth, requireRole(['admin']), asy
 });
 
 function stockCheckDateForMaterialRequest(request = {}) {
-  return String(request.period_start || request.request_date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  return stockReservationDateForProduction({
+    production_date: request.period_start || request.request_date || null
+  });
 }
 
 async function enrichMaterialRequestsWithReservableStock(records = [], scope) {

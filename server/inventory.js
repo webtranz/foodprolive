@@ -374,6 +374,12 @@ function toDateOnly(value = new Date()) {
   return toBusinessDateOnly(value) || toBusinessDateOnly(new Date());
 }
 
+function stockReservationDateForProduction(production = {}) {
+  const today = toDateOnly();
+  const productionDate = production?.production_date ? toDateOnly(production.production_date) : today;
+  return productionDate > today ? productionDate : today;
+}
+
 function parseInventoryDate(value, fieldName, { required = false } = {}) {
   if (value === null || typeof value === 'undefined' || value === '') {
     if (!required) return null;
@@ -594,7 +600,7 @@ function buildInsufficientReservationStockError({
     && getInventoryLotReservationAvailableQuantity(lot, { asOfDate }) <= QUANTITY_EPSILON
   )).length;
   if (unusableCount > 0) {
-    reasons.push(`${unusableCount} lot${unusableCount === 1 ? '' : 's'} are not usable for the reservation date`);
+    reasons.push(`${unusableCount} lot${unusableCount === 1 ? ' is' : 's are'} not usable for the reservation date`);
   }
   const reasonText = reasons.length ? ` (${reasons.join('; ')}).` : '.';
   const error = new Error(
@@ -2144,8 +2150,8 @@ export async function consumeProductionInventoryReservation({
   const movements = [];
   const nextLines = [];
   const plannedEligibilityDate = parseInventoryDate(
-    production.production_date || toDateOnly(),
-    'Production date',
+    stockReservationDateForProduction(production),
+    'Production stock reservation date',
     { required: true }
   );
   for (const line of Array.isArray(current.lines) ? current.lines : []) {

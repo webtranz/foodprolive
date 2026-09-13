@@ -171,7 +171,7 @@ export default function MaterialRequests() {
         </Table>
         {items.some((item) => item.live_stock_check_date) ? (
           <p className="mt-2 text-xs text-slate-500">
-            Live reservable stock is calculated from active, unreserved inventory lots for the production/request date.
+            Live reservable stock is calculated from active, unreserved inventory lots for today, or for the future production date when applicable.
           </p>
         ) : null}
       </div>
