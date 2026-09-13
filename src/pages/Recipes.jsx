@@ -53,48 +53,21 @@ function isRecipeUnassignedFromProjects(recipe = {}) {
     && getRecipeSiteIds(recipe).length === 0;
 }
 
-function valueReferencesRecipeId(value, recipeId) {
-  const target = String(recipeId || '');
-  if (!target || value == null) return false;
-  if (Array.isArray(value)) {
-    return value.some((item) => valueReferencesRecipeId(item, target));
-  }
-  if (typeof value !== 'object') return false;
+const EMPTY_RECIPE_DELETE_IMPACT = {
+  menuPlans: [],
+  subRecipes: [],
+  menuPlanCount: 0,
+  subRecipeCount: 0
+};
 
-  return Object.entries(value).some(([key, nestedValue]) => {
-    if (key === 'recipe_id' && String(nestedValue || '') === target) return true;
-    if (key === 'recipe_ids' && Array.isArray(nestedValue)) {
-      return nestedValue.some((item) => String(item || '') === target);
-    }
-    return valueReferencesRecipeId(nestedValue, target);
-  });
-}
-
-function describeMenuPlanReference(plan = {}) {
-  const date = plan.plan_date || plan.date || 'undated plan';
-  const site = plan.site_name || plan.project_name || plan.site_id || 'site not shown';
-  const scope = [plan.meal_period, plan.menu_type, plan.menu_category].filter(Boolean).join(' · ');
-  return `${date} · ${site}${scope ? ` · ${scope}` : ''}`;
-}
-
-function getRecipeDeleteImpact(recipe, menuPlans = [], recipes = []) {
-  if (!recipe?.id) {
-    return {
-      menuPlans: [],
-      subRecipes: []
-    };
-  }
+function normalizeRecipeDeleteImpact(impact = {}) {
+  const menuPlans = Array.isArray(impact.menu_plan_examples) ? impact.menu_plan_examples : [];
+  const subRecipes = Array.isArray(impact.sub_recipe_examples) ? impact.sub_recipe_examples : [];
   return {
-    menuPlans: menuPlans
-      .filter((plan) => valueReferencesRecipeId(plan, recipe.id))
-      .map(describeMenuPlanReference),
-    subRecipes: recipes
-      .filter((candidate) => (
-        candidate.id !== recipe.id
-        && (Array.isArray(candidate.sub_recipes) ? candidate.sub_recipes : [])
-          .some((line) => String(line?.recipe_id || '') === String(recipe.id))
-      ))
-      .map((candidate) => candidate.name || candidate.id)
+    menuPlans,
+    subRecipes,
+    menuPlanCount: Number(impact.menu_plan_reference_count || menuPlans.length || 0),
+    subRecipeCount: Number(impact.sub_recipe_reference_count || subRecipes.length || 0)
   };
 }
 
@@ -108,6 +81,9 @@ export default function Recipes() {
   const [editingRecipe, setEditingRecipe] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [recipeToDelete, setRecipeToDelete] = useState(null);
+  const [recipeDeleteImpact, setRecipeDeleteImpact] = useState(EMPTY_RECIPE_DELETE_IMPACT);
+  const [recipeDeleteImpactLoading, setRecipeDeleteImpactLoading] = useState(false);
+  const [recipeDeleteImpactError, setRecipeDeleteImpactError] = useState('');
   const [unitSyncOpen, setUnitSyncOpen] = useState(false);
   const [selectedUnitSyncKeys, setSelectedUnitSyncKeys] = useState(() => new Set());
   const [unitSyncResult, setUnitSyncResult] = useState(null);
@@ -120,12 +96,6 @@ export default function Recipes() {
   const { data: recipes = [], isLoading } = useQuery({
     queryKey: ['recipes'],
     queryFn: () => base44.entities.Recipe.list()
-  });
-
-  const { data: recipeDeleteMenuPlans = [] } = useQuery({
-    queryKey: ['menuPlans', 'recipeDeleteImpact'],
-    queryFn: () => base44.entities.MenuPlan.list('-plan_date', 5000),
-    enabled: canManageRecipeDeletion
   });
 
   const { data: ingredients = [] } = useQuery({
@@ -153,10 +123,6 @@ export default function Recipes() {
     return sites.filter((site) => allowedSiteIds.includes(site.id));
   }, [allowedSiteIds, isAdmin, sites]);
   const canSyncIngredientUnits = canManageRecipeDeletion;
-  const recipeDeleteImpact = useMemo(
-    () => getRecipeDeleteImpact(recipeToDelete, recipeDeleteMenuPlans, recipes),
-    [recipeDeleteMenuPlans, recipeToDelete, recipes]
-  );
   const unitSyncPreview = useMemo(
     () => buildRecipeIngredientUnitSyncPreview({ recipes, ingredients }),
     [ingredients, recipes]
@@ -244,10 +210,22 @@ export default function Recipes() {
     setFormOpen(true);
   };
 
-  const handleDelete = (recipe) => {
+  const handleDelete = async (recipe) => {
     if (!canManageRecipeDeletion || !isRecipeUnassignedFromProjects(recipe)) return;
     setRecipeToDelete(recipe);
+    setRecipeDeleteImpact(EMPTY_RECIPE_DELETE_IMPACT);
+    setRecipeDeleteImpactError('');
+    setRecipeDeleteImpactLoading(true);
+    deleteMutation.reset();
     setDeleteDialogOpen(true);
+    try {
+      const impact = await base44.entities.Recipe.deleteImpact(recipe.id);
+      setRecipeDeleteImpact(normalizeRecipeDeleteImpact(impact));
+    } catch (error) {
+      setRecipeDeleteImpactError(error.message || 'Could not load recipe linkage impact.');
+    } finally {
+      setRecipeDeleteImpactLoading(false);
+    }
   };
 
   const openUnitSyncDialog = () => {
@@ -692,6 +670,9 @@ export default function Recipes() {
           setDeleteDialogOpen(open);
           if (!open) {
             setRecipeToDelete(null);
+            setRecipeDeleteImpact(EMPTY_RECIPE_DELETE_IMPACT);
+            setRecipeDeleteImpactError('');
+            setRecipeDeleteImpactLoading(false);
             deleteMutation.reset();
           }
         }}>
@@ -708,26 +689,32 @@ export default function Recipes() {
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                       Menu planning linkage warning
                     </div>
-                    {recipeDeleteImpact.menuPlans.length > 0 ? (
+                    {recipeDeleteImpactLoading ? (
+                      <p>Checking saved menu planning and sub-recipe links…</p>
+                    ) : recipeDeleteImpactError ? (
+                      <p>
+                        {recipeDeleteImpactError} Review linked menu plans before future production if this recipe was previously scheduled.
+                      </p>
+                    ) : recipeDeleteImpact.menuPlanCount > 0 ? (
                       <>
                         <p>
-                          This recipe is still referenced by {recipeDeleteImpact.menuPlans.length} saved menu planning row{recipeDeleteImpact.menuPlans.length === 1 ? '' : 's'}. After deletion, those rows may no longer resolve to an active recipe and should be reviewed before future production.
+                          This recipe is still referenced by {recipeDeleteImpact.menuPlanCount} saved menu planning row{recipeDeleteImpact.menuPlanCount === 1 ? '' : 's'}. After deletion, those rows may no longer resolve to an active recipe and should be reviewed before future production.
                         </p>
                         <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
                           {recipeDeleteImpact.menuPlans.slice(0, 5).map((reference, index) => (
                             <li key={`${reference}-${index}`}>{reference}</li>
                           ))}
-                          {recipeDeleteImpact.menuPlans.length > 5 ? (
-                            <li>+{recipeDeleteImpact.menuPlans.length - 5} more menu planning row{recipeDeleteImpact.menuPlans.length - 5 === 1 ? '' : 's'}</li>
+                          {recipeDeleteImpact.menuPlanCount > recipeDeleteImpact.menuPlans.length ? (
+                            <li>+{recipeDeleteImpact.menuPlanCount - recipeDeleteImpact.menuPlans.length} more menu planning row{recipeDeleteImpact.menuPlanCount - recipeDeleteImpact.menuPlans.length === 1 ? '' : 's'}</li>
                           ) : null}
                         </ul>
                       </>
                     ) : (
                       <p>No saved menu planning rows were found for this recipe.</p>
                     )}
-                    {recipeDeleteImpact.subRecipes.length > 0 ? (
+                    {!recipeDeleteImpactLoading && !recipeDeleteImpactError && recipeDeleteImpact.subRecipeCount > 0 ? (
                       <p className="mt-2 text-xs">
-                        It is also used as a sub-recipe in {recipeDeleteImpact.subRecipes.length} recipe{recipeDeleteImpact.subRecipes.length === 1 ? '' : 's'}; those recipes may need review.
+                        It is also used as a sub-recipe in {recipeDeleteImpact.subRecipeCount} recipe{recipeDeleteImpact.subRecipeCount === 1 ? '' : 's'}; those recipes may need review.
                       </p>
                     ) : null}
                   </div>
@@ -747,7 +734,7 @@ export default function Recipes() {
                   event.preventDefault();
                   deleteMutation.mutate(recipeToDelete?.id);
                 }}
-                disabled={!recipeToDelete?.id || deleteMutation.isPending}
+                disabled={!recipeToDelete?.id || deleteMutation.isPending || recipeDeleteImpactLoading}
                 className="bg-red-600 hover:bg-red-700"
               >
                 {deleteMutation.isPending ? 'Deleting…' : 'Delete Recipe'}
