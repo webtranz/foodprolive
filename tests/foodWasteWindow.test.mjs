@@ -327,6 +327,8 @@ const cases = [
       assert.doesNotMatch(page, /formData\.waste_scope === 'ingredient' && formData\.ingredient_id === 'none'/);
       assert.match(page, /function getWasteWeightGrams/);
       assert.match(page, /getWasteQuantityKg\(item\)/);
+      assert.match(page, /function getWasteCost\(item = \{\}, productionMap = new Map\(\)\)/);
+      assert.match(page, /getWasteCost\(item, productionMap\)/);
       assert.match(page, /This weight will be deducted from the consumed amount under Meal Service Menu\./);
       assert.match(page, /Batch Overproduction Production Summary/);
       assert.match(page, /<TableHead>Dish Name<\/TableHead>/);
@@ -340,9 +342,13 @@ const cases = [
       assert.match(server, /isAdmin: hasAdminAccess\(user\)/);
       assert.match(server, /production_completed_at: context\.production_completed_at/);
       assert.match(server, /allocateBatchOverproductionWaste/);
+      assert.match(server, /calculateProducedOutputWasteCost/);
+      assert.match(server, /withFoodWasteCostAndApproval/);
       assert.match(server, /updateDocument\('ProducedItemBatch'/);
       assert.match(server, /buildPlateWasteMealServiceAdjustments/);
+      assert.match(server, /buildConsumptionCostPerGramById/);
       assert.match(server, /movement_type: 'plate_waste_adjustment'/);
+      assert.match(server, /meal_service_adjustment_cost: plateWasteAdjustment\.estimatedCost/);
       assert.match(api, /emitEntityChange\('ProducedItemBatch', \{ action: 'food-waste'/);
       assert.match(api, /emitEntityChange\('MealServiceConsumption', \{ action: 'plate-waste-adjustment'/);
       assert.match(db, /'batch_overproduction'/);

@@ -152,6 +152,64 @@ function getWasteQuantityKg(item = {}) {
   return getWasteWeightGrams(item) / 1000;
 }
 
+function firstPositiveSafeNumber(values = []) {
+  for (const value of values) {
+    const numeric = safeNumber(value);
+    if (numeric > 0) return numeric;
+  }
+  return 0;
+}
+
+function getProductionOutputCost(record = {}) {
+  return firstPositiveSafeNumber([
+    record.total_cost,
+    record.estimated_total_cost,
+    record.yield_total_cost,
+    record.planned_total_cost,
+    record.estimated_cost,
+    record.production_cost
+  ]);
+}
+
+function getProductionOutputWeightGrams(record = {}) {
+  return firstPositiveSafeNumber([
+    record.produced_weight_grams,
+    record.actual_finished_weight_grams,
+    record.expected_finished_weight_grams,
+    record.finished_weight_grams,
+    record.yielded_weight_grams
+  ]);
+}
+
+function getWasteCost(item = {}, productionMap = new Map()) {
+  const explicitCost = firstPositiveSafeNumber([
+    item.estimated_cost,
+    item.waste_cost,
+    item.total_cost,
+    item.meal_service_adjustment_cost
+  ]);
+  if (explicitCost > 0) return explicitCost;
+
+  const weightGrams = getWasteWeightGrams(item);
+  if (weightGrams <= 0) return 0;
+
+  const linkedProduction = item.production_id ? productionMap.get(item.production_id) : null;
+  const productionCost = getProductionOutputCost(linkedProduction || {});
+  const productionWeightGrams = firstPositiveSafeNumber([
+    item.produced_weight_grams,
+    getProductionOutputWeightGrams(linkedProduction || {})
+  ]);
+  if (productionCost > 0 && productionWeightGrams > 0) {
+    return Number(((weightGrams / productionWeightGrams) * productionCost).toFixed(4));
+  }
+
+  const costPerGram = firstPositiveSafeNumber([
+    item.estimated_cost_per_gram,
+    item.cost_per_gram
+  ]);
+  return Number((weightGrams * costPerGram).toFixed(4));
+}
+
 function formatWeightGrams(value) {
   const grams = safeNumber(value);
   if (grams >= 1000) return `${Number((grams / 1000).toFixed(3))} kg`;
@@ -484,13 +542,13 @@ export default function FoodWaste() {
   const totalProductionOutput = filteredProductions.reduce((sum, item) => sum + safeNumber(item.actual_servings || item.target_servings), 0);
 
   const totalWasteQuantity = analyticsWaste.reduce((sum, item) => sum + getWasteQuantityKg(item), 0);
-  const totalWasteCost = analyticsWaste.reduce((sum, item) => sum + safeNumber(item.estimated_cost), 0);
+  const totalWasteCost = analyticsWaste.reduce((sum, item) => sum + getWasteCost(item, productionMap), 0);
   const avoidableCost = analyticsWaste
     .filter((item) => item.avoidable_type === 'avoidable' || item.preventable)
-    .reduce((sum, item) => sum + safeNumber(item.estimated_cost), 0);
+    .reduce((sum, item) => sum + getWasteCost(item, productionMap), 0);
   const unavoidableCost = analyticsWaste
     .filter((item) => item.avoidable_type === 'unavoidable' && !item.preventable)
-    .reduce((sum, item) => sum + safeNumber(item.estimated_cost), 0);
+    .reduce((sum, item) => sum + getWasteCost(item, productionMap), 0);
   const wastePercentVsProduction = totalProductionOutput > 0
     ? Number(((totalWasteQuantity / totalProductionOutput) * 100).toFixed(2))
     : 0;
@@ -509,10 +567,10 @@ export default function FoodWaste() {
       }
       const row = grouped.get(key);
       row.total_quantity += getWasteQuantityKg(item);
-      row.total_cost += safeNumber(item.estimated_cost);
+      row.total_cost += getWasteCost(item, productionMap);
     });
     return [...grouped.values()].sort((left, right) => `${left.waste_date}-${left.site_name}`.localeCompare(`${right.waste_date}-${right.site_name}`));
-  }, [analyticsWaste]);
+  }, [analyticsWaste, productionMap]);
 
   const topWastedIngredients = useMemo(() => {
     const grouped = new Map();
@@ -528,14 +586,14 @@ export default function FoodWaste() {
       }
       const row = grouped.get(key);
       row.quantity += getWasteQuantityKg(item);
-      row.estimated_cost += safeNumber(item.estimated_cost);
+      row.estimated_cost += getWasteCost(item, productionMap);
       row.waste_count += 1;
     });
     return [...grouped.values()]
       .map((item) => ({ ...item, estimated_cost: Number(item.estimated_cost.toFixed(2)), quantity: Number(item.quantity.toFixed(2)) }))
       .sort((left, right) => right.estimated_cost - left.estimated_cost)
       .slice(0, 8);
-  }, [analyticsWaste]);
+  }, [analyticsWaste, productionMap]);
 
   const wasteByReason = useMemo(() => {
     const grouped = new Map();
@@ -552,10 +610,10 @@ export default function FoodWaste() {
       }
       const row = grouped.get(key);
       row.quantity += getWasteQuantityKg(item);
-      row.estimated_cost += safeNumber(item.estimated_cost);
+      row.estimated_cost += getWasteCost(item, productionMap);
     });
     return [...grouped.values()].sort((left, right) => right.estimated_cost - left.estimated_cost);
-  }, [analyticsWaste]);
+  }, [analyticsWaste, productionMap]);
 
   const wasteByLocation = useMemo(() => {
     const grouped = new Map();
@@ -573,11 +631,11 @@ export default function FoodWaste() {
       }
       const row = grouped.get(key);
       row.total_quantity += getWasteQuantityKg(item);
-      row.total_cost += safeNumber(item.estimated_cost);
+      row.total_cost += getWasteCost(item, productionMap);
       if (item.avoidable_type === 'unavoidable' && !item.preventable) {
-        row.unavoidable_cost += safeNumber(item.estimated_cost);
+        row.unavoidable_cost += getWasteCost(item, productionMap);
       } else {
-        row.avoidable_cost += safeNumber(item.estimated_cost);
+        row.avoidable_cost += getWasteCost(item, productionMap);
       }
     });
     return [...grouped.values()].map((row) => ({
@@ -587,7 +645,7 @@ export default function FoodWaste() {
       avoidable_cost: Number(row.avoidable_cost.toFixed(2)),
       unavoidable_cost: Number(row.unavoidable_cost.toFixed(2))
     })).sort((left, right) => right.total_cost - left.total_cost);
-  }, [analyticsWaste]);
+  }, [analyticsWaste, productionMap]);
 
   const dailyWasteReport = useMemo(() => {
     const grouped = new Map();
@@ -603,7 +661,7 @@ export default function FoodWaste() {
       }
       const row = grouped.get(key);
       row.total_quantity += getWasteQuantityKg(item);
-      row.total_cost += safeNumber(item.estimated_cost);
+      row.total_cost += getWasteCost(item, productionMap);
       row.records += 1;
     });
     return [...grouped.values()].map((row) => ({
@@ -611,7 +669,7 @@ export default function FoodWaste() {
       total_quantity: Number(row.total_quantity.toFixed(2)),
       total_cost: Number(row.total_cost.toFixed(2))
     })).sort((left, right) => right.waste_date.localeCompare(left.waste_date));
-  }, [analyticsWaste]);
+  }, [analyticsWaste, productionMap]);
 
   const monthlyTargets = useMemo(() => (
     wasteTargets.filter((item) => {
@@ -681,10 +739,11 @@ export default function FoodWaste() {
         });
       }
       const row = productionRecipeStats.get(key);
+      const wasteCost = getWasteCost(entry, productionMap);
       row.waste_servings += getWasteQuantityKg(entry);
-      row.waste_cost += safeNumber(entry.estimated_cost);
+      row.waste_cost += wasteCost;
       if (entry.avoidable_type === 'avoidable' || entry.preventable) {
-        row.avoidable_cost += safeNumber(entry.estimated_cost);
+        row.avoidable_cost += wasteCost;
       }
       if (['poor_forecast', 'overproduction'].includes(entry.reason_code)) {
         row.shortage_count += 1;
@@ -761,7 +820,9 @@ export default function FoodWaste() {
     }, {})).map((entry) => {
       const relatedWasteCost = analyticsWaste.reduce((sum, wasteRow) => {
         const linkedProduction = wasteRow.production_id ? productionMap.get(wasteRow.production_id) : null;
-        return (linkedProduction?.meal_type || wasteRow.meal_type) === entry.meal_type ? sum + safeNumber(wasteRow.estimated_cost) : sum;
+        return (linkedProduction?.meal_type || wasteRow.meal_type) === entry.meal_type
+          ? sum + getWasteCost(wasteRow, productionMap)
+          : sum;
       }, 0);
       return {
         ...entry,
@@ -1038,7 +1099,7 @@ export default function FoodWaste() {
       batch_reference: item.batch_reference,
       quantity: item.quantity,
       unit: item.unit,
-      estimated_cost: item.estimated_cost,
+      estimated_cost: Number(getWasteCost(item, productionMap).toFixed(2)),
       approval_status: item.approval_status,
       record_status: item.status
     }));
@@ -1607,7 +1668,7 @@ export default function FoodWaste() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="font-medium text-slate-900">{item.ingredient_name || item.recipe_name || item.batch_reference || 'Waste Record'}</p>
-                      <p className="text-xs text-slate-500">{item.site_name} • {item.waste_date} • {formatCurrency(item.estimated_cost)}</p>
+                      <p className="text-xs text-slate-500">{item.site_name} • {item.waste_date} • {formatCurrency(getWasteCost(item, productionMap))}</p>
                     </div>
                     <Badge className={APPROVAL_TONES.pending}>pending</Badge>
                   </div>
@@ -1683,7 +1744,7 @@ export default function FoodWaste() {
                       </Badge>
                     </TableCell>
                     <TableCell>{formatWasteQuantity(item)}</TableCell>
-                    <TableCell>{formatCurrency(item.estimated_cost)}</TableCell>
+                    <TableCell>{formatCurrency(getWasteCost(item, productionMap))}</TableCell>
                     <TableCell>
                       {item.evidence_image_url || item.image_url ? (
                         <a className="text-sm font-medium text-emerald-700 hover:underline" href={item.evidence_image_url || item.image_url} target="_blank" rel="noreferrer">
