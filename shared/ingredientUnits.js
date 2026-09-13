@@ -75,7 +75,7 @@ const UNIT_ALIASES = {
 
 const WEIGHT_IN_GRAMS = { kg: 1000, g: 1, lb: 453.59237, oz: 28.349523125 };
 const VOLUME_IN_MILLILITRES = { m3: 1000000, l: 1000, ml: 1 };
-const COUNT_IN_PIECES = { pieces: 1 };
+const COUNT_IN_PIECES = { pieces: 1, ea: 1 };
 
 function positiveConversionNumber(value) {
   if (typeof value !== 'number' && typeof value !== 'string') return null;
@@ -224,6 +224,10 @@ export function convertIngredientQuantity(quantity, fromUnit, toUnit, ingredient
 
   if (sourceUnit in VOLUME_IN_MILLILITRES && targetUnit in VOLUME_IN_MILLILITRES) {
     return (numericQuantity * VOLUME_IN_MILLILITRES[sourceUnit]) / VOLUME_IN_MILLILITRES[targetUnit];
+  }
+
+  if (sourceUnit in COUNT_IN_PIECES && targetUnit in COUNT_IN_PIECES) {
+    return (numericQuantity * COUNT_IN_PIECES[sourceUnit]) / COUNT_IN_PIECES[targetUnit];
   }
 
   const configuredConversion = configuredConversionFactor(sourceUnit, targetUnit, ingredient);

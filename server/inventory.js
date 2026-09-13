@@ -10,7 +10,8 @@ import {
 import {
   calculateIngredientCost,
   convertIngredientQuantity,
-  isIngredientUnitCompatible
+  isIngredientUnitCompatible,
+  normalizeIngredientUnit
 } from '../shared/ingredientUnits.js';
 import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 import { calculateYieldOutputQuantity } from '../shared/ingredientYield.js';
@@ -44,6 +45,7 @@ const UNUSABLE_LOT_STATUSES = new Set([
   'quarantined',
   'recalled'
 ]);
+const ONE_TO_ONE_COUNT_UNITS = new Set(['ea', 'pieces']);
 
 async function runInTransaction(executor, handler) {
   if (executor) {
@@ -54,6 +56,14 @@ async function runInTransaction(executor, handler) {
 
 function normalizeText(value) {
   return String(value || '').trim();
+}
+
+function areInventoryUnitsEquivalent(left, right) {
+  const leftUnit = normalizeIngredientUnit(left);
+  const rightUnit = normalizeIngredientUnit(right);
+  if (!leftUnit || !rightUnit) return false;
+  if (leftUnit === rightUnit) return true;
+  return ONE_TO_ONE_COUNT_UNITS.has(leftUnit) && ONE_TO_ONE_COUNT_UNITS.has(rightUnit);
 }
 
 function toNumber(value, fallback = 0) {
@@ -470,7 +480,7 @@ async function validateInventoryIdentity({ site_id, ingredient_id, unit }, execu
     error.status = 400;
     throw error;
   }
-  if (canonicalUnit.toLowerCase() !== suppliedUnit.toLowerCase()) {
+  if (!areInventoryUnitsEquivalent(canonicalUnit, suppliedUnit)) {
     const error = new Error(`Inventory quantity must use the ingredient's canonical unit (${canonicalUnit})`);
     error.status = 409;
     throw error;
@@ -704,7 +714,7 @@ async function ensureInventoryRecord({
 
   if (existing) {
     const existingUnit = normalizeText(existing.unit || canonicalUnit);
-    if (existingUnit.toLowerCase() !== canonicalUnit.toLowerCase()) {
+    if (!areInventoryUnitsEquivalent(existingUnit, canonicalUnit)) {
       const error = new Error(`Existing inventory unit (${existingUnit}) does not match ingredient unit (${canonicalUnit})`);
       error.status = 409;
       throw error;
@@ -1539,8 +1549,8 @@ export function normalizeProductionCommitmentDemand(
 
     const ingredient = ingredientMap.get(ingredientId) || {};
     const inventory = inventoryMap.get(ingredientId) || {};
-    const sourceUnit = line?.unit || ingredient.unit || inventory.unit || 'unit';
-    const inventoryUnit = inventory.unit || ingredient.unit || sourceUnit;
+    const sourceUnit = line?.unit || inventory.unit || ingredient.unit || 'unit';
+    const inventoryUnit = ingredient.unit || inventory.unit || sourceUnit;
     const desiredQuantity = convertIngredientQuantity(
       sourceQuantity,
       sourceUnit,
@@ -2481,7 +2491,7 @@ export async function reconcileProductionInventoryCommitment({
       source_recipe_names: previousLine?.source_recipe_names || [],
       yield_percent: previousLine?.yield_percent ?? 100
     };
-    if (previousLine?.unit && desiredLine.unit && previousLine.unit !== desiredLine.unit) {
+    if (previousLine?.unit && desiredLine.unit && !areInventoryUnitsEquivalent(previousLine.unit, desiredLine.unit)) {
       const error = new Error(
         `Inventory unit for ${desiredLine.ingredient_name} changed from ${previousLine.unit} to ${desiredLine.unit}; reconcile the inventory master first`
       );
