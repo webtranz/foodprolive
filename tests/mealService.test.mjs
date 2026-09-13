@@ -934,6 +934,72 @@ test('recipe-filtered reports return and sum only the matching recipe item and b
   assert.equal(report.summary.measurement_basis.authoritative, 'weight_grams');
 });
 
+test('meal-service report deducts plate waste adjustments from served consumption', () => {
+  const report = buildMealServiceReportData({
+    records: [
+      {
+        id: 'attendance-breakfast',
+        service_date: '2026-09-14',
+        attendee_count: 10,
+        status: 'posted',
+        required_servings: 10,
+        required_weight_grams: 5000,
+        served_servings: 10,
+        served_weight_grams: 5000,
+        items: [
+          {
+            recipe_id: 'recipe-daal',
+            recipe_name: 'Daal',
+            required_servings: 10,
+            allocated_servings: 10,
+            allocated_weight_grams: 5000
+          }
+        ]
+      }
+    ],
+    consumptionRecords: [
+      {
+        id: 'consumption-daal',
+        meal_service_attendance_id: 'attendance-breakfast',
+        recipe_id: 'recipe-daal',
+        consumed_servings: 10,
+        consumed_production_equivalent_servings: 10,
+        consumed_weight_grams: 5000,
+        movement_type: 'consumption'
+      },
+      {
+        id: 'plate-waste-daal',
+        meal_service_attendance_id: 'attendance-breakfast',
+        recipe_id: 'recipe-daal',
+        consumed_servings: -1,
+        consumed_production_equivalent_servings: -1,
+        consumed_weight_grams: -500,
+        reverses_consumption_id: 'consumption-daal',
+        movement_type: 'plate_waste_adjustment',
+        source_type: 'food_waste_plate_waste'
+      }
+    ],
+    producedBatches: [
+      {
+        recipe_id: 'recipe-daal',
+        meal_type: 'breakfast',
+        production_date: '2026-09-14',
+        produced_servings: 10,
+        produced_weight_grams: 5000,
+        remaining_servings: 0,
+        remaining_weight_grams: 0
+      }
+    ]
+  });
+
+  assert.equal(report.rows[0].served_weight_grams, 4500);
+  assert.equal(report.rows[0].gross_served_weight_grams, 5000);
+  assert.equal(report.rows[0].plate_waste_weight_grams, 500);
+  assert.equal(report.rows[0].plate_waste_adjustment_count, 1);
+  assert.equal(report.summary.served_weight_grams, 4500);
+  assert.equal(report.summary.served_meal_portions, 9);
+});
+
 test('report retrieval applies indexed server-side date ranges and pages every entity', async () => {
   const serviceRows = [1, 2, 3, 4].map((value) => ({
     id: `attendance-${value}`,

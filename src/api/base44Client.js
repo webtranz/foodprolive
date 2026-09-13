@@ -713,6 +713,9 @@ export const base44 = {
         if (data?.source_type === 'batch_overproduction' || data?.waste_category === 'batch_overproduction') {
           emitEntityChange('ProducedItemBatch', { action: 'food-waste', result });
         }
+        if (data?.waste_category === 'plate_waste' || result?.meal_service_adjustment_weight_grams > 0) {
+          emitEntityChange('MealServiceConsumption', { action: 'plate-waste-adjustment', result });
+        }
         return result;
       });
     },

@@ -1957,6 +1957,238 @@ async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = 
   };
 }
 
+const FOOD_WASTE_QUANTITY_EPSILON = 0.0000005;
+
+function roundFoodWasteQuantity(value) {
+  return Number(numericMatch(value, 0).toFixed(6));
+}
+
+function uniqueTextValues(values = []) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : [...values || []])
+    .map((value) => String(value || '').trim())
+    .filter((value) => {
+      if (!value || seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+}
+
+async function getMealServiceSiteIdsForFoodWaste(siteId, executor = null) {
+  const normalizedSiteId = String(siteId || '').trim();
+  if (!normalizedSiteId) return [];
+  const site = await findDocument('Site', normalizedSiteId, executor || undefined);
+  const siteIds = [normalizedSiteId];
+  if (
+    site
+    && normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE
+    && String(site.parent_site_id || '').trim()
+  ) {
+    siteIds.push(String(site.parent_site_id).trim());
+  }
+  return uniqueTextValues(siteIds);
+}
+
+function getConsumptionWeightGrams(record = {}) {
+  return numericMatch(record.consumed_weight_grams ?? record.served_weight_grams, 0);
+}
+
+function getConsumptionServings(record = {}) {
+  return numericMatch(
+    record.consumed_servings
+      ?? record.served_servings
+      ?? record.covers,
+    0
+  );
+}
+
+function getConsumptionProductionEquivalentServings(record = {}) {
+  return numericMatch(
+    record.consumed_production_equivalent_servings
+      ?? record.production_equivalent_servings
+      ?? record.consumed_servings,
+    0
+  );
+}
+
+async function listPlateWasteMealServiceConsumptionScope({
+  user,
+  siteId,
+  wasteDate,
+  mealType,
+  recipeId = '',
+  executor = null,
+  lock = false
+} = {}) {
+  const mealServiceSiteIds = await getMealServiceSiteIdsForFoodWaste(siteId, executor);
+  const attendanceRows = [];
+  const consumptionRows = [];
+
+  for (const mealServiceSiteId of mealServiceSiteIds) {
+    const attendances = await listDocuments('MealServiceAttendance', {
+      filters: {
+        site_id: mealServiceSiteId,
+        service_date: wasteDate,
+        meal_type: mealType
+      },
+      sort: 'recorded_at',
+      limit: 10000,
+      lock,
+      location: null
+    }, executor || undefined);
+    attendanceRows.push(...attendances.filter((entry) => (
+      String(entry.status || '').toLowerCase() !== 'reversed'
+    )));
+
+    consumptionRows.push(...await listDocuments('MealServiceConsumption', {
+      filters: {
+        site_id: mealServiceSiteId,
+        service_date: wasteDate,
+        meal_type: mealType,
+        ...(recipeId ? { recipe_id: recipeId } : {})
+      },
+      sort: 'created_date',
+      limit: 10000,
+      lock,
+      location: null
+    }, executor || undefined));
+  }
+
+  const visibleAttendanceRows = await scopeEntityRecords(user, 'MealServiceAttendance', attendanceRows);
+  const attendanceIds = new Set(visibleAttendanceRows.map((entry) => String(entry.id || '')));
+  return {
+    mealServiceSiteIds,
+    attendanceRows: visibleAttendanceRows,
+    consumptionRows: consumptionRows.filter((entry) => (
+      attendanceIds.has(String(entry.meal_service_attendance_id || ''))
+    ))
+  };
+}
+
+function buildPlateWasteMealServiceAdjustments({
+  consumptions = [],
+  wasteWeightGrams = 0,
+  foodWasteRecord = {},
+  actor = {}
+} = {}) {
+  const requiredWeight = roundFoodWasteQuantity(wasteWeightGrams);
+  if (requiredWeight <= FOOD_WASTE_QUANTITY_EPSILON) {
+    return { adjustmentRows: [], allocatedWeightGrams: 0, sourceConsumptionIds: [] };
+  }
+
+  const previousAdjustmentsByConsumption = new Map();
+  for (const entry of consumptions) {
+    const sourceId = String(entry.reverses_consumption_id || '').trim();
+    if (!sourceId) continue;
+    const movementType = String(entry.movement_type || '').toLowerCase();
+    const sourceType = String(entry.source_type || '').toLowerCase();
+    if (movementType !== 'plate_waste_adjustment' && sourceType !== 'food_waste_plate_waste') continue;
+    previousAdjustmentsByConsumption.set(
+      sourceId,
+      roundFoodWasteQuantity(
+        numericMatch(previousAdjustmentsByConsumption.get(sourceId), 0)
+        + Math.abs(getConsumptionWeightGrams(entry))
+      )
+    );
+  }
+
+  const sourceRows = consumptions
+    .filter((entry) => (
+      String(entry.movement_type || 'consumption').toLowerCase() === 'consumption'
+      && getConsumptionWeightGrams(entry) > FOOD_WASTE_QUANTITY_EPSILON
+    ))
+    .map((entry) => {
+      const consumedWeight = getConsumptionWeightGrams(entry);
+      const previouslyAdjusted = numericMatch(previousAdjustmentsByConsumption.get(String(entry.id || '')), 0);
+      return {
+        ...entry,
+        available_for_plate_waste_grams: roundFoodWasteQuantity(Math.max(0, consumedWeight - previouslyAdjusted))
+      };
+    })
+    .filter((entry) => entry.available_for_plate_waste_grams > FOOD_WASTE_QUANTITY_EPSILON)
+    .sort((left, right) => (
+      String(left.performed_at || left.created_date || '').localeCompare(String(right.performed_at || right.created_date || ''))
+      || String(left.id || '').localeCompare(String(right.id || ''))
+    ));
+
+  const availableWeight = roundFoodWasteQuantity(
+    sourceRows.reduce((sum, entry) => sum + entry.available_for_plate_waste_grams, 0)
+  );
+  if (availableWeight + FOOD_WASTE_QUANTITY_EPSILON < requiredWeight) {
+    const error = new Error(`Plate waste exceeds the recorded Meal Service consumption for this selection. Available to deduct: ${availableWeight} g.`);
+    error.status = 409;
+    throw error;
+  }
+
+  let remainingWeight = requiredWeight;
+  const adjustmentRows = [];
+  for (const source of sourceRows) {
+    if (remainingWeight <= FOOD_WASTE_QUANTITY_EPSILON) break;
+    const allocationWeight = roundFoodWasteQuantity(Math.min(remainingWeight, source.available_for_plate_waste_grams));
+    const sourceWeight = getConsumptionWeightGrams(source);
+    const mealServings = sourceWeight > FOOD_WASTE_QUANTITY_EPSILON
+      ? roundFoodWasteQuantity(allocationWeight * (getConsumptionServings(source) / sourceWeight))
+      : 0;
+    const productionEquivalentServings = sourceWeight > FOOD_WASTE_QUANTITY_EPSILON
+      ? roundFoodWasteQuantity(allocationWeight * (getConsumptionProductionEquivalentServings(source) / sourceWeight))
+      : 0;
+    adjustmentRows.push({
+      idempotency_key: `${foodWasteRecord.id}:plate-waste:${source.id}`,
+      meal_service_attendance_id: source.meal_service_attendance_id,
+      service_reference: source.service_reference || null,
+      reverses_consumption_id: source.id,
+      menu_plan_id: source.menu_plan_id || null,
+      menu_type: source.menu_type || null,
+      menu_category: source.menu_category || null,
+      customer_meal_plan_id: source.customer_meal_plan_id || null,
+      site_id: source.site_id || null,
+      site_name: source.site_name || null,
+      service_date: source.service_date,
+      meal_type: source.meal_type,
+      recipe_id: source.recipe_id || foodWasteRecord.recipe_id || null,
+      recipe_name: source.recipe_name || foodWasteRecord.recipe_name || null,
+      attendee_count: source.attendee_count || null,
+      covers: 0,
+      portions_per_attendee: source.portions_per_attendee || source.servings_per_attendee || 1,
+      servings_per_attendee: source.servings_per_attendee || source.portions_per_attendee || 1,
+      portion_size_grams: source.portion_size_grams || foodWasteRecord.portion_size_grams || null,
+      manual_portion_size_grams: source.manual_portion_size_grams || null,
+      portion_size_source: source.portion_size_source || 'meal_service_plate_waste_adjustment',
+      required_servings: 0,
+      required_weight_grams: 0,
+      consumed_servings: mealServings * -1,
+      consumed_production_equivalent_servings: productionEquivalentServings * -1,
+      consumed_weight_grams: allocationWeight * -1,
+      shortage_servings: 0,
+      shortage_weight_grams: 0,
+      allocations: [{
+        food_waste_id: foodWasteRecord.id,
+        source_consumption_id: source.id,
+        weight_grams: allocationWeight * -1,
+        meal_portions: mealServings * -1,
+        production_equivalent_servings: productionEquivalentServings * -1
+      }],
+      movement_type: 'plate_waste_adjustment',
+      source_type: 'food_waste_plate_waste',
+      food_waste_id: foodWasteRecord.id,
+      performed_by: actor.email || null,
+      performed_by_name: actor.full_name || actor.email || null,
+      performed_at: new Date().toISOString(),
+      status: 'posted',
+      cutover_version: source.cutover_version || null
+    });
+    remainingWeight = roundFoodWasteQuantity(Math.max(0, remainingWeight - allocationWeight));
+  }
+
+  return {
+    adjustmentRows,
+    allocatedWeightGrams: roundFoodWasteQuantity(
+      adjustmentRows.reduce((sum, row) => sum + Math.abs(getConsumptionWeightGrams(row)), 0)
+    ),
+    sourceConsumptionIds: adjustmentRows.map((row) => row.reverses_consumption_id)
+  };
+}
+
 async function findAccessibleSite(user, siteId) {
   const site = await findDocument('Site', siteId);
   if (!site) {
@@ -3479,6 +3711,7 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
       : null;
     const isBatchOverproductionWaste = String(payload.waste_category || '').toLowerCase() === 'batch_overproduction'
       && String(payload.waste_scope || '').toLowerCase() === 'batch';
+    const isPlateWaste = String(payload.waste_category || '').toLowerCase() === 'plate_waste';
 
     const preparedPayload = {
       ...payload,
@@ -3504,6 +3737,7 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
     const finalPayload = await prepareEntityPayload(request.user, 'FoodWaste', preparedPayload);
     const created = await withTransaction(async (client) => {
       let batchWasteAllocation = null;
+      let plateWasteAdjustment = null;
       let payloadForCreate = finalPayload;
       if (isBatchOverproductionWaste) {
         const wasteWeightGrams = normalizeFoodWasteWeightGrams(
@@ -3538,6 +3772,39 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
             || null
         };
       }
+      if (isPlateWaste) {
+        let plateWasteWeightGrams = 0;
+        try {
+          plateWasteWeightGrams = normalizeFoodWasteWeightGrams(
+            finalPayload.wasted_weight_grams ?? finalPayload.quantity,
+            finalPayload.unit
+          );
+        } catch {
+          const error = new Error('Plate waste must be recorded as a weight in kg or g so it can be deducted from Meal Service consumption.');
+          error.status = 400;
+          throw error;
+        }
+        const consumptionScope = await listPlateWasteMealServiceConsumptionScope({
+          user: request.user,
+          siteId,
+          wasteDate,
+          mealType,
+          recipeId: finalPayload.recipe_id || '',
+          executor: client,
+          lock: true
+        });
+        if (!consumptionScope.attendanceRows.length || !consumptionScope.consumptionRows.length) {
+          const error = new Error('No earlier Meal Service consumption was found for this location, date, meal type, and dish selection.');
+          error.status = 409;
+          throw error;
+        }
+        payloadForCreate = {
+          ...finalPayload,
+          source_type: 'plate_waste',
+          wasted_weight_grams: plateWasteWeightGrams,
+          unit: String(finalPayload.unit || '').trim().toLowerCase() === 'g' ? 'g' : 'kg'
+        };
+      }
 
       const wasteRecord = await createDocument('FoodWaste', payloadForCreate, client);
       if (batchWasteAllocation) {
@@ -3551,6 +3818,38 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
           status: batch.status
         }, client)));
         return wasteRecord;
+      }
+      if (isPlateWaste) {
+        const wasteWeightGrams = normalizeFoodWasteWeightGrams(
+          wasteRecord.wasted_weight_grams ?? wasteRecord.quantity,
+          wasteRecord.unit
+        );
+        const consumptionScope = await listPlateWasteMealServiceConsumptionScope({
+          user: request.user,
+          siteId,
+          wasteDate,
+          mealType,
+          recipeId: wasteRecord.recipe_id || '',
+          executor: client,
+          lock: true
+        });
+        plateWasteAdjustment = buildPlateWasteMealServiceAdjustments({
+          consumptions: consumptionScope.consumptionRows,
+          wasteWeightGrams,
+          foodWasteRecord: wasteRecord,
+          actor: request.user
+        });
+        const adjustmentRecords = [];
+        for (const adjustmentRow of plateWasteAdjustment.adjustmentRows) {
+          adjustmentRecords.push(await createDocument('MealServiceConsumption', adjustmentRow, client));
+        }
+        return updateDocument('FoodWaste', wasteRecord.id, {
+          wasted_weight_grams: wasteWeightGrams,
+          meal_service_adjustment_weight_grams: plateWasteAdjustment.allocatedWeightGrams,
+          meal_service_adjustment_consumption_ids: adjustmentRecords.map((entry) => entry.id),
+          meal_service_source_consumption_ids: plateWasteAdjustment.sourceConsumptionIds,
+          meal_service_adjustment_note: 'Plate waste deducted from earlier Meal Service consumption.'
+        }, client);
       }
       if (String(finalPayload.waste_scope || '').toLowerCase() !== 'ingredient' || !finalPayload.ingredient_id) {
         return wasteRecord;
@@ -3589,6 +3888,9 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
     });
     if (created.source_type === 'batch_overproduction') {
       recordChanged('ProducedItemBatch');
+    }
+    if (created.source_type === 'plate_waste' || numericMatch(created.meal_service_adjustment_weight_grams, 0) > 0) {
+      recordChanged('MealServiceConsumption');
     }
     return response.status(201).json(buildApiObjectResponse(decorateFoodWasteRecord(created), { action: 'create' }));
   } catch (error) {

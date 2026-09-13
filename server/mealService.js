@@ -2224,12 +2224,15 @@ export function buildMealServiceReportData({
 } = {}) {
   const normalizedRecipeId = normalizeText(recipeId);
   const normalizedMenuPlanId = normalizeText(menuPlanId);
+  const consumptionRowsByAttendance = new Map();
   const consumptionIdsByAttendance = new Map();
   consumptionRecords.filter((entry) => (
     (!normalizedMenuPlanId || String(entry.menu_plan_id || '') === normalizedMenuPlanId)
     && (!normalizedRecipeId || String(entry.recipe_id || '') === normalizedRecipeId)
   )).forEach((entry) => {
     const attendanceId = String(entry.meal_service_attendance_id || '');
+    if (!consumptionRowsByAttendance.has(attendanceId)) consumptionRowsByAttendance.set(attendanceId, []);
+    consumptionRowsByAttendance.get(attendanceId).push(entry);
     if (!consumptionIdsByAttendance.has(attendanceId)) consumptionIdsByAttendance.set(attendanceId, []);
     consumptionIdsByAttendance.get(attendanceId).push(entry.id);
   });
@@ -2252,18 +2255,41 @@ export function buildMealServiceReportData({
     const requiredMealPortions = useItemTotals
       ? filteredTotal(['required_servings'])
       : number(record.required_servings, 0);
-    const servedMealPortions = useItemTotals
-      ? filteredTotal(['allocated_servings', 'served_servings'])
-      : number(record.served_servings, 0);
     const shortMealPortions = useItemTotals
       ? filteredTotal(['shortage_servings', 'short_servings'])
       : number(record.shortage_servings, 0);
-    const servedProductionEquivalentServings = filteredTotal([
-      'allocated_production_equivalent_servings',
-      'consumed_production_equivalent_servings',
-      'allocated_servings',
-      'served_servings'
-    ]);
+    const consumptionRows = consumptionRowsByAttendance.get(String(record.id)) || [];
+    const hasLedgerRows = consumptionRows.some((entry) => (
+      Number.isFinite(Number(entry.consumed_weight_grams))
+      || Number.isFinite(Number(entry.consumed_servings))
+      || Number.isFinite(Number(entry.consumed_production_equivalent_servings))
+    ));
+    const plateWasteRows = consumptionRows.filter((entry) => (
+      normalizeText(entry.movement_type) === 'plate_waste_adjustment'
+      || normalizeText(entry.source_type) === 'food_waste_plate_waste'
+    ));
+    const servedMealPortions = hasLedgerRows
+      ? sumMealServiceItemFields(consumptionRows, ['consumed_servings'])
+      : useItemTotals
+        ? filteredTotal(['allocated_servings', 'served_servings'])
+        : number(record.served_servings, 0);
+    const servedProductionEquivalentServings = hasLedgerRows
+      ? sumMealServiceItemFields(consumptionRows, [
+        'consumed_production_equivalent_servings',
+        'consumed_servings'
+      ])
+      : filteredTotal([
+        'allocated_production_equivalent_servings',
+        'consumed_production_equivalent_servings',
+        'allocated_servings',
+        'served_servings'
+      ]);
+    const servedWeightGrams = hasLedgerRows
+      ? sumMealServiceItemFields(consumptionRows, ['consumed_weight_grams'])
+      : useItemTotals
+        ? filteredTotal(['allocated_weight_grams', 'served_weight_grams'])
+        : number(record.served_weight_grams, 0);
+    const plateWasteWeightGrams = Math.abs(sumMealServiceItemFields(plateWasteRows, ['consumed_weight_grams']));
 
     return {
       attendance_id: record.id,
@@ -2298,9 +2324,12 @@ export function buildMealServiceReportData({
         ? filteredTotal(['required_weight_grams'])
         : record.required_weight_grams,
       served_servings: servedMealPortions,
-      served_weight_grams: useItemTotals
+      served_weight_grams: servedWeightGrams,
+      gross_served_weight_grams: useItemTotals
         ? filteredTotal(['allocated_weight_grams', 'served_weight_grams'])
-        : record.served_weight_grams,
+        : number(record.served_weight_grams, servedWeightGrams),
+      plate_waste_weight_grams: plateWasteWeightGrams,
+      plate_waste_adjustment_count: plateWasteRows.length,
       short_servings: shortMealPortions,
       short_weight_grams: useItemTotals
         ? filteredTotal(['shortage_weight_grams', 'short_weight_grams'])

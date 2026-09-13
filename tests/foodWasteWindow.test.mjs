@@ -325,6 +325,9 @@ const cases = [
       assert.match(page, /readOnly=\{isBatchOverproduction\}/);
       assert.doesNotMatch(page, /IngredientSearchCombobox/);
       assert.doesNotMatch(page, /formData\.waste_scope === 'ingredient' && formData\.ingredient_id === 'none'/);
+      assert.match(page, /function getWasteWeightGrams/);
+      assert.match(page, /getWasteQuantityKg\(item\)/);
+      assert.match(page, /This weight will be deducted from the consumed amount under Meal Service Menu\./);
       assert.match(page, /Batch Overproduction Production Summary/);
       assert.match(page, /<TableHead>Dish Name<\/TableHead>/);
       assert.match(page, /<TableHead>Produced Quantity<\/TableHead>/);
@@ -338,7 +341,10 @@ const cases = [
       assert.match(server, /production_completed_at: context\.production_completed_at/);
       assert.match(server, /allocateBatchOverproductionWaste/);
       assert.match(server, /updateDocument\('ProducedItemBatch'/);
+      assert.match(server, /buildPlateWasteMealServiceAdjustments/);
+      assert.match(server, /movement_type: 'plate_waste_adjustment'/);
       assert.match(api, /emitEntityChange\('ProducedItemBatch', \{ action: 'food-waste'/);
+      assert.match(api, /emitEntityChange\('MealServiceConsumption', \{ action: 'plate-waste-adjustment'/);
       assert.match(db, /'batch_overproduction'/);
     }
   }

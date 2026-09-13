@@ -133,6 +133,25 @@ function formatWasteQuantity(item = {}) {
   return `${safeNumber(item.quantity).toFixed(2)} ${item.unit}`;
 }
 
+function getWasteWeightGrams(item = {}) {
+  const explicitWeight = [
+    item.wasted_weight_grams,
+    item.waste_weight_grams,
+    item.quantity_grams,
+    item.weight_grams
+  ].find((value) => Number.isFinite(Number(value)));
+  if (typeof explicitWeight !== 'undefined') return Math.max(0, safeNumber(explicitWeight));
+  const quantity = safeNumber(item.quantity);
+  const unit = String(item.unit || '').trim().toLowerCase();
+  if (unit === 'kg') return quantity * 1000;
+  if (['g', 'gram', 'grams'].includes(unit)) return quantity;
+  return 0;
+}
+
+function getWasteQuantityKg(item = {}) {
+  return getWasteWeightGrams(item) / 1000;
+}
+
 function formatWeightGrams(value) {
   const grams = safeNumber(value);
   if (grams >= 1000) return `${Number((grams / 1000).toFixed(3))} kg`;
@@ -376,6 +395,7 @@ export default function FoodWaste() {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['foodWasteContext'] });
       queryClient.invalidateQueries({ queryKey: ['mealServiceAvailability'] });
+      queryClient.invalidateQueries({ queryKey: ['mealServiceHistory'] });
       setFormOpen(false);
       setEditingWasteId(null);
       setMessage('Waste record saved.');
@@ -463,7 +483,7 @@ export default function FoodWaste() {
   });
   const totalProductionOutput = filteredProductions.reduce((sum, item) => sum + safeNumber(item.actual_servings || item.target_servings), 0);
 
-  const totalWasteQuantity = analyticsWaste.reduce((sum, item) => sum + safeNumber(item.quantity), 0);
+  const totalWasteQuantity = analyticsWaste.reduce((sum, item) => sum + getWasteQuantityKg(item), 0);
   const totalWasteCost = analyticsWaste.reduce((sum, item) => sum + safeNumber(item.estimated_cost), 0);
   const avoidableCost = analyticsWaste
     .filter((item) => item.avoidable_type === 'avoidable' || item.preventable)
@@ -488,7 +508,7 @@ export default function FoodWaste() {
         });
       }
       const row = grouped.get(key);
-      row.total_quantity += safeNumber(item.quantity);
+      row.total_quantity += getWasteQuantityKg(item);
       row.total_cost += safeNumber(item.estimated_cost);
     });
     return [...grouped.values()].sort((left, right) => `${left.waste_date}-${left.site_name}`.localeCompare(`${right.waste_date}-${right.site_name}`));
@@ -507,7 +527,7 @@ export default function FoodWaste() {
         });
       }
       const row = grouped.get(key);
-      row.quantity += safeNumber(item.quantity);
+      row.quantity += getWasteQuantityKg(item);
       row.estimated_cost += safeNumber(item.estimated_cost);
       row.waste_count += 1;
     });
@@ -531,7 +551,7 @@ export default function FoodWaste() {
         });
       }
       const row = grouped.get(key);
-      row.quantity += safeNumber(item.quantity);
+      row.quantity += getWasteQuantityKg(item);
       row.estimated_cost += safeNumber(item.estimated_cost);
     });
     return [...grouped.values()].sort((left, right) => right.estimated_cost - left.estimated_cost);
@@ -552,7 +572,7 @@ export default function FoodWaste() {
         });
       }
       const row = grouped.get(key);
-      row.total_quantity += safeNumber(item.quantity);
+      row.total_quantity += getWasteQuantityKg(item);
       row.total_cost += safeNumber(item.estimated_cost);
       if (item.avoidable_type === 'unavoidable' && !item.preventable) {
         row.unavoidable_cost += safeNumber(item.estimated_cost);
@@ -582,7 +602,7 @@ export default function FoodWaste() {
         });
       }
       const row = grouped.get(key);
-      row.total_quantity += safeNumber(item.quantity);
+      row.total_quantity += getWasteQuantityKg(item);
       row.total_cost += safeNumber(item.estimated_cost);
       row.records += 1;
     });
@@ -661,7 +681,7 @@ export default function FoodWaste() {
         });
       }
       const row = productionRecipeStats.get(key);
-      row.waste_servings += safeNumber(entry.quantity);
+      row.waste_servings += getWasteQuantityKg(entry);
       row.waste_cost += safeNumber(entry.estimated_cost);
       if (entry.avoidable_type === 'avoidable' || entry.preventable) {
         row.avoidable_cost += safeNumber(entry.estimated_cost);
@@ -1892,6 +1912,11 @@ export default function FoodWaste() {
                     placeholder={isBatchOverproduction ? 'Total from dish rows' : ''}
                     onChange={(event) => setFormData((current) => ({ ...current, quantity: event.target.value }))}
                   />
+                  {formData.waste_category === 'plate_waste' ? (
+                    <p className="mt-2 text-sm font-medium leading-snug text-red-600">
+                      This weight will be deducted from the consumed amount under Meal Service Menu.
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <Label>Unit</Label>

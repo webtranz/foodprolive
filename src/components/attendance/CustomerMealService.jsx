@@ -882,6 +882,11 @@ export function CustomerMealServicePanel({
                           </TableCell>
                           <TableCell className="min-w-[150px]">
                             <p className="font-medium text-slate-900">{formatMealWeight(record.served_weight_grams)}</p>
+                            {asNumber(record.plate_waste_weight_grams) > 0 ? (
+                              <p className="mt-1 text-xs font-semibold text-red-600">
+                                Plate waste deducted: {formatMealWeight(record.plate_waste_weight_grams)}
+                              </p>
+                            ) : null}
                             <p className="mt-1 text-xs text-slate-500">
                               {(record.items || []).reduce(
                                 (total, item) => total + asNumber(item.covers ?? item.required_servings),
