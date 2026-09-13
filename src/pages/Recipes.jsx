@@ -71,6 +71,19 @@ function normalizeRecipeDeleteImpact(impact = {}) {
   };
 }
 
+function normalizeArrayResponse(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function buildSafeUnitSyncPreview({ recipes, ingredients }) {
+  try {
+    return buildRecipeIngredientUnitSyncPreview({ recipes, ingredients });
+  } catch (error) {
+    console.error('Recipe ingredient unit sync preview failed:', error);
+    return { changes: [], skipped: [] };
+  }
+}
+
 export default function Recipes() {
   const { allowedSiteIds, isAdmin, currentUser } = useSiteContext();
   const [searchQuery, setSearchQuery] = useState('');
@@ -93,25 +106,30 @@ export default function Recipes() {
   const queryClient = useQueryClient();
   const canManageRecipeDeletion = hasAdministratorAccess(currentUser || {});
 
-  const { data: recipes = [], isLoading } = useQuery({
+  const { data: recipesData = [], isLoading, error: recipesError } = useQuery({
     queryKey: ['recipes'],
     queryFn: () => base44.entities.Recipe.list()
   });
 
-  const { data: ingredients = [] } = useQuery({
+  const { data: ingredientsData = [] } = useQuery({
     queryKey: ['ingredients'],
     queryFn: () => base44.entities.Ingredient.list()
   });
 
-  const { data: recipeInventory = [], isSuccess: recipeInventoryLoaded } = useQuery({
+  const { data: recipeInventoryData = [], isSuccess: recipeInventoryLoaded } = useQuery({
     queryKey: ['recipe-ingredient-stock'],
     queryFn: () => base44.inventory.getStockOnHand()
   });
 
-  const { data: sites = [] } = useQuery({
+  const { data: sitesData = [] } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
+
+  const recipes = useMemo(() => normalizeArrayResponse(recipesData), [recipesData]);
+  const ingredients = useMemo(() => normalizeArrayResponse(ingredientsData), [ingredientsData]);
+  const recipeInventory = useMemo(() => normalizeArrayResponse(recipeInventoryData), [recipeInventoryData]);
+  const sites = useMemo(() => normalizeArrayResponse(sitesData), [sitesData]);
 
   const visibleSites = useMemo(() => {
     if (isAdmin) {
@@ -123,18 +141,21 @@ export default function Recipes() {
     return sites.filter((site) => allowedSiteIds.includes(site.id));
   }, [allowedSiteIds, isAdmin, sites]);
   const canSyncIngredientUnits = canManageRecipeDeletion;
-  const unitSyncPreview = useMemo(
-    () => buildRecipeIngredientUnitSyncPreview({ recipes, ingredients }),
-    [ingredients, recipes]
-  );
-  const unitSyncRows = unitSyncPreview.changes;
+  const unitSyncPreview = useMemo(() => {
+    if (!canSyncIngredientUnits) {
+      return { changes: [], skipped: [] };
+    }
+    return buildSafeUnitSyncPreview({ recipes, ingredients });
+  }, [canSyncIngredientUnits, ingredients, recipes]);
+  const unitSyncRows = Array.isArray(unitSyncPreview.changes) ? unitSyncPreview.changes : [];
+  const incompatibleUnitSyncRows = Array.isArray(unitSyncPreview.skipped) ? unitSyncPreview.skipped : [];
   const filteredUnitSyncRows = useMemo(
     () => unitSyncRows.filter((row) => matchesIngredientSearch(row, unitSyncIngredientSearch)),
     [unitSyncIngredientSearch, unitSyncRows]
   );
   const filteredIncompatibleUnitSyncRows = useMemo(
-    () => unitSyncPreview.skipped.filter((row) => matchesIngredientSearch(row, unitSyncIngredientSearch)),
-    [unitSyncIngredientSearch, unitSyncPreview.skipped]
+    () => incompatibleUnitSyncRows.filter((row) => matchesIngredientSearch(row, unitSyncIngredientSearch)),
+    [incompatibleUnitSyncRows, unitSyncIngredientSearch]
   );
   const selectedUnitSyncRows = unitSyncRows.filter((row) => selectedUnitSyncKeys.has(row.key));
   const allVisibleUnitSyncRowsSelected = filteredUnitSyncRows.length > 0
@@ -183,7 +204,7 @@ export default function Recipes() {
   });
 
   const filteredRecipes = recipes.filter(recipe => {
-    const matchesSearch = recipe.name?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = String(recipe.name || '').toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'all' || recipe.category === selectedCategory;
     const matchesCuisine = selectedCuisine === 'all' || recipe.cuisine_type === selectedCuisine;
     const recipeSiteIds = getRecipeSiteIds(recipe);
@@ -294,8 +315,8 @@ export default function Recipes() {
             <Button
               variant="outline"
               onClick={openUnitSyncDialog}
-              disabled={unitSyncRows.length === 0 && unitSyncPreview.skipped.length === 0}
-              title={unitSyncRows.length === 0 && unitSyncPreview.skipped.length === 0 ? 'No recipe lines need ingredient unit syncing.' : 'Review recipe lines that can be converted to current ingredient units.'}
+              disabled={unitSyncRows.length === 0 && incompatibleUnitSyncRows.length === 0}
+              title={unitSyncRows.length === 0 && incompatibleUnitSyncRows.length === 0 ? 'No recipe lines need ingredient unit syncing.' : 'Review recipe lines that can be converted to current ingredient units.'}
             >
               <RefreshCw className="w-4 h-4 mr-2" />
               Sync Ingredient Units
@@ -383,6 +404,15 @@ export default function Recipes() {
           </div>
         </div>
 
+        {recipesError ? (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
+            <div className="font-semibold">Recipes could not be loaded.</div>
+            <div className="mt-1 text-sm">
+              {recipesError.message || 'Please refresh the page. If this continues, check the recipe data or server logs.'}
+            </div>
+          </div>
+        ) : null}
+
         {/* Content */}
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -410,6 +440,7 @@ export default function Recipes() {
                 ingredients={ingredients}
                 inventory={recipeInventory}
                 inventoryLoaded={recipeInventoryLoaded}
+                sites={sites}
                 onEdit={handleEdit}
                 onDelete={canManageRecipeDeletion && isRecipeUnassignedFromProjects(recipe) ? handleDelete : null}
               />
@@ -486,7 +517,7 @@ export default function Recipes() {
                 <p className="mt-2 text-xs text-slate-500">
                   {unitSyncIngredientSearch
                     ? `Showing ${filteredUnitSyncRows.length} compatible and ${filteredIncompatibleUnitSyncRows.length} incompatible recipe line${filteredUnitSyncRows.length + filteredIncompatibleUnitSyncRows.length === 1 ? '' : 's'} for “${unitSyncIngredientSearch}”.`
-                    : `Showing all ${unitSyncRows.length} compatible and ${unitSyncPreview.skipped.length} incompatible recipe line${unitSyncRows.length + unitSyncPreview.skipped.length === 1 ? '' : 's'}.`}
+                    : `Showing all ${unitSyncRows.length} compatible and ${incompatibleUnitSyncRows.length} incompatible recipe line${unitSyncRows.length + incompatibleUnitSyncRows.length === 1 ? '' : 's'}.`}
                 </p>
                 </div>
               ) : null}
@@ -507,7 +538,7 @@ export default function Recipes() {
                   </div>
                 </div>
                 </div>
-              ) : unitSyncRows.length === 0 && unitSyncPreview.skipped.length === 0 ? (
+              ) : unitSyncRows.length === 0 && incompatibleUnitSyncRows.length === 0 ? (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                 No recipe lines need syncing right now.
                 </div>

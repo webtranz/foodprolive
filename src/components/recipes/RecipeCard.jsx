@@ -38,13 +38,20 @@ function formatRecipeYieldPercent(value) {
   return `${Number(value.toFixed(2)).toLocaleString()}%`;
 }
 
-export default function RecipeCard({ recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, onEdit, onDelete }) {
+export default function RecipeCard({ recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, sites = [], onEdit, onDelete }) {
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0);
   const subRecipes = Array.isArray(recipe.sub_recipes) ? recipe.sub_recipes : [];
   const siteIds = Array.isArray(recipe.site_ids) ? recipe.site_ids.filter(Boolean) : [];
   const isSpecificRecipe = String(recipe.site_scope || '').toLowerCase() === 'specific';
   const isUnassignedRecipe = isSpecificRecipe && siteIds.length === 0;
   const isGlobalRecipe = !isSpecificRecipe && (!recipe.site_scope || recipe.site_scope === 'global');
+  const siteNames = useMemo(() => {
+    if (!Array.isArray(sites) || siteIds.length === 0) return [];
+    const siteNameById = new Map(sites.map((site) => [String(site.id || ''), site.name || site.code || 'Project']));
+    return siteIds
+      .map((siteId) => siteNameById.get(String(siteId)) || String(siteId))
+      .filter(Boolean);
+  }, [siteIds, sites]);
   const nutritionSnapshot = useMemo(
     () => calculateRecipeNutritionSnapshot(recipe, recipes, ingredients),
     [ingredients, recipe, recipes]
