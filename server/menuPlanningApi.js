@@ -1,5 +1,6 @@
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { normalizeMenuCategory, normalizeMenuCuisine } from '../shared/menuCategories.js';
+import { roundStandardDecimal } from '../shared/recipeNumbers.js';
 
 const CORE_MENU_MEAL_TYPES = new Set(['breakfast', 'lunch', 'dinner']);
 
@@ -7,6 +8,11 @@ function toNumber(value, fallback = 0) {
   if (value === null || value === undefined || value === '') return fallback;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function roundRecipeCost(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? roundStandardDecimal(numeric, 4) : 0;
 }
 
 function normalizeText(value) {
@@ -60,11 +66,15 @@ function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
   const servings = Math.max(0, toNumber(recipe?.servings, 0));
   const ingredientCost = calculateRecipeCostingSnapshot(recipe, ingredients, recipes);
   if (ingredientCost.has_cost) {
-    const totalCost = toNumber(ingredientCost.total_cost, 0);
+    const totalCost = roundRecipeCost(ingredientCost.total_cost);
+    const costPerServing = toNumber(
+      ingredientCost.cost_per_serving,
+      servings > 0 ? totalCost / servings : totalCost
+    );
     return {
       has_cost: true,
       source: 'ingredients',
-      cost_per_serving: servings > 0 ? totalCost / servings : totalCost,
+      cost_per_serving: roundRecipeCost(costPerServing),
       total_cost: totalCost,
       costing_method: ingredientCost.costing_method
     };
@@ -86,8 +96,8 @@ function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
     return {
       has_cost: true,
       source: 'recipe',
-      cost_per_serving: directCostPerServing,
-      total_cost: servings > 0 ? directCostPerServing * servings : directCostPerServing
+      cost_per_serving: roundRecipeCost(directCostPerServing),
+      total_cost: roundRecipeCost(servings > 0 ? directCostPerServing * servings : directCostPerServing)
     };
   }
 
@@ -96,8 +106,8 @@ function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
     return {
       has_cost: true,
       source: 'recipe',
-      cost_per_serving: directTotalCost / servings,
-      total_cost: directTotalCost
+      cost_per_serving: roundRecipeCost(directTotalCost / servings),
+      total_cost: roundRecipeCost(directTotalCost)
     };
   }
 

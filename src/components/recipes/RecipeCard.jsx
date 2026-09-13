@@ -95,13 +95,51 @@ export default function RecipeCard({ recipe, recipes = [], ingredients = [], inv
     totals.set(ingredientId, (totals.get(ingredientId) || 0) + normalizedQuantity);
     return totals;
   }, new Map()), [ingredientMap, inventory]);
+  const costingIngredients = useMemo(() => {
+    const valueByIngredient = inventory.reduce((totals, stock) => {
+      const ingredientId = String(stock?.ingredient_id || '');
+      const ingredient = ingredientMap.get(ingredientId);
+      if (!ingredientId || !ingredient) return totals;
+      const onHandQuantity = getInventoryQuantities(stock).on_hand_quantity;
+      const baseUnit = ingredient.unit || stock.unit || 'unit';
+      const baseQuantity = convertIngredientQuantity(
+        onHandQuantity,
+        stock.unit || baseUnit,
+        baseUnit,
+        ingredient
+      );
+      const totalValue = Number(stock.total_value ?? stock.weighted_average_value ?? stock.fifo_total_value);
+      if (!(baseQuantity > 0) || !Number.isFinite(totalValue) || totalValue < 0) return totals;
+      const current = totals.get(ingredientId) || { quantity: 0, value: 0 };
+      current.quantity += baseQuantity;
+      current.value += totalValue;
+      totals.set(ingredientId, current);
+      return totals;
+    }, new Map());
+
+    return ingredients.map((ingredient) => {
+      const aggregate = valueByIngredient.get(String(ingredient?.id || ''));
+      if (!aggregate || !(aggregate.quantity > 0)) return ingredient;
+      return {
+        ...ingredient,
+        average_cost: aggregate.value / aggregate.quantity,
+        stock_summary: {
+          on_hand_quantity: aggregate.quantity,
+          available_quantity: aggregate.quantity,
+          reserved_quantity: 0,
+          total_value: aggregate.value,
+          unit: ingredient.unit || ''
+        }
+      };
+    });
+  }, [ingredientMap, ingredients, inventory]);
   const servingWeight = useMemo(
     () => calculateRecipeServingWeight(recipe, recipes, ingredients),
     [ingredients, recipe, recipes]
   );
   const costSnapshot = useMemo(
-    () => calculateRecipeCostSnapshot(recipe, ingredients, recipes),
-    [ingredients, recipe, recipes]
+    () => calculateRecipeCostSnapshot(recipe, costingIngredients, recipes),
+    [costingIngredients, recipe, recipes]
   );
   const savedPortionSize = Number(recipe.portion_size_grams);
   const hasSavedPortionSize = Number.isFinite(savedPortionSize) && savedPortionSize > 0;

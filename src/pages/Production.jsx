@@ -25,10 +25,12 @@ import {
   getInventoryQuantities,
   getProductionInventoryState
 } from '@/lib/inventoryAvailability';
-import { convertIngredientQuantity } from '../../shared/ingredientUnits.js';
+import { convertIngredientQuantity, isIngredientUnitCompatible } from '../../shared/ingredientUnits.js';
 import { buildAutomaticProductionYieldSummary } from '../../shared/productionReconciliation.js';
 import { calculateRecipeNutritionSnapshot } from '../../shared/recipeNutrition.js';
 import { formatRecipeQuantity, getRecipeQuantityPrecision, roundStandardDecimal } from '../../shared/recipeNumbers.js';
+import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
+import { ingredientForRecipeLine } from '../../shared/recipeLineWeight.js';
 import { getItemCode } from '../../shared/itemCode.js';
 import {
   aggregateProductionIngredientLines,
@@ -1823,6 +1825,50 @@ export default function Production() {
     setIssueMealView(normalizedMealView);
   };
 
+  const getIssueRecipe = (item = {}) => (
+    recipes.find((entry) => String(entry.id) === String(item?.recipe_id || '')) || null
+  );
+
+  const getIssueItemServingGrams = (item = {}) => {
+    const recipe = getIssueRecipe(item);
+    if (!recipe) return 0;
+    const weightSnapshot = calculateRecipeServingWeight(recipe, recipes, ingredients);
+    const gramsPerServing = finiteProductionNumber(
+      weightSnapshot?.yielded_grams_per_serving ?? weightSnapshot?.grams_per_serving,
+      0
+    );
+    return gramsPerServing > 0 ? gramsPerServing : 0;
+  };
+
+  const calculateIssueSnapshotProductionKg = (lines = []) => {
+    const totalGrams = (Array.isArray(lines) ? lines : []).reduce((sum, line) => {
+      const ingredient = ingredients.find((entry) => String(entry.id) === String(line?.ingredient_id || ''));
+      if (!ingredient) return sum;
+      const effectiveIngredient = ingredientForRecipeLine(line, ingredient);
+      const lineUnit = line?.unit || effectiveIngredient.unit;
+      const lineQuantity = finiteProductionNumber(
+        line?.yielded_quantity ?? line?.raw_quantity ?? line?.planned_quantity,
+        0
+      );
+      if (lineQuantity <= 0 || !isIngredientUnitCompatible(lineUnit, 'g', effectiveIngredient)) {
+        return sum;
+      }
+      const grams = convertIngredientQuantity(lineQuantity, lineUnit, 'g', effectiveIngredient);
+      return Number.isFinite(grams) ? sum + grams : sum;
+    }, 0);
+    return roundStandardDecimal(totalGrams / 1000, 2);
+  };
+
+  const getIssueItemProductionSizeKg = (item = {}) => {
+    const snapshotKg = calculateIssueSnapshotProductionKg(issueSnapshots[item.key] || []);
+    if (snapshotKg > 0) return snapshotKg;
+    const covers = finiteProductionNumber(item.production_covers, 0);
+    const gramsPerServing = getIssueItemServingGrams(item);
+    return covers > 0 && gramsPerServing > 0
+      ? roundStandardDecimal((covers * gramsPerServing) / 1000, 2)
+      : 0;
+  };
+
   const updateIssueCovers = (itemKey, value) => {
     const productionCovers = finiteProductionNumber(value, 0);
     setIssueItems((currentItems) => currentItems.map((item) => (
@@ -1840,6 +1886,15 @@ export default function Production() {
     });
     setIssueSnapshots((current) => ({ ...current, [itemKey]: snapshot.lines }));
     setIssueSuggestions((current) => ({ ...current, [itemKey]: {} }));
+  };
+
+  const updateIssueProductionSizeKg = (itemKey, value) => {
+    const productionSizeKg = finiteProductionNumber(value, 0);
+    const item = issueItems.find((entry) => entry.key === itemKey);
+    const gramsPerServing = getIssueItemServingGrams(item);
+    if (gramsPerServing <= 0) return;
+    const productionCovers = (productionSizeKg * 1000) / gramsPerServing;
+    updateIssueCovers(itemKey, productionCovers);
   };
 
   const toggleIssueItem = (itemKey, selected) => {
@@ -3001,20 +3056,37 @@ export default function Production() {
                               </p>
                             </button>
                           </div>
-                          <div className="mt-3">
-                            <Label className="text-xs text-slate-500">Production covers</Label>
-                            <StandardDecimalInput
-                              value={item.production_covers}
-                              unit="servings"
-                              precision={0}
-                              min={0}
-                              allowZero
-                              allowEmpty={false}
-                              label={`${item.recipe_name} production covers`}
-                              disabled={alreadyIssued}
-                              onValueChange={(value) => updateIssueCovers(item.key, value)}
-                              className="mt-1 bg-white"
-                            />
+                          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div>
+                              <Label className="text-xs text-slate-500">Production covers</Label>
+                              <StandardDecimalInput
+                                value={item.production_covers}
+                                unit="servings"
+                                precision={0}
+                                min={0}
+                                allowZero
+                                allowEmpty={false}
+                                label={`${item.recipe_name} production covers`}
+                                disabled={alreadyIssued}
+                                onValueChange={(value) => updateIssueCovers(item.key, value)}
+                                className="mt-1 bg-white"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs text-slate-500">Production Size (Kg)</Label>
+                              <StandardDecimalInput
+                                value={getIssueItemProductionSizeKg(item)}
+                                unit="kg"
+                                precision={2}
+                                min={0}
+                                allowZero
+                                allowEmpty={false}
+                                label={`${item.recipe_name} production size in kilograms`}
+                                disabled={alreadyIssued || getIssueItemServingGrams(item) <= 0}
+                                onValueChange={(value) => updateIssueProductionSizeKg(item.key, value)}
+                                className="mt-1 bg-white"
+                              />
+                            </div>
                           </div>
                         </div>
                       );

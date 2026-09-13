@@ -48,11 +48,6 @@ function getRecipeSiteIds(recipe = {}) {
     .filter(Boolean);
 }
 
-function isRecipeUnassignedFromProjects(recipe = {}) {
-  return String(recipe.site_scope || '').toLowerCase() === 'specific'
-    && getRecipeSiteIds(recipe).length === 0;
-}
-
 const EMPTY_RECIPE_DELETE_IMPACT = {
   menuPlans: [],
   subRecipes: [],
@@ -232,7 +227,7 @@ export default function Recipes() {
   };
 
   const handleDelete = async (recipe) => {
-    if (!canManageRecipeDeletion || !isRecipeUnassignedFromProjects(recipe)) return;
+    if (!canManageRecipeDeletion) return;
     setRecipeToDelete(recipe);
     setRecipeDeleteImpact(EMPTY_RECIPE_DELETE_IMPACT);
     setRecipeDeleteImpactError('');
@@ -442,7 +437,7 @@ export default function Recipes() {
                 inventoryLoaded={recipeInventoryLoaded}
                 sites={sites}
                 onEdit={handleEdit}
-                onDelete={canManageRecipeDeletion && isRecipeUnassignedFromProjects(recipe) ? handleDelete : null}
+                onDelete={canManageRecipeDeletion ? handleDelete : null}
               />
             ))}
           </div>
@@ -713,7 +708,7 @@ export default function Recipes() {
               <AlertDialogDescription asChild>
                 <div className="space-y-3 text-left text-slate-600">
                   <p>
-                    This will permanently delete "{recipeToDelete?.name}". Only administrators can delete recipes, and only after the recipe has been unselected from all project/location availability.
+                    This will permanently delete "{recipeToDelete?.name}". Only administrators can delete recipes. If this recipe is still linked to project availability, menu planning, or sub-recipes, those areas should be reviewed after deletion.
                   </p>
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
                     <div className="mb-2 flex items-start gap-2 font-semibold">

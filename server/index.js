@@ -4167,11 +4167,6 @@ function getRecipeAssignedSiteIds(recipe = {}) {
     .filter(Boolean);
 }
 
-function isRecipeUnassignedFromProjects(recipe = {}) {
-  return String(recipe.site_scope || '').toLowerCase() === 'specific'
-    && getRecipeAssignedSiteIds(recipe).length === 0;
-}
-
 function valueReferencesRecipeId(value, recipeId) {
   const target = String(recipeId || '');
   if (!target || value == null) return false;
@@ -4227,10 +4222,13 @@ async function buildRecipeDeleteImpact(recipe, executor = undefined) {
     menu_plan_examples: menuPlanExamples.slice(0, 10),
     sub_recipe_reference_count: subRecipeExamples.length,
     sub_recipe_examples: subRecipeExamples.slice(0, 10),
-    can_delete_after_unassigned: isRecipeUnassignedFromProjects(recipe),
+    assigned_project_count: getRecipeAssignedSiteIds(recipe).length,
+    can_delete_after_unassigned: true,
     warning: linkages.length > 0
       ? 'This recipe is linked to menu planning or sub-recipes. Admin deletion will remove the recipe record; linked menu plans may no longer resolve this recipe and should be reviewed before future production.'
-      : 'No obvious menu planning or sub-recipe links were found.'
+      : getRecipeAssignedSiteIds(recipe).length > 0
+        ? 'This recipe is still available to one or more projects. Admin deletion will remove the recipe record, so future menu planning for those projects will no longer be able to use it.'
+        : 'No obvious menu planning or sub-recipe links were found.'
   };
 }
 
@@ -4589,12 +4587,6 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
     }
     if (entity === 'Recipe' && hasAdminAccess(request.user)) {
       authorizeEntityAction(request.user, entity, 'delete', null, existing);
-      if (!isRecipeUnassignedFromProjects(existing)) {
-        return response.status(409).json({
-          message: 'Unselect this recipe from all project/location availability before deleting it.'
-        });
-      }
-
       const deletion = await withTransaction(async (client) => {
         const lockedRecipe = await findDocument('Recipe', request.params.id, client, true);
         if (!lockedRecipe) {
@@ -4602,12 +4594,6 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
           error.status = 404;
           throw error;
         }
-        if (!isRecipeUnassignedFromProjects(lockedRecipe)) {
-          const error = new Error('Unselect this recipe from all project/location availability before deleting it.');
-          error.status = 409;
-          throw error;
-        }
-
         const impact = await buildRecipeDeleteImpact(lockedRecipe, client);
         const removed = await deleteDocumentRecordOnly('Recipe', lockedRecipe.id, client);
         if (!removed) {
@@ -4629,9 +4615,11 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
         entity,
         entityId: request.params.id,
         details: {
-          friendly_summary: `${request.user.full_name || request.user.email || 'An administrator'} deleted unassigned recipe ${deletion.deleted_record.name || request.params.id}.`,
+          friendly_summary: `${request.user.full_name || request.user.email || 'An administrator'} deleted recipe ${deletion.deleted_record.name || request.params.id}.`,
           friendly_changes: [
-            'The recipe had already been removed from all project/location availability before deletion.',
+            deletion.impact.assigned_project_count > 0
+              ? `The recipe was still available to ${deletion.impact.assigned_project_count} project/location assignment${deletion.impact.assigned_project_count === 1 ? '' : 's'} when it was deleted. Those areas should be reviewed before future menu planning.`
+              : 'The recipe was not assigned to any project/location availability at deletion time.',
             deletion.impact.menu_plan_reference_count > 0
               ? `${deletion.impact.menu_plan_reference_count} menu planning reference${deletion.impact.menu_plan_reference_count === 1 ? '' : 's'} may no longer resolve this recipe and should be reviewed before future production.`
               : 'No saved menu planning references were found for this recipe.',

@@ -16,6 +16,49 @@ function finiteNumber(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function parseStockSummary(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveStockSummaryItemCost(ingredient = {}) {
+  const stockSummary = parseStockSummary(
+    ingredient.stock_summary
+      ?? ingredient.inventory_summary
+      ?? ingredient.stockSummary
+  );
+  if (!stockSummary) return null;
+
+  const totalValue = finiteNumber(
+    stockSummary.total_value
+      ?? stockSummary.totalValue
+      ?? stockSummary.value
+  );
+  const stockQuantity = finiteNumber(
+    stockSummary.on_hand_quantity
+      ?? stockSummary.onHandQuantity
+      ?? stockSummary.on_hand
+      ?? stockSummary.available_quantity
+      ?? stockSummary.availableQuantity
+      ?? stockSummary.quantity
+  );
+  if (totalValue === null || totalValue < 0 || stockQuantity === null || stockQuantity <= 0) {
+    return null;
+  }
+
+  const stockUnit = stockSummary.unit || stockSummary.base_unit || ingredient.unit;
+  const baseQuantity = quantityInIngredientBaseUnit(stockQuantity, stockUnit, ingredient);
+  if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) return null;
+  return totalValue / baseQuantity;
+}
+
 export function normalizeRecipeCostingMethod(value) {
   return Object.prototype.hasOwnProperty.call(RECIPE_COSTING_METHODS, value)
     ? value
@@ -34,7 +77,7 @@ export function resolveIngredientItemCost(ingredient = {}, costingMethod = 'aver
     const numeric = finiteNumber(candidate);
     if (numeric !== null && numeric >= 0) return numeric;
   }
-  return null;
+  return resolveStockSummaryItemCost(ingredient);
 }
 
 export function calculateRecipeIngredientLineCost(line = {}, ingredient = {}, costingMethod = 'average_cost') {
