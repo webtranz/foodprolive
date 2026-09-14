@@ -3077,8 +3077,8 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
   if (production.status === 'completed') {
     const producedItemBatch = (await listDocuments('ProducedItemBatch', {
       filters: { production_id: production.id },
-      limit: 1
-    }, executor))[0] || null;
+      limit: 50
+    }, executor)).find((batch) => String(batch.status || '').toLowerCase() !== 'voided') || null;
     return { record: production, produced_item_batch: producedItemBatch, mutated: false };
   }
 
@@ -3501,10 +3501,374 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
   };
 }
 
+function getProductionReversalLines(production = {}, report = {}) {
+  const reportLines = Array.isArray(report?.ingredient_lines) ? report.ingredient_lines : [];
+  if (reportLines.length > 0) return reportLines;
+  const sectionLines = (Array.isArray(report?.sections) ? report.sections : [])
+    .find((section) => section?.key === 'ingredient_consumption')?.lines;
+  if (Array.isArray(sectionLines) && sectionLines.length > 0) return sectionLines;
+  return Array.isArray(production?.completion_lines) ? production.completion_lines : [];
+}
+
+function getProductionReversalReturnLayers(line = {}) {
+  const layers = Array.isArray(line.movement_layers) && line.movement_layers.length > 0
+    ? line.movement_layers
+    : Array.isArray(line.allocation_layers)
+      ? line.allocation_layers
+      : [];
+  return sanitizeProductionAllocationLayers(layers);
+}
+
+function assertProducedOutputUnused(batch = null) {
+  if (!batch) return;
+  const producedServings = toNumber(batch.produced_servings, 0);
+  const producedWeight = toNumber(batch.produced_weight_grams, 0);
+  const remainingServings = toNumber(batch.remaining_servings, 0);
+  const remainingWeight = toNumber(batch.remaining_weight_grams, 0);
+  const usedServings = toNumber(batch.served_servings, 0) + toNumber(batch.wasted_servings, 0);
+  const usedWeight = toNumber(batch.served_weight_grams, 0) + toNumber(batch.wasted_weight_grams, 0);
+  const unavailableServings = Math.max(0, producedServings - remainingServings);
+  const unavailableWeight = Math.max(0, producedWeight - remainingWeight);
+  if (
+    usedServings > QUANTITY_EPSILON
+    || usedWeight > QUANTITY_EPSILON
+    || unavailableServings > QUANTITY_EPSILON
+    || unavailableWeight > QUANTITY_EPSILON
+  ) {
+    const error = new Error('This production output has already been served or recorded as waste. Reverse those Meal Service or Food Waste records before reversing this production.');
+    error.status = 409;
+    throw error;
+  }
+}
+
+async function findProductionReportForReversal(production, executor) {
+  const reportId = normalizeText(production?.consumption_report_id);
+  if (reportId) {
+    const report = await findDocument('ProductionConsumptionReport', reportId, executor, true);
+    if (report) return report;
+  }
+  const reports = await listDocuments('ProductionConsumptionReport', {
+    filters: { production_id: production.id },
+    limit: 50,
+    lock: true
+  }, executor);
+  return reports.find((report) => String(report.status || '').toLowerCase() !== 'reversed') || reports[0] || null;
+}
+
+async function findProducedItemBatchForReversal(production, executor) {
+  const batchId = normalizeText(production?.produced_item_batch_id);
+  if (batchId) {
+    const batch = await findDocument('ProducedItemBatch', batchId, executor, true);
+    if (batch) return batch;
+  }
+  const batches = await listDocuments('ProducedItemBatch', {
+    filters: { production_id: production.id },
+    limit: 50,
+    lock: true
+  }, executor);
+  return batches.find((batch) => String(batch.status || '').toLowerCase() !== 'voided') || batches[0] || null;
+}
+
+function buildProductionCompletionReversalCommitmentPatch({
+  production,
+  actor = {},
+  timestamp,
+  reason,
+  returnedLines
+}) {
+  const current = getProductionInventoryCommitment(production);
+  const nextRevision = Math.max(0, toNumber(current.revision, 0)) + 1;
+  const performedBy = actor?.email || actor?.id || 'admin';
+  const operationId = `production:${production.id}:completion-reversal:${timestamp.replace(/[^0-9]/g, '').slice(0, 14)}`;
+  const historyEntry = {
+    revision: nextRevision,
+    operation: 'production_completion_reversal',
+    operation_id: operationId,
+    status: 'released',
+    actor_id: actor?.id || null,
+    actor_email: actor?.email || null,
+    actor_name: actor?.full_name || actor?.email || null,
+    reason: normalizeText(reason) || 'Admin reversed completed production for correction.',
+    timestamp,
+    movements: returnedLines.map((line) => ({
+      direction: 'return',
+      ingredient_id: line.ingredient_id,
+      quantity: line.returned_quantity,
+      unit: line.unit,
+      transaction_id: line.transaction_id
+    }))
+  };
+  const commitment = {
+    ...current,
+    revision: nextRevision,
+    status: 'released',
+    stock_model: current.stock_model || current.model_version || PRODUCTION_RESERVATION_MODEL,
+    model_version: current.model_version || current.stock_model || PRODUCTION_RESERVATION_MODEL,
+    operation: 'production_completion_reversal',
+    last_operation_id: operationId,
+    idempotency_key: operationId,
+    updated_at: timestamp,
+    updated_by: performedBy,
+    released_at: timestamp,
+    released_by: performedBy,
+    consumed_at: null,
+    consumed_by: null,
+    total_reserved_quantity: 0,
+    total_committed_quantity: 0,
+    total_consumed_quantity: 0,
+    total_shortage_quantity: 0,
+    lines: []
+  };
+
+  return {
+    inventory_commitment: commitment,
+    inventory_commitment_revision: nextRevision,
+    inventory_commitment_status: 'released',
+    inventory_commitment_operation_id: operationId,
+    inventory_commitment_idempotency_key: operationId,
+    inventory_commitment_updated_at: timestamp,
+    inventory_commitment_updated_by: performedBy,
+    inventory_committed_lines: [],
+    inventory_released_at: timestamp,
+    inventory_released_by: performedBy,
+    inventory_released_by_name: actor?.full_name || actor?.email || null,
+    inventory_consumed_at: null,
+    inventory_consumed_by: null,
+    inventory_consumed_by_name: null,
+    inventory_commitment_history: [
+      ...(Array.isArray(production.inventory_commitment_history)
+        ? production.inventory_commitment_history.slice(-99)
+        : []),
+      historyEntry
+    ]
+  };
+}
+
+async function reverseCompletedProductionWithExecutor(productionId, actor, options, executor) {
+  const production = await findDocument('Production', productionId, executor, true);
+  if (!production) {
+    const error = new Error('Production record not found');
+    error.status = 404;
+    throw error;
+  }
+  if (String(production.status || '').toLowerCase() !== 'completed') {
+    const error = new Error('Only completed productions can be reversed by an administrator');
+    error.status = 400;
+    throw error;
+  }
+
+  const timestamp = nowIso();
+  const reason = normalizeText(options?.reason) || 'Admin reversed completed production for correction.';
+  const stockSiteId = normalizeText(production.fulfillment_store_id || production.site_id);
+  const stockSiteName = production.fulfillment_store_name || production.site_name || null;
+  const report = await findProductionReportForReversal(production, executor);
+  const producedItemBatch = await findProducedItemBatchForReversal(production, executor);
+  if (producedItemBatch && String(producedItemBatch.status || '').toLowerCase() === 'voided') {
+    const error = new Error('This production output batch has already been voided');
+    error.status = 409;
+    throw error;
+  }
+  if (report && String(report.status || '').toLowerCase() === 'reversed') {
+    const error = new Error('This production consumption report has already been reversed');
+    error.status = 409;
+    throw error;
+  }
+  assertProducedOutputUnused(producedItemBatch);
+
+  const completionLines = getProductionReversalLines(production, report);
+  if (completionLines.length === 0) {
+    const error = new Error('This production does not have saved consumption lines, so its inventory cannot be reversed exactly');
+    error.status = 409;
+    throw error;
+  }
+
+  const returnedLines = [];
+  for (const [index, line] of completionLines.entries()) {
+    const ingredientId = normalizeText(line?.ingredient_id);
+    const ingredientName = normalizeText(line?.ingredient_name) || ingredientId;
+    const unit = normalizeText(line?.unit || line?.inventory_unit);
+    const returnedLayers = getProductionReversalReturnLayers(line);
+    const layerQuantity = returnedLayers.reduce((sum, layer) => sum + Math.max(0, toNumber(layer?.quantity, 0)), 0);
+    const issuedQuantity = Math.max(0, toNumber(line?.issued_quantity, 0));
+    if (!ingredientId || !unit) {
+      const error = new Error('Every saved production consumption line must include an ingredient and inventory unit before reversal');
+      error.status = 409;
+      throw error;
+    }
+    if (issuedQuantity > QUANTITY_EPSILON && layerQuantity <= QUANTITY_EPSILON) {
+      const error = new Error(`Cannot reverse ${ingredientName} because the exact consumed inventory lots are missing`);
+      error.status = 409;
+      throw error;
+    }
+    if (layerQuantity <= QUANTITY_EPSILON) {
+      returnedLines.push({
+        ingredient_id: ingredientId,
+        ingredient_name: ingredientName,
+        unit,
+        returned_quantity: 0,
+        total_cost: 0,
+        transaction_id: null,
+        movement_layers: []
+      });
+      continue;
+    }
+    const returned = await returnStockToCommittedLotsWithExecutor({
+      site_id: stockSiteId,
+      site_name: stockSiteName,
+      ingredient_id: ingredientId,
+      ingredient_name: ingredientName,
+      unit,
+      returned_layers: returnedLayers,
+      transaction_date: toDateOnly(),
+      reference_id: production.id,
+      reference_type: 'production',
+      notes: `Admin reversed completed production: ${production.recipe_name || production.id}. ${reason}`,
+      performed_by: actor?.email || actor?.id || 'admin',
+      reason_code: 'production_completion_reversal',
+      source: 'production_completion_reversal',
+      source_type: 'production_reversal',
+      operation: 'completion_reversal',
+      operation_id: `production:${production.id}:completion-reversal`,
+      idempotency_key: `production:${production.id}:completion-reversal:${report?.id || 'production'}:${ingredientId}:${index}`,
+      metadata: {
+        production_id: production.id,
+        consumption_report_id: report?.id || null,
+        produced_item_batch_id: producedItemBatch?.id || null,
+        reason
+      }
+    }, executor);
+    returnedLines.push({
+      ingredient_id: ingredientId,
+      ingredient_name: ingredientName,
+      item_code: line?.item_code || null,
+      unit,
+      returned_quantity: returned.returned_quantity,
+      total_cost: returned.total_cost,
+      transaction_id: returned.transaction_id,
+      movement_layers: returned.movement_layers
+    });
+  }
+
+  const reversalSummary = {
+    reversed_at: timestamp,
+    reversed_by: actor?.email || actor?.id || 'admin',
+    reversed_by_name: actor?.full_name || actor?.email || null,
+    reason,
+    returned_line_count: returnedLines.length,
+    returned_total_cost: Number(returnedLines.reduce((sum, line) => sum + toNumber(line.total_cost, 0), 0).toFixed(2)),
+    returned_lines: returnedLines
+  };
+
+  const voidedBatch = producedItemBatch ? await updateDocument('ProducedItemBatch', producedItemBatch.id, {
+    status: 'voided',
+    served_servings: 0,
+    served_weight_grams: 0,
+    wasted_servings: 0,
+    wasted_weight_grams: 0,
+    remaining_servings: 0,
+    remaining_weight_grams: 0,
+    voided_at: timestamp,
+    voided_by: actor?.email || actor?.id || 'admin',
+    voided_by_name: actor?.full_name || actor?.email || null,
+    void_reason: reason,
+    reversal_summary: reversalSummary
+  }, executor) : null;
+
+  const reversedReport = report ? await updateDocument('ProductionConsumptionReport', report.id, {
+    status: 'reversed',
+    reversed_at: timestamp,
+    reversed_by: actor?.email || actor?.id || 'admin',
+    reversed_by_name: actor?.full_name || actor?.email || null,
+    reversal_reason: reason,
+    reversal_summary: reversalSummary
+  }, executor) : null;
+
+  const commitmentPatch = buildProductionCompletionReversalCommitmentPatch({
+    production,
+    actor,
+    timestamp,
+    reason,
+    returnedLines
+  });
+  const reopened = await updateDocument('Production', production.id, {
+    ...commitmentPatch,
+    status: 'in_progress',
+    completed_date: null,
+    completed_by: null,
+    completed_by_name: null,
+    ingredient_cost_total: null,
+    production_cost_total: null,
+    cost_per_serving: null,
+    total_shortage_quantity: null,
+    shortage_totals_by_unit: {},
+    completion_lines: [],
+    consumption_report_id: null,
+    consumption_report_number: null,
+    consumption_report_name: null,
+    consumption_report_generated_at: null,
+    actual_finished_weight_grams: null,
+    produced_servings: null,
+    produced_item_batch_id: null,
+    produced_item_batch_number: null,
+    ingredients_used: Array.isArray(production.ingredients_used) ? production.ingredients_used : [],
+    menu_issue_items: Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [],
+    last_review_action: 'production_completion_reversed',
+    production_reversal_history: [
+      ...(Array.isArray(production.production_reversal_history)
+        ? production.production_reversal_history.slice(-99)
+        : []),
+      {
+        type: 'completion_reversal',
+        timestamp,
+        actor_id: actor?.id || null,
+        actor_email: actor?.email || null,
+        actor_name: actor?.full_name || actor?.email || null,
+        reason,
+        consumption_report_id: report?.id || null,
+        consumption_report_number: report?.report_number || production.consumption_report_number || null,
+        produced_item_batch_id: producedItemBatch?.id || null,
+        produced_item_batch_number: producedItemBatch?.batch_number || production.produced_item_batch_number || null,
+        returned_line_count: returnedLines.length,
+        returned_total_cost: reversalSummary.returned_total_cost
+      }
+    ],
+    approval_history: [
+      ...(Array.isArray(production.approval_history) ? production.approval_history : []),
+      {
+        action: 'production_completion_reversed',
+        stage: 'admin',
+        from_status: 'completed',
+        to_status: 'in_progress',
+        actor_id: actor?.id || null,
+        actor_email: actor?.email || null,
+        actor_name: actor?.full_name || actor?.email || null,
+        reason,
+        note: 'Admin reversed completion directly; original production manifest retained for re-completion.',
+        timestamp
+      }
+    ]
+  }, executor);
+
+  return {
+    record: reopened,
+    consumption_report: reversedReport,
+    produced_item_batch: voidedBatch,
+    returned_lines: returnedLines,
+    mutated: true
+  };
+}
+
 async function completeProduction(productionId, actor, options = {}, executor = null) {
   return runInTransaction(
     executor,
     (client) => completeProductionWithExecutor(productionId, actor, options, client)
+  );
+}
+
+async function reverseCompletedProduction(productionId, actor, options = {}, executor = null) {
+  return runInTransaction(
+    executor,
+    (client) => reverseCompletedProductionWithExecutor(productionId, actor, options, client)
   );
 }
 
@@ -3766,6 +4130,7 @@ export {
   adjustStock,
   transferStock,
   completeProduction,
+  reverseCompletedProduction,
   getStockOnHandReport,
   getStockMovementReport,
   getExpiryReport,

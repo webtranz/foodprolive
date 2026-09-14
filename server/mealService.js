@@ -1391,9 +1391,9 @@ export async function createProducedItemBatchForCompletion({
   }
   const existing = (await listDocuments('ProducedItemBatch', {
     filters: { production_id: production.id },
-    limit: 1,
+    limit: 50,
     lock: true
-  }, executor))[0];
+  }, executor)).find((batch) => String(batch.status || '').toLowerCase() !== 'voided');
   if (existing) return { batch: existing, mutated: false };
   const batch = await createDocument('ProducedItemBatch', snapshot, executor);
   return { batch, mutated: true };

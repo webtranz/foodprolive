@@ -854,6 +854,20 @@ export const base44 = {
         return result;
       });
     },
+    reverseCompletedProduction(id, data = {}) {
+      return apiRequest(`/api/inventory/production/${id}/reverse-completion`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('Production', { action: 'reverse-completion', result, id });
+        emitEntityChange('ProducedItemBatch', { action: 'void', result: result?.voided_produced_item_batch });
+        emitEntityChange('ProductionConsumptionReport', { action: 'reverse', result: result?.reversed_consumption_report });
+        emitEntityChange('Inventory', { action: 'production-reversal', result });
+        emitEntityChange('InventoryLot', { action: 'production-reversal', result });
+        emitEntityChange('InventoryTransaction', { action: 'production-reversal', result });
+        return result;
+      });
+    },
     listLots(filters = {}) {
       return apiRequest(`/api/inventory/lots${buildQueryString(filters)}`);
     },

@@ -750,6 +750,8 @@ export default function Production() {
   const [reportLoadingId, setReportLoadingId] = useState('');
   const [historyProduction, setHistoryProduction] = useState(null);
   const [deleteProduction, setDeleteProduction] = useState(null);
+  const [reverseProduction, setReverseProduction] = useState(null);
+  const [reverseReason, setReverseReason] = useState('');
   const [inventoryAction, setInventoryAction] = useState(null);
   const [inventoryActionMode, setInventoryActionMode] = useState('adjust');
   const [inventoryActionServings, setInventoryActionServings] = useState(null);
@@ -1238,6 +1240,32 @@ export default function Production() {
     },
     onError: (error) => {
       setActionError(error.message || 'Unable to delete this production request.');
+    }
+  });
+
+  const reverseProductionMutation = useMutation({
+    mutationFn: async ({ production, reason }) => {
+      if (!production?.id) {
+        throw new Error('Select a completed production to reverse.');
+      }
+      return base44.inventory.reverseCompletedProduction(production.id, { reason });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
+      queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
+      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
+      setReverseProduction(null);
+      setReverseReason('');
+      setActionError('');
+      setActionMessage('Production completion reversed. The same manifest is open for admin completion again.');
+    },
+    onError: (error) => {
+      setActionError(error.message || 'Unable to reverse this production completion.');
     }
   });
 
@@ -2335,6 +2363,13 @@ export default function Production() {
     setCompletionOpen(true);
   };
 
+  const openReverseProductionDialog = (production) => {
+    setReverseProduction(production);
+    setReverseReason('');
+    setActionError('');
+    setActionMessage('');
+  };
+
   const openConsumptionReport = async (production) => {
     const reportId = production.consumption_report_id;
     if (!reportId || reportLoadingId) return;
@@ -2471,6 +2506,20 @@ export default function Production() {
         >
           <FileText className="mr-1.5 h-4 w-4" />
           {reportLoadingId === String(production.id) ? 'Loading Report...' : 'Consumption Report'}
+        </Button>
+      ) : null}
+      {production.status === 'completed' && isAdmin ? (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => openReverseProductionDialog(production)}
+          disabled={reverseProductionMutation.isPending && String(reverseProductionMutation.variables?.production?.id || '') === String(production.id)}
+          className="justify-center whitespace-normal border-red-200 text-xs leading-snug text-red-700 hover:bg-red-50"
+        >
+          <ArrowLeft className="mr-1.5 h-4 w-4" />
+          {reverseProductionMutation.isPending && String(reverseProductionMutation.variables?.production?.id || '') === String(production.id)
+            ? 'Reversing...'
+            : 'Reverse Completion'}
         </Button>
       ) : null}
       {approvalHistory.length > 0 ? (
@@ -3427,6 +3476,78 @@ export default function Production() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <Dialog
+          open={Boolean(reverseProduction)}
+          onOpenChange={(open) => {
+            if (!open && !reverseProductionMutation.isPending) {
+              setReverseProduction(null);
+              setReverseReason('');
+            }
+          }}
+        >
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Reverse Completed Production</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 text-sm">
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800">
+                <p className="font-semibold">
+                  Admin-only direct reversal — no approval workflow will be created.
+                </p>
+                <p className="mt-2">
+                  This will return the consumed inventory to the original lots, void the incorrect produced output,
+                  mark the old production consumption report as reversed, and reopen the same production manifest
+                  for completion again.
+                </p>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+                If any finished output has already been used by Meal Service or Food Waste, reverse those dependent
+                records first. The app will block this reversal until the output is unused.
+              </div>
+              <div>
+                <Label htmlFor="production-reversal-reason">Reason / notes</Label>
+                <Textarea
+                  id="production-reversal-reason"
+                  value={reverseReason}
+                  onChange={(event) => setReverseReason(event.target.value)}
+                  placeholder="Example: Incorrect produced weight posted; admin will complete again with the corrected values."
+                  className="mt-2 min-h-[100px]"
+                />
+              </div>
+              {actionError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+                  {actionError}
+                </div>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={reverseProductionMutation.isPending}
+                onClick={() => {
+                  setReverseProduction(null);
+                  setReverseReason('');
+                  setActionError('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="bg-red-600 hover:bg-red-700"
+                disabled={reverseProductionMutation.isPending}
+                onClick={() => reverseProductionMutation.mutate({
+                  production: reverseProduction,
+                  reason: reverseReason
+                })}
+              >
+                {reverseProductionMutation.isPending ? 'Reversing...' : 'Reverse Now'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Approval Dialog */}
         <Dialog

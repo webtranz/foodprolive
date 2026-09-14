@@ -424,10 +424,25 @@ export const entityRegistry = {
       remaining_weight_grams: z.coerce.number().min(0),
       completed_by: stringOptional,
       completed_by_name: stringOptional,
-      status: z.enum(['available', 'partial', 'consumed']),
+      status: z.enum(['available', 'partial', 'consumed', 'voided']),
       cutover_version: z.coerce.number().int().min(1)
     }).passthrough().superRefine((batch, context) => {
       const tolerance = 0.00001;
+      if (batch.status === 'voided') {
+        if ((batch.served_servings || 0) > tolerance
+          || (batch.served_weight_grams || 0) > tolerance
+          || (batch.wasted_servings || 0) > tolerance
+          || (batch.wasted_weight_grams || 0) > tolerance
+          || (batch.remaining_servings || 0) > tolerance
+          || (batch.remaining_weight_grams || 0) > tolerance) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['status'],
+            message: 'Voided produced-item batches cannot keep served, wasted, or remaining balances'
+          });
+        }
+        return;
+      }
       if (batch.served_servings - batch.produced_servings > tolerance
         || batch.remaining_servings - batch.produced_servings > tolerance
         || Math.abs((batch.served_servings + (batch.wasted_servings || 0) + batch.remaining_servings) - batch.produced_servings) > tolerance) {

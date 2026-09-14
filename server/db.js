@@ -409,6 +409,20 @@ async function ensureEntityUniqueness(entity, record, currentId = null, executor
       if (currentId && existing.id === currentId) {
         return false;
       }
+      if (
+        entity === 'ProducedItemBatch'
+        && fields.includes('production_id')
+        && String(existing.status || '').trim().toLowerCase() === 'voided'
+      ) {
+        return false;
+      }
+      if (
+        entity === 'ProductionConsumptionReport'
+        && fields.includes('production_id')
+        && String(existing.status || '').trim().toLowerCase() === 'reversed'
+      ) {
+        return false;
+      }
       return fields.every((field) => valuesMatchForUnique(existing[field], record[field]));
     });
 

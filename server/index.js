@@ -126,6 +126,7 @@ import {
   adjustStock,
   transferStock,
   completeProduction,
+  reverseCompletedProduction,
   consumeProductionInventoryReservation,
   reconcileProductionInventoryCommitment,
   releaseProductionInventoryCommitment,
@@ -8355,6 +8356,60 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
     response.json({
       ...result.record,
       produced_item_batch: result.produced_item_batch || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/inventory/production/:id/reverse-completion', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const production = await findDocument('Production', request.params.id);
+    if (!production || !filterRowsByAccessibleSites(
+      [production],
+      scope,
+      ['site_id', 'fulfillment_store_id']
+    ).length) {
+      return response.status(403).json({ message: 'You do not have access to this production record' });
+    }
+    const productionInventorySite = resolveProductionFulfillmentStore(production, scope.sites);
+    if (
+      !scope.unrestricted
+      && !scope.accessibleSiteIds.has(String(productionInventorySite.id))
+    ) {
+      return response.status(403).json({ message: 'You do not have access to this production site inventory' });
+    }
+
+    const result = await reverseCompletedProduction(request.params.id, request.user, {
+      reason: request.body?.reason || ''
+    });
+    if (result.mutated) {
+      recordChanged('Production');
+      recordChanged('ProductionConsumptionReport');
+      recordChanged('Inventory');
+      recordChanged('InventoryLot');
+      recordChanged('InventoryTransaction');
+      recordChanged('ProducedItemBatch');
+      await auditAction({
+        user: request.user,
+        action: 'PRODUCTION_COMPLETION_REVERSED',
+        entity: 'Production',
+        entityId: result.record.id,
+        details: {
+          saved_record: result.record,
+          consumption_report_id: result.consumption_report?.id || null,
+          produced_item_batch_id: result.produced_item_batch?.id || null,
+          returned_line_count: result.returned_lines?.length || 0,
+          reason: request.body?.reason || null
+        }
+      });
+    }
+    response.json({
+      ...result.record,
+      reversed_consumption_report: result.consumption_report || null,
+      voided_produced_item_batch: result.produced_item_batch || null,
+      returned_lines: result.returned_lines || []
     });
   } catch (error) {
     next(error);
