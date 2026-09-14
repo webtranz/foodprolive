@@ -201,6 +201,41 @@ function getStoredServicePortionSize(batch = {}) {
   return value > 0 ? normalizeManualMealPortionSize(value) : null;
 }
 
+function normalizeProducedItemBatchIds(payload = {}) {
+  const values = [
+    ...(Array.isArray(payload.produced_item_batch_ids) ? payload.produced_item_batch_ids : []),
+    payload.produced_item_batch_id,
+    payload.production_batch_id,
+    payload.prepared_meal_id
+  ];
+  return uniqueNormalizedTexts(values);
+}
+
+function canUpdateMealServicePortionSize(batch = {}) {
+  return normalizeText(batch.status).toLowerCase() === 'available'
+    && number(batch.served_weight_grams, 0) <= QUANTITY_EPSILON
+    && number(batch.wasted_weight_grams, 0) <= QUANTITY_EPSILON;
+}
+
+export function selectMealServicePortionSizeUpdateBatches(batches = [], requestedBatchIds = []) {
+  const routineBatches = (Array.isArray(batches) ? batches : []).filter((batch) => isRoutineMealServiceBatch(batch));
+  const requestedIds = new Set(uniqueNormalizedTexts(requestedBatchIds));
+  const selectedBatches = requestedIds.size
+    ? routineBatches.filter((batch) => requestedIds.has(normalizeText(batch.id)))
+    : routineBatches.filter(canUpdateMealServicePortionSize);
+
+  if (requestedIds.size && selectedBatches.length !== requestedIds.size) {
+    throw httpError('Prepared output changed after it was loaded. Refresh fully produced dishes before saving the portion size.', 409);
+  }
+  if (routineBatches.length === 0 || selectedBatches.length === 0) {
+    throw httpError('No matching completed production output was found', 404);
+  }
+  if (selectedBatches.some((batch) => !canUpdateMealServicePortionSize(batch))) {
+    throw httpError('Service portion size cannot be changed after any output has been served or wasted', 409);
+  }
+  return selectedBatches;
+}
+
 export function groupMealServiceProducedDishes(batches = []) {
   const grouped = new Map();
   batches.filter((batch) => (
@@ -2191,7 +2226,7 @@ async function updateMealServicePortionSizeWithExecutor(payload, actor, executor
     menu_type: menuType, menu_category: menuCategory
   });
   await acquireMealServiceScopeLock(scopeKey, executor);
-  const batches = (await listMealServiceProducedItemBatchesForSites({
+  const matchedBatches = await listMealServiceProducedItemBatchesForSites({
     siteIds: productionSiteIds,
     serviceDate,
     mealType,
@@ -2201,15 +2236,10 @@ async function updateMealServicePortionSizeWithExecutor(payload, actor, executor
     lock: true,
     location: productionLocation,
     executor
-  })).filter((batch) => isRoutineMealServiceBatch(batch));
+  });
+  const requestedBatchIds = normalizeProducedItemBatchIds(payload);
+  const batches = selectMealServicePortionSizeUpdateBatches(matchedBatches, requestedBatchIds);
   if (batches.length === 0) throw httpError('No matching completed production output was found', 404);
-  if (batches.some((batch) => (
-    normalizeText(batch.status).toLowerCase() !== 'available'
-    || number(batch.served_weight_grams, 0) > QUANTITY_EPSILON
-    || number(batch.wasted_weight_grams, 0) > QUANTITY_EPSILON
-  ))) {
-    throw httpError('Service portion size cannot be changed after any output has been served or wasted', 409);
-  }
   const updatedAt = nowIso();
   const updated = [];
   for (const batch of batches) {

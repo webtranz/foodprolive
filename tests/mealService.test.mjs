@@ -32,6 +32,7 @@ import {
   resolveMenuPlanPreparedMealSelections,
   reverseMealServiceAllocations,
   reverseMealServiceWasteAllocations,
+  selectMealServicePortionSizeUpdateBatches,
   selectMealServiceMenuPlan
 } from '../server/mealService.js';
 import {
@@ -813,6 +814,41 @@ test('service portion is never inferred from the production or recipe portion', 
   const service = source('server/mealService.js');
   assert.match(service, /requires an administrator-configured service portion size before Meal Service can be saved/);
   assert.doesNotMatch(service, /batch\.service_portion_size_grams \?\? batch\.portion_size_grams/);
+});
+
+test('service portion updates only the current untouched produced output', () => {
+  const current = batch({ id: 'current-output' });
+  const reversedHistory = batch({
+    id: 'old-reversed-output',
+    status: 'reversed',
+    served_weight_grams: 1000,
+    remaining_weight_grams: 0
+  });
+  const partiallyServed = batch({
+    id: 'partial-output',
+    status: 'partial',
+    served_weight_grams: 250,
+    remaining_weight_grams: 750
+  });
+
+  assert.deepEqual(
+    selectMealServicePortionSizeUpdateBatches([reversedHistory, current], [current.id]).map((entry) => entry.id),
+    ['current-output']
+  );
+  assert.deepEqual(
+    selectMealServicePortionSizeUpdateBatches([reversedHistory, current]).map((entry) => entry.id),
+    ['current-output']
+  );
+  assertHttpError(
+    () => selectMealServicePortionSizeUpdateBatches([partiallyServed], [partiallyServed.id]),
+    409,
+    /cannot be changed/
+  );
+  assertHttpError(
+    () => selectMealServicePortionSizeUpdateBatches([current], ['missing-output']),
+    409,
+    /Refresh fully produced dishes/
+  );
 });
 
 test('confirmation moves every unserved gram to waste and reversal restores served and wasted output', () => {

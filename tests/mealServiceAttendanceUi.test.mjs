@@ -17,7 +17,13 @@ const scope = {
   menu_category: 'senior'
 };
 const dishes = [
-  { recipe_id: 'dish-1', recipe_name: 'Rice', available_covers: 20, service_portion_size_grams: 200 },
+  {
+    recipe_id: 'dish-1',
+    recipe_name: 'Rice',
+    available_covers: 20,
+    service_portion_size_grams: 200,
+    batches: [{ id: 'batch-1' }, { id: 'batch-2' }]
+  },
   { recipe_id: 'dish-2', recipe_name: 'Chicken', available_covers: 12, service_portion_size_grams: 250 }
 ];
 
@@ -51,6 +57,7 @@ assert.deepEqual(
 assert.deepEqual(buildMealServicePortionRequest(scope, dishes[0], '225.5'), {
   ...scope,
   recipe_id: 'dish-1',
+  produced_item_batch_ids: ['batch-1', 'batch-2'],
   service_portion_size_grams: 225.5
 });
 

@@ -43,6 +43,9 @@ export function buildMealServiceConfirmationRequest(
 }
 
 export function buildMealServicePortionRequest(scope = {}, dish = {}, portionSizeGrams) {
+  const producedItemBatchIds = (Array.isArray(dish.batches) ? dish.batches : [])
+    .map((batch) => String(batch?.id || '').trim())
+    .filter(Boolean);
   return {
     site_id: scope.site_id,
     service_date: scope.service_date,
@@ -50,6 +53,7 @@ export function buildMealServicePortionRequest(scope = {}, dish = {}, portionSiz
     menu_type: scope.menu_type,
     menu_category: scope.menu_category,
     recipe_id: dish.recipe_id,
+    ...(producedItemBatchIds.length ? { produced_item_batch_ids: producedItemBatchIds } : {}),
     service_portion_size_grams: normalizeMealServicePortionSize(portionSizeGrams)
   };
 }
