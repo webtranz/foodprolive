@@ -21,7 +21,7 @@ import { buildAutomaticProductionYieldSummary } from '../shared/productionReconc
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import {
   formatProductionEventTitle,
-  getProductionEventDishCount,
+  getProductionEventItemCount,
   getProductionEventScopeLabel
 } from '../shared/productionLabels.js';
 import { normalizeProductionMenuScope } from '../shared/menuCategories.js';
@@ -97,6 +97,16 @@ function isFrozenRawProductionSnapshot(production = {}) {
     && String(production.quantity_semantics || '').toLowerCase().includes('raw');
 }
 
+function hasSavedProductionManifestSnapshot(production = {}) {
+  const lines = Array.isArray(production.ingredients_used) ? production.ingredients_used : [];
+  if (lines.length === 0) return false;
+  return isFrozenRawProductionSnapshot(production)
+    || production.production_issue_grouped === true
+    || (Array.isArray(production.menu_issue_items) && production.menu_issue_items.length > 0)
+    || production.recipe_snapshot_locked === true
+    || Boolean(normalizeText(production.recipe_snapshot_mode));
+}
+
 function resolveFrozenRawQuantity(line = {}) {
   const value = line.planned_quantity ?? line.raw_quantity ?? line.required_quantity;
   const quantity = Number(value);
@@ -167,11 +177,12 @@ export function buildAutomaticProductionCompletionPlan({
     ingredients.map((ingredient) => [String(ingredient?.id || ''), ingredient])
   );
   const frozenV2 = isFrozenRawProductionSnapshot(production);
+  const savedManifestSnapshot = hasSavedProductionManifestSnapshot(production);
   let productionIngredients;
 
-  if (frozenV2) {
+  if (savedManifestSnapshot) {
     if (!Array.isArray(production.ingredients_used) || production.ingredients_used.length === 0) {
-      const error = new Error('The frozen production recipe snapshot has no raw ingredient quantities');
+      const error = new Error('The saved production manifest has no raw ingredient quantities');
       error.status = 409;
       throw error;
     }
@@ -179,14 +190,14 @@ export function buildAutomaticProductionCompletionPlan({
       `${normalizeText(line?.ingredient_id)}::${isExemptProcessingAid(line) ? 'processing_aid' : `prep_${getRecipeLinePrepExemptPercent(line)}`}`
     ));
     if (new Set(ingredientKeys).size !== ingredientKeys.length) {
-      const error = new Error('The frozen production recipe snapshot contains duplicate ingredient IDs');
+      const error = new Error('The saved production manifest contains duplicate ingredient IDs');
       error.status = 409;
       throw error;
     }
     productionIngredients = production.ingredients_used.map((line) => {
       const ingredientId = normalizeText(line?.ingredient_id);
       if (!ingredientId) {
-        const error = new Error('Every frozen production ingredient must include an ingredient ID');
+        const error = new Error('Every saved production manifest ingredient must include an ingredient ID');
         error.status = 409;
         throw error;
       }
@@ -196,14 +207,14 @@ export function buildAutomaticProductionCompletionPlan({
       const masterUnit = ingredient.unit || sourceUnit;
       if (!isIngredientUnitCompatible(sourceUnit, masterUnit, ingredient)) {
         const error = new Error(
-          `The frozen production unit for ${line.ingredient_name || ingredient.name || ingredientId} cannot be converted to ingredient unit ${masterUnit}`
+          `The saved production unit for ${line.ingredient_name || ingredient.name || ingredientId} cannot be converted to ingredient unit ${masterUnit}`
         );
         error.status = 409;
         throw error;
       }
       return {
         ...line,
-        quantity_basis: 'raw_recipe_v2',
+        quantity_basis: frozenV2 ? 'raw_recipe_v2' : 'production_manifest_snapshot',
         raw_quantity: roundQuantity(rawQuantity),
         planned_quantity: roundQuantity(rawQuantity),
         required_quantity: roundQuantity(rawQuantity),
@@ -280,36 +291,45 @@ export function buildAutomaticProductionCompletionPlan({
   }
 
   const lineYieldSummary = buildAutomaticProductionYieldSummary({
-    production: { ...production, ingredients_used: productionIngredients },
+    production: {
+      ...production,
+      ingredients_used: productionIngredients,
+      ...(savedManifestSnapshot
+        ? {
+          yield_adjustment_version: 2,
+          quantity_semantics: 'raw_recipe_to_yielded_output_v2'
+        }
+        : {})
+    },
     recipe,
     ingredients
   });
-  if (frozenV2 && !positiveNumber(lineYieldSummary.expected_finished_weight_grams)) {
+  if (savedManifestSnapshot && !positiveNumber(lineYieldSummary.expected_finished_weight_grams)) {
     const unavailable = lineYieldSummary.line_weights
       .filter((line) => line.raw_quantity > 0 && line.yielded_weight_grams === null)
       .map((line) => line.ingredient_id)
       .filter(Boolean);
     const error = new Error(
-      `The frozen production recipe snapshot cannot calculate yield weight for every ingredient${unavailable.length ? `: ${unavailable.join(', ')}` : ''}`
+      `The saved production manifest cannot calculate yield weight for every ingredient${unavailable.length ? `: ${unavailable.join(', ')}` : ''}`
     );
     error.status = 409;
     throw error;
   }
   productionIngredients = productionIngredients.map((line, index) => {
     const weight = lineYieldSummary.line_weights[index] || {};
-    const repairedLegacyV2 = frozenV2 && weight.weight_snapshot_status === 'metadata_reconstruction';
+    const reconstructedWeight = savedManifestSnapshot && weight.weight_snapshot_status === 'metadata_reconstruction';
     return {
       ...line,
       raw_weight_grams: weight.raw_weight_grams,
       yielded_weight_grams: weight.yielded_weight_grams,
-      weight_calculation_source: repairedLegacyV2
-        ? `legacy_v2_repair:${weight.source}`
+      weight_calculation_source: reconstructedWeight
+        ? `${frozenV2 ? 'legacy_v2_repair' : 'saved_manifest_repair'}:${weight.source}`
         : line.weight_calculation_source || weight.source,
       yield_calculation_source: line.yield_calculation_source || weight.yield_source || line.yield_source,
       weight_snapshot_version: 1
     };
   });
-  const recipeWeight = frozenV2
+  const recipeWeight = savedManifestSnapshot
     ? null
     : calculateRecipeServingWeight(recipe, recipeCatalog, ingredients);
   const recipeServings = Math.max(1, toNumber(recipe.servings, 1));
@@ -328,22 +348,29 @@ export function buildAutomaticProductionCompletionPlan({
     ?? (recipeYieldWeight ? recipeYieldWeight * scale : portionSize * targetServings);
   const expectedYieldServings = expectedFinishedWeight / portionSize;
   const rawRecipeWeight = positiveNumber(lineYieldSummary.recipe_raw_weight_grams)
-    ?? (frozenV2
+    ?? (savedManifestSnapshot
       ? null
       : (positiveNumber(recipeWeight?.raw_total_grams)
         ? Number(recipeWeight?.raw_total_grams) * scale
         : null));
+  const outputCalculationSource = savedManifestSnapshot && !frozenV2 && lineYieldWeight
+    ? 'saved_production_manifest_line_yields'
+    : lineYieldWeight
+      ? lineYieldSummary.output_calculation_source
+      : recipeYieldWeight
+        ? 'recipe_yield_fallback'
+        : 'target_portion_fallback';
 
   return {
     recipe,
     ingredients_used: productionIngredients,
-    upgraded_legacy_yield: !frozenV2,
-    quantity_basis: frozenV2 ? 'raw_recipe_plan' : 'legacy_recipe_raw_yield_fallback',
-    output_calculation_source: lineYieldWeight
-      ? lineYieldSummary.output_calculation_source
-      : recipeYieldWeight
-        ? 'recipe_yield_fallback'
-        : 'target_portion_fallback',
+    upgraded_legacy_yield: !savedManifestSnapshot,
+    quantity_basis: frozenV2
+      ? 'raw_recipe_plan'
+      : savedManifestSnapshot
+        ? 'saved_production_manifest'
+        : 'legacy_recipe_raw_yield_fallback',
+    output_calculation_source: outputCalculationSource,
     production_snapshot: {
       ...production,
       ingredients_used: productionIngredients,
@@ -352,6 +379,8 @@ export function buildAutomaticProductionCompletionPlan({
       yield_adjustment_updated_at: nowIso(),
       yield_snapshot_source: frozenV2
         ? production.yield_snapshot_source || 'server_recipe_expansion'
+        : savedManifestSnapshot
+          ? production.yield_snapshot_source || 'saved_production_manifest'
         : 'legacy_completion_recipe_expansion',
       quantity_semantics: 'raw_recipe_to_yielded_output_v2',
       recipe_raw_weight_grams: rawRecipeWeight === null ? null : roundQuantity(rawRecipeWeight),
@@ -361,11 +390,7 @@ export function buildAutomaticProductionCompletionPlan({
         || (positiveNumber(recipe.portion_size_grams) ? 'recipe_portion_size' : 'yield_calculated'),
       expected_yield_servings: roundQuantity(expectedYieldServings),
       reconciliation_mode: 'automatic_yield_plan',
-      output_calculation_source: lineYieldWeight
-        ? lineYieldSummary.output_calculation_source
-        : recipeYieldWeight
-          ? 'recipe_yield_fallback'
-          : 'target_portion_fallback',
+      output_calculation_source: outputCalculationSource,
       production_warnings: [...new Set([
         ...(Array.isArray(production.production_warnings) ? production.production_warnings : []),
         ...(Array.isArray(lineYieldSummary.warnings) ? lineYieldSummary.warnings : []),
@@ -3276,13 +3301,14 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
   const completedAt = nowIso();
   const dateToken = String(production.production_date || completedAt.slice(0, 10)).replace(/[^0-9]/g, '').slice(0, 8);
   const reportNumber = `PCR-${dateToken}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-  const productionDishCount = getProductionEventDishCount(
+  const productionItemCount = getProductionEventItemCount(
     production,
     Array.isArray(production.menu_issue_items) ? production.menu_issue_items.length : 1
   );
   const productionEventTitle = formatProductionEventTitle({
     ...production,
-    production_issue_dish_count: productionDishCount
+    production_issue_item_count: productionItemCount,
+    production_issue_dish_count: productionItemCount
   }, {
     fallback: production.recipe_name || 'Production Consumption'
   });
@@ -3347,7 +3373,8 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     menu_category: production.menu_category || null,
     menu_scope_label: getProductionEventScopeLabel(production),
     production_issue_grouped: Boolean(production.production_issue_grouped),
-    production_issue_dish_count: productionDishCount,
+    production_issue_item_count: productionItemCount,
+    production_issue_dish_count: productionItemCount,
     menu_issue_items: menuIssueItems,
     kitchen_station: production.kitchen_station || production.assigned_station || production.station || null,
     target_servings: production.target_servings || 0,
@@ -3426,6 +3453,8 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     consumption_report_number: report.report_number,
     consumption_report_name: report.report_name,
     consumption_report_generated_at: completedAt,
+    production_issue_item_count: productionItemCount,
+    production_issue_dish_count: productionItemCount,
     portion_size_grams: producedItemBatch.portion_size_grams,
     expected_finished_weight_grams: producedItemBatch.expected_finished_weight_grams,
     actual_finished_weight_grams: producedItemBatch.actual_finished_weight_grams,

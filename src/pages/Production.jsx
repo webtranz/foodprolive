@@ -34,7 +34,8 @@ import { ingredientForRecipeLine } from '../../shared/recipeLineWeight.js';
 import { getItemCode } from '../../shared/itemCode.js';
 import {
   formatProductionEventTitle,
-  getProductionEventDishCount,
+  formatProductionItemCountLabel,
+  getProductionEventItemCount,
   getProductionEventScopeLabel
 } from '../../shared/productionLabels.js';
 import {
@@ -111,6 +112,104 @@ function formatReportPercent(value) {
 
 function getReportSectionLines(report, key) {
   return ((report?.sections || []).find((section) => section.key === key)?.lines || []);
+}
+
+function arrayValue(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function firstPresent(...values) {
+  return values.find((value) => value !== null && value !== undefined && value !== '') ?? null;
+}
+
+function sumReportWeights(lines = [], field) {
+  const usableLines = arrayValue(lines).filter((line) => optionalNumber(line?.[field]) !== null);
+  if (usableLines.length === 0) return null;
+  return usableLines.reduce((sum, line) => sum + toNumber(line[field], 0), 0);
+}
+
+function sumManifestItemWeight(item = {}, field) {
+  return sumReportWeights(item.ingredients_used, field);
+}
+
+function getReportSourceRecipeNames(lines = []) {
+  return new Set(
+    arrayValue(lines)
+      .flatMap((line) => arrayValue(line?.source_recipe_names))
+      .map((name) => String(name || '').trim())
+      .filter(Boolean)
+  );
+}
+
+function mergeConsumptionReportWithProduction(report = {}, production = {}) {
+  const reportMenuItems = arrayValue(report.menu_issue_items);
+  const productionMenuItems = arrayValue(production.menu_issue_items);
+  const reportIngredientLines = arrayValue(report.ingredient_lines);
+  const productionCompletionLines = arrayValue(production.completion_lines);
+  const productionIngredientLines = arrayValue(production.ingredients_used);
+  const ingredientLines = reportIngredientLines.length > 0
+    ? reportIngredientLines
+    : productionCompletionLines.length > 0
+      ? productionCompletionLines
+      : productionIngredientLines;
+  const menuIssueItems = reportMenuItems.length > 0 ? reportMenuItems : productionMenuItems;
+  const mergedForCount = {
+    ...production,
+    ...report,
+    menu_issue_items: menuIssueItems
+  };
+  const itemCount = getProductionEventItemCount(mergedForCount, menuIssueItems.length || 0);
+
+  return {
+    ...production,
+    ...report,
+    production_id: report.production_id || production.id || null,
+    production_name: report.production_name || production.recipe_name || production.production_name || null,
+    original_production_name: report.original_production_name || production.recipe_name || null,
+    production_date: report.production_date || production.production_date || null,
+    site_id: report.site_id || production.fulfillment_store_id || production.site_id || null,
+    site_name: report.site_name || production.fulfillment_store_name || production.site_name || null,
+    requesting_site_id: report.requesting_site_id || production.site_id || null,
+    requesting_site_name: report.requesting_site_name || production.site_name || null,
+    fulfillment_store_id: report.fulfillment_store_id || production.fulfillment_store_id || production.site_id || null,
+    fulfillment_store_name: report.fulfillment_store_name || production.fulfillment_store_name || production.site_name || null,
+    recipe_name: report.recipe_name || production.recipe_name || null,
+    meal_type: report.meal_type || production.meal_type || null,
+    menu_type: report.menu_type || production.menu_type || production.cuisine_type || null,
+    cuisine_type: report.cuisine_type || report.menu_type || production.menu_type || production.cuisine_type || null,
+    menu_category: report.menu_category || production.menu_category || null,
+    production_issue_grouped: Boolean(report.production_issue_grouped ?? production.production_issue_grouped),
+    production_issue_item_count: itemCount,
+    production_issue_dish_count: itemCount,
+    menu_issue_items: menuIssueItems,
+    target_servings: firstPresent(report.target_servings, production.target_servings, 0),
+    output_calculation_source: report.output_calculation_source || production.output_calculation_source || null,
+    quantity_basis: report.quantity_basis || production.quantity_basis || null,
+    recipe_raw_weight_grams: firstPresent(report.recipe_raw_weight_grams, production.recipe_raw_weight_grams),
+    expected_finished_weight_grams: firstPresent(
+      report.expected_finished_weight_grams,
+      production.expected_finished_weight_grams,
+      production.actual_finished_weight_grams
+    ),
+    actual_finished_weight_grams: firstPresent(report.actual_finished_weight_grams, production.actual_finished_weight_grams),
+    total_raw_consumption_weight_grams: firstPresent(
+      report.total_raw_consumption_weight_grams,
+      production.total_raw_consumption_weight_grams,
+      production.recipe_raw_weight_grams,
+      sumReportWeights(ingredientLines, 'raw_weight_grams')
+    ),
+    total_yielded_weight_grams: firstPresent(
+      report.total_yielded_weight_grams,
+      production.total_yielded_weight_grams,
+      production.expected_finished_weight_grams,
+      production.actual_finished_weight_grams,
+      sumReportWeights(ingredientLines, 'yielded_weight_grams')
+    ),
+    portion_size_grams: firstPresent(report.portion_size_grams, production.portion_size_grams),
+    expected_yield_servings: firstPresent(report.expected_yield_servings, production.expected_yield_servings),
+    ingredient_line_count: firstPresent(report.ingredient_line_count, ingredientLines.length),
+    ingredient_lines: ingredientLines
+  };
 }
 
 function formatReportSource(value) {
@@ -313,7 +412,7 @@ function ProductionIngredientSnapshotEditor({
         <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-900">
           <p className="font-semibold">Short after selected meal demand</p>
           <p className="mt-1 text-xs text-red-800">
-            These ingredient lines are short after all selected dishes are combined. Use the highlighted lines below to zero out, replace, or adjust quantities for production only.
+            These ingredient lines are short after all selected production items are combined. Use the highlighted lines below to zero out, replace, or adjust quantities for production only.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
             {aggregateShortageLines.map((line) => (
@@ -1643,9 +1742,9 @@ export default function Production() {
           'Only choose from the available inventory candidates. Do not invent ingredients.',
           'Compare the full item name, including descriptors and package details, not only the first word or brand.',
           'Prefer culinary similarity, compatible units, and enough available stock. Mention allergy/dietary concerns when likely.',
-          `Short ingredient: ${line.ingredient_name}. This dish line requires ${formatRecipeQuantity(line.raw_quantity, line.unit)} ${line.unit}.`,
+          `Short ingredient: ${line.ingredient_name}. This production item requires ${formatRecipeQuantity(line.raw_quantity, line.unit)} ${line.unit}.`,
           line.aggregate_shortage
-            ? `Selected-meal aggregate shortage context: ${formatRecipeQuantity(line.aggregate_shortage_quantity ?? line.shortage, line.aggregate_inventory_unit || line.inventory_unit)} ${line.aggregate_inventory_unit || line.inventory_unit}. Size the replacement for this dish line, not the whole aggregate shortage.`
+            ? `Selected-meal aggregate shortage context: ${formatRecipeQuantity(line.aggregate_shortage_quantity ?? line.shortage, line.aggregate_inventory_unit || line.inventory_unit)} ${line.aggregate_inventory_unit || line.inventory_unit}. Size the replacement for this production item, not the whole aggregate shortage.`
             : `Shortage: ${formatRecipeQuantity(line.shortage, line.inventory_unit)} ${line.inventory_unit}.`,
           `Available candidates: ${fallbackSuggestions.map((candidate) => `${candidate.ingredient_id} | ${candidate.ingredient_name} | ${formatRecipeQuantity(candidate.available_quantity, candidate.unit)} ${candidate.unit} available`).join('; ')}`
         ].join('\n'),
@@ -1965,7 +2064,8 @@ export default function Production() {
     const lines = group.snapshot_lines || [];
     const estimatedBatchCost = Number((group.estimatedBatchCost || 0).toFixed(2));
     const servingCount = Math.max(1, finiteProductionNumber(group.production_covers, 0));
-    const dishNames = group.items.map((item) => item.recipe_name).filter(Boolean);
+    const manifestItemCount = group.items.length;
+    const manifestItemNames = group.items.map((item) => item.recipe_name).filter(Boolean);
     const menuIssueItems = group.items.map((item) => {
       const itemLines = issueSnapshots[item.key] || [];
       const itemBatchCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
@@ -2000,9 +2100,10 @@ export default function Production() {
       menu_type: menuType,
       menu_category: menuCategory,
       production_issue_grouped: true,
-      production_issue_dish_count: group.items.length
+      production_issue_item_count: manifestItemCount,
+      production_issue_dish_count: manifestItemCount
     }, {
-      fallback: `${group.meal_label} Menu (${group.items.length} dish${group.items.length === 1 ? '' : 'es'})`
+      fallback: `${group.meal_label} Menu (${formatProductionItemCountLabel(manifestItemCount)})`
     });
 
     return {
@@ -2021,7 +2122,7 @@ export default function Production() {
       kitchen_station: recipe.kitchen_station || recipe.station || '',
       notes: [
         `Issued from menu plan ${issuePlan?.plan_date || group.plan_date || ''} ${group.meal_label}.`,
-        dishNames.length ? `Dishes: ${dishNames.join(', ')}` : '',
+        manifestItemNames.length ? `Manifest items: ${manifestItemNames.join(', ')}` : '',
         issueNotes
       ].filter(Boolean).join('\n'),
       source_type: 'menu_plan',
@@ -2034,7 +2135,8 @@ export default function Production() {
       production_issue_grouped: true,
       production_issue_group_key: group.key,
       production_issue_scope: issueMealView,
-      production_issue_dish_count: group.items.length,
+      production_issue_item_count: manifestItemCount,
+      production_issue_dish_count: manifestItemCount,
       menu_issue_items: menuIssueItems,
       recipe_snapshot_mode: 'production_only_override',
       recipe_snapshot_locked: true,
@@ -2240,7 +2342,7 @@ export default function Production() {
     setActionError('');
     try {
       const report = await base44.entities.ProductionConsumptionReport.get(reportId);
-      setSelectedConsumptionReport(report);
+      setSelectedConsumptionReport(mergeConsumptionReportWithProduction(report, production));
     } catch (error) {
       setActionError(error.message || 'Unable to load the production consumption report.');
     } finally {
@@ -2538,10 +2640,23 @@ export default function Production() {
   const reportScopeLabel = selectedConsumptionReport
     ? getProductionEventScopeLabel(selectedConsumptionReport)
     : '';
-  const reportDishCount = selectedConsumptionReport
-    ? getProductionEventDishCount(selectedConsumptionReport, 0)
+  const reportManifestItems = arrayValue(selectedConsumptionReport?.menu_issue_items);
+  const reportItemCount = selectedConsumptionReport
+    ? getProductionEventItemCount(selectedConsumptionReport, reportManifestItems.length)
     : 0;
   const reportIngredientLines = selectedConsumptionReport?.ingredient_lines || [];
+  const reportSourceRecipeNames = getReportSourceRecipeNames(reportIngredientLines);
+  const reportSourceText = [
+    selectedConsumptionReport?.quantity_basis,
+    selectedConsumptionReport?.reconciliation_mode,
+    selectedConsumptionReport?.output_calculation_source,
+    ...reportIngredientLines.map((line) => line.quantity_basis || line.weight_calculation_source)
+  ].filter(Boolean).join(' ');
+  const reportUsedLegacyFallback = /legacy_(?:completion_recipe_expansion|recipe_raw_yield_fallback|recipe_raw_line_yields)|legacy recipe raw yield/i
+    .test(reportSourceText);
+  const reportManifestCoverageIncomplete = reportManifestItems.length > 0
+    && reportSourceRecipeNames.size > 0
+    && reportSourceRecipeNames.size < reportManifestItems.length;
   const reportLotLines = getReportSectionLines(selectedConsumptionReport, 'inventory_lot_usage');
   const reportShortageLines = getReportSectionLines(selectedConsumptionReport, 'shortages');
   const reportTotalRawWeightGrams = optionalNumber(selectedConsumptionReport?.total_raw_consumption_weight_grams)
@@ -2969,7 +3084,7 @@ export default function Production() {
                       </p>
                       <p className="mt-1 text-sm text-indigo-800">
                         {editingIssueProduction
-                          ? 'Update the saved planned dishes and production-only recipe snapshots for this existing request.'
+                          ? 'Update the saved planned items and production-only recipe snapshots for this existing request.'
                           : 'One review is created per meal type for this production day. Shortage checks below use the same aggregate demand that will appear on the dashboard.'}
                       </p>
                     </div>
@@ -3022,7 +3137,7 @@ export default function Production() {
                                 </p>
                                 {Array.isArray(line.source_recipe_names) && line.source_recipe_names.length > 0 ? (
                                   <p className="mt-0.5 truncate text-slate-500">
-                                    Dishes: {line.source_recipe_names.join(', ')}
+                                    Used in: {line.source_recipe_names.join(', ')}
                                   </p>
                                 ) : null}
                                 {targetItemKey ? (
@@ -3048,7 +3163,7 @@ export default function Production() {
                             <div>
                               <p className="font-medium text-slate-950">{group.meal_label}</p>
                               <p className="mt-1 text-xs text-slate-500">
-                                {group.items.length} dish{group.items.length === 1 ? '' : 'es'} · {formatRecipeQuantity(group.production_covers, 'servings')} covers
+                                {formatProductionItemCountLabel(group.items.length)} · {formatRecipeQuantity(group.production_covers, 'servings')} covers
                               </p>
                             </div>
                             <Badge className={!issueInventoryReady ? 'bg-amber-600' : group.shortageCount > 0 ? 'bg-red-600' : 'bg-emerald-600'}>
@@ -3063,7 +3178,7 @@ export default function Production() {
                     </div>
                   ) : (
                     <p className="mt-3 rounded-lg border border-dashed border-indigo-200 bg-white/80 px-3 py-3 text-sm text-indigo-800">
-                      Select planned dishes below to prepare meal-level review requests.
+                      Select planned production items below to prepare meal-level review requests.
                     </p>
                   )}
                 </div>
@@ -3073,9 +3188,9 @@ export default function Production() {
                     <div className="rounded-2xl border border-slate-200 bg-white p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="font-semibold text-slate-900">Planned dishes</p>
+                          <p className="font-semibold text-slate-900">Planned production items</p>
                           <p className="mt-1 text-sm text-slate-500">
-                            {selectedIssueSubmitItems.length} dishes selected · {selectedIssueMealGroups.length} meal review{selectedIssueMealGroups.length === 1 ? '' : 's'}
+                            {selectedIssueSubmitItems.length} items selected · {selectedIssueMealGroups.length} meal review{selectedIssueMealGroups.length === 1 ? '' : 's'}
                           </p>
                         </div>
                         <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
@@ -3193,7 +3308,7 @@ export default function Production() {
                       />
                     ) : (
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-14 text-center text-sm text-slate-500">
-                        Select a planned dish to review its production recipe snapshot.
+                        Select a planned production item to review its production recipe snapshot.
                       </div>
                     )}
                   </div>
@@ -3347,11 +3462,11 @@ export default function Production() {
 
               {Array.isArray(selectedProduction?.menu_issue_items) && selectedProduction.menu_issue_items.length > 0 ? (
                 <div className="rounded-lg border border-indigo-100 bg-indigo-50/70 p-4">
-                  <p className="text-sm font-medium text-indigo-950">Planned dishes in this meal review</p>
+                  <p className="text-sm font-medium text-indigo-950">Production manifest items in this meal review</p>
                   <div className="mt-3 grid gap-2 md:grid-cols-2">
                     {selectedProduction.menu_issue_items.map((item, index) => (
-                      <div key={item.key || `${item.recipe_id || 'dish'}-${index}`} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-sm">
-                        <p className="font-medium text-slate-900">{item.recipe_name || 'Planned dish'}</p>
+                      <div key={item.key || `${item.recipe_id || 'item'}-${index}`} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-sm">
+                        <p className="font-medium text-slate-900">{item.recipe_name || 'Planned item'}</p>
                         <p className="mt-1 text-xs text-slate-500">
                           Covers {formatRecipeQuantity(item.production_covers ?? item.expected_servings, 'servings')} · Est. cost {formatCurrency(item.estimated_batch_cost || 0)}
                         </p>
@@ -3842,7 +3957,7 @@ export default function Production() {
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Menu Scope</p>
                   <p className="font-semibold text-slate-950">
                     {reportScopeLabel || 'Not classified'}
-                    {reportDishCount > 0 ? ` · ${reportDishCount} dish${reportDishCount === 1 ? '' : 'es'}` : ''}
+                    {reportItemCount > 0 ? ` · ${formatProductionItemCountLabel(reportItemCount)}` : ''}
                   </p>
                 </div>
                 <div>
@@ -3874,26 +3989,55 @@ export default function Production() {
                   <p className="text-xs text-slate-500">Source: {formatReportSource(selectedConsumptionReport?.output_calculation_source)}</p>
                 </div>
               </div>
-              {Array.isArray(selectedConsumptionReport?.menu_issue_items) && selectedConsumptionReport.menu_issue_items.length > 0 ? (
+              {reportItemCount > 0 ? (
+                <div className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-semibold text-emerald-900">Full production manifest</p>
+                    <p className="text-emerald-700">
+                      This production event contains every planned production line, including recipes and non-dish items.
+                    </p>
+                  </div>
+                  <Badge className="w-fit border border-emerald-300 bg-emerald-100 px-4 py-1.5 text-sm font-bold text-emerald-800 hover:bg-emerald-100">
+                    {formatProductionItemCountLabel(reportItemCount)}
+                  </Badge>
+                </div>
+              ) : null}
+              {reportUsedLegacyFallback || reportManifestCoverageIncomplete ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <p className="font-semibold">Legacy calculation warning</p>
+                  <p className="mt-1">
+                    This saved PCR appears to have been posted by an older fallback path. The stock rows may represent only the recipe shown under “Used In,” while the full production manifest is listed below for reverse troubleshooting.
+                  </p>
+                </div>
+              ) : null}
+              {reportManifestItems.length > 0 ? (
                 <div className="overflow-x-auto rounded-xl border border-slate-200">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Dish</TableHead>
+                        <TableHead>Manifest Item</TableHead>
                         <TableHead>Production Covers</TableHead>
                         <TableHead>Estimated Cost</TableHead>
                         <TableHead>Snapshot Lines</TableHead>
+                        <TableHead>Raw Weight</TableHead>
+                        <TableHead>Yielded Weight</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {selectedConsumptionReport.menu_issue_items.map((item, index) => (
-                        <TableRow key={item.key || `${item.recipe_id}-${index}`}>
-                          <TableCell className="font-medium text-slate-900">{item.recipe_name || 'Planned dish'}</TableCell>
-                          <TableCell>{formatReportQuantity(item.production_covers ?? item.expected_servings, 'servings')}</TableCell>
-                          <TableCell>{formatCurrency(item.estimated_batch_cost || 0)}</TableCell>
-                          <TableCell>{Array.isArray(item.ingredients_used) ? item.ingredients_used.length : '—'}</TableCell>
-                        </TableRow>
-                      ))}
+                      {reportManifestItems.map((item, index) => {
+                        const rawWeight = sumManifestItemWeight(item, 'raw_weight_grams');
+                        const yieldedWeight = sumManifestItemWeight(item, 'yielded_weight_grams');
+                        return (
+                          <TableRow key={item.key || `${item.recipe_id || 'item'}-${index}`}>
+                            <TableCell className="font-medium text-slate-900">{item.recipe_name || 'Planned item'}</TableCell>
+                            <TableCell>{formatReportQuantity(item.production_covers ?? item.expected_servings, 'servings')}</TableCell>
+                            <TableCell>{formatCurrency(item.estimated_batch_cost || 0)}</TableCell>
+                            <TableCell>{Array.isArray(item.ingredients_used) ? item.ingredients_used.length : '—'}</TableCell>
+                            <TableCell>{formatReportWeightFromGrams(rawWeight)}</TableCell>
+                            <TableCell>{formatReportWeightFromGrams(yieldedWeight)}</TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>

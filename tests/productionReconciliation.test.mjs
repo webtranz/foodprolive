@@ -24,6 +24,14 @@ const zeroLineIngredient = {
   name: 'ZERO TEST 1/1KG',
   unit: 'EA'
 };
+const oats = {
+  id: 'oats',
+  item_code: 'OAT-001',
+  name: 'OATMEAL BULK',
+  unit: 'kg',
+  cooking_yield_percent: 100,
+  cost_per_unit: 4
+};
 const recipe = {
   id: 'recipe-chicken',
   name: 'Chicken Test',
@@ -195,6 +203,63 @@ test('v2 completion reconciles frozen raw demand and calculates output without o
   assert.equal(plan.ingredients_used[0].yielded_weight_grams, 3600);
   assert.match(plan.ingredients_used[0].weight_calculation_source, /^legacy_v2_repair:/);
   assert.equal(plan.ingredients_used[0].weight_snapshot_version, 1);
+});
+
+test('menu production completion uses the saved manifest instead of rebuilding only the first recipe', () => {
+  const plan = buildAutomaticProductionCompletionPlan({
+    production: {
+      id: 'menu-production',
+      recipe_id: recipe.id,
+      recipe_name: 'Breakfast Menu Junior / General (2 Items)',
+      meal_type: 'breakfast',
+      menu_type: 'general',
+      menu_category: 'junior',
+      target_servings: 10,
+      production_issue_grouped: true,
+      production_issue_item_count: 2,
+      production_issue_dish_count: 2,
+      menu_issue_items: [
+        { key: 'eggs', recipe_id: recipe.id, recipe_name: 'Boiled Eggs', production_covers: 10 },
+        { key: 'oatmeal', recipe_id: 'oatmeal-recipe', recipe_name: 'Oatmeal', production_covers: 10 }
+      ],
+      recipe_snapshot_locked: true,
+      ingredients_used: [
+        {
+          ingredient_id: chicken.id,
+          ingredient_name: chicken.name,
+          planned_quantity: 5,
+          raw_quantity: 5,
+          unit: 'EA',
+          raw_weight_grams: 4500,
+          yielded_weight_grams: 3600,
+          yield_multiplier: 0.8,
+          source_recipe_names: ['Boiled Eggs']
+        },
+        {
+          ingredient_id: oats.id,
+          ingredient_name: oats.name,
+          planned_quantity: 2,
+          raw_quantity: 2,
+          unit: 'kg',
+          raw_weight_grams: 2000,
+          yielded_weight_grams: 2000,
+          yield_multiplier: 1,
+          source_recipe_names: ['Oatmeal']
+        }
+      ]
+    },
+    recipeCatalog: [recipe],
+    ingredientCatalog: [chicken, oats]
+  });
+
+  assert.equal(plan.quantity_basis, 'saved_production_manifest');
+  assert.deepEqual(plan.ingredients_used.map((line) => line.ingredient_id), [chicken.id, oats.id]);
+  assert.equal(plan.ingredients_used[1].source_recipe_names[0], 'Oatmeal');
+  assert.equal(plan.production_snapshot.expected_finished_weight_grams, 5600);
+  assert.equal(plan.production_snapshot.recipe_raw_weight_grams, 6500);
+  assert.equal(plan.production_snapshot.portion_size_grams, 560);
+  assert.equal(plan.production_snapshot.output_calculation_source, 'saved_production_manifest_line_yields');
+  assert.equal(plan.production_snapshot.yield_snapshot_source, 'saved_production_manifest');
 });
 
 test('frozen v2 line weights remain stable when ingredient package and yield metadata later change', () => {

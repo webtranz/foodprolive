@@ -5,7 +5,10 @@ import {
 import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
 import { formatRecipeQuantity } from '../../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../../shared/itemCode.js';
-import { formatProductionEventTitle } from '../../shared/productionLabels.js';
+import {
+  formatProductionEventTitle,
+  getProductionEventItemCount
+} from '../../shared/productionLabels.js';
 import { resolveProductionFulfillmentStore } from '../../shared/productionFulfillment.js';
 import {
   getInventoryQuantities,
@@ -51,11 +54,8 @@ function getMenuIssueItems(production = {}) {
   return Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [];
 }
 
-function getProductionDishCount(production = {}) {
-  const explicitCount = numberValue(production.production_issue_dish_count, 0);
-  if (explicitCount > 0) return explicitCount;
-  const menuIssueItems = getMenuIssueItems(production);
-  return menuIssueItems.length > 0 ? menuIssueItems.length : 1;
+function getProductionManifestItemCount(production = {}) {
+  return getProductionEventItemCount(production, 1);
 }
 
 function isLegacyMenuPlanReviewCandidate(item = {}) {
@@ -150,7 +150,7 @@ function groupLegacyMenuPlanReviewItems(items, shortages, ingredientMap) {
     groupItems.forEach((item) => consumedItemIds.add(item.id));
     const base = groupItems[0];
     const style = PRODUCTION_MEAL_PERIODS.find((period) => period.key === base.meal_type);
-    const dishCount = groupItems.reduce((sum, item) => sum + item.dish_count, 0);
+    const itemCount = groupItems.reduce((sum, item) => sum + item.item_count, 0);
     const productionIds = groupItems.map((item) => item.production.id);
     const groupShortages = shortages.filter((shortage) => (
       productionIds.some((productionId) => shortage.production_ids.includes(productionId))
@@ -190,15 +190,17 @@ function groupLegacyMenuPlanReviewItems(items, shortages, ingredientMap) {
         ...base.production,
         meal_type: base.meal_type,
         production_issue_grouped: true,
-        production_issue_dish_count: dishCount
+        production_issue_item_count: itemCount,
+        production_issue_dish_count: itemCount
       }, {
-        fallback: `${style?.label || titleCase(base.meal_type)} Menu (${dishCount} dish${dishCount === 1 ? '' : 'es'})`
+        fallback: `${style?.label || titleCase(base.meal_type)} Menu (${itemCount} Item${itemCount === 1 ? '' : 's'})`
       }),
       target_servings: groupItems.reduce((sum, item) => sum + item.required_portions, 0),
       estimated_batch_cost: round(groupItems.reduce((sum, item) => sum + item.estimated_batch_cost, 0)),
       status: 'pending_approval',
       production_issue_grouped: true,
-      production_issue_dish_count: dishCount,
+      production_issue_item_count: itemCount,
+      production_issue_dish_count: itemCount,
       menu_issue_items: menuIssueItems,
       ingredients_used: ingredientLines,
       approval_history: approvalHistory,
@@ -219,7 +221,8 @@ function groupLegacyMenuPlanReviewItems(items, shortages, ingredientMap) {
       batches_required: 1,
       estimated_batch_cost: production.estimated_batch_cost,
       menu_issue_items: menuIssueItems,
-      dish_count: dishCount,
+      item_count: itemCount,
+      dish_count: itemCount,
       station: 'Multiple stations',
       shortages: groupShortages,
       prep_status: resolvePrepStatus(production, groupShortages.length > 0),
@@ -497,13 +500,13 @@ export function buildProductionPlanningDashboard({
     const recipe = recipeMap.get(String(production?.recipe_id || '')) || null;
     const portions = Math.max(0, numberValue(production?.target_servings, 0));
     const menuIssueItems = getMenuIssueItems(production);
-    const dishCount = getProductionDishCount(production);
+    const itemCount = getProductionManifestItemCount(production);
     const batchYield = Math.max(1, numberValue(production?.batch_yield ?? recipe?.batch_yield ?? recipe?.servings, 1));
     const productionShortages = shortages.filter((shortage) => shortage.production_ids.includes(production.id));
     const workflowStatus = textValue(production?.status || 'planned').toLowerCase();
     const mealType = normalizeProductionMealType(production?.meal_type);
     const productionEventTitle = formatProductionEventTitle(production, {
-      fallback: production.recipe_name || recipe?.name || 'Unnamed dish'
+      fallback: production.recipe_name || recipe?.name || 'Unnamed item'
     });
 
     return {
@@ -512,7 +515,8 @@ export function buildProductionPlanningDashboard({
       recipe,
       recipe_name: productionEventTitle,
       menu_issue_items: menuIssueItems,
-      dish_count: dishCount,
+      item_count: itemCount,
+      dish_count: itemCount,
       ingredient_lines: (Array.isArray(production?.ingredients_used) ? production.ingredients_used : []).map((line) => ({
         ...line,
         item_code: getItemCodeFromRecords([
@@ -531,7 +535,7 @@ export function buildProductionPlanningDashboard({
         ? 'raw_recipe_to_yielded_output_v2'
         : 'legacy_v1'),
       batch_yield: batchYield,
-      batches_required: menuIssueItems.length > 0 ? dishCount : (portions > 0 ? Math.ceil(portions / batchYield) : 0),
+      batches_required: menuIssueItems.length > 0 ? itemCount : (portions > 0 ? Math.ceil(portions / batchYield) : 0),
       estimated_batch_cost: resolveProductionCost(production, ingredientMap),
       station: production.kitchen_station
         || production.assigned_station
@@ -561,7 +565,8 @@ export function buildProductionPlanningDashboard({
       ...period,
       items: periodItems,
       total_portions: periodItems.reduce((sum, item) => sum + item.required_portions, 0),
-      total_recipes: periodItems.reduce((sum, item) => sum + item.dish_count, 0)
+      total_items: periodItems.reduce((sum, item) => sum + item.item_count, 0),
+      total_recipes: periodItems.reduce((sum, item) => sum + item.item_count, 0)
     };
   });
   const labor_loads = buildLaborLoads(displayItems);
@@ -575,7 +580,8 @@ export function buildProductionPlanningDashboard({
     summary: {
       total_portions: countedItems.reduce((sum, item) => sum + item.required_portions, 0),
       portions_by_meal: Object.fromEntries(sections.map((section) => [section.key, section.total_portions])),
-      total_recipes: countedItems.reduce((sum, item) => sum + item.dish_count, 0),
+      total_items: countedItems.reduce((sum, item) => sum + item.item_count, 0),
+      total_recipes: countedItems.reduce((sum, item) => sum + item.item_count, 0),
       total_batch_cost: round(countedItems.reduce((sum, item) => sum + item.estimated_batch_cost, 0)),
       shortage_count: shortages.length,
       at_risk_count: countedItems.filter((item) => item.prep_status.key === 'at_risk').length,

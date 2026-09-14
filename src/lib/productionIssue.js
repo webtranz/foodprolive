@@ -42,13 +42,13 @@ export function getMenuIssueInventoryCheckState({
   if (error) return { ready: false, message: error };
   if (isLoading) return { ready: false, message: 'Loading production inventory and ingredients...' };
   if (!siteId) return { ready: false, message: 'Inventory cannot be checked until the production site is available.' };
-  if (items.length === 0) return { ready: false, message: 'Select a planned dish to check inventory.' };
+  if (items.length === 0) return { ready: false, message: 'Select a planned production item to check inventory.' };
   if (String(siteId) !== String(snapshotSiteId)
     || items.some((item) => !Array.isArray(snapshotsByItemKey[item.key]))) {
     return { ready: false, message: 'Calculating ingredient requirements for this production site...' };
   }
   if (items.some((item) => snapshotsByItemKey[item.key].length === 0)) {
-    return { ready: false, message: 'A selected dish has no ingredient details. Check its recipe before issuing production.' };
+    return { ready: false, message: 'A selected production item has no ingredient details. Check its recipe before issuing production.' };
   }
   return { ready: true, message: '' };
 }

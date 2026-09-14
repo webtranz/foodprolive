@@ -16,7 +16,10 @@ import {
   normalizeMenuCuisine,
   normalizeProductionMenuScope
 } from '../shared/menuCategories.js';
-import { formatProductionEventTitle } from '../shared/productionLabels.js';
+import {
+  formatProductionEventTitle,
+  getProductionEventItemCount
+} from '../shared/productionLabels.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../shared/siteHierarchy.js';
 
 const QUANTITY_EPSILON = 0.0000005;
@@ -1302,6 +1305,10 @@ export function buildProducedItemBatchSnapshot({
   const productionEventTitle = formatProductionEventTitle(production, {
     fallback: production.recipe_name || recipe.name || production.id
   });
+  const productionItemCount = getProductionEventItemCount(
+    production,
+    Array.isArray(production.menu_issue_items) ? production.menu_issue_items.length : 0
+  );
 
   return {
     batch_number: `PIB-${dateToken}-${productionToken}`,
@@ -1323,7 +1330,8 @@ export function buildProducedItemBatchSnapshot({
     menu_type: menuType,
     menu_category: menuCategory,
     production_issue_grouped: Boolean(production.production_issue_grouped),
-    production_issue_dish_count: number(production.production_issue_dish_count, 0),
+    production_issue_item_count: productionItemCount,
+    production_issue_dish_count: number(production.production_issue_dish_count, productionItemCount),
     menu_issue_items: Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [],
     portion_size_grams: roundQuantity(portionSize),
     service_portion_size_grams: null,

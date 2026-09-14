@@ -164,6 +164,7 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(reportBlock, /key: 'ingredient_consumption',[\s\S]*title: 'Ingredient Consumption'/);
   assert.match(reportBlock, /key: 'inventory_lot_usage',[\s\S]*title: 'Inventory Lots Consumed'/);
   assert.match(reportBlock, /key: 'shortages',[\s\S]*title: 'Shortages and Exceptions'/);
+  assert.match(reportBlock, /production_issue_item_count:/);
   assert.match(reportBlock, /production_issue_dish_count:/);
   assert.match(reportBlock, /menu_issue_items:/);
   assert.match(reportBlock, /total_raw_consumption_weight_grams:/);

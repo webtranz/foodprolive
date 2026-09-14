@@ -242,7 +242,10 @@ const groupedMenuDashboard = buildProductionPlanningDashboard({
 });
 const groupedBreakfastSection = groupedMenuDashboard.sections.find((section) => section.key === 'breakfast');
 assert.equal(groupedBreakfastSection.items.length, 1);
-assert.equal(groupedBreakfastSection.items[0].recipe_name, 'Breakfast Menu Senior / General (2 dishes)');
+assert.equal(groupedBreakfastSection.items[0].recipe_name, 'Breakfast Menu Senior / General (2 Items)');
+assert.equal(groupedBreakfastSection.items[0].item_count, 2);
+assert.equal(groupedBreakfastSection.total_items, 2);
+assert.equal(groupedMenuDashboard.summary.total_items, 2);
 assert.equal(groupedBreakfastSection.total_recipes, 2);
 assert.equal(groupedMenuDashboard.summary.total_recipes, 2);
 assert.equal(groupedMenuDashboard.shortages.length, 1);

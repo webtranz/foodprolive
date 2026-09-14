@@ -32,24 +32,36 @@ function getMealLabel(production = {}) {
   return MEAL_LABELS[normalized] || titleCase(production.meal_type);
 }
 
-export function getProductionEventDishCount(production = {}, fallback = 0) {
+export function getProductionEventItemCount(production = {}, fallback = 0) {
+  const issueItems = Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [];
+  if (issueItems.length > 0) return issueItems.length;
+
   const explicit = number(
-    production.production_issue_dish_count
+    production.production_issue_item_count
+      ?? production.item_count
+      ?? production.production_issue_dish_count
       ?? production.dish_count
       ?? production.recipe_count,
     0
   );
   if (explicit > 0) return explicit;
-  const issueItems = Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [];
-  if (issueItems.length > 0) return issueItems.length;
   const savedName = text(
     production.production_name
       || production.recipe_name
       || production.name
   );
-  const genericNameMatch = savedName.match(/\((\d+)\s+dishes?\)/i);
+  const genericNameMatch = savedName.match(/\((\d+)\s+(?:items?|dishes?)\)/i);
   if (genericNameMatch) return number(genericNameMatch[1], fallback);
   return fallback;
+}
+
+export function getProductionEventDishCount(production = {}, fallback = 0) {
+  return getProductionEventItemCount(production, fallback);
+}
+
+export function formatProductionItemCountLabel(itemCount = 0) {
+  const count = number(itemCount, 0);
+  return `${count} Item${count === 1 ? '' : 's'}`;
 }
 
 export function getProductionEventScopeLabel(production = {}) {
@@ -77,19 +89,20 @@ function isMenuProduction(production = {}) {
       || production.name
   );
   return production.production_issue_grouped === true
-    || getProductionEventDishCount(production, 0) > 1
+    || getProductionEventItemCount(production, 0) > 1
     || (Array.isArray(production.menu_issue_items) && production.menu_issue_items.length > 0)
     || hasGenericMenuProductionName(savedName);
 }
 
 function hasGenericMenuProductionName(value) {
-  return /^[a-z]+\s+menu\s+production(?:\s*\(\d+\s+dishes?\))?$/i.test(text(value));
+  return /^[a-z]+\s+menu\s+production(?:\s*\(\d+\s+(?:items?|dishes?)\))?$/i.test(text(value));
 }
 
 export function formatProductionEventTitle(
   production = {},
   {
     includeDishCount = true,
+    includeItemCount = includeDishCount,
     fallback = 'Production request',
     preferSavedName = false
   } = {}
@@ -112,11 +125,11 @@ export function formatProductionEventTitle(
   if (menuProduction) {
     const mealLabel = getMealLabel(production) || 'Meal';
     const scopeLabel = getProductionEventScopeLabel(production);
-    const dishCount = getProductionEventDishCount(production, 0);
-    const dishCountLabel = includeDishCount && dishCount > 0
-      ? ` (${dishCount} dish${dishCount === 1 ? '' : 'es'})`
+    const itemCount = getProductionEventItemCount(production, 0);
+    const itemCountLabel = includeItemCount && itemCount > 0
+      ? ` (${formatProductionItemCountLabel(itemCount)})`
       : '';
-    return `${mealLabel} Menu${scopeLabel ? ` ${scopeLabel}` : ''}${dishCountLabel}`;
+    return `${mealLabel} Menu${scopeLabel ? ` ${scopeLabel}` : ''}${itemCountLabel}`;
   }
 
   return savedName || fallback;

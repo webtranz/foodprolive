@@ -216,6 +216,7 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
   const reviewNotice = getProductionReviewNotice(item.production);
   const productionOverrideCount = getProductionOverrideCount(item.production);
   const isMenuIssueGroup = item.menu_issue_items.length > 0;
+  const manifestItemCount = Number(item.item_count || item.dish_count || item.menu_issue_items.length || 0);
 
   return (
     <Card className={`overflow-hidden border shadow-none ${item.prep_status.key === 'at_risk' ? 'border-red-300' : 'border-slate-200'}`}>
@@ -232,6 +233,11 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
                     ? 'Legacy approval - area review'
                     : getProductionStatusLabel(item.workflow_status)}
                 </Badge>
+                {isMenuIssueGroup ? (
+                  <Badge className="border border-emerald-200 bg-emerald-100 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100">
+                    {manifestItemCount.toLocaleString()} Item{manifestItemCount === 1 ? '' : 's'}
+                  </Badge>
+                ) : null}
               </div>
             </div>
           </div>
@@ -268,8 +274,8 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
           <Metric icon={Scale} label="Portion" value={item.portion_size.label} title={portionTitle} />
           <Metric
             icon={Layers3}
-            label={isMenuIssueGroup ? 'Dishes' : 'Yield'}
-            value={isMenuIssueGroup ? item.dish_count.toLocaleString() : `${formatRecipeQuantity(item.batch_yield, 'servings')} portions`}
+            label={isMenuIssueGroup ? 'Items' : 'Yield'}
+            value={isMenuIssueGroup ? manifestItemCount.toLocaleString() : `${formatRecipeQuantity(item.batch_yield, 'servings')} portions`}
           />
           <Metric
             icon={Factory}
@@ -281,11 +287,11 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
 
         {isMenuIssueGroup ? (
           <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/70 px-2.5 py-2 text-xs">
-            <p className="font-semibold text-indigo-900">Planned dishes in this meal review</p>
+            <p className="font-semibold text-indigo-900">Production manifest items</p>
             <ul className="mt-1.5 space-y-1 text-slate-700">
               {item.menu_issue_items.slice(0, 5).map((menuItem, index) => (
-                <li key={menuItem.key || `${menuItem.recipe_id || 'dish'}-${index}`} className="flex justify-between gap-3">
-                  <span className="min-w-0 truncate">{menuItem.recipe_name || 'Planned dish'}</span>
+                <li key={menuItem.key || `${menuItem.recipe_id || 'item'}-${index}`} className="flex justify-between gap-3">
+                  <span className="min-w-0 truncate">{menuItem.recipe_name || 'Planned item'}</span>
                   <span className="whitespace-nowrap text-slate-500">
                     {formatRecipeQuantity(menuItem.production_covers ?? menuItem.expected_servings, 'servings')}
                   </span>
@@ -293,7 +299,7 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
               ))}
             </ul>
             {item.menu_issue_items.length > 5 ? (
-              <p className="mt-1 text-slate-500">+{item.menu_issue_items.length - 5} more dishes</p>
+              <p className="mt-1 text-slate-500">+{item.menu_issue_items.length - 5} more items</p>
             ) : null}
           </div>
         ) : null}
@@ -361,6 +367,7 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
 function MealSection({ section, materialRequestMap, renderActions }) {
   const style = MEAL_STYLES[section.key] || MEAL_STYLES.other;
   const Icon = style.icon;
+  const sectionItemCount = Number(section.total_items ?? section.total_recipes ?? 0);
   return (
     <section className="production-meal-section min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white">
       <header className={`border-b px-4 py-3 ${style.header}`}>
@@ -375,7 +382,9 @@ function MealSection({ section, materialRequestMap, renderActions }) {
           <div className="text-right">
             <p className="text-lg font-bold text-slate-950">{section.total_portions.toLocaleString()}</p>
             <p className="text-[10px] uppercase tracking-wide text-slate-500">portions</p>
-            <p className="mt-0.5 text-[10px] text-slate-500">{section.total_recipes} dishes</p>
+            <Badge className="mt-1 border border-emerald-200 bg-emerald-100 text-emerald-700 shadow-sm hover:bg-emerald-100">
+              {sectionItemCount.toLocaleString()} planned
+            </Badge>
           </div>
         </div>
       </header>
@@ -391,7 +400,7 @@ function MealSection({ section, materialRequestMap, renderActions }) {
           <div className="flex min-h-32 flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center">
             <PackageOpen className="mb-2 h-6 w-6 text-slate-300" aria-hidden="true" />
             <p className="text-sm font-medium text-slate-600">No production planned</p>
-            <p className="mt-1 text-xs text-slate-400">No {section.label.toLowerCase()} dishes for this date.</p>
+            <p className="mt-1 text-xs text-slate-400">No {section.label.toLowerCase()} items for this date.</p>
           </div>
         )}
       </div>
@@ -422,8 +431,8 @@ function PlanSummary({ dashboard }) {
             </div>
           ) : null}
           <div className="mt-3 flex justify-between border-t border-slate-100 pt-3">
-            <span className="font-medium text-slate-700">Total Recipes</span>
-            <span className="font-semibold text-slate-950">{dashboard.summary.total_recipes}</span>
+            <span className="font-medium text-slate-700">Total Items</span>
+            <span className="font-semibold text-slate-950">{dashboard.summary.total_items ?? dashboard.summary.total_recipes}</span>
           </div>
           <div className="flex justify-between">
             <span className="font-medium text-slate-700">Total Batch Cost</span>
