@@ -2027,6 +2027,8 @@ function getConsumptionProductionEquivalentServings(record = {}) {
 function getProducedOutputCost(record = {}) {
   return firstPositiveNumber([
     record.total_cost,
+    record.production_cost_total,
+    record.ingredient_cost_total,
     record.estimated_total_cost,
     record.yield_total_cost,
     record.planned_total_cost,
@@ -2185,6 +2187,157 @@ function withFoodWasteCostAndApproval(payload = {}, calculatedCost = 0) {
     approval_status: isHighValue ? 'pending' : (payload.approval_status || 'approved'),
     status: isHighValue ? 'pending_review' : (payload.status || 'logged')
   };
+}
+
+function getFoodWasteSavedCost(record = {}) {
+  return firstPositiveNumber([
+    record.estimated_cost,
+    record.waste_cost,
+    record.total_cost,
+    record.meal_service_adjustment_cost
+  ]);
+}
+
+function getFoodWasteWeightGrams(record = {}) {
+  const explicitWeight = [
+    record.wasted_weight_grams,
+    record.waste_weight_grams,
+    record.quantity_grams,
+    record.weight_grams,
+    record.recorded_waste_grams,
+    record.total_waste_grams
+  ].find((value) => Number.isFinite(Number(value)));
+  if (typeof explicitWeight !== 'undefined') return Math.max(0, numericMatch(explicitWeight, 0));
+  try {
+    return normalizeFoodWasteWeightGrams(record.quantity, record.unit);
+  } catch {
+    return 0;
+  }
+}
+
+function uniqueRowsById(rows = []) {
+  const seen = new Set();
+  const uniqueRows = [];
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const key = String(row?.id || '').trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    uniqueRows.push(row);
+  });
+  return uniqueRows;
+}
+
+async function listFoodWasteMealServiceAdjustmentRows(record = {}, executor = null) {
+  const byId = await findDocumentsByIds(
+    'MealServiceConsumption',
+    Array.isArray(record.meal_service_adjustment_consumption_ids)
+      ? record.meal_service_adjustment_consumption_ids
+      : [],
+    executor
+  );
+  const byWasteId = record.id
+    ? await listDocuments('MealServiceConsumption', {
+      filters: { food_waste_id: record.id },
+      sort: 'created_date',
+      limit: 10000,
+      location: null
+    }, executor || undefined).catch(() => [])
+    : [];
+  return uniqueRowsById([...byId, ...byWasteId]);
+}
+
+function getPlateWasteAdjustmentSourceId(row = {}) {
+  const fromRow = String(row.reverses_consumption_id || '').trim();
+  if (fromRow) return fromRow;
+  const allocation = getConsumptionAllocations(row).find((entry) => String(entry.source_consumption_id || '').trim());
+  return String(allocation?.source_consumption_id || '').trim();
+}
+
+function getPlateWasteAdjustmentWeightGrams(row = {}) {
+  const explicitWeight = Math.abs(getConsumptionWeightGrams(row));
+  if (explicitWeight > FOOD_WASTE_QUANTITY_EPSILON) return explicitWeight;
+  return getConsumptionAllocations(row).reduce(
+    (sum, allocation) => sum + getAllocationWeightGrams(allocation),
+    0
+  );
+}
+
+async function calculatePlateWasteDisplayCost(record = {}, executor = null) {
+  const adjustmentRows = await listFoodWasteMealServiceAdjustmentRows(record, executor);
+  if (!adjustmentRows.length) return 0;
+
+  const explicitAdjustmentCost = roundFoodWasteCost(adjustmentRows.reduce((sum, row) => (
+    sum + Math.abs(firstPositiveNumber([
+      row.estimated_cost,
+      row.consumed_cost,
+      row.total_cost,
+      row.cost
+    ]))
+  ), 0));
+  if (explicitAdjustmentCost > FOOD_WASTE_QUANTITY_EPSILON) return explicitAdjustmentCost;
+
+  const sourceIds = uniqueTextValues([
+    ...(Array.isArray(record.meal_service_source_consumption_ids)
+      ? record.meal_service_source_consumption_ids
+      : []),
+    ...adjustmentRows.map((row) => getPlateWasteAdjustmentSourceId(row))
+  ]);
+  const sourceRows = await findDocumentsByIds('MealServiceConsumption', sourceIds, executor);
+  const costPerGramByConsumptionId = await buildConsumptionCostPerGramById(sourceRows, executor);
+  return roundFoodWasteCost(adjustmentRows.reduce((sum, row) => {
+    const sourceId = getPlateWasteAdjustmentSourceId(row);
+    const costPerGram = numericMatch(costPerGramByConsumptionId.get(sourceId), 0);
+    return sum + (getPlateWasteAdjustmentWeightGrams(row) * costPerGram);
+  }, 0));
+}
+
+async function calculateFoodWasteDisplayCost(record = {}, executor = null) {
+  const savedCost = getFoodWasteSavedCost(record);
+  if (savedCost > FOOD_WASTE_QUANTITY_EPSILON) return savedCost;
+
+  const outputAllocationCost = await calculateProducedOutputWasteCost({
+    allocations: Array.isArray(record.output_allocations) ? record.output_allocations : [],
+    executor
+  });
+  if (outputAllocationCost > FOOD_WASTE_QUANTITY_EPSILON) return outputAllocationCost;
+
+  if (
+    String(record.source_type || '').toLowerCase() === 'plate_waste'
+    || String(record.waste_category || '').toLowerCase() === 'plate_waste'
+    || numericMatch(record.meal_service_adjustment_weight_grams, 0) > FOOD_WASTE_QUANTITY_EPSILON
+  ) {
+    const plateWasteCost = await calculatePlateWasteDisplayCost(record, executor);
+    if (plateWasteCost > FOOD_WASTE_QUANTITY_EPSILON) return plateWasteCost;
+  }
+
+  const wasteWeightGrams = getFoodWasteWeightGrams(record);
+  if (wasteWeightGrams <= FOOD_WASTE_QUANTITY_EPSILON || !String(record.production_id || '').trim()) {
+    return 0;
+  }
+  const production = await findDocument('Production', record.production_id, executor || undefined).catch(() => null);
+  const productionCost = getProducedOutputCost(production || {});
+  const productionWeightGrams = firstPositiveNumber([
+    record.produced_weight_grams,
+    getProducedOutputWeightGrams(production || {})
+  ]);
+  return productionCost > FOOD_WASTE_QUANTITY_EPSILON && productionWeightGrams > FOOD_WASTE_QUANTITY_EPSILON
+    ? roundFoodWasteCost((wasteWeightGrams / productionWeightGrams) * productionCost)
+    : 0;
+}
+
+async function enrichFoodWasteDisplayCosts(records = [], executor = null) {
+  return Promise.all((Array.isArray(records) ? records : []).map(async (record) => {
+    const cost = await calculateFoodWasteDisplayCost(record, executor);
+    if (cost <= FOOD_WASTE_QUANTITY_EPSILON || getFoodWasteSavedCost(record) > FOOD_WASTE_QUANTITY_EPSILON) {
+      return record;
+    }
+    return {
+      ...record,
+      estimated_cost: cost,
+      calculated_estimated_cost: cost,
+      food_waste_cost_source: 'calculated_from_production_output'
+    };
+  }));
 }
 
 async function listPlateWasteMealServiceConsumptionScope({
@@ -3857,7 +4010,8 @@ app.get('/api/food-waste', requireAuth, requirePermission('manage_waste'), async
     });
 
     const isAdministrator = hasAdminAccess(request.user);
-    return response.json(filteredRecords.map((record) => decorateFoodWasteRecord(record, new Date(), {
+    const costedRecords = await enrichFoodWasteDisplayCosts(filteredRecords);
+    return response.json(costedRecords.map((record) => decorateFoodWasteRecord(record, new Date(), {
       isAdmin: isAdministrator
     })));
   } catch (error) {

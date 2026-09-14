@@ -329,6 +329,8 @@ const cases = [
       assert.match(page, /getWasteQuantityKg\(item\)/);
       assert.match(page, /function getWasteCost\(item = \{\}, productionMap = new Map\(\)\)/);
       assert.match(page, /getWasteCost\(item, productionMap\)/);
+      assert.match(page, /record\.production_cost_total/);
+      assert.match(page, /record\.ingredient_cost_total/);
       assert.match(page, /This weight will be deducted from the consumed amount under Meal Service Menu\./);
       assert.match(page, /Batch Overproduction Production Summary/);
       assert.match(page, /<TableHead>Dish Name<\/TableHead>/);
@@ -344,6 +346,10 @@ const cases = [
       assert.match(server, /allocateBatchOverproductionWaste/);
       assert.match(server, /calculateProducedOutputWasteCost/);
       assert.match(server, /withFoodWasteCostAndApproval/);
+      assert.match(server, /enrichFoodWasteDisplayCosts/);
+      assert.match(server, /calculatePlateWasteDisplayCost/);
+      assert.match(server, /record\.production_cost_total/);
+      assert.match(server, /record\.ingredient_cost_total/);
       assert.match(server, /updateDocument\('ProducedItemBatch'/);
       assert.match(server, /buildPlateWasteMealServiceAdjustments/);
       assert.match(server, /buildConsumptionCostPerGramById/);

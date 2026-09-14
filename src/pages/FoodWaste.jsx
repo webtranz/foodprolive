@@ -163,6 +163,8 @@ function firstPositiveSafeNumber(values = []) {
 function getProductionOutputCost(record = {}) {
   return firstPositiveSafeNumber([
     record.total_cost,
+    record.production_cost_total,
+    record.ingredient_cost_total,
     record.estimated_total_cost,
     record.yield_total_cost,
     record.planned_total_cost,
