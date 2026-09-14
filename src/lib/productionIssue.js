@@ -245,6 +245,21 @@ export function getMenuIssueMealGroupKey(item = {}) {
   return `${item.source_menu_plan_id || 'menu-plan'}::${item.meal_type || 'meal'}`;
 }
 
+const NON_BLOCKING_MENU_ISSUE_STATUSES = new Set(['cancelled', 'rejected', 'reversed', 'voided']);
+
+export function isMenuPlanIssueProductionBlocking(production = {}, {
+  planId = '',
+  editingProductionId = ''
+} = {}) {
+  const normalizedPlanId = String(planId || '').trim();
+  if (!normalizedPlanId || !production?.source_menu_plan_id) return false;
+  if (String(production.source_menu_plan_id) !== normalizedPlanId) return false;
+  if (editingProductionId && String(production.id || '') === String(editingProductionId)) return false;
+
+  const status = String(production.status || '').trim().toLowerCase();
+  return !NON_BLOCKING_MENU_ISSUE_STATUSES.has(status);
+}
+
 export function buildProductionIngredientLine({
   sourceLine = {},
   ingredient = null,

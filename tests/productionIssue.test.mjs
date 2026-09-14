@@ -10,6 +10,7 @@ import {
   buildProductionIngredientSnapshot,
   buildProductionIngredientsForSubmit,
   buildProductionOverrideAudit,
+  isMenuPlanIssueProductionBlocking,
   recalculateProductionIngredientSnapshot
 } from '../src/lib/productionIssue.js';
 
@@ -99,6 +100,28 @@ assert.equal(breakfastItems.length, 1);
 assert.equal(breakfastItems[0].meal_type, 'breakfast');
 assert.equal(breakfastItems[0].expected_servings, 30);
 assert.equal(breakfastItems[0].production_covers, 0);
+
+assert.equal(
+  isMenuPlanIssueProductionBlocking(
+    { id: 'prod-1', source_menu_plan_id: 'plan-1', status: 'completed' },
+    { planId: 'plan-1' }
+  ),
+  true
+);
+assert.equal(
+  isMenuPlanIssueProductionBlocking(
+    { id: 'prod-1', source_menu_plan_id: 'plan-1', status: 'voided' },
+    { planId: 'plan-1' }
+  ),
+  false
+);
+assert.equal(
+  isMenuPlanIssueProductionBlocking(
+    { id: 'prod-1', source_menu_plan_id: 'plan-1', status: 'in_progress' },
+    { planId: 'plan-1', editingProductionId: 'prod-1' }
+  ),
+  false
+);
 
 const allItems = buildMenuPlanIssueItems(menuPlan, { mealView: 'all', recipes });
 assert.deepEqual(allItems.map((item) => item.meal_type), ['breakfast', 'lunch']);

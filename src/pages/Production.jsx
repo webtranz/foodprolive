@@ -51,6 +51,7 @@ import {
   getMenuIssueInventoryCheckState,
   getMenuIssueMealGroupKey,
   getProductionIngredientLineKey,
+  isMenuPlanIssueProductionBlocking,
   normalizeIssueMealView,
   PRODUCTION_ISSUE_MEAL_LABELS,
   PRODUCTION_ISSUE_MEAL_TYPES,
@@ -769,6 +770,7 @@ export default function Production() {
   const [issueSuggestions, setIssueSuggestions] = useState({});
   const [issueSuggestionLoadingKey, setIssueSuggestionLoadingKey] = useState('');
   const [editingIssueProduction, setEditingIssueProduction] = useState(null);
+  const [issueAdminReissueEnabled, setIssueAdminReissueEnabled] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -781,6 +783,7 @@ export default function Production() {
     setIssueSnapshotSiteId('');
     setActiveIssueItemKey('');
     setEditingIssueProduction(null);
+    setIssueAdminReissueEnabled(false);
   };
 
   const { data: sites = [], error: sitesError, isPending: sitesLoading } = useQuery({
@@ -1011,13 +1014,10 @@ export default function Production() {
     const editingProductionId = String(editingIssueProduction?.id || '');
     const keys = new Set();
     productions
-      .filter((production) => (
-        planId
-        && production.source_menu_plan_id
-        && String(production.source_menu_plan_id) === planId
-        && String(production.id || '') !== editingProductionId
-        && !['cancelled', 'rejected'].includes(String(production.status || '').toLowerCase())
-      ))
+      .filter((production) => isMenuPlanIssueProductionBlocking(production, {
+        planId,
+        editingProductionId
+      }))
       .forEach((production) => {
         if (production.source_menu_plan_item_key) {
           keys.add(production.source_menu_plan_item_key);
@@ -1049,6 +1049,11 @@ export default function Production() {
     issueAlreadyCreatedKeys.has(item.key)
     || issueAlreadyCreatedKeys.has(getMenuIssueMealGroupKey(item))
   );
+  const canAdminReissueIssuedItems = isAdmin && !editingIssueProduction;
+  const issueAdminReissueActive = canAdminReissueIssuedItems && issueAdminReissueEnabled;
+  const isIssueItemSelectionLocked = (item) => (
+    isIssueItemAlreadyIssued(item) && !issueAdminReissueActive
+  );
 
   useEffect(() => {
     const routeIssueRequest = location.state?.issueProduction;
@@ -1065,6 +1070,7 @@ export default function Production() {
     setIssueSnapshots({});
     setIssueSuggestions({});
     setEditingIssueProduction(null);
+    setIssueAdminReissueEnabled(false);
     setActionError('');
     setActionMessage('');
     if (routeIssueRequest.plan_date) {
@@ -2094,12 +2100,21 @@ export default function Production() {
     const servingCount = Math.max(1, finiteProductionNumber(group.production_covers, 0));
     const manifestItemCount = group.items.length;
     const manifestItemNames = group.items.map((item) => item.recipe_name).filter(Boolean);
+    const adminReissuedItems = group.items.filter((item) => isIssueItemAlreadyIssued(item));
+    const isAdminReissue = issueAdminReissueActive && adminReissuedItems.length > 0;
+    const adminReissueRunId = isAdminReissue
+      ? `admin-reissue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+      : '';
     const menuIssueItems = group.items.map((item) => {
       const itemLines = issueSnapshots[item.key] || [];
       const itemBatchCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
       const itemServingCount = Math.max(1, finiteProductionNumber(item.production_covers, 0));
+      const itemAlreadyIssued = isIssueItemAlreadyIssued(item);
       return {
         key: item.key,
+        original_source_menu_plan_item_key: item.key,
+        admin_reissue: isAdminReissue && itemAlreadyIssued,
+        admin_reissue_run_id: adminReissueRunId,
         source_menu_plan_item_index: item.source_menu_plan_item_index,
         recipe_id: item.recipe_id,
         recipe_name: item.recipe_name,
@@ -2150,6 +2165,9 @@ export default function Production() {
       kitchen_station: recipe.kitchen_station || recipe.station || '',
       notes: [
         `Issued from menu plan ${issuePlan?.plan_date || group.plan_date || ''} ${group.meal_label}.`,
+        isAdminReissue
+          ? `Admin reissue ${adminReissueRunId}: this is an additional production run for already-issued planned item(s).`
+          : '',
         manifestItemNames.length ? `Manifest items: ${manifestItemNames.join(', ')}` : '',
         issueNotes
       ].filter(Boolean).join('\n'),
@@ -2165,6 +2183,10 @@ export default function Production() {
       production_issue_scope: issueMealView,
       production_issue_item_count: manifestItemCount,
       production_issue_dish_count: manifestItemCount,
+      production_issue_admin_reissue: isAdminReissue,
+      production_issue_reissue_run_id: adminReissueRunId,
+      production_issue_reissue_original_group_key: isAdminReissue ? group.key : '',
+      production_issue_reissue_original_item_keys: isAdminReissue ? group.items.map((item) => item.key) : [],
       menu_issue_items: menuIssueItems,
       recipe_snapshot_mode: 'production_only_override',
       recipe_snapshot_locked: true,
@@ -2321,6 +2343,7 @@ export default function Production() {
     setIssueSuggestions({});
     setIssueSnapshotSiteId('');
     setIssueNotes(production.notes || '');
+    setIssueAdminReissueEnabled(false);
     setActiveIssueItemKey(seededItems[0]?.key || '');
     setIssueDialogOpen(true);
     if (productionDate) {
@@ -2601,9 +2624,10 @@ export default function Production() {
   const siteOptions = canViewAllAccessibleSites
     ? [{ id: 'all', name: 'All Sites' }, ...productionSiteOptions]
     : productionSiteOptions;
+  const visibleAlreadyIssuedIssueItems = visibleIssueItems.filter((item) => isIssueItemAlreadyIssued(item));
   const selectedIssueSubmitItems = visibleIssueItems.filter((item) => (
     item.selected
-    && !isIssueItemAlreadyIssued(item)
+    && !isIssueItemSelectionLocked(item)
     && Number(item.production_covers) > 0
   ));
   const issueInventoryCheckState = getMenuIssueInventoryCheckState({
@@ -2670,11 +2694,13 @@ export default function Production() {
     ? Number((activeIssueBatchCost / Math.max(1, finiteProductionNumber(activeIssueItem.production_covers, 0))).toFixed(2))
     : 0;
   const issueSubmitDisabledReason = editingIssueProduction && !can('edit_production_request')
-    ? 'You need production edit permission to update this menu production request.'
-    : !editingIssueProduction && !can('create_production_request')
-      ? 'You need production creation permission to issue production.'
-      : selectedIssueMealGroups.length === 0
-        ? 'Enter production covers greater than zero for at least one planned meal item that has not already been issued.'
+      ? 'You need production edit permission to update this menu production request.'
+      : !editingIssueProduction && !can('create_production_request')
+        ? 'You need production creation permission to issue production.'
+        : selectedIssueMealGroups.length === 0
+        ? issueAdminReissueActive
+          ? 'Enter production covers or production size greater than zero for at least one admin reissue item.'
+          : 'Enter production covers greater than zero for at least one planned meal item that has not already been issued.'
         : issueInventoryCheckState.message;
   const issueSubmitForApprovalDisabledReason = issueSubmitDisabledReason
     || (!can('submit_production_request') ? 'You need production submission permission to submit this request.' : '');
@@ -3141,6 +3167,42 @@ export default function Production() {
                     {selectedIssueMealGroups.length} review{selectedIssueMealGroups.length === 1 ? '' : 's'}
                   </Badge>
                 </div>
+                  {!editingIssueProduction && visibleAlreadyIssuedIssueItems.length > 0 ? (
+                    <div className={`mt-3 rounded-xl border px-3 py-3 ${
+                      issueAdminReissueActive
+                        ? 'border-amber-300 bg-amber-50 text-amber-950'
+                        : 'border-slate-200 bg-white/80 text-slate-700'
+                    }`}>
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="flex gap-2">
+                          <AlertCircle className={`mt-0.5 h-4 w-4 ${issueAdminReissueActive ? 'text-amber-700' : 'text-slate-500'}`} />
+                          <div>
+                            <p className="text-sm font-semibold">
+                              {visibleAlreadyIssuedIssueItems.length} already-issued item{visibleAlreadyIssuedIssueItems.length === 1 ? '' : 's'} in this meal scope
+                            </p>
+                            <p className="mt-1 text-xs">
+                              Use the existing production card if you are continuing the same run. Admin reissue creates an additional production request from the same planned items.
+                            </p>
+                          </div>
+                        </div>
+                        {canAdminReissueIssuedItems ? (
+                          <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-900 shadow-sm">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-amber-300"
+                              checked={issueAdminReissueActive}
+                              onChange={(event) => setIssueAdminReissueEnabled(event.target.checked)}
+                            />
+                            Create another admin run
+                          </label>
+                        ) : (
+                          <Badge variant="outline" className="w-fit border-slate-200 bg-slate-50 text-slate-600">
+                            Admin only
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                   {selectedIssueMealGroups.length > 0 ? (
                     <div className={`mt-3 rounded-xl border px-3 py-2.5 ${
                       !issueInventoryReady
@@ -3254,6 +3316,7 @@ export default function Production() {
                       </div>
                     ) : visibleIssueItems.map((item) => {
                       const alreadyIssued = isIssueItemAlreadyIssued(item);
+                      const selectionLocked = isIssueItemSelectionLocked(item);
                       const itemCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
                       const isActive = activeIssueItem?.key === item.key;
                       const itemShortageCount = (selectedIssueShortagesByItemKey[item.key] || []).length;
@@ -3268,8 +3331,8 @@ export default function Production() {
                             <input
                               type="checkbox"
                               className="mt-1 h-4 w-4 rounded border-slate-300"
-                              checked={Boolean(item.selected) && !alreadyIssued}
-                              disabled={alreadyIssued}
+                              checked={Boolean(item.selected) && !selectionLocked}
+                              disabled={selectionLocked}
                               onChange={(event) => toggleIssueItem(item.key, event.target.checked)}
                               aria-label={`Select ${item.recipe_name} for production issue`}
                             />
@@ -3281,7 +3344,14 @@ export default function Production() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <Badge variant="outline">{item.meal_label}</Badge>
                                 {alreadyIssued ? (
-                                  <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">Already issued</Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className={issueAdminReissueActive
+                                      ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                      : 'border-slate-200 bg-slate-50 text-slate-500'}
+                                  >
+                                    {issueAdminReissueActive ? 'Admin reissue' : 'Already issued'}
+                                  </Badge>
                                 ) : null}
                                 {issueInventoryReady && itemShortageCount > 0 ? (
                                   <Badge className="bg-red-600">{itemShortageCount} short</Badge>
@@ -3304,7 +3374,7 @@ export default function Production() {
                                 allowZero
                                 allowEmpty={false}
                                 label={`${item.recipe_name} production covers`}
-                                disabled={alreadyIssued}
+                                disabled={selectionLocked}
                                 onValueChange={(value) => updateIssueCovers(item.key, value)}
                                 className="mt-1 bg-white"
                               />
@@ -3319,7 +3389,7 @@ export default function Production() {
                                 allowZero
                                 allowEmpty={false}
                                 label={`${item.recipe_name} production size in kilograms`}
-                                disabled={alreadyIssued || getIssueItemServingGrams(item) <= 0}
+                                disabled={selectionLocked || getIssueItemServingGrams(item) <= 0}
                                 onValueChange={(value) => updateIssueProductionSizeKg(item.key, value)}
                                 className="mt-1 bg-white"
                               />
