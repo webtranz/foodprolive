@@ -32,7 +32,9 @@ const UNITS = [
   { value: 'pieces', label: 'Pieces' },
   { value: 'ct', label: 'CT (Count)' },
   { value: 'ea', label: 'EA (Each)' },
-  { value: 'pak', label: 'PAK (Pack)' }
+  { value: 'pak', label: 'PAK (Pack)' },
+  { value: 'cs', label: 'CS (Case)' },
+  { value: 'bdl', label: 'BDL' }
 ];
 
 const NO_CONVERSION_UNIT = '__no_conversion__';

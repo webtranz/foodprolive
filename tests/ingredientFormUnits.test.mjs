@@ -18,12 +18,14 @@ test('conversion unit uses the same unit options and dropdown as base unit', () 
 });
 
 test('existing standard aliases are normalized while custom units remain selectable', () => {
-  for (const [saved, expected] of [['gram', 'g'], ['Grams', 'g'], ['liter', 'l'], ['pcs', 'pieces'], ['EA', 'ea'], ['PAK', 'pak']]) {
+  for (const [saved, expected] of [['gram', 'g'], ['Grams', 'g'], ['liter', 'l'], ['pcs', 'pieces'], ['EA', 'ea'], ['PAK', 'pak'], ['Case', 'cs'], ['BDL', 'bdl']]) {
     assert.equal(normalizeIngredientUnit(saved), expected);
   }
   assert.match(form, /label: 'CT \(Count\)'/);
   assert.match(form, /label: 'EA \(Each\)'/);
   assert.match(form, /label: 'PAK \(Pack\)'/);
+  assert.match(form, /label: 'CS \(Case\)'/);
+  assert.match(form, /label: 'BDL'/);
   assert.match(form, /normalizeIngredientUnit\(formData\.conversion_unit\)/);
   assert.match(form, /UNITS\.some\(unit => unit\.value === formData\.conversion_unit\)/);
   assert.match(form, /UNITS\.some\(unit => unit\.value === normalizedConversionUnit\)/);
