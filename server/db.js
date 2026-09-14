@@ -411,7 +411,7 @@ async function ensureEntityUniqueness(entity, record, currentId = null, executor
       }
       if (
         entity === 'ProducedItemBatch'
-        && fields.includes('production_id')
+        && (fields.includes('production_id') || fields.includes('batch_number'))
         && String(existing.status || '').trim().toLowerCase() === 'voided'
       ) {
         return false;

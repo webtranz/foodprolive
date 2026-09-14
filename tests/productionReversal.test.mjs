@@ -45,7 +45,7 @@ test('voided and reversed records do not block clean re-completion', () => {
   const mealService = source('server/mealService.js');
   const inventory = source('server/inventory.js');
 
-  assert.match(database, /entity === 'ProducedItemBatch'[\s\S]*status \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'voided'[\s\S]*return false/);
+  assert.match(database, /entity === 'ProducedItemBatch'[\s\S]*fields\.includes\('production_id'\) \|\| fields\.includes\('batch_number'\)[\s\S]*status \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'voided'[\s\S]*return false/);
   assert.match(database, /entity === 'ProductionConsumptionReport'[\s\S]*status \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'reversed'[\s\S]*return false/);
   assert.match(mealService, /find\(\(batch\) => String\(batch\.status \|\| ''\)\.toLowerCase\(\) !== 'voided'\)/);
   assert.match(inventory, /find\(\(batch\) => String\(batch\.status \|\| ''\)\.toLowerCase\(\) !== 'voided'\) \|\| null/);
