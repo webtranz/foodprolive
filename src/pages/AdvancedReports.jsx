@@ -18,6 +18,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { downloadCSV, downloadExcel } from '../components/utils/exportData';
 import { formatCurrency, replaceVisibleUSDCurrency } from '@/lib/currency';
 import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
+import {
+  buildConfirmedFoodCostRows,
+  groupFoodCostRows
+} from '../../shared/foodCostReport.js';
 import { canAccessAdvancedReport } from '../../shared/advancedReportAccess.js';
 import { getItemCodeFromRecords } from '../../shared/itemCode.js';
 import {
@@ -140,6 +144,8 @@ export default function AdvancedReports() {
   const { data: ingredients = [] } = useQuery({ queryKey: ['ingredients'], queryFn: () => base44.entities.Ingredient.list() });
   const { data: recipes = [] } = useQuery({ queryKey: ['recipes'], queryFn: () => base44.entities.Recipe.list() });
   const { data: productions = [] } = useQuery({ queryKey: ['productions'], queryFn: () => base44.entities.Production.list('-production_date', 500) });
+  const { data: mealServiceConsumptions = [] } = useQuery({ queryKey: ['advancedMealServiceConsumptions'], queryFn: () => base44.entities.MealServiceConsumption.list('-service_date', 5000) });
+  const { data: producedItemBatches = [] } = useQuery({ queryKey: ['advancedProducedItemBatches'], queryFn: () => base44.entities.ProducedItemBatch.list('-production_date', 5000) });
   const { data: waste = [] } = useQuery({ queryKey: ['foodWaste'], queryFn: () => base44.entities.FoodWaste.list('-waste_date', 500) });
   const { data: purchaseOrders = [] } = useQuery({ queryKey: ['procurementOrders'], queryFn: () => base44.procurement.listOrders() });
   const { data: inventoryValuation = [] } = useQuery({ queryKey: ['inventoryValuation'], queryFn: () => base44.inventory.getValuation() });
@@ -182,6 +188,30 @@ export default function AdvancedReports() {
 
   const ingredientMap = useMemo(() => Object.fromEntries(ingredients.map((item) => [item.id, item])), [ingredients]);
   const siteMap = useMemo(() => Object.fromEntries(sites.map((item) => [item.id, item])), [sites]);
+  const relatedLocationIds = useMemo(() => {
+    if (filters.locationId === 'all') return null;
+    const siteLookup = new Map(sites.map((site) => [String(site.id), site]));
+    const related = new Set([String(filters.locationId)]);
+
+    let selectedCursor = siteLookup.get(String(filters.locationId));
+    while (selectedCursor?.parent_site_id) {
+      related.add(String(selectedCursor.parent_site_id));
+      selectedCursor = siteLookup.get(String(selectedCursor.parent_site_id));
+    }
+
+    sites.forEach((site) => {
+      let cursor = site;
+      while (cursor?.parent_site_id) {
+        if (String(cursor.parent_site_id) === String(filters.locationId)) {
+          related.add(String(site.id));
+          break;
+        }
+        cursor = siteLookup.get(String(cursor.parent_site_id));
+      }
+    });
+
+    return related;
+  }, [filters.locationId, sites]);
 
   const availableReports = useMemo(
     () => reportDefinitions.filter((report) => canAccessAdvancedReport(
@@ -195,8 +225,10 @@ export default function AdvancedReports() {
     const values = new Set();
     recipes.forEach((recipe) => { if (recipe.category) values.add(recipe.category); });
     ingredients.forEach((ingredient) => { if (ingredient.category) values.add(ingredient.category); });
+    productions.forEach((production) => { if (production.menu_category) values.add(production.menu_category); });
+    mealServiceConsumptions.forEach((consumption) => { if (consumption.menu_category) values.add(consumption.menu_category); });
     return [...values].sort();
-  }, [ingredients, recipes]);
+  }, [ingredients, mealServiceConsumptions, productions, recipes]);
 
   const filteredData = useMemo(() => {
     const start = parseISO(filters.startDate);
@@ -205,7 +237,7 @@ export default function AdvancedReports() {
       if (!value) return false;
       return isWithinInterval(parseISO(value), { start, end });
     };
-    const matchesLocation = (siteId) => filters.locationId === 'all' || siteId === filters.locationId;
+    const matchesLocation = (siteId) => filters.locationId === 'all' || relatedLocationIds?.has(String(siteId || ''));
     const matchesCategory = (category) => filters.category === 'all' || category === filters.category;
 
     const matchesMealType = (mealType) => filters.mealType === 'all' || (mealType || 'unspecified') === filters.mealType;
@@ -217,6 +249,13 @@ export default function AdvancedReports() {
         && matchesCategory(production.menu_category || recipe?.category)
         && matchesMealType(production.meal_type);
     });
+    const filteredMealServiceConsumptions = mealServiceConsumptions.filter((consumption) => {
+      const recipe = recipes.find((item) => item.id === consumption.recipe_id);
+      return matchesDate(consumption.service_date)
+        && matchesLocation(consumption.site_id)
+        && matchesCategory(consumption.menu_category || recipe?.category)
+        && matchesMealType(consumption.meal_type);
+    });
 
     const filteredWaste = waste.filter((entry) => matchesDate(entry.waste_date) && matchesLocation(entry.site_id) && matchesCategory(entry.category || ingredientMap[entry.ingredient_id]?.category));
     const filteredOrders = purchaseOrders.filter((order) => (!order.order_date || matchesDate(order.order_date)) && matchesLocation(order.site_id));
@@ -226,81 +265,24 @@ export default function AdvancedReports() {
 
     return {
       productions: filteredProductions,
+      mealServiceConsumptions: filteredMealServiceConsumptions,
       waste: filteredWaste,
       orders: filteredOrders,
       valuation: filteredValuation,
       salesSummary: filteredSalesSummary,
       salesVariance: filteredSalesVariance
     };
-  }, [filters, ingredientMap, inventoryValuation, productions, purchaseOrders, recipes, salesSummary, salesVariance, waste]);
+  }, [filters, ingredientMap, inventoryValuation, mealServiceConsumptions, productions, purchaseOrders, recipes, relatedLocationIds, salesSummary, salesVariance, waste]);
 
   const reportRows = useMemo(() => {
-    const productionCostRows = filteredData.productions.map((production) => {
-      const totalCost = (production.ingredients_used || []).reduce((sum, ingredient) => {
-        return sum + calculateProductionIngredientCost(
-          ingredient,
-          ingredientMap[ingredient.ingredient_id]
-        );
-      }, 0);
-      const servings = safeNumber(production.actual_servings || production.target_servings);
-      return {
-        date: production.production_date,
-        location: production.site_name,
-        recipe: production.recipe_name,
-        meal_type: production.meal_type || 'unspecified',
-        category: production.menu_category || recipes.find((item) => item.id === production.recipe_id)?.category || '-',
-        servings,
-        total_cost: Number(totalCost.toFixed(2)),
-        cost_per_serving: Number((servings > 0 ? totalCost / servings : 0).toFixed(2))
-      };
+    const productionCostRows = buildConfirmedFoodCostRows({
+      consumptions: filteredData.mealServiceConsumptions,
+      productions,
+      producedItemBatches,
+      recipes,
+      ingredients
     });
-
-    let foodCostRows = productionCostRows;
-    if (filters.foodCostView === 'daily') {
-      foodCostRows = Object.values(productionCostRows.reduce((accumulator, row) => {
-        const key = `${row.date}::${row.location}`;
-        if (!accumulator[key]) {
-          accumulator[key] = {
-            date: row.date,
-            location: row.location,
-            meal_type: filters.mealType === 'all' ? 'all' : filters.mealType,
-            total_servings: 0,
-            total_cost: 0
-          };
-        }
-        accumulator[key].total_servings += row.servings;
-        accumulator[key].total_cost += row.total_cost;
-        return accumulator;
-      }, {})).map((row) => ({
-        date: row.date,
-        location: row.location,
-        meal_type: row.meal_type,
-        total_servings: row.total_servings,
-        total_cost: Number(row.total_cost.toFixed(2)),
-        cost_per_serving: Number((row.total_servings > 0 ? row.total_cost / row.total_servings : 0).toFixed(2))
-      }));
-    } else if (filters.foodCostView === 'meal_type') {
-      foodCostRows = Object.values(productionCostRows.reduce((accumulator, row) => {
-        const key = `${row.meal_type}::${row.location}`;
-        if (!accumulator[key]) {
-          accumulator[key] = {
-            meal_type: row.meal_type,
-            location: row.location,
-            total_servings: 0,
-            total_cost: 0
-          };
-        }
-        accumulator[key].total_servings += row.servings;
-        accumulator[key].total_cost += row.total_cost;
-        return accumulator;
-      }, {})).map((row) => ({
-        meal_type: row.meal_type,
-        location: row.location,
-        total_servings: row.total_servings,
-        total_cost: Number(row.total_cost.toFixed(2)),
-        cost_per_serving: Number((row.total_servings > 0 ? row.total_cost / row.total_servings : 0).toFixed(2))
-      }));
-    }
+    const foodCostRows = groupFoodCostRows(productionCostRows, filters.foodCostView);
 
     const groupedRecipeCosts = Object.values(productionCostRows.reduce((accumulator, row) => {
       const key = row.recipe;
@@ -549,7 +531,7 @@ export default function AdvancedReports() {
       sales_vs_production: salesVsProductionRows,
       forecasted_demand: forecastDemandRows
     };
-  }, [filteredData, filters.foodCostView, filters.mealType, ingredientMap, recipes]);
+  }, [filteredData, filters.foodCostView, ingredientMap, ingredients, producedItemBatches, productions, recipes]);
 
   const currentRows = reportRows[activeReport] || [];
   const currentReport = reportDefinitions.find((report) => report.key === activeReport);

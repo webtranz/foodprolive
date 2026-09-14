@@ -13,18 +13,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/exportData';
 import { CircleDollarSign, Download, TrendingUp, UtensilsCrossed } from 'lucide-react';
 import { formatCurrency, SAR_NAME } from '@/lib/currency';
-import { calculateProductionIngredientCost } from '../../shared/ingredientUnits.js';
-
-function safeNumber(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function titleCase(value) {
-  return String(value || '')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
+import {
+  buildConfirmedFoodCostRows,
+  buildPendingProductionRows,
+  groupFoodCostRows,
+  safeFoodCostNumber,
+  titleCaseFoodCost
+} from '../../shared/foodCostReport.js';
 
 export default function FoodCost() {
   const [filters, setFilters] = useState({
@@ -33,90 +28,127 @@ export default function FoodCost() {
     locationId: 'all',
     category: 'all',
     mealType: 'all',
+    menuType: 'all',
     view: 'detail'
   });
 
   const { data: sites = [] } = useQuery({ queryKey: ['sites'], queryFn: () => base44.entities.Site.list() });
   const { data: recipes = [] } = useQuery({ queryKey: ['recipes'], queryFn: () => base44.entities.Recipe.list() });
   const { data: ingredients = [] } = useQuery({ queryKey: ['ingredients'], queryFn: () => base44.entities.Ingredient.list() });
-  const { data: productions = [] } = useQuery({ queryKey: ['foodCostProductionsPage'], queryFn: () => base44.entities.Production.list('-production_date', 1000) });
+  const { data: productions = [] } = useQuery({ queryKey: ['foodCostProductionsPage'], queryFn: () => base44.entities.Production.list('-production_date', 5000) });
+  const { data: mealServiceConsumptions = [] } = useQuery({ queryKey: ['foodCostMealServiceConsumptionsPage'], queryFn: () => base44.entities.MealServiceConsumption.list('-service_date', 5000) });
+  const { data: producedItemBatches = [] } = useQuery({ queryKey: ['foodCostProducedItemBatchesPage'], queryFn: () => base44.entities.ProducedItemBatch.list('-production_date', 5000) });
 
-  const ingredientMap = useMemo(
-    () => Object.fromEntries(ingredients.map((ingredient) => [ingredient.id, ingredient])),
-    [ingredients]
+  const recipeMap = useMemo(
+    () => new Map(recipes.map((recipe) => [String(recipe.id), recipe])),
+    [recipes]
   );
+  const relatedLocationIds = useMemo(() => {
+    if (filters.locationId === 'all') return null;
+    const siteMap = new Map(sites.map((site) => [String(site.id), site]));
+    const related = new Set([String(filters.locationId)]);
 
-  const categories = useMemo(() => {
-    const values = new Set(recipes.map((recipe) => recipe.category).filter(Boolean));
-    return [...values].sort();
-  }, [recipes]);
+    let selectedCursor = siteMap.get(String(filters.locationId));
+    while (selectedCursor?.parent_site_id) {
+      related.add(String(selectedCursor.parent_site_id));
+      selectedCursor = siteMap.get(String(selectedCursor.parent_site_id));
+    }
 
-  const filteredRows = useMemo(() => {
-    const detailRows = productions
-      .filter((production) => {
-        if (!production.production_date || production.production_date < filters.startDate || production.production_date > filters.endDate) return false;
-        if (filters.locationId !== 'all' && production.site_id !== filters.locationId) return false;
-        const recipe = recipes.find((item) => item.id === production.recipe_id);
-        const category = production.menu_category || recipe?.category || '';
-        if (filters.category !== 'all' && category !== filters.category) return false;
-        if (filters.mealType !== 'all' && (production.meal_type || 'unspecified') !== filters.mealType) return false;
-        return true;
-      })
-      .map((production) => {
-        const recalculatedEstimate = (production.ingredients_used || []).reduce(
-          (sum, ingredient) => sum + calculateProductionIngredientCost(
-            ingredient,
-            ingredientMap[ingredient.ingredient_id]
-          ),
-          0
-        );
-        const totalCost = production.status === 'completed'
-          ? safeNumber(production.production_cost_total ?? production.ingredient_cost_total) || recalculatedEstimate
-          : recalculatedEstimate;
-        const servings = safeNumber(production.actual_servings || production.target_servings);
-        const recipe = recipes.find((item) => item.id === production.recipe_id);
-        return {
-          date: production.production_date,
-          location: production.site_name,
-          meal_type: titleCase(production.meal_type || 'unspecified'),
-          recipe: production.recipe_name,
-          category: production.menu_category || recipe?.category || '-',
-          servings,
-          total_cost: Number(totalCost.toFixed(2)),
-          cost_per_serving: Number((servings > 0 ? totalCost / servings : 0).toFixed(2))
-        };
-      });
-
-    if (filters.view === 'detail') return detailRows;
-
-    const grouped = {};
-    detailRows.forEach((row) => {
-      const key = filters.view === 'daily'
-        ? `${row.date}::${row.location}`
-        : `${row.meal_type}::${row.location}`;
-      if (!grouped[key]) {
-        grouped[key] = {
-          date: filters.view === 'daily' ? row.date : '',
-          meal_type: filters.view === 'meal_type' ? row.meal_type : row.meal_type,
-          location: row.location,
-          total_servings: 0,
-          total_cost: 0
-        };
+    sites.forEach((site) => {
+      let cursor = site;
+      while (cursor?.parent_site_id) {
+        if (String(cursor.parent_site_id) === String(filters.locationId)) {
+          related.add(String(site.id));
+          break;
+        }
+        cursor = siteMap.get(String(cursor.parent_site_id));
       }
-      grouped[key].total_servings += safeNumber(row.servings);
-      grouped[key].total_cost += safeNumber(row.total_cost);
     });
 
-    return Object.values(grouped).map((row) => ({
-      ...row,
-      total_cost: Number(row.total_cost.toFixed(2)),
-      cost_per_serving: Number((row.total_servings > 0 ? row.total_cost / row.total_servings : 0).toFixed(2))
-    }));
-  }, [filters, ingredientMap, productions, recipes]);
+    return related;
+  }, [filters.locationId, sites]);
+
+  const categories = useMemo(() => {
+    const values = new Set();
+    recipes.forEach((recipe) => { if (recipe.category) values.add(recipe.category); });
+    productions.forEach((production) => { if (production.menu_category) values.add(production.menu_category); });
+    mealServiceConsumptions.forEach((consumption) => { if (consumption.menu_category) values.add(consumption.menu_category); });
+    return [...values].sort();
+  }, [mealServiceConsumptions, productions, recipes]);
+
+  const menuTypes = useMemo(() => {
+    const values = new Set();
+    recipes.forEach((recipe) => {
+      const value = recipe.menu_type || recipe.cuisine_type;
+      if (value) values.add(value);
+    });
+    productions.forEach((production) => {
+      const value = production.menu_type || production.cuisine_type;
+      if (value) values.add(value);
+    });
+    mealServiceConsumptions.forEach((consumption) => {
+      if (consumption.menu_type) values.add(consumption.menu_type);
+    });
+    return [...values].sort();
+  }, [mealServiceConsumptions, productions, recipes]);
+
+  const filteredSourceData = useMemo(() => {
+    const matchesDate = (value) => value && value >= filters.startDate && value <= filters.endDate;
+    const matchesLocation = (siteId) => filters.locationId === 'all' || relatedLocationIds?.has(String(siteId || ''));
+    const matchesCategory = (category) => filters.category === 'all' || category === filters.category;
+    const matchesMealType = (mealType) => filters.mealType === 'all' || (mealType || 'unspecified') === filters.mealType;
+    const matchesMenuType = (menuType) => filters.menuType === 'all' || (menuType || 'general') === filters.menuType;
+
+    const filteredProductions = productions.filter((production) => {
+      const recipe = recipeMap.get(String(production.recipe_id || ''));
+      const category = production.menu_category || recipe?.category || '';
+      const menuType = production.menu_type || production.cuisine_type || recipe?.menu_type || recipe?.cuisine_type || 'general';
+      return matchesDate(production.production_date)
+        && matchesLocation(production.site_id)
+        && matchesCategory(category)
+        && matchesMealType(production.meal_type)
+        && matchesMenuType(menuType);
+    });
+
+    const filteredConsumptions = mealServiceConsumptions.filter((consumption) => {
+      const recipe = recipeMap.get(String(consumption.recipe_id || ''));
+      const category = consumption.menu_category || recipe?.category || '';
+      const menuType = consumption.menu_type || recipe?.menu_type || recipe?.cuisine_type || 'general';
+      return matchesDate(consumption.service_date)
+        && matchesLocation(consumption.site_id)
+        && matchesCategory(category)
+        && matchesMealType(consumption.meal_type)
+        && matchesMenuType(menuType);
+    });
+
+    return {
+      consumptions: filteredConsumptions,
+      productions: filteredProductions
+    };
+  }, [filters, mealServiceConsumptions, productions, recipeMap, relatedLocationIds]);
+
+  const filteredRows = useMemo(() => {
+    const detailRows = buildConfirmedFoodCostRows({
+      consumptions: filteredSourceData.consumptions,
+      productions,
+      producedItemBatches,
+      recipes,
+      ingredients
+    });
+    return groupFoodCostRows(detailRows, filters.view);
+  }, [filteredSourceData.consumptions, filters.view, ingredients, producedItemBatches, productions, recipes]);
+
+  const pendingProductionRows = useMemo(() => buildPendingProductionRows({
+    consumptions: mealServiceConsumptions,
+    productions: filteredSourceData.productions,
+    producedItemBatches,
+    recipes,
+    ingredients
+  }), [filteredSourceData.productions, ingredients, mealServiceConsumptions, producedItemBatches, recipes]);
 
   const summary = useMemo(() => {
-    const totalCost = filteredRows.reduce((sum, row) => sum + safeNumber(row.total_cost), 0);
-    const servings = filteredRows.reduce((sum, row) => sum + safeNumber(row.servings ?? row.total_servings), 0);
+    const totalCost = filteredRows.reduce((sum, row) => sum + safeFoodCostNumber(row.total_cost), 0);
+    const servings = filteredRows.reduce((sum, row) => sum + safeFoodCostNumber(row.servings ?? row.total_servings), 0);
     return {
       totalCost,
       servings,
@@ -126,8 +158,8 @@ export default function FoodCost() {
 
   const exportRows = filteredRows.map((row) => ({
     ...row,
-    total_cost: safeNumber(row.total_cost),
-    cost_per_serving: safeNumber(row.cost_per_serving)
+    total_cost: safeFoodCostNumber(row.total_cost),
+    cost_per_serving: safeFoodCostNumber(row.cost_per_serving)
   }));
 
   const handleExport = (type) => {
@@ -148,7 +180,7 @@ export default function FoodCost() {
           heading: 'Summary',
           lines: [
             `Total cost: ${formatCurrency(summary.totalCost)}`,
-            `Servings: ${summary.servings.toFixed(0)}`,
+            `Confirmed covers: ${summary.servings.toFixed(0)}`,
             `Average cost per serving: ${formatCurrency(summary.averageCostPerServing)}`
           ]
         },
@@ -166,7 +198,7 @@ export default function FoodCost() {
       <div className="max-w-[1680px] mx-auto space-y-6">
         <PageHeader
           title="Food Cost"
-          description={`Daily, date-wise, and meal-type ${SAR_NAME} food cost reporting with direct exports`}
+          description={`Confirmed Meal Service ${SAR_NAME} food cost reporting with production-only rows kept separate until covers are saved`}
         >
           <Button variant="outline" onClick={() => handleExport('csv')}>
             <Download className="w-4 h-4 mr-2" />
@@ -184,7 +216,7 @@ export default function FoodCost() {
 
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard title="Total Food Cost" value={formatCurrency(summary.totalCost)} icon={CircleDollarSign} iconBg="bg-amber-50" iconColor="text-amber-600" />
-          <StatCard title="Servings" value={summary.servings.toFixed(0)} icon={UtensilsCrossed} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+          <StatCard title="Confirmed Covers" value={summary.servings.toFixed(0)} icon={UtensilsCrossed} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
           <StatCard title="Avg. Cost / Serving" value={formatCurrency(summary.averageCostPerServing)} icon={TrendingUp} iconBg="bg-blue-50" iconColor="text-blue-600" />
         </div>
 
@@ -193,7 +225,7 @@ export default function FoodCost() {
             <CardTitle>Food Cost Filters</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-7">
               <div>
                 <Label>Start Date</Label>
                 <Input type="date" className="mt-1" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} />
@@ -237,6 +269,16 @@ export default function FoodCost() {
                 </Select>
               </div>
               <div>
+                <Label>Menu Type</Label>
+                <Select value={filters.menuType} onValueChange={(value) => setFilters((current) => ({ ...current, menuType: value }))}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Menu Types</SelectItem>
+                    {menuTypes.map((menuType) => <SelectItem key={menuType} value={menuType}>{titleCaseFoodCost(menuType)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
                 <Label>Report View</Label>
                 <Select value={filters.view} onValueChange={(value) => setFilters((current) => ({ ...current, view: value }))}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
@@ -253,7 +295,10 @@ export default function FoodCost() {
 
         <Card className="border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Food Cost Report</CardTitle>
+            <CardTitle>Confirmed Meal Cost Report</CardTitle>
+            <p className="text-sm text-slate-500">
+              These figures are populated only after Meal Service commits covers and a serving size for the selected menu scope.
+            </p>
           </CardHeader>
           <CardContent className="overflow-x-auto">
             <Table>
@@ -269,11 +314,52 @@ export default function FoodCost() {
               <TableBody>
                 {filteredRows.length === 0 ? (
                   <TableRow>
-                    <TableCell className="py-10 text-center text-slate-500">No food cost data available for this filter range.</TableCell>
+                    <TableCell className="py-10 text-center text-slate-500">
+                      No confirmed Meal Service food cost is available for this filter range.
+                    </TableCell>
                   </TableRow>
                 ) : filteredRows.map((row, index) => (
                   <TableRow key={`${row.date || row.meal_type || 'row'}-${index}`}>
                     {Object.keys(filteredRows[0]).map((column) => (
+                      <TableCell key={column}>
+                        {column.includes('cost') ? formatCurrency(row[column]) : row[column]}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>Production Data Pending Meal Service</CardTitle>
+            <p className="text-sm text-slate-500">
+              These completed productions are informational only. They do not affect Food Cost totals until Meal Service saves the actual covers and portion size.
+            </p>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {pendingProductionRows.length ? Object.keys(pendingProductionRows[0]).map((column) => (
+                    <TableHead key={column}>{column.replace(/_/g, ' ')}</TableHead>
+                  )) : (
+                    <TableHead>Production</TableHead>
+                  )}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pendingProductionRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell className="py-8 text-center text-slate-500">
+                      No production-only rows are waiting for Meal Service under the current filters.
+                    </TableCell>
+                  </TableRow>
+                ) : pendingProductionRows.map((row, index) => (
+                  <TableRow key={`${row.date || 'production'}-${index}`}>
+                    {Object.keys(pendingProductionRows[0]).map((column) => (
                       <TableCell key={column}>
                         {column.includes('cost') ? formatCurrency(row[column]) : row[column]}
                       </TableCell>
