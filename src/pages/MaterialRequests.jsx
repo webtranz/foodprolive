@@ -439,57 +439,61 @@ export default function MaterialRequests() {
           setActionNotice('');
         }
       }}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[92vh] max-w-5xl flex-col overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b border-slate-200 px-6 py-4">
             <DialogTitle>Acknowledge Material Request</DialogTitle>
           </DialogHeader>
-          {actionError ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
-          ) : null}
-          {actionNotice ? (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{actionNotice}</div>
-          ) : null}
-          <div className="space-y-4">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-              <p><span className="font-medium text-slate-900">Request:</span> {selectedRequest?.request_number}</p>
-              <p><span className="font-medium text-slate-900">Production:</span> {selectedRequest?.source_production_name || '-'}</p>
-              <p><span className="font-medium text-slate-900">Project:</span> {selectedRequest?.requesting_site_name || selectedRequest?.site_name || '-'}</p>
-              <p><span className="font-medium text-slate-900">Fulfillment Store:</span> {selectedRequest?.fulfillment_store_name || selectedRequest?.site_name || '-'}</p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-slate-900">Requested Items</p>
-                {isAdmin && aggregateRequestItems(selectedRequest?.items || []).some((item) => Number(item.repairable_issue_count || 0) > 0) ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={repairIssuesMutation.isPending}
-                    onClick={() => repairIssuesMutation.mutate({ id: selectedRequest.id })}
-                    className="border-amber-300 text-amber-700 hover:bg-amber-50"
-                  >
-                    {repairIssuesMutation.isPending ? (
-                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Wrench className="mr-2 h-3.5 w-3.5" />
-                    )}
-                    Resolve all safe issues
-                  </Button>
-                ) : null}
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
+            {actionError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
+            ) : null}
+            {actionNotice ? (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{actionNotice}</div>
+            ) : null}
+            <div className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p><span className="font-medium text-slate-900">Request:</span> {selectedRequest?.request_number}</p>
+                <p><span className="font-medium text-slate-900">Production:</span> {selectedRequest?.source_production_name || '-'}</p>
+                <p><span className="font-medium text-slate-900">Project:</span> {selectedRequest?.requesting_site_name || selectedRequest?.site_name || '-'}</p>
+                <p><span className="font-medium text-slate-900">Fulfillment Store:</span> {selectedRequest?.fulfillment_store_name || selectedRequest?.site_name || '-'}</p>
               </div>
-              {renderRequestItemsTable(selectedRequest, { allowAdminRepair: isAdmin })}
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">Procurement Notes</label>
-              <Textarea
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="Add acknowledgement notes, sourcing notes, or next action details..."
-                rows={4}
-              />
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">Requested Items</p>
+                  {isAdmin && aggregateRequestItems(selectedRequest?.items || []).some((item) => Number(item.repairable_issue_count || 0) > 0) ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={repairIssuesMutation.isPending}
+                      onClick={() => repairIssuesMutation.mutate({ id: selectedRequest.id })}
+                      className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                    >
+                      {repairIssuesMutation.isPending ? (
+                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Wrench className="mr-2 h-3.5 w-3.5" />
+                      )}
+                      Resolve all safe issues
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="max-h-[45vh] overflow-y-auto">
+                  {renderRequestItemsTable(selectedRequest, { allowAdminRepair: isAdmin })}
+                </div>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Procurement Notes</label>
+                <Textarea
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  placeholder="Add acknowledgement notes, sourcing notes, or next action details..."
+                  rows={3}
+                />
+              </div>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t border-slate-200 bg-white px-6 py-4">
             <Button variant="outline" onClick={() => setSelectedRequest(null)}>Cancel</Button>
             <Button
               onClick={() => {
