@@ -1143,15 +1143,19 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_qrcode_site_category_status
 -- Finished-food output is intentionally separate from raw Inventory and
 -- InventoryLot. Production completion creates one immutable-identity output
 -- batch, while meal service changes only its served/remaining balance.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_produced_item_production_unique
+DROP INDEX IF EXISTS idx_entity_records_produced_item_production_unique;
+CREATE UNIQUE INDEX idx_entity_records_produced_item_production_unique
   ON entity_records ((data->>'production_id'))
   WHERE entity_name = 'ProducedItemBatch'
-    AND COALESCE(data->>'production_id', '') <> '';
+    AND COALESCE(data->>'production_id', '') <> ''
+    AND COALESCE(data->>'status', '') <> 'voided';
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_produced_item_batch_number_unique
+DROP INDEX IF EXISTS idx_entity_records_produced_item_batch_number_unique;
+CREATE UNIQUE INDEX idx_entity_records_produced_item_batch_number_unique
   ON entity_records ((data->>'batch_number'))
   WHERE entity_name = 'ProducedItemBatch'
-    AND COALESCE(data->>'batch_number', '') <> '';
+    AND COALESCE(data->>'batch_number', '') <> ''
+    AND COALESCE(data->>'status', '') <> 'voided';
 
 CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_fifo
   ON entity_records (

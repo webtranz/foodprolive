@@ -44,11 +44,16 @@ test('voided and reversed records do not block clean re-completion', () => {
   const database = source('server/db.js');
   const mealService = source('server/mealService.js');
   const inventory = source('server/inventory.js');
+  const sql = source('server/sql/init.sql');
 
   assert.match(database, /entity === 'ProducedItemBatch'[\s\S]*fields\.includes\('production_id'\) \|\| fields\.includes\('batch_number'\)[\s\S]*status \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'voided'[\s\S]*return false/);
   assert.match(database, /entity === 'ProductionConsumptionReport'[\s\S]*status \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'reversed'[\s\S]*return false/);
   assert.match(mealService, /find\(\(batch\) => String\(batch\.status \|\| ''\)\.toLowerCase\(\) !== 'voided'\)/);
   assert.match(inventory, /find\(\(batch\) => String\(batch\.status \|\| ''\)\.toLowerCase\(\) !== 'voided'\) \|\| null/);
+  assert.match(sql, /DROP INDEX IF EXISTS idx_entity_records_produced_item_production_unique;/);
+  assert.match(sql, /idx_entity_records_produced_item_production_unique[\s\S]*COALESCE\(data->>'status', ''\) <> 'voided'/);
+  assert.match(sql, /DROP INDEX IF EXISTS idx_entity_records_produced_item_batch_number_unique;/);
+  assert.match(sql, /idx_entity_records_produced_item_batch_number_unique[\s\S]*COALESCE\(data->>'status', ''\) <> 'voided'/);
 });
 
 test('voided produced-item batches keep audit identity but cannot keep active balances', () => {
