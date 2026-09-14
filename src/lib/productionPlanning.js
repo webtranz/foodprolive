@@ -21,7 +21,28 @@ export const PRODUCTION_MEAL_PERIODS = Object.freeze([
   { key: 'dinner', label: 'Dinner', time_range: '4:30 PM – 7:30 PM' }
 ]);
 
-const NON_DEMAND_STATUSES = new Set(['cancelled', 'rejected']);
+const NON_DEMAND_STATUSES = new Set(['cancelled', 'rejected', 'reversed', 'voided']);
+
+export function isProductionReversedAuditRecord(production = {}) {
+  const status = textValue(production?.status).toLowerCase();
+  if (status === 'reversed' || status === 'voided') return true;
+  if (status === 'completed') return false;
+
+  const approvalHistory = Array.isArray(production?.approval_history) ? production.approval_history : [];
+  const reversalHistory = Array.isArray(production?.production_reversal_history)
+    ? production.production_reversal_history
+    : [];
+  return Boolean(
+    production?.reversal_locked
+    || production?.reversal_summary
+    || production?.reversed_at
+    || production?.reversed_consumption_report_id
+    || production?.reversed_produced_item_batch_id
+    || production?.last_review_action === 'production_completion_reversed'
+    || reversalHistory.length > 0
+    || approvalHistory.some((entry) => entry?.action === 'production_completion_reversed')
+  );
+}
 
 function numberValue(value, fallback = 0) {
   if (value === null || value === undefined || value === '') return fallback;
@@ -455,6 +476,7 @@ function buildShortages(productions, ingredientMap, inventoryMap, sites) {
 
 function resolvePrepStatus(production, hasShortage) {
   const status = textValue(production?.status).toLowerCase();
+  if (isProductionReversedAuditRecord(production)) return { key: 'reversed', label: 'Reversed' };
   if (status === 'completed') return { key: 'complete', label: 'Complete' };
   if (hasShortage || ['rejected', 'cancelled'].includes(status)) return { key: 'at_risk', label: 'At Risk' };
   if (status === 'in_progress') return { key: 'in_progress', label: 'In Progress' };
@@ -503,7 +525,8 @@ export function buildProductionPlanningDashboard({
     const itemCount = getProductionManifestItemCount(production);
     const batchYield = Math.max(1, numberValue(production?.batch_yield ?? recipe?.batch_yield ?? recipe?.servings, 1));
     const productionShortages = shortages.filter((shortage) => shortage.production_ids.includes(production.id));
-    const workflowStatus = textValue(production?.status || 'planned').toLowerCase();
+    const rawWorkflowStatus = textValue(production?.status || 'planned').toLowerCase();
+    const workflowStatus = isProductionReversedAuditRecord(production) ? 'reversed' : rawWorkflowStatus;
     const mealType = normalizeProductionMealType(production?.meal_type);
     const productionEventTitle = formatProductionEventTitle(production, {
       fallback: production.recipe_name || recipe?.name || 'Unnamed item'
@@ -555,18 +578,19 @@ export function buildProductionPlanningDashboard({
   const countedItems = displayItems.filter((item) => item.counts_toward_plan);
   const sectionDefinitions = [
     ...PRODUCTION_MEAL_PERIODS,
-    ...(countedItems.some((item) => item.meal_type === 'other')
+    ...(displayItems.some((item) => item.meal_type === 'other')
       ? [{ key: 'other', label: 'Other Production', time_range: 'Outside core meal periods' }]
       : [])
   ];
   const sections = sectionDefinitions.map((period) => {
-    const periodItems = countedItems.filter((item) => item.meal_type === period.key);
+    const periodItems = displayItems.filter((item) => item.meal_type === period.key);
+    const countedPeriodItems = periodItems.filter((item) => item.counts_toward_plan);
     return {
       ...period,
       items: periodItems,
-      total_portions: periodItems.reduce((sum, item) => sum + item.required_portions, 0),
-      total_items: periodItems.reduce((sum, item) => sum + item.item_count, 0),
-      total_recipes: periodItems.reduce((sum, item) => sum + item.item_count, 0)
+      total_portions: countedPeriodItems.reduce((sum, item) => sum + item.required_portions, 0),
+      total_items: countedPeriodItems.reduce((sum, item) => sum + item.item_count, 0),
+      total_recipes: countedPeriodItems.reduce((sum, item) => sum + item.item_count, 0)
     };
   });
   const labor_loads = buildLaborLoads(displayItems);

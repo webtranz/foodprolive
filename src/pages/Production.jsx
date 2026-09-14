@@ -20,7 +20,10 @@ import { useSiteContext } from '@/components/auth/useSiteContext';
 import { formatCurrency } from '@/lib/currency';
 import StandardDecimalInput from '@/components/recipes/StandardDecimalInput';
 import IngredientSearchCombobox from '@/components/ingredients/IngredientSearchCombobox';
-import { buildProductionPlanExportRows } from '@/lib/productionPlanning';
+import {
+  buildProductionPlanExportRows,
+  isProductionReversedAuditRecord
+} from '@/lib/productionPlanning';
 import {
   getInventoryQuantities,
   getProductionInventoryState
@@ -258,6 +261,90 @@ function ApprovalHistoryList({ production, emptyMessage = 'No approval actions h
         );
       })}
     </ol>
+  );
+}
+
+function getProductionReversalEntries(production = {}) {
+  const history = arrayValue(production.production_reversal_history);
+  if (history.length > 0) return history;
+  return production.reversal_summary ? [production.reversal_summary] : [];
+}
+
+function ProductionReversalDetails({ production }) {
+  const entries = getProductionReversalEntries(production);
+  if (entries.length === 0) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+        No reversal details have been recorded on this production.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {entries.map((entry, index) => {
+        const returnedLines = arrayValue(entry.returned_lines);
+        return (
+          <section key={`${entry.timestamp || entry.reversed_at || index}`} className="rounded-xl border border-slate-300 bg-slate-50 p-4">
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Reversed at</p>
+                <p className="font-semibold text-slate-900">{formatWorkflowTimestamp(entry.timestamp || entry.reversed_at)}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Reversed by</p>
+                <p className="font-semibold text-slate-900">{entry.actor_name || entry.reversed_by_name || entry.actor_email || entry.reversed_by || 'Admin'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Returned lines</p>
+                <p className="font-semibold text-slate-900">{entry.returned_line_count ?? returnedLines.length ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Returned stock value</p>
+                <p className="font-semibold text-slate-900">{formatCurrency(entry.returned_total_cost || 0)}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Old consumption report</p>
+                <p className="font-semibold text-slate-900">{entry.consumption_report_number || production.reversed_consumption_report_number || 'Reversed'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Old produced batch</p>
+                <p className="font-semibold text-slate-900">{entry.produced_item_batch_number || production.reversed_produced_item_batch_number || 'Voided'}</p>
+              </div>
+            </div>
+            {entry.reason ? (
+              <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
+                <span className="font-medium">Reason:</span> {entry.reason}
+              </p>
+            ) : null}
+            {returnedLines.length > 0 ? (
+              <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Item Name</TableHead>
+                      <TableHead>Returned Qty</TableHead>
+                      <TableHead>Value</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {returnedLines.map((line, lineIndex) => (
+                      <TableRow key={`${line.ingredient_id || line.item_code || lineIndex}`}>
+                        <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
+                        <TableCell className="font-medium">{line.ingredient_name || line.ingredient_id || 'Ingredient'}</TableCell>
+                        <TableCell>{formatReportQuantity(line.returned_quantity, line.unit)}</TableCell>
+                        <TableCell>{formatCurrency(line.total_cost || 0)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : null}
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1268,7 +1355,7 @@ export default function Production() {
       setReverseProduction(null);
       setReverseReason('');
       setActionError('');
-      setActionMessage('Production completion reversed. The same manifest is open for admin completion again.');
+      setActionMessage('Production completion reversed. The old card is now audit-only; create a new admin run for the corrected production.');
     },
     onError: (error) => {
       setActionError(error.message || 'Unable to reverse this production completion.');
@@ -2426,13 +2513,30 @@ export default function Production() {
     const approvalHistory = getProductionApprovalHistory(production);
     const startBlockReason = getProductionStartBlockReason(production);
     const productionInventoryState = getProductionInventoryState(production);
-    const productionStatus = String(production.status || '').toLowerCase();
+    const productionStatus = isProductionReversedAuditRecord(production)
+      ? 'reversed'
+      : String(production.status || '').toLowerCase();
     const canDeleteDraftProduction = isAdmin && ['draft', 'planned', 'changes_requested'].includes(productionStatus);
     const startActionLabel = productionInventoryState.is_legacy_consumption
       ? 'Start Production (Legacy Stock Already Deducted)'
       : productionInventoryState.is_reserved
         ? 'Start Production & Consume Reserved Stock'
         : 'Start Production & Consume Stock';
+    if (productionStatus === 'reversed' || productionStatus === 'voided') {
+      return (
+        <div className="grid gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="justify-center whitespace-normal border-slate-300 bg-white text-xs leading-snug text-slate-700 hover:bg-slate-50"
+            onClick={() => setHistoryProduction(production)}
+          >
+            <History className="mr-1.5 h-4 w-4" />
+            What was reversed
+          </Button>
+        </div>
+      );
+    }
     return (
       <div className="grid gap-2 sm:grid-cols-2">
       {['draft', 'planned', 'changes_requested'].includes(production.status) && can('edit_production_request') ? (
@@ -3567,8 +3671,8 @@ export default function Production() {
                 </p>
                 <p className="mt-2">
                   This will return the consumed inventory to the original lots, void the incorrect produced output,
-                  mark the old production consumption report as reversed, and reopen the same production manifest
-                  for completion again.
+                  mark the old production consumption report as reversed, and lock this production card as a
+                  grey audit record. Create a separate admin reissue run for the corrected production.
                 </p>
               </div>
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
@@ -3800,7 +3904,9 @@ export default function Production() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <History className="h-5 w-5" aria-hidden="true" />
-                Production Approval History
+                {isProductionReversedAuditRecord(historyProduction)
+                  ? 'Production Reversal Details'
+                  : 'Production Approval History'}
               </DialogTitle>
             </DialogHeader>
             <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -3811,6 +3917,9 @@ export default function Production() {
                 {historyProduction?.site_name || 'Site not named'} · {historyProduction?.production_date || 'Date not set'}
               </p>
             </div>
+            {isProductionReversedAuditRecord(historyProduction) ? (
+              <ProductionReversalDetails production={historyProduction} />
+            ) : null}
             <ApprovalHistoryList production={historyProduction} />
           </DialogContent>
         </Dialog>

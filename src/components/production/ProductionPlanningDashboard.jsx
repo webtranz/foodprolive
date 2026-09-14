@@ -93,6 +93,11 @@ const PREP_STATUS = {
     icon: AlertTriangle,
     badge: 'border-red-200 bg-red-50 text-red-700',
     dot: 'bg-red-500'
+  },
+  reversed: {
+    icon: RotateCcw,
+    badge: 'border-slate-300 bg-slate-100 text-slate-700',
+    dot: 'bg-slate-400'
   }
 };
 
@@ -217,10 +222,18 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
   const productionOverrideCount = getProductionOverrideCount(item.production);
   const isMenuIssueGroup = item.menu_issue_items.length > 0;
   const manifestItemCount = Number(item.item_count || item.dish_count || item.menu_issue_items.length || 0);
+  const isReversed = item.workflow_status === 'reversed' || item.prep_status.key === 'reversed';
 
   return (
-    <Card className={`overflow-hidden border shadow-none ${item.prep_status.key === 'at_risk' ? 'border-red-300' : 'border-slate-200'}`}>
+    <Card className={`overflow-hidden border shadow-sm ${
+      isReversed
+        ? 'border-slate-400 bg-slate-100/80'
+        : item.prep_status.key === 'at_risk'
+          ? 'border-red-400 bg-white'
+          : 'border-slate-300 bg-white'
+    }`}>
       <CardContent className="p-3">
+        <div className={isReversed ? 'opacity-70' : ''}>
         <div className="flex gap-3">
           <ProductionImage src={item.image_url} alt={item.recipe_name} />
           <div className="min-w-0 flex-1">
@@ -236,6 +249,11 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
                 {isMenuIssueGroup ? (
                   <Badge className="border border-emerald-200 bg-emerald-100 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100">
                     {manifestItemCount.toLocaleString()} Item{manifestItemCount === 1 ? '' : 's'}
+                  </Badge>
+                ) : null}
+                {isReversed ? (
+                  <Badge variant="outline" className="border-slate-300 bg-white text-[10px] text-slate-700">
+                    Audit only
                   </Badge>
                 ) : null}
               </div>
@@ -353,9 +371,15 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
             This legacy record is not ready to start. Reconcile its Store / Procurement state so inventory can be reserved.
           </p>
         ) : null}
+        {isReversed ? (
+          <p className="mt-3 rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-700">
+            This production attempt was reversed and is locked for audit only. Create a new production run for the corrected manifest.
+          </p>
+        ) : null}
+        </div>
 
         {renderActions ? (
-          <div className="production-plan-no-print mt-3 border-t border-slate-100 pt-3">
+          <div className="production-plan-no-print mt-3 border-t border-slate-200 pt-3">
             {renderActions(item.production, materialRequest)}
           </div>
         ) : null}
@@ -369,7 +393,7 @@ function MealSection({ section, materialRequestMap, renderActions }) {
   const Icon = style.icon;
   const sectionItemCount = Number(section.total_items ?? section.total_recipes ?? 0);
   return (
-    <section className="production-meal-section min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white">
+    <section className="production-meal-section min-w-0 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
       <header className={`border-b px-4 py-3 ${style.header}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2.5">

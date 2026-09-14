@@ -1372,8 +1372,8 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     }
 
     if (action === 'update') {
-      if (currentStatus === 'completed') {
-        const error = new Error('Completed production and its consumption record are immutable');
+      if (['completed', 'reversed'].includes(currentStatus)) {
+        const error = new Error('Completed or reversed production and its consumption record are immutable');
         error.status = 409;
         throw error;
       }

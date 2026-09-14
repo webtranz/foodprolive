@@ -3792,10 +3792,17 @@ async function reverseCompletedProductionWithExecutor(productionId, actor, optio
   });
   const reopened = await updateDocument('Production', production.id, {
     ...commitmentPatch,
-    status: 'in_progress',
-    completed_date: null,
-    completed_by: null,
-    completed_by_name: null,
+    status: 'reversed',
+    reversed_at: timestamp,
+    reversed_by: actor?.email || actor?.id || 'admin',
+    reversed_by_name: actor?.full_name || actor?.email || null,
+    reversal_reason: reason,
+    reversal_summary: reversalSummary,
+    reversal_locked: true,
+    reversed_consumption_report_id: report?.id || production.consumption_report_id || null,
+    reversed_consumption_report_number: report?.report_number || production.consumption_report_number || null,
+    reversed_produced_item_batch_id: producedItemBatch?.id || production.produced_item_batch_id || null,
+    reversed_produced_item_batch_number: producedItemBatch?.batch_number || production.produced_item_batch_number || null,
     ingredient_cost_total: null,
     production_cost_total: null,
     cost_per_serving: null,
@@ -3838,12 +3845,12 @@ async function reverseCompletedProductionWithExecutor(productionId, actor, optio
         action: 'production_completion_reversed',
         stage: 'admin',
         from_status: 'completed',
-        to_status: 'in_progress',
+        to_status: 'reversed',
         actor_id: actor?.id || null,
         actor_email: actor?.email || null,
         actor_name: actor?.full_name || actor?.email || null,
         reason,
-        note: 'Admin reversed completion directly; original production manifest retained for re-completion.',
+        note: 'Admin reversed completion directly; this production card is now audit-only. Create a new production run for correction.',
         timestamp
       }
     ]

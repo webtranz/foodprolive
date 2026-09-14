@@ -7,6 +7,7 @@ export const PRODUCTION_STATUS = Object.freeze({
   READY_TO_START: 'approved',
   IN_PROGRESS: 'in_progress',
   COMPLETED: 'completed',
+  REVERSED: 'reversed',
   CHANGES_REQUESTED: 'changes_requested',
   REJECTED: 'rejected',
   CANCELLED: 'cancelled'
@@ -21,6 +22,7 @@ export const PRODUCTION_STATUS_LABELS = Object.freeze({
   approved: 'Approved / Ready to Start',
   in_progress: 'Production In Progress',
   completed: 'Production Completed',
+  reversed: 'Production Reversed',
   changes_requested: 'Changes Requested',
   rejected: 'Rejected',
   cancelled: 'Cancelled'
@@ -54,6 +56,8 @@ const PRODUCTION_HISTORY_ACTION_LABELS = Object.freeze({
   started: 'Production Started',
   production_completed: 'Production Completed',
   completed: 'Production Completed',
+  production_completion_reversed: 'Production Completion Reversed',
+  reversed: 'Production Reversed',
   inventory_reserved: 'Inventory Reserved at Area Approval',
   inventory_reservation_reconciled: 'Inventory Reservation Reconciled',
   inventory_reservation_released: 'Inventory Reservation Released',
@@ -208,7 +212,7 @@ export function canCancelProduction(value) {
 }
 
 export function isProductionTerminalStatus(value) {
-  return ['completed', 'rejected', 'cancelled'].includes(normalizeProductionStatus(value));
+  return ['completed', 'reversed', 'rejected', 'cancelled'].includes(normalizeProductionStatus(value));
 }
 
 export function hasAreaProductionApproval(production) {

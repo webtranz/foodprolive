@@ -22,7 +22,7 @@ test('admins can directly reverse completed production without creating a separa
   assert.doesNotMatch(route, /pending_reversal|submit.*reversal|approve.*reversal/i);
 });
 
-test('production reversal uses saved completion evidence and reopens the same manifest', () => {
+test('production reversal uses saved completion evidence and freezes the old attempt as audit only', () => {
   const inventory = source('server/inventory.js');
   const start = inventory.indexOf('async function reverseCompletedProductionWithExecutor(');
   const end = inventory.indexOf('\nasync function completeProduction(', start);
@@ -35,7 +35,9 @@ test('production reversal uses saved completion evidence and reopens the same ma
   assert.match(reversal, /Cannot reverse \$\{ingredientName\} because the exact consumed inventory lots are missing/);
   assert.match(reversal, /status:\s*'voided'/);
   assert.match(reversal, /status:\s*'reversed'/);
-  assert.match(reversal, /status:\s*'in_progress'/);
+  assert.doesNotMatch(reversal, /status:\s*'in_progress'/);
+  assert.match(reversal, /reversal_locked:\s*true/);
+  assert.match(reversal, /reversal_summary/);
   assert.match(reversal, /ingredients_used/);
   assert.doesNotMatch(reversal, /buildAutomaticProductionCompletionPlan\(/);
 });
@@ -105,5 +107,7 @@ test('front end exposes an admin-only direct reversal action', () => {
   assert.match(productionPage, /production\.status === 'completed' && isAdmin/);
   assert.match(productionPage, /Reverse Completion/);
   assert.match(productionPage, /Admin-only direct reversal — no approval workflow will be created/);
+  assert.match(productionPage, /What was reversed/);
+  assert.match(productionPage, /The old card is now audit-only/);
   assert.match(productionPage, /base44\.inventory\.reverseCompletedProduction/);
 });

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   buildProductionPlanExportRows,
   buildProductionPlanningDashboard,
+  isProductionReversedAuditRecord,
   normalizeProductionMealType
 } from '../src/lib/productionPlanning.js';
 
@@ -330,6 +331,15 @@ assert.equal(legacyMenuReviewDashboard.shortages[0].shortage_quantity, 2);
 const statusDashboard = buildProductionPlanningDashboard({
   productions: [
     { id: 'complete', site_id: 'site-a', meal_type: 'breakfast', target_servings: 1, status: 'completed' },
+    { id: 'reversed', site_id: 'site-a', meal_type: 'breakfast', target_servings: 99, status: 'reversed' },
+    {
+      id: 'legacy-reversed',
+      site_id: 'site-a',
+      meal_type: 'breakfast',
+      target_servings: 77,
+      status: 'in_progress',
+      last_review_action: 'production_completion_reversed'
+    },
     { id: 'progress', site_id: 'site-a', meal_type: 'lunch', target_servings: 1, status: 'in_progress' },
     { id: 'pending', site_id: 'site-a', meal_type: 'dinner', target_servings: 1, status: 'planned' },
     {
@@ -348,6 +358,13 @@ assert.equal(statusDashboard.items.find((item) => item.id === 'complete').prep_s
 assert.equal(statusDashboard.items.find((item) => item.id === 'progress').prep_status.key, 'in_progress');
 assert.equal(statusDashboard.items.find((item) => item.id === 'pending').prep_status.key, 'pending');
 assert.equal(statusDashboard.items.find((item) => item.id === 'risk').prep_status.key, 'at_risk');
+assert.equal(statusDashboard.all_items.find((item) => item.id === 'reversed').prep_status.key, 'reversed');
+assert.equal(statusDashboard.items.some((item) => item.id === 'reversed'), false);
+assert.equal(isProductionReversedAuditRecord(statusDashboard.all_items.find((item) => item.id === 'legacy-reversed').production), true);
+assert.equal(statusDashboard.all_items.find((item) => item.id === 'legacy-reversed').prep_status.key, 'reversed');
+assert.equal(statusDashboard.items.some((item) => item.id === 'legacy-reversed'), false);
+assert.equal(statusDashboard.sections.find((section) => section.key === 'breakfast').items.some((item) => item.id === 'reversed'), true);
+assert.equal(statusDashboard.sections.find((section) => section.key === 'breakfast').total_portions, 1);
 
 const storeRoutedDashboard = buildProductionPlanningDashboard({
   productions: [{
