@@ -222,13 +222,14 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
   const productionOverrideCount = getProductionOverrideCount(item.production);
   const isMenuIssueGroup = item.menu_issue_items.length > 0;
   const manifestItemCount = Number(item.item_count || item.dish_count || item.menu_issue_items.length || 0);
-  const isReversed = item.workflow_status === 'reversed' || item.prep_status.key === 'reversed';
+  const prepStatusKey = item.prep_status?.key || 'pending';
+  const isReversed = item.workflow_status === 'reversed' || prepStatusKey === 'reversed';
 
   return (
     <Card className={`overflow-hidden border shadow-sm ${
       isReversed
         ? 'border-slate-400 bg-slate-100/80'
-        : item.prep_status.key === 'at_risk'
+        : prepStatusKey === 'at_risk'
           ? 'border-red-400 bg-white'
           : 'border-slate-300 bg-white'
     }`}>
