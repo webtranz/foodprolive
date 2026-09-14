@@ -17,6 +17,7 @@ import {
   PackageOpen,
   Plus,
   Printer,
+  RotateCcw,
   Scale,
   ShieldCheck,
   Sun,
