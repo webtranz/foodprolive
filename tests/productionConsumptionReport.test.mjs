@@ -147,6 +147,12 @@ test('completion reporting preserves item-code-first reconciliation fields and n
     /planned_quantity:[\s\S]*actual_requested_quantity:[\s\S]*issued_quantity:[\s\S]*shortage_quantity:/
   );
   assert.match(summaryBlock, /quantity_basis:/);
+  assert.match(summaryBlock, /recipe_quantity:/);
+  assert.match(summaryBlock, /recipe_unit:/);
+  assert.match(summaryBlock, /inventory_unit:/);
+  assert.match(summaryBlock, /raw_weight_grams:/);
+  assert.match(summaryBlock, /yielded_weight_grams:/);
+  assert.match(summaryBlock, /conversion_note:/);
   assert.match(summaryBlock, /inventory_transaction_id:/);
   assert.match(summaryBlock, /movement_layers:/);
 
@@ -158,6 +164,10 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(reportBlock, /key: 'ingredient_consumption',[\s\S]*title: 'Ingredient Consumption'/);
   assert.match(reportBlock, /key: 'inventory_lot_usage',[\s\S]*title: 'Inventory Lots Consumed'/);
   assert.match(reportBlock, /key: 'shortages',[\s\S]*title: 'Shortages and Exceptions'/);
+  assert.match(reportBlock, /production_issue_dish_count:/);
+  assert.match(reportBlock, /menu_issue_items:/);
+  assert.match(reportBlock, /total_raw_consumption_weight_grams:/);
+  assert.match(reportBlock, /total_yielded_weight_grams:/);
 
   const productionPage = source('src/pages/Production.jsx');
   const ingredientSectionStart = productionPage.indexOf('>Ingredient Consumption</h3>');

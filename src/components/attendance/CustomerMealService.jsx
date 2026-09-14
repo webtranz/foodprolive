@@ -25,6 +25,7 @@ import {
   getMenuCategoryOptions,
   MENU_CUISINE_OPTIONS
 } from '../../../shared/menuCategories.js';
+import { formatProductionEventTitle } from '../../../shared/productionLabels.js';
 
 const MEAL_PERIODS = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -640,6 +641,9 @@ export function CustomerMealServicePanel({
                   <TableBody>
                     {displayedDishes.map((dish) => {
                       const recipeId = dish.recipe_id;
+                      const dishTitle = formatProductionEventTitle(dish, {
+                        fallback: dish.recipe_name || 'Prepared dish'
+                      });
                       const configuredPortion = normalizeMealServicePortionSize(dish.service_portion_size_grams);
                       const availableCoversValue = Number(dish.available_covers);
                       const availableCovers = configuredPortion !== null
@@ -660,8 +664,18 @@ export function CustomerMealServicePanel({
                       return (
                         <TableRow key={recipeId}>
                           <TableCell>
-                            <p className="font-medium text-slate-900">{dish.recipe_name || 'Prepared dish'}</p>
+                            <p className="font-medium text-slate-900">{dishTitle}</p>
                             <p className="mt-1 text-xs text-slate-500">{asNumber(dish.batch_count)} completed batch{asNumber(dish.batch_count) === 1 ? '' : 'es'}</p>
+                            {Array.isArray(dish.production_names) && dish.production_names.length > 0 ? (
+                              <p className="mt-1 text-xs text-slate-500">
+                                Production event{dish.production_names.length === 1 ? '' : 's'}: {dish.production_names.join(', ')}
+                              </p>
+                            ) : null}
+                            {Array.isArray(dish.consumption_report_ids) && dish.consumption_report_ids.length > 0 ? (
+                              <p className="mt-1 text-xs font-medium text-emerald-700">
+                                Production consumption report available
+                              </p>
+                            ) : null}
                           </TableCell>
                           <TableCell className="min-w-[210px]">
                             <p className="font-medium text-slate-900">{formatMealWeight(dish.available_weight_grams)}</p>

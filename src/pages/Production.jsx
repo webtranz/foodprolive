@@ -33,6 +33,11 @@ import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
 import { ingredientForRecipeLine } from '../../shared/recipeLineWeight.js';
 import { getItemCode } from '../../shared/itemCode.js';
 import {
+  formatProductionEventTitle,
+  getProductionEventDishCount,
+  getProductionEventScopeLabel
+} from '../../shared/productionLabels.js';
+import {
   aggregateProductionIngredientLines,
   buildInventoryReplacementSuggestions,
   buildMenuIssueMealGroups,
@@ -76,6 +81,40 @@ const MEAL_TYPES = [
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatReportQuantity(quantity, unit) {
+  const numeric = optionalNumber(quantity);
+  if (numeric === null) return '—';
+  return `${formatRecipeQuantity(numeric, unit || '')}${unit ? ` ${unit}` : ''}`.trim();
+}
+
+function formatReportWeightFromGrams(value) {
+  const grams = optionalNumber(value);
+  if (grams === null) return '—';
+  if (Math.abs(grams) >= 1000) {
+    return `${formatRecipeQuantity(grams / 1000, 'kg')} kg`;
+  }
+  return `${formatRecipeQuantity(grams, 'g')} g`;
+}
+
+function formatReportPercent(value) {
+  const numeric = optionalNumber(value);
+  return numeric === null ? '—' : `${formatRecipeQuantity(numeric, '%')}%`;
+}
+
+function getReportSectionLines(report, key) {
+  return ((report?.sections || []).find((section) => section.key === key)?.lines || []);
+}
+
+function formatReportSource(value) {
+  return String(value || 'automatic_yield_plan').replace(/_/g, ' ');
 }
 
 function formatWorkflowTimestamp(value) {
@@ -1954,6 +1993,17 @@ export default function Production() {
       };
     });
     const productionOverrides = menuIssueItems.flatMap((item) => item.production_overrides || []);
+    const menuType = group.menu_type || issueSource?.menu_type || 'general';
+    const menuCategory = group.menu_category || issueSource?.menu_category || 'senior';
+    const productionEventTitle = formatProductionEventTitle({
+      meal_type: group.meal_type,
+      menu_type: menuType,
+      menu_category: menuCategory,
+      production_issue_grouped: true,
+      production_issue_dish_count: group.items.length
+    }, {
+      fallback: `${group.meal_label} Menu (${group.items.length} dish${group.items.length === 1 ? '' : 'es'})`
+    });
 
     return {
       site_id: site?.id || group.site_id || firstItem.site_id || '',
@@ -1962,11 +2012,11 @@ export default function Production() {
       fulfillment_store_name: productionStore?.name || '',
       production_date: group.plan_date || firstItem.plan_date || issueSource?.plan_date || format(new Date(), 'yyyy-MM-dd'),
       meal_type: group.meal_type,
-      menu_type: group.menu_type || issueSource?.menu_type || 'general',
-      cuisine_type: group.menu_type || issueSource?.menu_type || 'general',
-      menu_category: group.menu_category || issueSource?.menu_category || 'senior',
+      menu_type: menuType,
+      cuisine_type: menuType,
+      menu_category: menuCategory,
       recipe_id: firstItem.recipe_id,
-      recipe_name: `${group.meal_label} Menu Production (${group.items.length} dish${group.items.length === 1 ? '' : 'es'})`,
+      recipe_name: productionEventTitle,
       target_servings: finiteProductionNumber(group.production_covers, 0),
       kitchen_station: recipe.kitchen_station || recipe.station || '',
       notes: [
@@ -2477,6 +2527,29 @@ export default function Production() {
         : issueInventoryCheckState.message;
   const issueSubmitForApprovalDisabledReason = issueSubmitDisabledReason
     || (!can('submit_production_request') ? 'You need production submission permission to submit this request.' : '');
+  const reportEventTitle = selectedConsumptionReport
+    ? formatProductionEventTitle(selectedConsumptionReport, {
+      fallback: selectedConsumptionReport.production_name
+        || selectedConsumptionReport.recipe_name
+        || selectedConsumptionReport.report_name
+        || 'Production Consumption Report'
+    })
+    : 'Production Consumption Report';
+  const reportScopeLabel = selectedConsumptionReport
+    ? getProductionEventScopeLabel(selectedConsumptionReport)
+    : '';
+  const reportDishCount = selectedConsumptionReport
+    ? getProductionEventDishCount(selectedConsumptionReport, 0)
+    : 0;
+  const reportIngredientLines = selectedConsumptionReport?.ingredient_lines || [];
+  const reportLotLines = getReportSectionLines(selectedConsumptionReport, 'inventory_lot_usage');
+  const reportShortageLines = getReportSectionLines(selectedConsumptionReport, 'shortages');
+  const reportTotalRawWeightGrams = optionalNumber(selectedConsumptionReport?.total_raw_consumption_weight_grams)
+    ?? optionalNumber(selectedConsumptionReport?.recipe_raw_weight_grams)
+    ?? reportIngredientLines.reduce((sum, line) => sum + toNumber(line.raw_weight_grams, 0), 0);
+  const reportTotalYieldedWeightGrams = optionalNumber(selectedConsumptionReport?.total_yielded_weight_grams)
+    ?? optionalNumber(selectedConsumptionReport?.expected_finished_weight_grams)
+    ?? reportIngredientLines.reduce((sum, line) => sum + toNumber(line.yielded_weight_grams, 0), 0);
 
   return (
     <>
@@ -3742,11 +3815,13 @@ export default function Production() {
             if (!open) setSelectedConsumptionReport(null);
           }}
         >
-          <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
+          <DialogContent className="max-h-[90vh] w-[96vw] max-w-[1400px] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <FileText className="h-5 w-5 text-emerald-700" />
-                {selectedConsumptionReport?.report_name || 'Production Consumption Report'}
+                {selectedConsumptionReport?.report_number
+                  ? `${selectedConsumptionReport.report_number} · ${reportEventTitle}`
+                  : reportEventTitle}
               </DialogTitle>
             </DialogHeader>
             <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -3757,34 +3832,145 @@ export default function Production() {
             </div>
 
             <section className="space-y-2">
+              <h3 className="font-semibold text-slate-900">Production Event Details</h3>
+              <div className="grid gap-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Event</p>
+                  <p className="font-semibold text-slate-950">{reportEventTitle}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Menu Scope</p>
+                  <p className="font-semibold text-slate-950">
+                    {reportScopeLabel || 'Not classified'}
+                    {reportDishCount > 0 ? ` · ${reportDishCount} dish${reportDishCount === 1 ? '' : 'es'}` : ''}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Production Date</p>
+                  <p className="font-semibold text-slate-950">{selectedConsumptionReport?.production_date || 'Not recorded'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Completed At</p>
+                  <p className="font-semibold text-slate-950">{formatWorkflowTimestamp(selectedConsumptionReport?.completed_at)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Finished Kg Produced</p>
+                  <p className="font-semibold text-emerald-800">{formatReportWeightFromGrams(reportTotalYieldedWeightGrams)}</p>
+                  <p className="text-xs text-slate-500">Yielded finished output</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Raw Stock Consumed</p>
+                  <p className="font-semibold text-slate-950">{formatReportWeightFromGrams(reportTotalRawWeightGrams)}</p>
+                  <p className="text-xs text-slate-500">Before cooking/yield adjustment</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Portion / Serving Size</p>
+                  <p className="font-semibold text-slate-950">{formatReportWeightFromGrams(selectedConsumptionReport?.portion_size_grams)}</p>
+                  <p className="text-xs text-slate-500">Used to derive produced servings</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Production Covers</p>
+                  <p className="font-semibold text-slate-950">{formatReportQuantity(selectedConsumptionReport?.target_servings, 'servings')}</p>
+                  <p className="text-xs text-slate-500">Source: {formatReportSource(selectedConsumptionReport?.output_calculation_source)}</p>
+                </div>
+              </div>
+              {Array.isArray(selectedConsumptionReport?.menu_issue_items) && selectedConsumptionReport.menu_issue_items.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Dish</TableHead>
+                        <TableHead>Production Covers</TableHead>
+                        <TableHead>Estimated Cost</TableHead>
+                        <TableHead>Snapshot Lines</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedConsumptionReport.menu_issue_items.map((item, index) => (
+                        <TableRow key={item.key || `${item.recipe_id}-${index}`}>
+                          <TableCell className="font-medium text-slate-900">{item.recipe_name || 'Planned dish'}</TableCell>
+                          <TableCell>{formatReportQuantity(item.production_covers ?? item.expected_servings, 'servings')}</TableCell>
+                          <TableCell>{formatCurrency(item.estimated_batch_cost || 0)}</TableCell>
+                          <TableCell>{Array.isArray(item.ingredients_used) ? item.ingredients_used.length : '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="space-y-2">
               <h3 className="font-semibold text-slate-900">Ingredient Consumption</h3>
-              <div className="rounded-lg border border-slate-200">
+              <p className="text-sm text-slate-500">
+                Every row below is what the production posted to stock. Recipe quantities are shown beside the converted inventory quantity so unit changes are visible.
+              </p>
+              <div className="overflow-x-auto rounded-lg border border-slate-200">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Item Code</TableHead>
                       <TableHead>Item Name</TableHead>
-                      <TableHead>Planned Raw</TableHead>
-                      <TableHead>Actual Requested</TableHead>
+                      <TableHead>Used In</TableHead>
+                      <TableHead>Recipe Qty</TableHead>
+                      <TableHead>Inventory Qty</TableHead>
                       <TableHead>Stock Issued</TableHead>
+                      <TableHead>Raw Weight</TableHead>
+                      <TableHead>Yield</TableHead>
+                      <TableHead>Yielded Weight</TableHead>
                       <TableHead>Shortage</TableHead>
-                      <TableHead>Basis</TableHead>
+                      <TableHead>Unit / Conversion</TableHead>
                       <TableHead>Cost</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(selectedConsumptionReport?.ingredient_lines || []).map((line, index) => (
-                      <TableRow key={`${line.ingredient_id}-${index}`}>
-                        <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
-                        <TableCell className="font-medium">{line.ingredient_name}</TableCell>
-                        <TableCell>{formatRecipeQuantity(line.planned_quantity, line.unit)} {line.unit}</TableCell>
-                        <TableCell>{formatRecipeQuantity(line.actual_requested_quantity, line.unit)} {line.unit}</TableCell>
-                        <TableCell>{formatRecipeQuantity(line.issued_quantity, line.unit)} {line.unit}</TableCell>
-                        <TableCell className={Number(line.shortage_quantity) > 0 ? 'font-semibold text-red-600' : ''}>{formatRecipeQuantity(line.shortage_quantity, line.unit)} {line.unit}</TableCell>
-                        <TableCell>{String(line.quantity_basis || '').replace(/_/g, ' ')}</TableCell>
-                        <TableCell>{formatCurrency(line.posted_cost || 0)}</TableCell>
+                    {reportIngredientLines.map((line, index) => {
+                      const recipeUnit = line.recipe_unit || line.source_unit || line.unit;
+                      const inventoryUnit = line.inventory_unit || line.unit;
+                      const unitStatus = String(line.unit_status || '').toLowerCase();
+                      const hasUnitIssue = unitStatus && unitStatus !== 'ok';
+                      return (
+                        <TableRow key={`${line.ingredient_id}-${index}`} className={hasUnitIssue ? 'bg-red-50/60' : ''}>
+                          <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
+                          <TableCell className="min-w-[220px] font-medium">{line.ingredient_name}</TableCell>
+                          <TableCell className="min-w-[180px] text-xs text-slate-600">
+                            {Array.isArray(line.source_recipe_names) && line.source_recipe_names.length > 0
+                              ? line.source_recipe_names.join(', ')
+                              : reportEventTitle}
+                          </TableCell>
+                          <TableCell>{formatReportQuantity(line.recipe_quantity ?? line.planned_recipe_quantity ?? line.planned_quantity, recipeUnit)}</TableCell>
+                          <TableCell>{formatReportQuantity(line.actual_requested_quantity, inventoryUnit)}</TableCell>
+                          <TableCell>{formatReportQuantity(line.issued_quantity, inventoryUnit)}</TableCell>
+                          <TableCell>{formatReportWeightFromGrams(line.raw_weight_grams)}</TableCell>
+                          <TableCell>{formatReportPercent(line.yield_percent)}</TableCell>
+                          <TableCell>{formatReportWeightFromGrams(line.yielded_weight_grams)}</TableCell>
+                          <TableCell className={Number(line.shortage_quantity) > 0 ? 'font-semibold text-red-600' : ''}>
+                            {formatReportQuantity(line.shortage_quantity, inventoryUnit)}
+                          </TableCell>
+                          <TableCell className="min-w-[180px]">
+                            <Badge
+                              variant="outline"
+                              className={hasUnitIssue
+                                ? 'border-red-200 bg-red-50 text-red-700'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-700'}
+                            >
+                              {hasUnitIssue ? 'Issue' : 'OK'}
+                            </Badge>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {line.conversion_note || formatReportSource(line.quantity_basis)}
+                            </p>
+                          </TableCell>
+                          <TableCell>{formatCurrency(line.posted_cost || 0)}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {reportIngredientLines.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={12} className="py-6 text-center text-sm text-slate-500">
+                          No ingredient consumption lines were stored for this report.
+                        </TableCell>
                       </TableRow>
-                    ))}
+                    ) : null}
                   </TableBody>
                 </Table>
               </div>
@@ -3798,7 +3984,7 @@ export default function Production() {
                     <TableRow><TableHead>Item Code</TableHead><TableHead>Item Name</TableHead><TableHead>Batch</TableHead><TableHead>Expiry</TableHead><TableHead>Quantity</TableHead><TableHead>Cost</TableHead></TableRow>
                   </TableHeader>
                   <TableBody>
-                    {((selectedConsumptionReport?.sections || []).find((section) => section.key === 'inventory_lot_usage')?.lines || []).map((line, index) => (
+                    {reportLotLines.map((line, index) => (
                       <TableRow key={`${line.inventory_lot_id}-${index}`}>
                         <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
                         <TableCell>{line.ingredient_name}</TableCell>
@@ -3808,6 +3994,9 @@ export default function Production() {
                         <TableCell>{formatCurrency(line.total_cost || 0)}</TableCell>
                       </TableRow>
                     ))}
+                    {reportLotLines.length === 0 ? (
+                      <TableRow><TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">No inventory lot movements were stored for this report.</TableCell></TableRow>
+                    ) : null}
                   </TableBody>
                 </Table>
               </div>
@@ -3821,7 +4010,7 @@ export default function Production() {
                     <TableRow><TableHead>Item Code</TableHead><TableHead>Item Name</TableHead><TableHead>Requested</TableHead><TableHead>Issued</TableHead><TableHead>Shortage</TableHead><TableHead>Estimated Shortage Cost</TableHead></TableRow>
                   </TableHeader>
                   <TableBody>
-                    {((selectedConsumptionReport?.sections || []).find((section) => section.key === 'shortages')?.lines || []).map((line, index) => (
+                    {reportShortageLines.map((line, index) => (
                       <TableRow key={`${line.ingredient_id}-${index}`}>
                         <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
                         <TableCell>{line.ingredient_name}</TableCell>
@@ -3831,7 +4020,7 @@ export default function Production() {
                         <TableCell>{formatCurrency(line.estimated_shortage_cost || 0)}</TableCell>
                       </TableRow>
                     ))}
-                    {((selectedConsumptionReport?.sections || []).find((section) => section.key === 'shortages')?.lines || []).length === 0 ? (
+                    {reportShortageLines.length === 0 ? (
                       <TableRow><TableCell colSpan={6} className="py-6 text-center text-sm text-emerald-700">No shortages or consumption exceptions were posted.</TableCell></TableRow>
                     ) : null}
                   </TableBody>

@@ -218,6 +218,8 @@ const groupedMenuDashboard = buildProductionPlanningDashboard({
     recipe_id: 'rice-recipe',
     recipe_name: 'Breakfast Menu Production (2 dishes)',
     meal_type: 'breakfast',
+    menu_type: 'general',
+    menu_category: 'senior',
     target_servings: 40,
     status: 'pending_approval',
     production_issue_grouped: true,
@@ -240,6 +242,7 @@ const groupedMenuDashboard = buildProductionPlanningDashboard({
 });
 const groupedBreakfastSection = groupedMenuDashboard.sections.find((section) => section.key === 'breakfast');
 assert.equal(groupedBreakfastSection.items.length, 1);
+assert.equal(groupedBreakfastSection.items[0].recipe_name, 'Breakfast Menu Senior / General (2 dishes)');
 assert.equal(groupedBreakfastSection.total_recipes, 2);
 assert.equal(groupedMenuDashboard.summary.total_recipes, 2);
 assert.equal(groupedMenuDashboard.shortages.length, 1);

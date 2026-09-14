@@ -5,6 +5,7 @@ import {
 import { calculateRecipeServingWeight } from '../../shared/recipeWeight.js';
 import { formatRecipeQuantity } from '../../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../../shared/itemCode.js';
+import { formatProductionEventTitle } from '../../shared/productionLabels.js';
 import { resolveProductionFulfillmentStore } from '../../shared/productionFulfillment.js';
 import {
   getInventoryQuantities,
@@ -185,7 +186,14 @@ function groupLegacyMenuPlanReviewItems(items, shortages, ingredientMap) {
       grouped_productions: groupItems.map((item) => item.production),
       grouped_production_ids: productionIds,
       recipe_id: base.production.recipe_id,
-      recipe_name: `${style?.label || titleCase(base.meal_type)} Menu Production (${dishCount} dish${dishCount === 1 ? '' : 'es'})`,
+      recipe_name: formatProductionEventTitle({
+        ...base.production,
+        meal_type: base.meal_type,
+        production_issue_grouped: true,
+        production_issue_dish_count: dishCount
+      }, {
+        fallback: `${style?.label || titleCase(base.meal_type)} Menu (${dishCount} dish${dishCount === 1 ? '' : 'es'})`
+      }),
       target_servings: groupItems.reduce((sum, item) => sum + item.required_portions, 0),
       estimated_batch_cost: round(groupItems.reduce((sum, item) => sum + item.estimated_batch_cost, 0)),
       status: 'pending_approval',
@@ -494,11 +502,15 @@ export function buildProductionPlanningDashboard({
     const productionShortages = shortages.filter((shortage) => shortage.production_ids.includes(production.id));
     const workflowStatus = textValue(production?.status || 'planned').toLowerCase();
     const mealType = normalizeProductionMealType(production?.meal_type);
+    const productionEventTitle = formatProductionEventTitle(production, {
+      fallback: production.recipe_name || recipe?.name || 'Unnamed dish'
+    });
+
     return {
       id: production.id,
       production,
       recipe,
-      recipe_name: production.recipe_name || recipe?.name || 'Unnamed dish',
+      recipe_name: productionEventTitle,
       menu_issue_items: menuIssueItems,
       dish_count: dishCount,
       ingredient_lines: (Array.isArray(production?.ingredients_used) ? production.ingredients_used : []).map((line) => ({

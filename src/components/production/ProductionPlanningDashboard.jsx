@@ -38,6 +38,7 @@ import { buildProductionPlanningDashboard } from '@/lib/productionPlanning';
 import { getProductionInventoryState } from '@/lib/inventoryAvailability';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 import { getItemCodeFromRecords } from '../../../shared/itemCode.js';
+import { formatProductionEventTitle } from '../../../shared/productionLabels.js';
 import {
   getProductionApprovalHistory,
   getProductionReviewNotice,
@@ -545,12 +546,15 @@ function AreaApprovalQueue({
           {productions.map((production) => {
             const materialRequest = materialRequestMap[production.id] || null;
             const historyCount = getProductionApprovalHistory(production).length;
+            const productionTitle = formatProductionEventTitle(production, {
+              fallback: production.recipe_name || production.name || 'Production request'
+            });
             return (
               <article key={production.id} className="rounded-lg border border-purple-100 bg-white p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h3 className="truncate text-sm font-semibold text-slate-950" title={production.recipe_name || production.name}>
-                      {production.recipe_name || production.name || 'Production request'}
+                    <h3 className="truncate text-sm font-semibold text-slate-950" title={productionTitle}>
+                      {productionTitle}
                     </h3>
                     <p className="mt-1 truncate text-xs text-slate-500">
                       {production.site_name || 'Site not named'}

@@ -19,6 +19,11 @@ import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
 import { getRecipeLinePrepExemptPercent, isExemptProcessingAid, recipeLineWeightFields } from '../shared/recipeLineWeight.js';
 import { buildAutomaticProductionYieldSummary } from '../shared/productionReconciliation.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
+import {
+  formatProductionEventTitle,
+  getProductionEventDishCount,
+  getProductionEventScopeLabel
+} from '../shared/productionLabels.js';
 import { normalizeProductionMenuScope } from '../shared/menuCategories.js';
 import { resolveProductionFulfillmentStore } from '../shared/productionFulfillment.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../shared/siteHierarchy.js';
@@ -73,6 +78,12 @@ function toNumber(value, fallback = 0) {
 
 function roundQuantity(value) {
   return Number(toNumber(value, 0).toFixed(6));
+}
+
+function roundOptionalQuantity(value, decimals = 6) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Number(numeric.toFixed(decimals)) : null;
 }
 
 function positiveNumber(value) {
@@ -3100,6 +3111,8 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     const inventoryItem = inventoryMap.get(String(ingredient.ingredient_id));
     const inventoryUnit = inventoryItem?.unit || ingredientData?.unit || ingredient.unit;
     const sourceUnit = ingredient.unit || inventoryUnit;
+    const sourceUnitNormalized = normalizeIngredientUnit(sourceUnit);
+    const inventoryUnitNormalized = normalizeIngredientUnit(inventoryUnit);
     const conversionContext = {
       sourceUnit,
       inventoryUnit,
@@ -3117,6 +3130,16 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     return {
       ...ingredient,
       unit: inventoryUnit,
+      recipe_quantity: roundOptionalQuantity(sourceQuantity),
+      recipe_unit: sourceUnit,
+      inventory_unit: inventoryUnit,
+      unit_status: 'ok',
+      conversion_note: (
+        areInventoryUnitsEquivalent(sourceUnit, inventoryUnit)
+        || sourceUnitNormalized === inventoryUnitNormalized
+      )
+        ? `Recipe and inventory both use ${inventoryUnit || sourceUnit || 'the same unit'}`
+        : `Recipe ${sourceUnit} converted to inventory ${inventoryUnit}`,
       desired_quantity: Number(inventoryQuantity.toFixed(6)),
       planned_inventory_quantity: Number(plannedInventoryQuantity.toFixed(6))
     };
@@ -3223,6 +3246,9 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
       item_code: getItemCodeFromRecords([ingredientData, ingredient], null),
       ingredient_name: ingredient.ingredient_name,
       unit: inventoryUnit,
+      recipe_quantity: roundOptionalQuantity(ingredient.recipe_quantity),
+      recipe_unit: ingredient.recipe_unit || inventoryUnit,
+      inventory_unit: ingredient.inventory_unit || inventoryUnit,
       planned_quantity: Number(plannedInventoryQuantity.toFixed(4)),
       actual_requested_quantity: Number(inventoryQuantity.toFixed(4)),
       issued_quantity: toNumber(movement.issued_quantity, 0),
@@ -3232,6 +3258,12 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
       quantity_basis: plannedQuantityBasis,
       source_recipe_names: Array.isArray(ingredient.source_recipe_names) ? ingredient.source_recipe_names : [],
       yield_percent: toNumber(ingredient.yield_percent, 100),
+      raw_weight_grams: roundOptionalQuantity(ingredient.raw_weight_grams, 3),
+      yielded_weight_grams: roundOptionalQuantity(ingredient.yielded_weight_grams, 3),
+      weight_calculation_source: ingredient.weight_calculation_source || null,
+      yield_calculation_source: ingredient.yield_calculation_source || ingredient.yield_source || null,
+      unit_status: ingredient.unit_status || 'ok',
+      conversion_note: ingredient.conversion_note || 'Unit conversion completed',
       inventory_transaction_id: movement.transaction_id || null,
       inventory_transaction_ids: movement.transaction_ids || (
         movement.transaction_id ? [movement.transaction_id] : []
@@ -3244,7 +3276,17 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
   const completedAt = nowIso();
   const dateToken = String(production.production_date || completedAt.slice(0, 10)).replace(/[^0-9]/g, '').slice(0, 8);
   const reportNumber = `PCR-${dateToken}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-  const reportName = `${reportNumber} · ${production.recipe_name || 'Production Consumption'}`;
+  const productionDishCount = getProductionEventDishCount(
+    production,
+    Array.isArray(production.menu_issue_items) ? production.menu_issue_items.length : 1
+  );
+  const productionEventTitle = formatProductionEventTitle({
+    ...production,
+    production_issue_dish_count: productionDishCount
+  }, {
+    fallback: production.recipe_name || 'Production Consumption'
+  });
+  const reportName = `${reportNumber} · ${productionEventTitle}`;
   const lotLines = consumptionSummary.flatMap((line) => line.movement_layers.map((layer) => ({
     item_code: line.item_code,
     ingredient_id: line.ingredient_id,
@@ -3253,11 +3295,42 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     ...layer
   })));
   const shortageLines = consumptionSummary.filter((line) => line.shortage_quantity > 0);
+  const totalRawConsumptionWeightGrams = consumptionSummary.reduce(
+    (sum, line) => sum + toNumber(line.raw_weight_grams, 0),
+    0
+  );
+  const totalYieldedWeightGrams = consumptionSummary.reduce(
+    (sum, line) => sum + toNumber(line.yielded_weight_grams, 0),
+    0
+  );
+  const menuIssueItems = Array.isArray(production.menu_issue_items)
+    ? production.menu_issue_items.map((item) => ({
+      key: item.key,
+      recipe_id: item.recipe_id,
+      recipe_name: item.recipe_name,
+      expected_servings: roundOptionalQuantity(item.expected_servings),
+      production_covers: roundOptionalQuantity(item.production_covers),
+      estimated_batch_cost: roundOptionalQuantity(item.estimated_batch_cost, 2),
+      ingredients_used: Array.isArray(item.ingredients_used)
+        ? item.ingredients_used.map((line) => ({
+          ingredient_id: line.ingredient_id,
+          item_code: line.item_code,
+          ingredient_name: line.ingredient_name,
+          quantity: roundOptionalQuantity(line.planned_quantity ?? line.raw_quantity ?? line.quantity),
+          unit: line.unit,
+          raw_weight_grams: roundOptionalQuantity(line.raw_weight_grams, 3),
+          yielded_weight_grams: roundOptionalQuantity(line.yielded_weight_grams, 3),
+          yield_percent: roundOptionalQuantity(line.yield_percent, 2)
+        }))
+        : []
+    }))
+    : [];
   const report = await createDocument('ProductionConsumptionReport', {
     report_number: reportNumber,
     report_name: reportName,
     production_id: production.id,
-    production_name: production.recipe_name || production.id,
+    production_name: productionEventTitle || production.id,
+    original_production_name: production.recipe_name || null,
     production_date: production.production_date || null,
     site_id: stockSiteId || null,
     site_name: stockSiteName || null,
@@ -3266,8 +3339,16 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     fulfillment_store_id: fulfillmentStore.id,
     fulfillment_store_name: fulfillmentStore.name || null,
     recipe_id: production.recipe_id || null,
-    recipe_name: production.recipe_name || null,
+    recipe_name: productionEventTitle || production.recipe_name || null,
+    original_recipe_name: production.recipe_name || null,
     meal_type: production.meal_type || null,
+    menu_type: production.menu_type || production.cuisine_type || null,
+    cuisine_type: production.menu_type || production.cuisine_type || null,
+    menu_category: production.menu_category || null,
+    menu_scope_label: getProductionEventScopeLabel(production),
+    production_issue_grouped: Boolean(production.production_issue_grouped),
+    production_issue_dish_count: productionDishCount,
+    menu_issue_items: menuIssueItems,
     kitchen_station: production.kitchen_station || production.assigned_station || production.station || null,
     target_servings: production.target_servings || 0,
     completed_by: actor.email,
@@ -3278,6 +3359,14 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     output_calculation_source: automaticPlan.output_calculation_source,
     recipe_raw_weight_grams: completionProduction.recipe_raw_weight_grams,
     expected_finished_weight_grams: completionProduction.expected_finished_weight_grams,
+    total_raw_consumption_weight_grams: roundOptionalQuantity(
+      totalRawConsumptionWeightGrams || completionProduction.recipe_raw_weight_grams,
+      3
+    ),
+    total_yielded_weight_grams: roundOptionalQuantity(
+      totalYieldedWeightGrams || completionProduction.expected_finished_weight_grams,
+      3
+    ),
     portion_size_grams: completionProduction.portion_size_grams,
     expected_yield_servings: completionProduction.expected_yield_servings,
     total_consumption_cost: Number(totalProductionCost.toFixed(2)),
@@ -3307,7 +3396,11 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
   }, executor);
 
   const producedItemResult = await createProducedItemBatchForCompletion({
-    production: completionProduction,
+    production: {
+      ...completionProduction,
+      consumption_report_id: report.id,
+      consumption_report_number: report.report_number
+    },
     recipe: automaticPlan.recipe,
     recipes: recipeCatalog,
     ingredients: ingredientCatalog,

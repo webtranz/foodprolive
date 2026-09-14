@@ -16,6 +16,7 @@ import {
   normalizeMenuCuisine,
   normalizeProductionMenuScope
 } from '../shared/menuCategories.js';
+import { formatProductionEventTitle } from '../shared/productionLabels.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../shared/siteHierarchy.js';
 
 const QUANTITY_EPSILON = 0.0000005;
@@ -207,10 +208,16 @@ export function groupMealServiceProducedDishes(batches = []) {
   )).sort(compareBatchFifo).forEach((batch) => {
     const recipeId = normalizeText(batch.recipe_id);
     if (!recipeId) return;
+    const productionName = formatProductionEventTitle(batch, {
+      fallback: batch.production_name || batch.recipe_name || recipeId
+    });
     if (!grouped.has(recipeId)) {
       grouped.set(recipeId, {
         recipe_id: recipeId,
-        recipe_name: batch.recipe_name || recipeId,
+        recipe_name: productionName,
+        meal_type: batch.meal_type || null,
+        menu_type: batch.menu_type || null,
+        menu_category: batch.menu_category || null,
         service_portion_size_grams: getStoredServicePortionSize(batch),
         portion_configured: Boolean(getStoredServicePortionSize(batch)),
         produced_servings: 0,
@@ -222,10 +229,16 @@ export function groupMealServiceProducedDishes(batches = []) {
         available_weight_grams: 0,
         available_covers: 0,
         batch_count: 0,
+        production_names: new Set(),
+        consumption_report_ids: new Set(),
         batches: []
       });
     }
     const row = grouped.get(recipeId);
+    row.production_names.add(productionName);
+    if (normalizeText(batch.consumption_report_id)) {
+      row.consumption_report_ids.add(normalizeText(batch.consumption_report_id));
+    }
     const explicitSize = getStoredServicePortionSize(batch);
     if (!explicitSize) row.portion_configured = false;
     if (explicitSize && row.service_portion_size_grams
@@ -245,12 +258,17 @@ export function groupMealServiceProducedDishes(batches = []) {
       id: batch.id,
       batch_number: batch.batch_number,
       production_id: batch.production_id,
+      production_name: productionName,
+      consumption_report_id: batch.consumption_report_id || null,
+      consumption_report_number: batch.consumption_report_number || null,
       completed_at: batch.completed_at,
       remaining_weight_grams: batch.remaining_weight_grams
     });
   });
   return [...grouped.values()].map((row) => ({
     ...row,
+    production_names: [...row.production_names],
+    consumption_report_ids: [...row.consumption_report_ids],
     service_portion_size_grams: row.portion_configured ? row.service_portion_size_grams : null,
     available_covers: row.portion_configured
       ? Math.floor((row.available_weight_grams + QUANTITY_EPSILON) / row.service_portion_size_grams)
@@ -1281,23 +1299,32 @@ export function buildProducedItemBatchSnapshot({
   const productionToken = normalizeText(production.id)
     ? crypto.createHash('sha256').update(normalizeText(production.id)).digest('hex').slice(0, 10).toUpperCase()
     : crypto.randomBytes(5).toString('hex').toUpperCase();
+  const productionEventTitle = formatProductionEventTitle(production, {
+    fallback: production.recipe_name || recipe.name || production.id
+  });
 
   return {
     batch_number: `PIB-${dateToken}-${productionToken}`,
     production_id: normalizeText(production.id),
-    production_name: production.recipe_name || recipe.name || production.id,
+    production_name: productionEventTitle,
     production_date: completedDate,
     completed_at: completedAt,
     site_id: normalizeText(production.site_id),
     site_name: production.site_name || null,
     recipe_id: normalizeText(production.recipe_id || recipe.id),
-    recipe_name: production.recipe_name || recipe.name || null,
+    recipe_name: productionEventTitle || production.recipe_name || recipe.name || null,
+    original_recipe_name: production.recipe_name || recipe.name || null,
+    consumption_report_id: normalizeText(production.consumption_report_id) || null,
+    consumption_report_number: normalizeText(production.consumption_report_number) || null,
     source_type: normalizeText(production.source_type) || null,
     source_event_id: normalizeText(production.source_event_id) || null,
     menu_plan_id: normalizeText(production.menu_plan_id) || null,
     meal_type: mealType,
     menu_type: menuType,
     menu_category: menuCategory,
+    production_issue_grouped: Boolean(production.production_issue_grouped),
+    production_issue_dish_count: number(production.production_issue_dish_count, 0),
+    menu_issue_items: Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [],
     portion_size_grams: roundQuantity(portionSize),
     service_portion_size_grams: null,
     expected_servings: roundQuantity(expectedServings),
