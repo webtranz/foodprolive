@@ -311,6 +311,20 @@ const cases = [
     }
   },
   {
+    name: 'limits food waste edit controls to administrators',
+    run() {
+      const page = read('src/pages/FoodWaste.jsx');
+      const server = read('server/index.js');
+      const entities = read('server/entities.js');
+      assert.match(page, /const \{ can, isAdmin \} = usePermissions\(\)/);
+      assert.match(page, /Only administrators can edit waste requests\./);
+      assert.match(page, /isAdmin \? \(/);
+      assert.match(server, /Only administrators can edit food waste requests\./);
+      assert.match(entities, /Only administrators can edit food waste requests/);
+      assert.match(entities, /approvalOnlyUpdate[\s\S]*return true/);
+    }
+  },
+  {
     name: 'removes manual scope and recipe controls while keeping quantity',
     run() {
       const page = read('src/pages/FoodWaste.jsx');

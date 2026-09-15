@@ -266,7 +266,7 @@ function createDefaultWasteForm() {
 
 export default function FoodWaste() {
   const queryClient = useQueryClient();
-  const { can } = usePermissions();
+  const { can, isAdmin } = usePermissions();
   const wasteImageInputRef = useRef(null);
   const [formOpen, setFormOpen] = useState(false);
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
@@ -1040,6 +1040,10 @@ export default function FoodWaste() {
   };
 
   const handleOpenEditDialog = (record) => {
+    if (!isAdmin) {
+      setMessage('Only administrators can edit waste requests.');
+      return;
+    }
     if (isMealServiceLeftover(record)) {
       setMessage('Meal Service Leftover records are system managed. Correct them by reversing the related Meal Service request.');
       return;
@@ -1797,7 +1801,7 @@ export default function FoodWaste() {
                         >
                           Dish-wise
                         </Badge>
-                      ) : can('manage_waste') ? (
+                      ) : isAdmin ? (
                         <Button
                           size="sm"
                           variant="outline"

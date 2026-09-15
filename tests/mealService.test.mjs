@@ -1180,6 +1180,43 @@ test('automatic meal-service leftover waste is server-owned and immutable throug
   assert.match(database, /data->>'auto_generated'[\s\S]*meal_service_leftover[\s\S]*meal_service_attendance_id/);
 });
 
+test('food waste request edits are admin-only while approval-only patches stay scoped', () => {
+  const manager = {
+    role: 'manager',
+    role_permissions: ['manage_waste', 'approve_waste']
+  };
+  const administrator = {
+    role: 'admin',
+    role_permissions: ['manage_waste', 'approve_waste']
+  };
+  const regularWaste = { id: 'waste-regular', status: 'logged' };
+
+  assertHttpError(
+    () => authorizeEntityAction(manager, 'FoodWaste', 'update', { notes: 'corrected' }, regularWaste),
+    403,
+    /Only administrators can edit food waste requests/
+  );
+  assertHttpError(
+    () => authorizeEntityAction(manager, 'FoodWaste', 'delete', null, regularWaste),
+    403,
+    /Only administrators can edit food waste requests/
+  );
+  assert.doesNotThrow(() => authorizeEntityAction(
+    manager,
+    'FoodWaste',
+    'update',
+    { approval_status: 'approved', status: 'logged' },
+    regularWaste
+  ));
+  assert.doesNotThrow(() => authorizeEntityAction(
+    administrator,
+    'FoodWaste',
+    'update',
+    { notes: 'admin correction' },
+    regularWaste
+  ));
+});
+
 test('staff meal service is transactional, admin-correctable, and cannot mutate raw inventory entities', () => {
   const serviceSource = source('server/mealService.js');
   const serverSource = source('server/index.js');

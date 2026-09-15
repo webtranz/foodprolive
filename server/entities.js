@@ -337,6 +337,18 @@ export function hasPermission(user, permission) {
   return getUserPermissions(user).includes(permission);
 }
 
+const FOOD_WASTE_APPROVAL_ONLY_FIELDS = new Set([
+  'approval_status',
+  'approved_by',
+  'approved_at',
+  'status'
+]);
+
+function isFoodWasteApprovalOnlyPayload(payload = {}) {
+  const keys = Object.keys(payload || {});
+  return keys.length > 0 && keys.every((key) => FOOD_WASTE_APPROVAL_ONLY_FIELDS.has(key));
+}
+
 export const entityRegistry = {
   AdvancedReportSchedule: {
     defaults: { status: 'active', frequency: 'weekly' }
@@ -1229,6 +1241,15 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     if (protectedLeftover && ['update', 'delete'].includes(action)) {
       const error = new Error('Automatic meal-service leftover waste can only be changed by the protected meal-service reversal');
       error.status = 409;
+      throw error;
+    }
+    const approvalOnlyUpdate = action === 'update'
+      && isFoodWasteApprovalOnlyPayload(payload)
+      && hasPermission(user, 'approve_waste');
+    if (approvalOnlyUpdate) return true;
+    if (['update', 'delete'].includes(action) && !hasAdminAccess(user) && !approvalOnlyUpdate) {
+      const error = new Error('Only administrators can edit food waste requests');
+      error.status = 403;
       throw error;
     }
   }

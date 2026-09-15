@@ -4280,8 +4280,8 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
       if (!hasPermission(request.user, 'approve_waste')) {
         return response.status(403).json({ message: 'You do not have permission to approve food waste.' });
       }
-    } else if (!hasPermission(request.user, 'manage_waste')) {
-      return response.status(403).json({ message: 'You do not have permission to edit food waste.' });
+    } else if (!hasAdminAccess(request.user)) {
+      return response.status(403).json({ message: 'Only administrators can edit food waste requests.' });
     }
 
     if (!approvalOnly && !String(payload.evidence_image_url || payload.image_url || existing.evidence_image_url || existing.image_url || '').trim()) {
