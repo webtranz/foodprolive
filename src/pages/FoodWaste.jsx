@@ -395,6 +395,9 @@ export default function FoodWaste() {
     })
   ), [batchOverproductionDishes, dishWasteGramsByRecipe]);
   const batchWasteTotalGrams = batchWasteRows.reduce((sum, row) => sum + row.waste_grams, 0);
+  const hasBatchOverproductionAvailableOutput = batchWasteRows.some((row) => (
+    safeNumber(row.available_weight_grams) > 0
+  ));
   const adminEditingExistingWaste = Boolean(isAdmin && editingWasteId);
   const adminWasteWindowOverride = Boolean(isAdmin && wasteContext?.window_status !== 'future_date');
   const wasteContextAllowsSave = Boolean(
@@ -980,17 +983,17 @@ export default function FoodWaste() {
         setMessage('Production summary is still loading. Wait a moment and try again.');
         return;
       }
-      if (!batchOverproductionDishes.length) {
+      if (!batchOverproductionDishes.length || !hasBatchOverproductionAvailableOutput) {
         setMessage('No completed production output was found for this date, location, and meal type.');
         return;
       }
       if (!selectedBatchWasteRows.length) {
-        setMessage('Enter recorded food waste in grams for at least one produced item.');
+        setMessage('Enter recorded food waste in grams for at least one menu category.');
         return;
       }
       const excessiveRow = selectedBatchWasteRows.find((row) => row.waste_grams > safeNumber(row.available_weight_grams));
       if (excessiveRow) {
-        setMessage(`${excessiveRow.recipe_name} has only ${formatWeightGrams(excessiveRow.available_weight_grams)} available to record as waste.`);
+        setMessage(`${excessiveRow.menu_category_label || excessiveRow.recipe_name} has only ${formatWeightGrams(excessiveRow.available_weight_grams)} available to record as waste.`);
         return;
       }
     }
@@ -1011,7 +1014,7 @@ export default function FoodWaste() {
       const buildPayload = ({ row = null, estimatedCost = handleAutoCostPreview() } = {}) => {
         const approvalStatus = estimatedCost >= APPROVAL_THRESHOLD ? 'pending' : 'approved';
         const rowBatches = row?.batches || [];
-        const rowProductionId = rowBatches[0]?.production_id || null;
+        const rowProductionId = rowBatches.length === 1 ? rowBatches[0]?.production_id || null : null;
         const rowBatchReference = rowBatches.map((batch) => batch.batch_number).filter(Boolean).join(', ');
         return {
           site_id: formData.site_id,
@@ -2082,7 +2085,7 @@ export default function FoodWaste() {
                     className="mt-1"
                     value={formData.quantity}
                     readOnly={isBatchOverproductionEntryMode}
-                    placeholder={isBatchOverproductionEntryMode ? 'Total from dish rows' : ''}
+                    placeholder={isBatchOverproductionEntryMode ? 'Total from category fields' : ''}
                     onChange={(event) => setFormData((current) => ({ ...current, quantity: event.target.value }))}
                   />
                   {formData.waste_category === 'plate_waste' ? (
@@ -2110,9 +2113,9 @@ export default function FoodWaste() {
                 <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-slate-900">Batch Overproduction Production Summary</p>
+                      <p className="text-sm font-semibold text-slate-900">Batch Overproduction by Menu Category</p>
                       <p className="mt-1 text-xs text-slate-600">
-                        Enter recorded food waste in grams against each filled produced item. Quantity stays visible and totals these item rows.
+                        Enter recorded food waste in grams against the total produced weight for each menu category. These four fields total into Quantity.
                       </p>
                     </div>
                     <Badge className="bg-white text-amber-700 border border-amber-200">
@@ -2127,62 +2130,61 @@ export default function FoodWaste() {
                   ) : wasteContextLoading ? (
                     <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-100 bg-white/70 px-3 py-3 text-sm text-slate-600">
                       <RefreshCw className="h-4 w-4 animate-spin" />
-                      Loading produced dishes…
+                      Loading menu category totals…
                     </div>
                   ) : wasteContextError ? (
                     <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
                       {wasteContextError.message || 'Unable to load the production summary.'}
                     </p>
                   ) : batchWasteRows.length ? (
-                    <div className="mt-4 overflow-x-auto rounded-lg border border-amber-100 bg-white">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Produced Item</TableHead>
-                            <TableHead>Produced Quantity</TableHead>
-                            <TableHead>Recorded Food Waste (g)</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {batchWasteRows.map((row) => {
-                            const isOverAvailable = row.waste_grams > safeNumber(row.available_weight_grams);
-                            const rowKey = getBatchWasteRowKey(row);
-                            return (
-                              <TableRow key={rowKey}>
-                                <TableCell className="min-w-[220px]">
-                                  <div className="font-medium text-slate-900">{row.recipe_name}</div>
-                                  <div className="text-xs text-slate-500">
-                                    {row.batch_count} {row.batch_count === 1 ? 'batch' : 'batches'}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  <div className="font-medium text-slate-900">{formatWeightGrams(row.produced_weight_grams)}</div>
-                                  <div className="text-xs text-slate-500">
-                                    Available: {formatWeightGrams(row.available_weight_grams)}
-                                  </div>
-                                </TableCell>
-                                <TableCell className="min-w-[220px]">
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.001"
-                                    max={safeNumber(row.available_weight_grams) || undefined}
-                                    value={dishWasteGramsByRecipe[rowKey] ?? ''}
-                                    onChange={(event) => handleDishWasteGramsChange(rowKey, event.target.value)}
-                                    className={isOverAvailable ? 'border-red-300 focus-visible:ring-red-500' : ''}
-                                    placeholder="0"
-                                  />
-                                  {isOverAvailable ? (
-                                    <p className="mt-1 text-xs text-red-600">
-                                      Available waste balance is {formatWeightGrams(row.available_weight_grams)}.
-                                    </p>
-                                  ) : null}
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      {batchWasteRows.map((row) => {
+                        const isOverAvailable = row.waste_grams > safeNumber(row.available_weight_grams);
+                        const rowKey = getBatchWasteRowKey(row);
+                        const categoryLabel = row.menu_category_label || row.recipe_name;
+                        const availableWeight = safeNumber(row.available_weight_grams);
+                        return (
+                          <div key={rowKey} className="rounded-lg border border-amber-100 bg-white p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">{categoryLabel}</p>
+                                <p className="text-xs text-slate-500">
+                                  {row.batch_count} {row.batch_count === 1 ? 'production batch' : 'production batches'}
+                                </p>
+                              </div>
+                              <Badge className={availableWeight > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'}>
+                                {formatWeightGrams(row.produced_weight_grams)}
+                              </Badge>
+                            </div>
+                            <p className="mt-2 text-xs text-slate-600">
+                              Available to record: {formatWeightGrams(row.available_weight_grams)}
+                            </p>
+                            <Label className="mt-3 block text-xs text-slate-600" htmlFor={`batch-waste-${rowKey}`}>
+                              {categoryLabel} waste (g)
+                            </Label>
+                            <Input
+                              id={`batch-waste-${rowKey}`}
+                              type="number"
+                              min="0"
+                              step="0.001"
+                              max={availableWeight || undefined}
+                              value={dishWasteGramsByRecipe[rowKey] ?? ''}
+                              onChange={(event) => handleDishWasteGramsChange(rowKey, event.target.value)}
+                              className={`mt-1 ${isOverAvailable ? 'border-red-300 focus-visible:ring-red-500' : ''}`}
+                              placeholder="0"
+                            />
+                            {isOverAvailable ? (
+                              <p className="mt-1 text-xs text-red-600">
+                                Available waste balance is {formatWeightGrams(row.available_weight_grams)}.
+                              </p>
+                            ) : availableWeight <= 0 ? (
+                              <p className="mt-1 text-xs text-slate-500">
+                                No completed output for this category.
+                              </p>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <p className="mt-4 rounded-lg border border-dashed border-amber-200 bg-white/70 px-3 py-3 text-sm text-slate-600">

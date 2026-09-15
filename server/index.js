@@ -4628,7 +4628,9 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
           wasted_weight_grams: batchWasteAllocation.wasted_weight_grams,
           wasted_production_equivalent_servings: batchWasteAllocation.wasted_production_equivalent_servings,
           output_allocations: batchWasteAllocation.allocations,
-          production_id: finalPayload.production_id || firstAllocation?.production_id || null,
+          production_id: finalPayload.production_id
+            || (batchOverproductionContextRow?.batch_count === 1 ? firstAllocation?.production_id : null)
+            || null,
           production_name: batchOverproductionContextRow?.production_name || finalPayload.production_name || null,
           recipe_id: batchOverproductionContextRow?.recipe_id || finalPayload.recipe_id || null,
           recipe_name: batchOverproductionContextRow?.recipe_name || finalPayload.recipe_name || null,
