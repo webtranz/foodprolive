@@ -276,6 +276,11 @@ app.get('/files/*', async (request, response, next) => {
     return next(error);
   }
 });
+app.get(/^\/([^/]+)\/(uploads|files)\/(.+)$/, (request, response, next) => {
+  const [, hostSegment, fileRoute, filePath] = request.path.match(/^\/([^/]+)\/(uploads|files)\/(.+)$/) || [];
+  if (!/^[a-z0-9][a-z0-9.-]*(?::\d+)?$/i.test(hostSegment || '')) return next();
+  return response.redirect(302, `/${fileRoute}/${filePath}`);
+});
 
 const localStorage = multer.diskStorage({
   destination: (_req, _file, callback) => callback(null, uploadsDir),

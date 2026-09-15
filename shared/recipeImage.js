@@ -51,8 +51,23 @@ export function validateSecureImageUrl(value) {
   return '';
 }
 
-export function validateRecipeImageReference(value) {
+export function normalizeRecipeImageReference(value, { currentHost = '' } = {}) {
   const candidate = String(value || '').trim();
-  if (!candidate || candidate.startsWith('/uploads/')) return '';
+  if (!candidate) return '';
+  if (candidate.startsWith('/')) return candidate;
+  if (/^https:\/\//i.test(candidate)) return candidate;
+
+  const hostPathMatch = candidate.match(/^([a-z0-9][a-z0-9.-]*(?::\d+)?)(\/(?:uploads|files)\/.+)$/i);
+  if (!hostPathMatch) return candidate;
+
+  const storedHost = hostPathMatch[1].toLowerCase();
+  const browserHost = String(currentHost || '').trim().toLowerCase();
+  if (browserHost && storedHost === browserHost) return hostPathMatch[2];
+  return `https://${candidate}`;
+}
+
+export function validateRecipeImageReference(value) {
+  const candidate = normalizeRecipeImageReference(value);
+  if (!candidate || candidate.startsWith('/uploads/') || candidate.startsWith('/files/')) return '';
   return validateSecureImageUrl(candidate);
 }

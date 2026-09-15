@@ -19,6 +19,7 @@ import {
   wouldCreateRecipeCycle
 } from '../../../shared/recipeComposition.js';
 import {
+  normalizeRecipeImageReference,
   validateRecipeImageFile,
   validateRecipeImageReference
 } from '../../../shared/recipeImage.js';
@@ -85,6 +86,12 @@ function calculateRecipeYieldPercentFromCost(recipeCost) {
   return (yieldedWeight / rawWeight) * 100;
 }
 
+function recipeImageBrowserOptions() {
+  return {
+    currentHost: typeof window === 'undefined' ? '' : window.location.host
+  };
+}
+
 export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = [], ingredients = [], inventory = [], inventoryLoaded = false, sites = [], isLoading, canEditLineWeights = false }) {
   const imageInputRef = useRef(null);
   const [formError, setFormError] = useState('');
@@ -118,6 +125,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
   });
 
   useEffect(() => {
+    const normalizedImageUrl = normalizeRecipeImageReference(recipe?.image_url || '', recipeImageBrowserOptions());
     if (recipe) {
       setFormData({
         name: recipe.name || '',
@@ -136,7 +144,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
           ? null
           : Number(recipe.target_selling_price),
         instructions: recipe.instructions || '',
-        image_url: recipe.image_url || '',
+        image_url: normalizedImageUrl,
         ingredients: (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).map((line) => ({
           ...line,
           quantity: Number.isFinite(Number(line.quantity)) ? Number(line.quantity) : null,
@@ -184,7 +192,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     }
     setFormError('');
     setImageFile(null);
-    setImagePreview(recipe?.image_url || '');
+    setImagePreview(normalizedImageUrl);
     setImageUploading(false);
     setSelectedIngredientsById({});
     setNumericValidation({});
@@ -459,7 +467,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
     const validationError = validateRecipeImageReference(nextValue);
     setImageFile(null);
     setFormData((current) => ({ ...current, image_url: nextValue }));
-    setImagePreview(validationError ? '' : nextValue.trim());
+    setImagePreview(validationError ? '' : normalizeRecipeImageReference(nextValue, recipeImageBrowserOptions()));
     setFormError(validationError);
   };
 
@@ -502,7 +510,7 @@ export default function RecipeForm({ open, onClose, onSubmit, recipe, recipes = 
       return;
     }
     setFormError('');
-    let imageUrl = String(formData.image_url || '').trim();
+    let imageUrl = normalizeRecipeImageReference(formData.image_url, recipeImageBrowserOptions());
     if (imageFile) {
       try {
         setImageUploading(true);

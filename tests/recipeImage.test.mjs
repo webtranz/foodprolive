@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   MAX_RECIPE_IMAGE_BYTES,
+  normalizeRecipeImageReference,
   validateRecipeImageFile,
   validateRecipeImageReference,
   validateSecureImageUrl
@@ -17,6 +18,18 @@ assert.match(validateRecipeImageFile(null), /Select/);
 assert.equal(validateSecureImageUrl('https://cdn.example.com/recipes/image.webp'), '');
 assert.equal(validateRecipeImageReference('/uploads/recipe-image.jpg'), '');
 assert.equal(validateRecipeImageReference('/uploads/recipe-abc.png'), '');
+assert.equal(validateRecipeImageReference('/files/recipe-images/recipe-abc.png'), '');
+assert.equal(
+  normalizeRecipeImageReference('foodpro-foodpro-xunghx-8bc79f-95-177-172-210.sslip.io/uploads/recipe.jpg', {
+    currentHost: 'foodpro-foodpro-xunghx-8bc79f-95-177-172-210.sslip.io'
+  }),
+  '/uploads/recipe.jpg'
+);
+assert.equal(
+  normalizeRecipeImageReference('foodpro-foodpro-xunghx-8bc79f-95-177-172-210.sslip.io/uploads/recipe.jpg'),
+  'https://foodpro-foodpro-xunghx-8bc79f-95-177-172-210.sslip.io/uploads/recipe.jpg'
+);
+assert.equal(validateRecipeImageReference('foodpro-foodpro-xunghx-8bc79f-95-177-172-210.sslip.io/uploads/recipe.jpg'), '');
 assert.match(validateSecureImageUrl('http://cdn.example.com/image.jpg'), /HTTPS/);
 assert.match(validateSecureImageUrl('https://user:secret@cdn.example.com/image.jpg'), /credentials/);
 assert.match(validateSecureImageUrl('https://localhost/image.jpg'), /public/);

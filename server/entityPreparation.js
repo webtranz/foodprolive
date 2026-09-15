@@ -1,5 +1,5 @@
 import { expandRecipeIngredients, validateRecipeComposition } from '../shared/recipeComposition.js';
-import { validateRecipeImageReference } from '../shared/recipeImage.js';
+import { normalizeRecipeImageReference, validateRecipeImageReference } from '../shared/recipeImage.js';
 import { calculateRecipeCostingSnapshot } from '../shared/recipeCosting.js';
 import { calculateRecipeNutrition } from '../shared/recipeNutrition.js';
 import { normalizeRecipeNumericFields } from '../shared/recipeNumbers.js';
@@ -681,7 +681,7 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
     }
     const locationNormalizedRecipe = normalizeRecipeLocationPayload({
       ...recipeWithDeclarations,
-      image_url: String(merged.image_url || '').trim()
+      image_url: normalizeRecipeImageReference(merged.image_url)
     }, scope);
     const numericResult = normalizeRecipeNumericFields(locationNormalizedRecipe);
     if (numericResult.errors.length > 0) {

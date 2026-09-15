@@ -1,5 +1,5 @@
 import { validateEntityPayload } from './entities.js';
-import { validateRecipeImageReference } from '../shared/recipeImage.js';
+import { normalizeRecipeImageReference, validateRecipeImageReference } from '../shared/recipeImage.js';
 import { isIngredientUnitCompatible, normalizeIngredientUnit } from '../shared/ingredientUnits.js';
 import { inferPackageFields } from '../shared/packageUnits.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../shared/siteHierarchy.js';
@@ -359,6 +359,7 @@ export function mapCsvRow(moduleKey, headers, values) {
   }
   const normalizedPayload = normalizeMappedPayload(moduleKey, payload);
   if (definition.entity === 'Recipe' && normalizedPayload.image_url) {
+    normalizedPayload.image_url = normalizeRecipeImageReference(normalizedPayload.image_url);
     const imageError = validateRecipeImageReference(normalizedPayload.image_url);
     if (imageError) throw new Error(imageError);
   }

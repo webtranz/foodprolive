@@ -10,6 +10,7 @@ import { calculateRecipeServingWeight } from '../../../shared/recipeWeight.js';
 import { calculateRecipeNutritionSnapshot } from '../../../shared/recipeNutrition.js';
 import { formatRecipeQuantity } from '../../../shared/recipeNumbers.js';
 import { convertIngredientQuantity } from '../../../shared/ingredientUnits.js';
+import { normalizeRecipeImageReference } from '../../../shared/recipeImage.js';
 import { getInventoryQuantities } from '@/lib/inventoryAvailability';
 
 const CATEGORY_COLORS = {
@@ -50,7 +51,11 @@ function slugifyRecipeImageName(value) {
 
 function getRecipeCardImageSource(recipe = {}) {
   const explicitImage = String(recipe.image_url || '').trim();
-  if (explicitImage) return explicitImage;
+  if (explicitImage) {
+    return normalizeRecipeImageReference(explicitImage, {
+      currentHost: typeof window === 'undefined' ? '' : window.location.host
+    });
+  }
   return `/recipe-images/${slugifyRecipeImageName(recipe.name)}.svg`;
 }
 
