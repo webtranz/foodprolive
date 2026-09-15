@@ -294,6 +294,56 @@ const cases = [
     }
   },
   {
+    name: 'loads filled menu batch rows when per-item yielded weights are missing',
+    run() {
+      const summary = buildBatchOverproductionDishSummary([
+        {
+          id: 'batch-menu',
+          batch_number: 'PIB-002',
+          production_id: 'production-menu',
+          production_date: '2026-09-05',
+          meal_type: 'breakfast',
+          status: 'available',
+          recipe_id: 'breakfast-menu',
+          recipe_name: 'Breakfast Menu Senior / General (3 Items)',
+          produced_weight_grams: 6000,
+          served_weight_grams: 0,
+          wasted_weight_grams: 0,
+          remaining_weight_grams: 6000,
+          menu_issue_items: [
+            {
+              key: 'line-chana',
+              recipe_id: 'chana',
+              recipe_name: 'Chana Masala',
+              production_covers: 1,
+              estimated_batch_cost: 30
+            },
+            {
+              key: 'line-coffee',
+              recipe_id: 'coffee',
+              recipe_name: 'Classic Coffee',
+              production_covers: 1,
+              estimated_batch_cost: 20
+            },
+            {
+              key: 'line-blank',
+              recipe_id: 'blank',
+              recipe_name: 'Blank Planned Line',
+              production_covers: 0,
+              estimated_batch_cost: 99
+            }
+          ]
+        }
+      ]);
+
+      assert.equal(summary.length, 2);
+      assert.deepEqual(summary.map((row) => row.recipe_name), ['Chana Masala', 'Classic Coffee']);
+      assert.equal(summary.reduce((sum, row) => sum + row.produced_weight_grams, 0), 6000);
+      assert.equal(summary.find((row) => row.recipe_id === 'chana').produced_weight_grams, 3600);
+      assert.equal(summary.find((row) => row.recipe_id === 'coffee').produced_weight_grams, 2400);
+    }
+  },
+  {
     name: 'allocates batch overproduction waste against produced item balances',
     run() {
       const allocation = allocateBatchOverproductionWaste({

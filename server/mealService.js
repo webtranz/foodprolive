@@ -726,7 +726,7 @@ function productionFinishedWeight(production = {}, recipe = {}, recipes = [], in
   return portionSize > 0 && servings > 0 ? roundQuantity(portionSize * servings) : 0;
 }
 
-async function backfillProducedItemBatchesForCompletedProductions({
+export async function backfillProducedItemBatchesForCompletedProductions({
   siteId,
   productionSiteIds = null,
   serviceDate,

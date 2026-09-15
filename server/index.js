@@ -225,6 +225,7 @@ import { normalizeSiteType, SITE_HIERARCHY_TYPES } from '../shared/siteHierarchy
 import { hasAdminAccess } from './accessControl.js';
 import { getManagementDashboardSnapshot } from './managementDashboard.js';
 import {
+  backfillProducedItemBatchesForCompletedProductions,
   getMealServiceReport,
   getProducedItemAvailability,
   previewMealService,
@@ -1875,17 +1876,65 @@ async function listBatchOverproductionBatches(user, {
   existingScope = null
 } = {}) {
   if (!siteId || !wasteDate || !mealType) return [];
-  const rows = await listDocuments('ProducedItemBatch', {
-    filters: {
-      site_id: siteId,
-      production_date: wasteDate,
-      meal_type: mealType
-    },
-    sort: 'completed_at',
+  const productionSiteIds = await resolveFoodWasteProductionSiteIds(siteId, executor);
+  const rows = [];
+  const seen = new Set();
+  for (const productionSiteId of productionSiteIds) {
+    const page = await listDocuments('ProducedItemBatch', {
+      filters: {
+        site_id: productionSiteId,
+        production_date: wasteDate,
+        meal_type: mealType
+      },
+      sort: 'completed_at',
+      limit: 10000,
+      lock
+    }, executor || undefined);
+    page.forEach((row) => {
+      const id = String(row?.id || '').trim();
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      rows.push(row);
+    });
+  }
+  const scopedRows = await scopeEntityRecords(user, 'ProducedItemBatch', rows, existingScope);
+  const backfilledRows = await backfillProducedItemBatchesForCompletedProductions({
+    siteId,
+    productionSiteIds,
+    serviceDate: wasteDate,
+    mealType,
+    batches: scopedRows,
+    executor
+  });
+  return scopeEntityRecords(user, 'ProducedItemBatch', backfilledRows, existingScope);
+}
+
+async function resolveFoodWasteProductionSiteIds(siteId, executor = null) {
+  const normalizedSiteId = String(siteId || '').trim();
+  if (!normalizedSiteId) return [];
+  const sites = await listDocuments('Site', {
     limit: 10000,
-    lock
+    sort: 'name'
   }, executor || undefined);
-  return scopeEntityRecords(user, 'ProducedItemBatch', rows, existingScope);
+  const selected = sites.find((site) => String(site?.id || '') === normalizedSiteId);
+  if (!selected) return [normalizedSiteId];
+
+  const selectedType = normalizeSiteType(selected.type);
+  const childStoreIds = sites
+    .filter((site) => (
+      site?.is_active !== false
+      && String(site?.parent_site_id || '') === normalizedSiteId
+      && normalizeSiteType(site?.type) === SITE_HIERARCHY_TYPES.STORE
+    ))
+    .map((site) => site.id);
+
+  if (selectedType === SITE_HIERARCHY_TYPES.STORE) {
+    return uniqueTextValues([normalizedSiteId]);
+  }
+  if (selectedType === SITE_HIERARCHY_TYPES.PROJECT) {
+    return uniqueTextValues([normalizedSiteId, ...childStoreIds]);
+  }
+  return uniqueTextValues([normalizedSiteId, ...childStoreIds]);
 }
 
 async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = new Date() }) {

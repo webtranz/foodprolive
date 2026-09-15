@@ -178,6 +178,16 @@ function getManifestItemProducedWeight(item = {}) {
   ]));
 }
 
+function getManifestItemCost(item = {}) {
+  return roundQuantity(firstPositiveQuantity([
+    item.estimated_batch_cost,
+    item.planned_total_cost,
+    item.total_cost,
+    item.estimated_total_cost,
+    item.cost
+  ]));
+}
+
 function getManifestItemRawWeight(item = {}) {
   return roundQuantity(firstPositiveQuantity([
     item.raw_weight_grams,
@@ -186,6 +196,50 @@ function getManifestItemRawWeight(item = {}) {
     item.total_raw_consumption_weight_grams,
     sumPositiveLineWeight(item.ingredients_used, 'raw_weight_grams')
   ]));
+}
+
+function buildManifestItemWeightShares(items = []) {
+  const manifestItems = Array.isArray(items) ? items : [];
+  const directWeights = manifestItems.map((item) => getManifestItemProducedWeight(item));
+  const directWeightTotal = roundQuantity(directWeights.reduce((sum, value) => sum + value, 0));
+  if (
+    directWeightTotal > QUANTITY_EPSILON
+    && directWeights.every((value) => value > QUANTITY_EPSILON)
+  ) {
+    return directWeights.map((value) => (
+      value > QUANTITY_EPSILON ? value / directWeightTotal : 0
+    ));
+  }
+
+  const costs = manifestItems.map((item) => getManifestItemCost(item));
+  const costTotal = roundQuantity(costs.reduce((sum, value) => sum + value, 0));
+  if (costTotal > QUANTITY_EPSILON) {
+    return costs.map((value) => (
+      value > QUANTITY_EPSILON ? value / costTotal : 0
+    ));
+  }
+
+  const servings = manifestItems.map((item) => getManifestItemServings(item));
+  const servingTotal = roundQuantity(servings.reduce((sum, value) => sum + value, 0));
+  if (servingTotal > QUANTITY_EPSILON) {
+    return servings.map((value) => (
+      value > QUANTITY_EPSILON ? value / servingTotal : 0
+    ));
+  }
+
+  const fallbackShare = manifestItems.length > 0 ? 1 / manifestItems.length : 0;
+  return manifestItems.map(() => fallbackShare);
+}
+
+function resolveManifestItemProducedWeight({
+  directWeight = 0,
+  batchProducedWeight = 0,
+  weightShare = 0
+} = {}) {
+  const direct = positiveQuantity(directWeight);
+  if (direct > QUANTITY_EPSILON) return direct;
+  const fallbackWeight = positiveQuantity(batchProducedWeight) * positiveQuantity(weightShare);
+  return fallbackWeight > QUANTITY_EPSILON ? roundQuantity(fallbackWeight) : 0;
 }
 
 function isFilledManifestItem(item = {}) {
@@ -311,8 +365,8 @@ export function buildBatchOverproductionDishSummary(batches = [], productionRows
         const batchWastedWeight = roundQuantity(number(batch.wasted_weight_grams, 0));
         const batchKnownWastedWeight = positiveQuantity(knownWasteIndex.totalByBatch.get(batchId));
         const batchUnknownWastedWeight = roundQuantity(Math.max(0, batchWastedWeight - batchKnownWastedWeight));
-        const manifestWeights = manifestItems.map((item) => getManifestItemProducedWeight(item));
-        const totalManifestWeight = roundQuantity(manifestWeights.reduce((sum, value) => sum + value, 0));
+        const directManifestWeights = manifestItems.map((item) => getManifestItemProducedWeight(item));
+        const manifestWeightShares = buildManifestItemWeightShares(manifestItems);
         const productionCost = number(
           production?.total_cost
             ?? production?.estimated_total_cost
@@ -333,10 +387,13 @@ export function buildBatchOverproductionDishSummary(batches = [], productionRows
           const recipeId = getManifestItemRecipeId(item, itemIndex);
           if (!recipeId) return;
           const recipeName = getManifestItemRecipeName(item, recipeId);
-          const producedWeight = manifestWeights[itemIndex] || 0;
-          const rowWeightShare = totalManifestWeight > QUANTITY_EPSILON
-            ? producedWeight / totalManifestWeight
-            : 1 / manifestItems.length;
+          const rowWeightShare = positiveQuantity(manifestWeightShares[itemIndex])
+            || (manifestItems.length > 0 ? 1 / manifestItems.length : 0);
+          const producedWeight = resolveManifestItemProducedWeight({
+            directWeight: directManifestWeights[itemIndex],
+            batchProducedWeight,
+            weightShare: rowWeightShare
+          });
           const rowServedWeight = roundQuantity(batchServedWeight * rowWeightShare);
           const knownItemWaste = getKnownItemWaste(knownWasteIndex, batchId, [
             `${batchId}::${manifestItemKey}`,
@@ -378,9 +435,7 @@ export function buildBatchOverproductionDishSummary(batches = [], productionRows
 
           const row = grouped.get(rowKey);
           const itemCost = firstPositiveQuantity([
-            item.estimated_batch_cost,
-            item.planned_total_cost,
-            item.total_cost,
+            getManifestItemCost(item),
             productionCost > QUANTITY_EPSILON ? productionCost * rowWeightShare : 0
           ]);
           row.produced_servings = roundQuantity(row.produced_servings + getManifestItemServings(item));
