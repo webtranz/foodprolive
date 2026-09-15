@@ -47,6 +47,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Target,
   Trash2,
   TrendingDown,
@@ -281,6 +282,7 @@ export default function FoodWaste() {
     mealType: 'all'
   });
   const [editingWasteId, setEditingWasteId] = useState(null);
+  const [reverseWasteDialog, setReverseWasteDialog] = useState({ open: false, record: null, reason: '' });
   const [formData, setFormData] = useState(createDefaultWasteForm);
   const [dishWasteGramsByRecipe, setDishWasteGramsByRecipe] = useState({});
   const [wasteImageFile, setWasteImageFile] = useState(null);
@@ -377,10 +379,12 @@ export default function FoodWaste() {
     }))
   ), [batchOverproductionDishes, dishWasteGramsByRecipe]);
   const batchWasteTotalGrams = batchWasteRows.reduce((sum, row) => sum + row.waste_grams, 0);
+  const adminEditingExistingWaste = Boolean(isAdmin && editingWasteId);
   const adminWasteWindowOverride = Boolean(isAdmin && wasteContext?.window_status !== 'future_date');
   const wasteContextAllowsSave = Boolean(
     wasteContext?.is_within_recording_window
     || adminWasteWindowOverride
+    || adminEditingExistingWaste
   );
   const bootstrapLoading = sitesLoading || ingredientsLoading || recipesLoading || productionsLoading || foodWasteLoading || wasteTargetsLoading;
   const bootstrapError = sitesError || ingredientsError || recipesError || productionsError || foodWasteError || wasteTargetsError;
@@ -478,6 +482,7 @@ export default function FoodWaste() {
     mutationFn: ({ id, payload }) => base44.foodWaste.update(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['foodWasteContext'] });
       queryClient.invalidateQueries({ queryKey: ['mealServiceAvailability'] });
       queryClient.invalidateQueries({ queryKey: ['mealServiceHistory'] });
@@ -490,6 +495,20 @@ export default function FoodWaste() {
       setWasteImagePreview('');
     },
     onError: (error) => setMessage(error.message || 'Failed to update waste record')
+  });
+
+  const reverseWasteMutation = useMutation({
+    mutationFn: ({ id, reason }) => base44.foodWaste.reverse(id, { reason }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['foodWasteContext'] });
+      queryClient.invalidateQueries({ queryKey: ['mealServiceAvailability'] });
+      queryClient.invalidateQueries({ queryKey: ['mealServiceHistory'] });
+      setReverseWasteDialog({ open: false, record: null, reason: '' });
+      setMessage('Waste record reversed.');
+    },
+    onError: (error) => setMessage(error.message || 'Failed to reverse waste record')
   });
 
   const approvalMutation = useMutation({
@@ -1075,6 +1094,32 @@ export default function FoodWaste() {
     setWasteImageFile(null);
     setWasteImagePreview(record.evidence_image_url || record.image_url || '');
     setFormOpen(true);
+  };
+
+  const handleOpenReverseDialog = (record) => {
+    if (!isAdmin) {
+      setMessage('Only administrators can reverse waste requests.');
+      return;
+    }
+    if (isMealServiceLeftover(record)) {
+      setMessage('Meal Service Leftover records are system managed. Reverse the related Meal Service request to correct this record.');
+      return;
+    }
+    setReverseWasteDialog({ open: true, record, reason: '' });
+  };
+
+  const handleConfirmWasteReversal = () => {
+    const record = reverseWasteDialog.record;
+    const reason = String(reverseWasteDialog.reason || '').trim();
+    if (!record?.id) {
+      setMessage('Select a waste record to reverse.');
+      return;
+    }
+    if (!reason) {
+      setMessage('Add a reversal reason before reversing this waste record.');
+      return;
+    }
+    reverseWasteMutation.mutate({ id: record.id, reason });
   };
 
   const handleWasteImageChange = (event) => {
@@ -1797,15 +1842,27 @@ export default function FoodWaste() {
                           System managed
                         </Badge>
                       ) : isAdmin ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={String(item.status || '').toLowerCase() === 'reversed'}
-                          onClick={() => handleOpenEditDialog(item)}
-                        >
-                          <Pencil className="mr-2 h-4 w-4" />
-                          Edit
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={String(item.status || '').toLowerCase() === 'reversed'}
+                            onClick={() => handleOpenEditDialog(item)}
+                          >
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                            disabled={String(item.status || '').toLowerCase() === 'reversed'}
+                            onClick={() => handleOpenReverseDialog(item)}
+                          >
+                            <RotateCcw className="mr-2 h-4 w-4" />
+                            Reverse
+                          </Button>
+                        </div>
                       ) : isBatchOverproductionWasteRecord(item) ? (
                         <Badge
                           className="bg-amber-100 text-amber-700"
@@ -2186,6 +2243,59 @@ export default function FoodWaste() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={reverseWasteDialog.open}
+          onOpenChange={(open) => setReverseWasteDialog((current) => ({
+            ...current,
+            open,
+            reason: open ? current.reason : ''
+          }))}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Reverse Food Waste Record</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                This admin-only action will mark the waste row as reversed and restore any linked produced-output or Meal Service adjustment balances where applicable.
+              </div>
+              {reverseWasteDialog.record ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                  <p className="font-semibold text-slate-900">{reverseWasteDialog.record.recipe_name || reverseWasteDialog.record.ingredient_name || reverseWasteDialog.record.item_name || 'Waste record'}</p>
+                  <p>{reverseWasteDialog.record.waste_date || 'No date'} · {titleCase(reverseWasteDialog.record.meal_type || 'meal')} · {reverseWasteDialog.record.quantity} {reverseWasteDialog.record.unit}</p>
+                </div>
+              ) : null}
+              <div>
+                <Label>Reversal reason</Label>
+                <Textarea
+                  rows={3}
+                  className="mt-1"
+                  value={reverseWasteDialog.reason}
+                  onChange={(event) => setReverseWasteDialog((current) => ({ ...current, reason: event.target.value }))}
+                  placeholder="Explain why this waste record is being reversed"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setReverseWasteDialog({ open: false, record: null, reason: '' })}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="bg-red-600 hover:bg-red-700"
+                disabled={reverseWasteMutation.isPending || !String(reverseWasteDialog.reason || '').trim()}
+                onClick={handleConfirmWasteReversal}
+              >
+                {reverseWasteMutation.isPending ? 'Reversing...' : 'Reverse Waste Record'}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 

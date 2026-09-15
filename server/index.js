@@ -2322,6 +2322,191 @@ async function updateBatchOverproductionFoodWasteRecord({
   });
 }
 
+function buildPlateWasteAdjustmentReversalRow(adjustment = {}, foodWasteRecord = {}, actor = {}, reason = '', reversedAt = new Date().toISOString()) {
+  const {
+    id,
+    created_date,
+    updated_date,
+    idempotency_key,
+    ...rest
+  } = adjustment || {};
+  const absNumber = (value) => Math.abs(numericMatch(value, 0));
+  return {
+    ...rest,
+    idempotency_key: `${foodWasteRecord.id}:plate-waste-reversal:${id || randomUUID()}`,
+    reverses_consumption_id: id || adjustment.reverses_consumption_id || null,
+    consumed_servings: absNumber(adjustment.consumed_servings),
+    consumed_production_equivalent_servings: absNumber(
+      adjustment.consumed_production_equivalent_servings ?? adjustment.consumed_servings
+    ),
+    consumed_weight_grams: absNumber(adjustment.consumed_weight_grams),
+    consumed_cost: absNumber(adjustment.consumed_cost ?? adjustment.estimated_cost ?? adjustment.total_cost),
+    total_cost: absNumber(adjustment.total_cost ?? adjustment.estimated_cost ?? adjustment.consumed_cost),
+    estimated_cost: absNumber(adjustment.estimated_cost ?? adjustment.consumed_cost ?? adjustment.total_cost),
+    allocations: (Array.isArray(adjustment.allocations) ? adjustment.allocations : []).map((allocation) => ({
+      ...allocation,
+      food_waste_id: foodWasteRecord.id,
+      source_adjustment_id: id || null,
+      weight_grams: absNumber(allocation.weight_grams ?? allocation.wasted_weight_grams),
+      meal_portions: absNumber(allocation.meal_portions),
+      production_equivalent_servings: absNumber(allocation.production_equivalent_servings),
+      estimated_cost: absNumber(allocation.estimated_cost),
+      source_type: 'food_waste_plate_waste_reversal'
+    })),
+    movement_type: 'plate_waste_adjustment',
+    source_type: 'food_waste_plate_waste_reversal',
+    food_waste_id: foodWasteRecord.id,
+    reversed_food_waste_id: foodWasteRecord.id,
+    reversal_reason: reason,
+    performed_by: actor.email || null,
+    performed_by_name: actor.full_name || actor.email || null,
+    performed_at: reversedAt,
+    status: 'posted'
+  };
+}
+
+function isMealServiceLeftoverFoodWasteRecord(record = {}) {
+  return (
+    String(record.source_type || '').toLowerCase() === 'meal_service_leftover'
+    || Boolean(record.auto_generated && record.meal_service_attendance_id)
+  );
+}
+
+async function reverseFoodWasteRecord({
+  user,
+  existing,
+  reason
+}) {
+  const reversalReason = String(reason || '').trim();
+  if (!reversalReason) {
+    const error = new Error('A reversal reason is required.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (String(existing.status || '').toLowerCase() === 'reversed') {
+    const error = new Error('This food waste record has already been reversed.');
+    error.status = 409;
+    throw error;
+  }
+
+  if (isMealServiceLeftoverFoodWasteRecord(existing)) {
+    const error = new Error('Meal Service Leftover records are system managed. Reverse the related Meal Service request to correct this record.');
+    error.status = 409;
+    throw error;
+  }
+
+  return withTransaction(async (client) => {
+    const reversedAt = new Date().toISOString();
+    const result = {
+      restored_batches: [],
+      reversed_plate_adjustments: [],
+      plate_adjustment_reversals: [],
+      inventory_reversal: null
+    };
+
+    if (isBatchOverproductionFoodWasteRecord(existing)) {
+      const existingAllocations = Array.isArray(existing.output_allocations) ? existing.output_allocations : [];
+      if (!existingAllocations.length) {
+        const error = new Error('This batch overproduction waste record cannot be reversed because its original batch allocations are missing.');
+        error.status = 409;
+        throw error;
+      }
+      const scopedBatches = await listBatchOverproductionBatches(user, {
+        siteId: existing.site_id,
+        wasteDate: existing.waste_date,
+        mealType: existing.meal_type,
+        executor: client,
+        lock: true
+      });
+      const reversed = reverseBatchOverproductionWasteAllocations(scopedBatches, existingAllocations);
+      for (const batchId of reversed.affectedIds) {
+        const batch = reversed.batches.find((entry) => String(entry.id || '') === String(batchId));
+        if (!batch) continue;
+        const restoredBatch = await updateDocument('ProducedItemBatch', batch.id, {
+          served_servings: batch.served_servings,
+          served_weight_grams: batch.served_weight_grams,
+          wasted_servings: batch.wasted_servings,
+          wasted_weight_grams: batch.wasted_weight_grams,
+          remaining_servings: batch.remaining_servings,
+          remaining_weight_grams: batch.remaining_weight_grams,
+          status: batch.status
+        }, client);
+        result.restored_batches.push(restoredBatch);
+      }
+    }
+
+    const isPlateWaste = (
+      String(existing.source_type || '').toLowerCase() === 'plate_waste'
+      || String(existing.waste_category || '').toLowerCase() === 'plate_waste'
+      || numericMatch(existing.meal_service_adjustment_weight_grams, 0) > FOOD_WASTE_QUANTITY_EPSILON
+    );
+    if (isPlateWaste) {
+      const adjustmentRows = (await listFoodWasteMealServiceAdjustmentRows(existing, client))
+        .filter((row) => String(row.status || '').toLowerCase() !== 'reversed')
+        .filter((row) => String(row.source_type || '').toLowerCase() !== 'food_waste_plate_waste_reversal');
+      for (const adjustment of adjustmentRows) {
+        result.plate_adjustment_reversals.push(await createDocument(
+          'MealServiceConsumption',
+          buildPlateWasteAdjustmentReversalRow(adjustment, existing, user, reversalReason, reversedAt),
+          client
+        ));
+        result.reversed_plate_adjustments.push(await updateDocument('MealServiceConsumption', adjustment.id, {
+          status: 'reversed',
+          reversal_reason: reversalReason,
+          reversed_by: user.email || null,
+          reversed_by_name: user.full_name || user.email || null,
+          reversed_at: reversedAt
+        }, client));
+      }
+    }
+
+    if (
+      String(existing.waste_scope || '').toLowerCase() === 'ingredient'
+      && String(existing.ingredient_id || '').trim()
+      && numericMatch(existing.inventory_deduction_quantity ?? existing.quantity, 0) > FOOD_WASTE_QUANTITY_EPSILON
+    ) {
+      result.inventory_reversal = await receiveStock({
+        site_id: existing.site_id,
+        site_name: existing.site_name || '',
+        ingredient_id: existing.ingredient_id,
+        ingredient_name: existing.ingredient_name || '',
+        quantity: numericMatch(existing.inventory_deduction_quantity ?? existing.quantity, 0),
+        unit: existing.unit || 'kg',
+        unit_cost: firstPositiveNumber([
+          numericMatch(existing.estimated_cost, 0) / numericMatch(existing.inventory_deduction_quantity ?? existing.quantity, 1),
+          0
+        ]),
+        stock_date: existing.waste_date || normalizeDateOnly(reversedAt),
+        received_date: existing.waste_date || normalizeDateOnly(reversedAt),
+        transaction_date: existing.waste_date || normalizeDateOnly(reversedAt),
+        reference_id: existing.id,
+        reference_type: 'FoodWaste',
+        notes: `Food waste reversal: ${reversalReason}`,
+        performed_by: user.email || 'food-waste-reversal',
+        reason_code: 'food_waste_reversal',
+        source: 'food_waste',
+        source_type: 'food_waste_reversal',
+        idempotency_key: `${existing.id}:food-waste-reversal`
+      }, client);
+    }
+
+    const reversedWaste = await updateDocument('FoodWaste', existing.id, {
+      status: 'reversed',
+      approval_status: 'reversed',
+      reversal_reason: reversalReason,
+      reversed_by: user.email || null,
+      reversed_by_name: user.full_name || user.email || null,
+      reversed_at: reversedAt
+    }, client);
+
+    return {
+      ...result,
+      waste: reversedWaste
+    };
+  });
+}
+
 async function buildConsumptionCostPerGramById(consumptions = [], executor = null) {
   const sourceRows = (Array.isArray(consumptions) ? consumptions : []).filter((entry) => (
     String(entry.movement_type || 'consumption').toLowerCase() === 'consumption'
@@ -4526,6 +4711,59 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
       recordChanged('ProducedItemBatch');
     }
     return response.json(buildApiObjectResponse(decorateFoodWasteRecord(updated), { action: approvalOnly ? 'approval' : 'update' }));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/food-waste/:id/reverse', requireAuth, async (request, response, next) => {
+  try {
+    if (!hasAdminAccess(request.user)) {
+      return response.status(403).json({ message: 'Only administrators can reverse food waste records.' });
+    }
+
+    const existing = await findDocument('FoodWaste', request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Food waste record not found' });
+    }
+
+    const scopedExisting = (await scopeEntityRecords(request.user, 'FoodWaste', [existing]))[0];
+    if (!scopedExisting) {
+      return response.status(403).json({ message: 'You do not have access to this food waste record' });
+    }
+
+    const result = await reverseFoodWasteRecord({
+      user: request.user,
+      existing: scopedExisting,
+      reason: request.body?.reason
+    });
+
+    recordChanged('FoodWaste');
+    if ((result.restored_batches || []).length) recordChanged('ProducedItemBatch');
+    if ((result.reversed_plate_adjustments || []).length || (result.plate_adjustment_reversals || []).length) {
+      recordChanged('MealServiceConsumption');
+    }
+    if (result.inventory_reversal) recordChanged('Inventory');
+
+    await auditAction({
+      user: request.user,
+      action: 'FOOD_WASTE_REVERSED',
+      entity: 'FoodWaste',
+      entityId: result.waste.id,
+      details: {
+        reason: result.waste.reversal_reason,
+        restored_batch_count: (result.restored_batches || []).length,
+        reversed_plate_adjustment_count: (result.reversed_plate_adjustments || []).length,
+        inventory_reversal: Boolean(result.inventory_reversal)
+      }
+    });
+
+    return response.json(buildApiObjectResponse(decorateFoodWasteRecord(result.waste), {
+      action: 'reverse',
+      restored_batch_count: (result.restored_batches || []).length,
+      reversed_plate_adjustment_count: (result.reversed_plate_adjustments || []).length,
+      inventory_reversal: Boolean(result.inventory_reversal)
+    }));
   } catch (error) {
     return next(error);
   }

@@ -733,6 +733,18 @@ export const base44 = {
         }
         return result;
       });
+    },
+    reverse(id, data = {}) {
+      return apiRequest(`/api/food-waste/${encodeURIComponent(id)}/reverse`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('FoodWaste', { action: 'reverse', result, id });
+        emitEntityChange('ProducedItemBatch', { action: 'food-waste-reversal', result, id });
+        emitEntityChange('MealServiceConsumption', { action: 'plate-waste-reversal', result, id });
+        emitEntityChange('Inventory', { action: 'food-waste-reversal', result, id });
+        return result;
+      });
     }
   },
   mealService: {

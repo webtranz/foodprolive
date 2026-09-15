@@ -322,6 +322,7 @@ const cases = [
       assert.match(page, /Only administrators can edit waste requests\./);
       assert.match(page, /isAdmin \? \(/);
       assert.match(page, /adminWasteWindowOverride/);
+      assert.match(page, /adminEditingExistingWaste/);
       assert.match(page, /wasteContextAllowsSave/);
       assert.match(page, /editingBatchOverproductionWaste/);
       assert.match(page, /isBatchOverproductionEntryMode/);
@@ -334,6 +335,27 @@ const cases = [
       assert.match(server, /reverseBatchOverproductionWasteAllocations/);
       assert.match(entities, /Only administrators can edit food waste requests/);
       assert.match(entities, /approvalOnlyUpdate[\s\S]*return true/);
+    }
+  },
+  {
+    name: 'adds admin-only food waste reversal controls and API',
+    run() {
+      const page = read('src/pages/FoodWaste.jsx');
+      const api = read('src/api/base44Client.js');
+      const server = read('server/index.js');
+      assert.match(page, /Only administrators can reverse waste requests\./);
+      assert.match(page, /handleOpenReverseDialog/);
+      assert.match(page, /Reverse Food Waste Record/);
+      assert.match(page, /base44\.foodWaste\.reverse/);
+      assert.match(api, /reverse\(id, data = \{\}\)/);
+      assert.match(api, /\/api\/food-waste\/\$\{encodeURIComponent\(id\)\}\/reverse/);
+      assert.match(api, /action: 'reverse'/);
+      assert.match(api, /action: 'food-waste-reversal'/);
+      assert.match(server, /app\.post\('\/api\/food-waste\/:id\/reverse'/);
+      assert.match(server, /Only administrators can reverse food waste records\./);
+      assert.match(server, /reverseFoodWasteRecord/);
+      assert.match(server, /FOOD_WASTE_REVERSED/);
+      assert.match(server, /food-waste-reversal/);
     }
   },
   {
