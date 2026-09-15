@@ -43,6 +43,7 @@ import {
 } from '../../shared/productionLabels.js';
 import {
   aggregateProductionIngredientLines,
+  buildMenuPlanIssueLockState,
   buildInventoryReplacementSuggestions,
   buildMenuIssueMealGroups,
   buildMenuPlanIssueItems,
@@ -52,9 +53,8 @@ import {
   buildProductionOverrideAudit,
   finiteProductionNumber,
   getMenuIssueInventoryCheckState,
-  getMenuIssueMealGroupKey,
   getProductionIngredientLineKey,
-  isMenuPlanIssueProductionBlocking,
+  isMenuPlanIssueItemAlreadyIssued,
   normalizeIssueMealView,
   PRODUCTION_ISSUE_MEAL_LABELS,
   PRODUCTION_ISSUE_MEAL_TYPES,
@@ -133,7 +133,114 @@ function sumReportWeights(lines = [], field) {
 }
 
 function sumManifestItemWeight(item = {}, field) {
+  const direct = optionalNumber(item[field]);
+  if (direct !== null) return direct;
+  if (field === 'raw_weight_grams') {
+    const rawTotal = optionalNumber(item.recipe_raw_weight_grams)
+      ?? optionalNumber(item.total_raw_weight_grams)
+      ?? optionalNumber(item.total_raw_consumption_weight_grams);
+    if (rawTotal !== null) return rawTotal;
+  }
+  if (field === 'yielded_weight_grams') {
+    const yieldedTotal = optionalNumber(item.expected_finished_weight_grams)
+      ?? optionalNumber(item.actual_finished_weight_grams)
+      ?? optionalNumber(item.total_yielded_weight_grams);
+    if (yieldedTotal !== null) return yieldedTotal;
+  }
   return sumReportWeights(item.ingredients_used, field);
+}
+
+function sumManifestItemsWeight(items = [], field) {
+  const values = arrayValue(items)
+    .map((item) => sumManifestItemWeight(item, field))
+    .filter((value) => optionalNumber(value) !== null);
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + toNumber(value, 0), 0);
+}
+
+function normalizedReportText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function getManifestItemMatchKeys(item = {}, index = 0) {
+  const recipeName = normalizedReportText(item.recipe_name || item.name);
+  const recipeId = String(item.recipe_id || '').trim();
+  return [
+    item.key,
+    item.original_source_menu_plan_item_key,
+    item.source_menu_plan_item_key,
+    item.menu_plan_item_key,
+    recipeId ? `recipe:${recipeId}` : '',
+    recipeName ? `name:${recipeName}` : '',
+    `${recipeId || recipeName || 'manifest'}:${index}`
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+}
+
+function mergeManifestItem(reportItem = {}, fallbackItem = {}) {
+  const reportLines = arrayValue(reportItem.ingredients_used);
+  const fallbackLines = arrayValue(fallbackItem.ingredients_used);
+  const mergedLines = reportLines.length > 0 ? reportLines : fallbackLines;
+  const rawWeight = sumManifestItemWeight(reportItem, 'raw_weight_grams')
+    ?? sumManifestItemWeight(fallbackItem, 'raw_weight_grams');
+  const yieldedWeight = sumManifestItemWeight(reportItem, 'yielded_weight_grams')
+    ?? sumManifestItemWeight(fallbackItem, 'yielded_weight_grams');
+
+  return {
+    ...fallbackItem,
+    ...reportItem,
+    key: reportItem.key || fallbackItem.key || reportItem.source_menu_plan_item_key || fallbackItem.source_menu_plan_item_key || '',
+    recipe_id: reportItem.recipe_id || fallbackItem.recipe_id || null,
+    recipe_name: reportItem.recipe_name || fallbackItem.recipe_name || fallbackItem.name || reportItem.name || 'Planned item',
+    expected_servings: firstPresent(reportItem.expected_servings, fallbackItem.expected_servings),
+    production_covers: firstPresent(
+      reportItem.production_covers,
+      reportItem.target_servings,
+      fallbackItem.production_covers,
+      fallbackItem.target_servings,
+      fallbackItem.expected_servings
+    ),
+    estimated_batch_cost: firstPresent(reportItem.estimated_batch_cost, fallbackItem.estimated_batch_cost, fallbackItem.planned_total_cost, 0),
+    raw_weight_grams: rawWeight,
+    yielded_weight_grams: yieldedWeight,
+    ingredients_used: mergedLines
+  };
+}
+
+function mergeManifestItems(reportItems = [], productionItems = []) {
+  const mergedItems = [];
+  const usedProductionIndexes = new Set();
+  const productionIndexByKey = new Map();
+
+  arrayValue(productionItems).forEach((item, index) => {
+    getManifestItemMatchKeys(item, index).forEach((key) => {
+      if (!productionIndexByKey.has(key)) {
+        productionIndexByKey.set(key, index);
+      }
+    });
+  });
+
+  arrayValue(reportItems).forEach((item, index) => {
+    const matchIndex = getManifestItemMatchKeys(item, index)
+      .map((key) => productionIndexByKey.get(key))
+      .find((candidateIndex) => Number.isInteger(candidateIndex) && !usedProductionIndexes.has(candidateIndex));
+    if (Number.isInteger(matchIndex)) {
+      usedProductionIndexes.add(matchIndex);
+      mergedItems.push(mergeManifestItem(item, productionItems[matchIndex]));
+      return;
+    }
+    mergedItems.push(mergeManifestItem(item, {}));
+  });
+
+  arrayValue(productionItems).forEach((item, index) => {
+    if (!usedProductionIndexes.has(index)) {
+      mergedItems.push(mergeManifestItem({}, item));
+    }
+  });
+
+  return mergedItems;
 }
 
 function getReportSourceRecipeNames(lines = []) {
@@ -156,7 +263,7 @@ function mergeConsumptionReportWithProduction(report = {}, production = {}) {
     : productionCompletionLines.length > 0
       ? productionCompletionLines
       : productionIngredientLines;
-  const menuIssueItems = reportMenuItems.length > 0 ? reportMenuItems : productionMenuItems;
+  const menuIssueItems = mergeManifestItems(reportMenuItems, productionMenuItems);
   const mergedForCount = {
     ...production,
     ...report,
@@ -186,7 +293,7 @@ function mergeConsumptionReportWithProduction(report = {}, production = {}) {
     production_issue_item_count: itemCount,
     production_issue_dish_count: itemCount,
     menu_issue_items: menuIssueItems,
-    target_servings: firstPresent(report.target_servings, production.target_servings, 0),
+    target_servings: firstPresent(report.target_servings, production.target_servings, production.produced_servings, 0),
     output_calculation_source: report.output_calculation_source || production.output_calculation_source || null,
     quantity_basis: report.quantity_basis || production.quantity_basis || null,
     recipe_raw_weight_grams: firstPresent(report.recipe_raw_weight_grams, production.recipe_raw_weight_grams),
@@ -200,14 +307,17 @@ function mergeConsumptionReportWithProduction(report = {}, production = {}) {
       report.total_raw_consumption_weight_grams,
       production.total_raw_consumption_weight_grams,
       production.recipe_raw_weight_grams,
-      sumReportWeights(ingredientLines, 'raw_weight_grams')
+      sumReportWeights(ingredientLines, 'raw_weight_grams'),
+      sumManifestItemsWeight(menuIssueItems, 'raw_weight_grams')
     ),
     total_yielded_weight_grams: firstPresent(
       report.total_yielded_weight_grams,
       production.total_yielded_weight_grams,
       production.expected_finished_weight_grams,
       production.actual_finished_weight_grams,
-      sumReportWeights(ingredientLines, 'yielded_weight_grams')
+      production.produced_weight_grams,
+      sumReportWeights(ingredientLines, 'yielded_weight_grams'),
+      sumManifestItemsWeight(menuIssueItems, 'yielded_weight_grams')
     ),
     portion_size_grams: firstPresent(report.portion_size_grams, production.portion_size_grams),
     expected_yield_servings: firstPresent(report.expected_yield_servings, production.expected_yield_servings),
@@ -1096,30 +1206,13 @@ export default function Production() {
     return { site: issueSite, siteId: String(issueSite.id), error: '' };
   }, [issueSite]);
   const issueInventorySiteId = issueInventoryContext.siteId;
-  const issueAlreadyCreatedKeys = useMemo(() => {
+  const issueAlreadyIssuedLockState = useMemo(() => {
     const planId = String(issuePlan?.id || issueSource?.menu_plan_id || '');
     const editingProductionId = String(editingIssueProduction?.id || '');
-    const keys = new Set();
-    productions
-      .filter((production) => isMenuPlanIssueProductionBlocking(production, {
-        planId,
-        editingProductionId
-      }))
-      .forEach((production) => {
-        if (production.source_menu_plan_item_key) {
-          keys.add(production.source_menu_plan_item_key);
-        }
-        if (production.production_issue_group_key) {
-          keys.add(production.production_issue_group_key);
-        }
-        if (production.source_menu_plan_meal_type) {
-          keys.add(`${planId}::${production.source_menu_plan_meal_type}`);
-        }
-        (Array.isArray(production.source_menu_plan_item_keys)
-          ? production.source_menu_plan_item_keys
-          : []).filter(Boolean).forEach((key) => keys.add(key));
-      });
-    return keys;
+    return buildMenuPlanIssueLockState(productions, {
+      planId,
+      editingProductionId
+    });
   }, [editingIssueProduction?.id, issuePlan?.id, issueSource?.menu_plan_id, productions]);
   const visibleIssueItems = issueMealView === 'all'
     ? issueItems
@@ -1132,10 +1225,7 @@ export default function Production() {
     ? issueSuggestionLoadingKey.slice(activeIssueSuggestionPrefix.length)
     : '';
 
-  const isIssueItemAlreadyIssued = (item) => (
-    issueAlreadyCreatedKeys.has(item.key)
-    || issueAlreadyCreatedKeys.has(getMenuIssueMealGroupKey(item))
-  );
+  const isIssueItemAlreadyIssued = (item) => isMenuPlanIssueItemAlreadyIssued(item, issueAlreadyIssuedLockState);
   const canAdminReissueIssuedItems = isAdmin && !editingIssueProduction;
   const issueAdminReissueActive = canAdminReissueIssuedItems && issueAdminReissueEnabled;
   const isIssueItemSelectionLocked = (item) => (
@@ -2196,6 +2286,8 @@ export default function Production() {
       const itemLines = issueSnapshots[item.key] || [];
       const itemBatchCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
       const itemServingCount = Math.max(1, finiteProductionNumber(item.production_covers, 0));
+      const itemRawWeightGrams = sumReportWeights(itemLines, 'raw_weight_grams');
+      const itemYieldedWeightGrams = sumReportWeights(itemLines, 'yielded_weight_grams');
       const itemAlreadyIssued = isIssueItemAlreadyIssued(item);
       return {
         key: item.key,
@@ -2211,6 +2303,8 @@ export default function Production() {
         planned_total_cost: item.planned_total_cost,
         estimated_batch_cost: itemBatchCost,
         estimated_cost_per_serving: Number((itemBatchCost / itemServingCount).toFixed(2)),
+        raw_weight_grams: itemRawWeightGrams,
+        yielded_weight_grams: itemYieldedWeightGrams,
         original_recipe_snapshot: buildOriginalSnapshot(itemLines),
         ingredients_used: buildProductionIngredientsForSubmit(itemLines),
         production_overrides: buildProductionOverrideAudit(itemLines).map((entry) => ({
@@ -2840,10 +2934,14 @@ export default function Production() {
   const reportShortageLines = getReportSectionLines(selectedConsumptionReport, 'shortages');
   const reportTotalRawWeightGrams = optionalNumber(selectedConsumptionReport?.total_raw_consumption_weight_grams)
     ?? optionalNumber(selectedConsumptionReport?.recipe_raw_weight_grams)
-    ?? reportIngredientLines.reduce((sum, line) => sum + toNumber(line.raw_weight_grams, 0), 0);
+    ?? sumReportWeights(reportIngredientLines, 'raw_weight_grams')
+    ?? sumManifestItemsWeight(reportManifestItems, 'raw_weight_grams');
   const reportTotalYieldedWeightGrams = optionalNumber(selectedConsumptionReport?.total_yielded_weight_grams)
     ?? optionalNumber(selectedConsumptionReport?.expected_finished_weight_grams)
-    ?? reportIngredientLines.reduce((sum, line) => sum + toNumber(line.yielded_weight_grams, 0), 0);
+    ?? optionalNumber(selectedConsumptionReport?.actual_finished_weight_grams)
+    ?? optionalNumber(selectedConsumptionReport?.produced_weight_grams)
+    ?? sumReportWeights(reportIngredientLines, 'yielded_weight_grams')
+    ?? sumManifestItemsWeight(reportManifestItems, 'yielded_weight_grams');
 
   return (
     <>

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   aggregateProductionIngredientLines,
+  buildMenuPlanIssueLockState,
   buildInventoryReplacementSuggestions,
   buildMenuIssueMealGroups,
   buildMenuPlanIssueItems,
@@ -10,6 +11,7 @@ import {
   buildProductionIngredientSnapshot,
   buildProductionIngredientsForSubmit,
   buildProductionOverrideAudit,
+  isMenuPlanIssueItemAlreadyIssued,
   isMenuPlanIssueProductionBlocking,
   recalculateProductionIngredientSnapshot
 } from '../src/lib/productionIssue.js';
@@ -122,6 +124,39 @@ assert.equal(
   ),
   false
 );
+
+const issuedItems = [
+  { ...breakfastItems[0], key: 'plan-1::breakfast::chana::0' },
+  { ...breakfastItems[0], key: 'plan-1::breakfast::oatmeal::1', recipe_id: 'oatmeal' },
+  { ...breakfastItems[0], key: 'plan-1::breakfast::bread::2', recipe_id: 'bread' }
+];
+const preciseLockState = buildMenuPlanIssueLockState([
+  {
+    id: 'group-production',
+    source_menu_plan_id: 'plan-1',
+    source_menu_plan_meal_type: 'breakfast',
+    production_issue_group_key: 'plan-1::breakfast',
+    source_menu_plan_item_key: 'plan-1::breakfast',
+    source_menu_plan_item_keys: issuedItems.slice(0, 2).map((item) => item.key),
+    status: 'completed',
+    menu_issue_items: issuedItems.slice(0, 2)
+  }
+], { planId: 'plan-1' });
+assert.equal(isMenuPlanIssueItemAlreadyIssued(issuedItems[0], preciseLockState), true);
+assert.equal(isMenuPlanIssueItemAlreadyIssued(issuedItems[1], preciseLockState), true);
+assert.equal(isMenuPlanIssueItemAlreadyIssued(issuedItems[2], preciseLockState), false);
+
+const legacyLockState = buildMenuPlanIssueLockState([
+  {
+    id: 'legacy-group-production',
+    source_menu_plan_id: 'plan-1',
+    source_menu_plan_meal_type: 'breakfast',
+    production_issue_group_key: 'plan-1::breakfast',
+    source_menu_plan_item_key: 'plan-1::breakfast',
+    status: 'completed'
+  }
+], { planId: 'plan-1' });
+assert.equal(isMenuPlanIssueItemAlreadyIssued(issuedItems[2], legacyLockState), true);
 
 const allItems = buildMenuPlanIssueItems(menuPlan, { mealView: 'all', recipes });
 assert.deepEqual(allItems.map((item) => item.meal_type), ['breakfast', 'lunch']);

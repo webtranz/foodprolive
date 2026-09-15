@@ -3337,6 +3337,21 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
       expected_servings: roundOptionalQuantity(item.expected_servings),
       production_covers: roundOptionalQuantity(item.production_covers),
       estimated_batch_cost: roundOptionalQuantity(item.estimated_batch_cost, 2),
+      raw_weight_grams: roundOptionalQuantity(
+        item.raw_weight_grams
+          ?? (Array.isArray(item.ingredients_used) && item.ingredients_used.length > 0
+            ? item.ingredients_used.reduce((sum, line) => sum + toNumber(line?.raw_weight_grams, 0), 0)
+            : null),
+        3
+      ),
+      yielded_weight_grams: roundOptionalQuantity(
+        item.yielded_weight_grams
+          ?? item.expected_finished_weight_grams
+          ?? (Array.isArray(item.ingredients_used) && item.ingredients_used.length > 0
+            ? item.ingredients_used.reduce((sum, line) => sum + toNumber(line?.yielded_weight_grams, 0), 0)
+            : null),
+        3
+      ),
       ingredients_used: Array.isArray(item.ingredients_used)
         ? item.ingredients_used.map((line) => ({
           ingredient_id: line.ingredient_id,

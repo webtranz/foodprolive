@@ -247,6 +247,18 @@ export function getMenuIssueMealGroupKey(item = {}) {
 
 const NON_BLOCKING_MENU_ISSUE_STATUSES = new Set(['cancelled', 'rejected', 'reversed', 'voided']);
 
+function normalizeKey(value) {
+  return String(value || '').trim();
+}
+
+function uniqueKeys(values = []) {
+  return [...new Set(
+    values
+      .map(normalizeKey)
+      .filter(Boolean)
+  )];
+}
+
 export function isMenuPlanIssueProductionBlocking(production = {}, {
   planId = '',
   editingProductionId = ''
@@ -258,6 +270,59 @@ export function isMenuPlanIssueProductionBlocking(production = {}, {
 
   const status = String(production.status || '').trim().toLowerCase();
   return !NON_BLOCKING_MENU_ISSUE_STATUSES.has(status);
+}
+
+export function buildMenuPlanIssueLockState(productions = [], {
+  planId = '',
+  editingProductionId = ''
+} = {}) {
+  const itemKeys = new Set();
+  const legacyGroupKeys = new Set();
+  const normalizedPlanId = normalizeKey(planId);
+
+  (Array.isArray(productions) ? productions : [])
+    .filter((production) => isMenuPlanIssueProductionBlocking(production, {
+      planId: normalizedPlanId,
+      editingProductionId
+    }))
+    .forEach((production) => {
+      const mealType = normalizeIssueMealType(production.source_menu_plan_meal_type || production.meal_type);
+      const derivedGroupKey = normalizedPlanId && mealType ? `${normalizedPlanId}::${mealType}` : '';
+      const productionGroupKeys = uniqueKeys([
+        production.production_issue_group_key,
+        derivedGroupKey
+      ]);
+      const productionGroupKeySet = new Set(productionGroupKeys);
+      const savedItemKeys = uniqueKeys([
+        ...(Array.isArray(production.source_menu_plan_item_keys) ? production.source_menu_plan_item_keys : []),
+        ...(Array.isArray(production.menu_issue_items)
+          ? production.menu_issue_items.map((item) => item?.key)
+          : [])
+      ]);
+      const singleSourceKey = normalizeKey(production.source_menu_plan_item_key);
+      if (singleSourceKey && !productionGroupKeySet.has(singleSourceKey)) {
+        savedItemKeys.push(singleSourceKey);
+      }
+
+      const preciseItemKeys = uniqueKeys(savedItemKeys);
+      if (preciseItemKeys.length > 0) {
+        preciseItemKeys.forEach((key) => itemKeys.add(key));
+        return;
+      }
+
+      productionGroupKeys.forEach((key) => legacyGroupKeys.add(key));
+    });
+
+  return { itemKeys, legacyGroupKeys };
+}
+
+export function isMenuPlanIssueItemAlreadyIssued(item = {}, lockState = {}) {
+  const itemKeys = lockState.itemKeys instanceof Set ? lockState.itemKeys : new Set(lockState.itemKeys || []);
+  const legacyGroupKeys = lockState.legacyGroupKeys instanceof Set
+    ? lockState.legacyGroupKeys
+    : new Set(lockState.legacyGroupKeys || []);
+  return itemKeys.has(normalizeKey(item.key))
+    || legacyGroupKeys.has(getMenuIssueMealGroupKey(item));
 }
 
 export function buildProductionIngredientLine({

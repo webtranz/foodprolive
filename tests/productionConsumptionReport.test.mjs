@@ -116,7 +116,7 @@ test('generic production mutations cannot bypass completion posting or rewrite c
       { completion_lines: [] },
       { id: 'production-1', status: 'completed' }
     ),
-    { status: 409, message: /Completed production and its consumption record are immutable/ }
+    { status: 409, message: /Completed or reversed production and its consumption record are immutable/ }
   );
 });
 
@@ -167,10 +167,21 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(reportBlock, /production_issue_item_count:/);
   assert.match(reportBlock, /production_issue_dish_count:/);
   assert.match(reportBlock, /menu_issue_items:/);
+  assert.match(inventorySource, /raw_weight_grams:[\s\S]*item\.raw_weight_grams/);
+  assert.match(inventorySource, /yielded_weight_grams:[\s\S]*item\.yielded_weight_grams/);
   assert.match(reportBlock, /total_raw_consumption_weight_grams:/);
   assert.match(reportBlock, /total_yielded_weight_grams:/);
 
   const productionPage = source('src/pages/Production.jsx');
+  const reportMergeStart = productionPage.indexOf('function mergeConsumptionReportWithProduction');
+  const reportMergeEnd = productionPage.indexOf('\nfunction formatReportSource', reportMergeStart);
+  const reportMergeBlock = productionPage.slice(reportMergeStart, reportMergeEnd);
+  assert.ok(reportMergeStart >= 0, 'production UI should merge saved reports with production records');
+  assert.ok(reportMergeEnd > reportMergeStart, 'report merge helper should be complete');
+  assert.match(reportMergeBlock, /mergeManifestItems\(reportMenuItems,\s*productionMenuItems\)/);
+  assert.match(reportMergeBlock, /sumManifestItemsWeight\(menuIssueItems,\s*'raw_weight_grams'\)/);
+  assert.match(reportMergeBlock, /sumManifestItemsWeight\(menuIssueItems,\s*'yielded_weight_grams'\)/);
+
   const ingredientSectionStart = productionPage.indexOf('>Ingredient Consumption</h3>');
   const ingredientSectionEnd = productionPage.indexOf('>Inventory Lots Consumed</h3>', ingredientSectionStart);
   const ingredientSection = productionPage.slice(ingredientSectionStart, ingredientSectionEnd);
