@@ -216,6 +216,84 @@ const cases = [
     }
   },
   {
+    name: 'explodes menu production batches into filled manifest item waste rows',
+    run() {
+      const summary = buildBatchOverproductionDishSummary([
+        {
+          id: 'batch-menu',
+          batch_number: 'PIB-001',
+          production_id: 'production-menu',
+          production_date: '2026-05-12',
+          meal_type: 'breakfast',
+          status: 'partial',
+          recipe_id: 'menu-event',
+          recipe_name: 'Breakfast Menu Junior / General (3 Items)',
+          produced_weight_grams: 3000,
+          served_weight_grams: 300,
+          wasted_weight_grams: 200,
+          remaining_weight_grams: 2500,
+          menu_issue_items: [
+            {
+              key: 'line-eggs',
+              recipe_id: 'eggs',
+              recipe_name: 'Boiled Eggs',
+              production_covers: 10,
+              yielded_weight_grams: 1000,
+              estimated_batch_cost: 30
+            },
+            {
+              key: 'line-bread',
+              recipe_id: 'bread',
+              recipe_name: 'Arabic Bread',
+              production_covers: 10,
+              yielded_weight_grams: 2000,
+              estimated_batch_cost: 20
+            },
+            {
+              key: 'line-blank',
+              recipe_id: 'blank',
+              recipe_name: 'Blank Planned Line',
+              production_covers: 0,
+              yielded_weight_grams: 0,
+              estimated_batch_cost: 99
+            }
+          ]
+        }
+      ], [], [
+        {
+          id: 'waste-eggs',
+          site_id: 'store-1',
+          waste_date: '2026-05-12',
+          meal_type: 'breakfast',
+          source_type: 'batch_overproduction',
+          status: 'logged',
+          recipe_id: 'eggs',
+          batch_overproduction_item_key: 'batch-menu::line-eggs',
+          output_allocations: [
+            {
+              produced_item_batch_id: 'batch-menu',
+              batch_overproduction_item_key: 'batch-menu::line-eggs',
+              wasted_weight_grams: 200
+            }
+          ]
+        }
+      ]);
+
+      assert.equal(summary.length, 2);
+      const eggs = summary.find((row) => row.recipe_id === 'eggs');
+      const bread = summary.find((row) => row.recipe_id === 'bread');
+      assert.equal(eggs.waste_key, 'batch-menu::line-eggs');
+      assert.equal(eggs.recipe_name, 'Boiled Eggs');
+      assert.equal(eggs.produced_weight_grams, 1000);
+      assert.equal(eggs.served_weight_grams, 100);
+      assert.equal(eggs.wasted_weight_grams, 200);
+      assert.equal(eggs.available_weight_grams, 700);
+      assert.equal(bread.produced_weight_grams, 2000);
+      assert.equal(bread.available_weight_grams, 1800);
+      assert.equal(summary.some((row) => row.recipe_id === 'blank'), false);
+    }
+  },
+  {
     name: 'allocates batch overproduction waste against produced item balances',
     run() {
       const allocation = allocateBatchOverproductionWaste({
@@ -260,6 +338,60 @@ const cases = [
       assert.equal(allocation.batches[0].status, 'consumed');
       assert.equal(allocation.batches[1].remaining_weight_grams, 400);
       assert.equal(allocation.batches[1].status, 'partial');
+    }
+  },
+  {
+    name: 'allocates manifest item waste against its parent menu production batch',
+    run() {
+      const allocation = allocateBatchOverproductionWaste({
+        recipeId: 'eggs',
+        productionId: 'production-menu',
+        manifestItemKey: 'batch-menu::line-eggs',
+        wasteWeightGrams: 300,
+        summaryRow: {
+          recipe_id: 'eggs',
+          recipe_name: 'Boiled Eggs',
+          estimated_cost_per_gram: 0.03,
+          batch_overproduction_item_key: 'batch-menu::line-eggs',
+          manifest_item_key: 'line-eggs',
+          source_menu_plan_item_key: 'line-eggs',
+          batches: [
+            {
+              id: 'batch-menu',
+              batch_overproduction_item_key: 'batch-menu::line-eggs',
+              manifest_item_key: 'line-eggs',
+              source_menu_plan_item_key: 'line-eggs',
+              recipe_name: 'Boiled Eggs',
+              remaining_weight_grams: 500
+            }
+          ]
+        },
+        batches: [
+          {
+            id: 'batch-menu',
+            batch_number: 'PIB-001',
+            production_id: 'production-menu',
+            status: 'available',
+            recipe_id: 'menu-event',
+            recipe_name: 'Breakfast Menu Junior / General (3 Items)',
+            portion_size_grams: 100,
+            served_servings: 0,
+            served_weight_grams: 0,
+            wasted_servings: 0,
+            wasted_weight_grams: 0,
+            remaining_servings: 10,
+            remaining_weight_grams: 1000
+          }
+        ]
+      });
+
+      assert.equal(allocation.wasted_weight_grams, 300);
+      assert.equal(allocation.allocations[0].recipe_id, 'eggs');
+      assert.equal(allocation.allocations[0].recipe_name, 'Boiled Eggs');
+      assert.equal(allocation.allocations[0].batch_recipe_id, 'menu-event');
+      assert.equal(allocation.allocations[0].batch_overproduction_item_key, 'batch-menu::line-eggs');
+      assert.equal(allocation.allocations[0].manifest_item_key, 'line-eggs');
+      assert.equal(allocation.batches[0].remaining_weight_grams, 700);
     }
   },
   {
@@ -381,9 +513,11 @@ const cases = [
       assert.match(page, /record\.ingredient_cost_total/);
       assert.match(page, /This weight will be deducted from the consumed amount under Meal Service Menu\./);
       assert.match(page, /Batch Overproduction Production Summary/);
-      assert.match(page, /<TableHead>Dish Name<\/TableHead>/);
+      assert.match(page, /<TableHead>Produced Item<\/TableHead>/);
       assert.match(page, /<TableHead>Produced Quantity<\/TableHead>/);
       assert.match(page, /<TableHead>Recorded Food Waste \(g\)<\/TableHead>/);
+      assert.match(page, /getBatchWasteRowKey/);
+      assert.match(page, /batch_overproduction_item_key/);
       assert.match(page, /Production completed:/);
       assert.match(page, /Admin window:/);
       assert.match(page, /setDishWasteGramsByRecipe/);

@@ -226,6 +226,18 @@ function normalizeGramEntry(value) {
   return text;
 }
 
+function getBatchWasteRowKey(row = {}) {
+  return String(
+    row.waste_key
+      || row.batch_overproduction_item_key
+      || row.manifest_item_key
+      || row.source_menu_plan_item_key
+      || row.recipe_id
+      || row.recipe_name
+      || ''
+  ).trim();
+}
+
 function sumRecipeIngredientCost(recipe, recipeMap, ingredientMap) {
   const expandedIngredients = expandRecipeIngredients(
     recipe,
@@ -373,10 +385,14 @@ export default function FoodWaste() {
     || []
   ), [wasteContext]);
   const batchWasteRows = useMemo(() => (
-    batchOverproductionDishes.map((dish) => ({
-      ...dish,
-      waste_grams: safeNumber(dishWasteGramsByRecipe[dish.recipe_id])
-    }))
+    batchOverproductionDishes.map((dish, index) => {
+      const rowKey = getBatchWasteRowKey(dish) || `batch-waste-row-${index}`;
+      return {
+        ...dish,
+        waste_key: rowKey,
+        waste_grams: safeNumber(dishWasteGramsByRecipe[rowKey])
+      };
+    })
   ), [batchOverproductionDishes, dishWasteGramsByRecipe]);
   const batchWasteTotalGrams = batchWasteRows.reduce((sum, row) => sum + row.waste_grams, 0);
   const adminEditingExistingWaste = Boolean(isAdmin && editingWasteId);
@@ -415,10 +431,15 @@ export default function FoodWaste() {
     }
     setDishWasteGramsByRecipe((current) => {
       const next = Object.fromEntries(
-        batchOverproductionDishes.map((dish) => [
-          dish.recipe_id,
-          Object.prototype.hasOwnProperty.call(current, dish.recipe_id) ? current[dish.recipe_id] : ''
-        ])
+        batchOverproductionDishes.map((dish, index) => {
+          const rowKey = getBatchWasteRowKey(dish) || `batch-waste-row-${index}`;
+          return [
+            rowKey,
+            Object.prototype.hasOwnProperty.call(current, rowKey)
+            ? current[rowKey]
+            : ''
+          ];
+        })
       );
       return JSON.stringify(next) === JSON.stringify(current) ? current : next;
     });
@@ -929,12 +950,12 @@ export default function FoodWaste() {
     }));
   };
 
-  const handleDishWasteGramsChange = (recipeId, value) => {
+  const handleDishWasteGramsChange = (rowKey, value) => {
     const normalizedValue = normalizeGramEntry(value);
     if (normalizedValue === null) return;
     setDishWasteGramsByRecipe((current) => ({
       ...current,
-      [recipeId]: normalizedValue
+      [rowKey]: normalizedValue
     }));
   };
 
@@ -964,7 +985,7 @@ export default function FoodWaste() {
         return;
       }
       if (!selectedBatchWasteRows.length) {
-        setMessage('Enter recorded food waste in grams for at least one produced dish.');
+        setMessage('Enter recorded food waste in grams for at least one produced item.');
         return;
       }
       const excessiveRow = selectedBatchWasteRows.find((row) => row.waste_grams > safeNumber(row.available_weight_grams));
@@ -1009,7 +1030,7 @@ export default function FoodWaste() {
           recipe_name: row?.recipe_name || recipe?.name || production?.recipe_name || null,
           production_id: rowProductionId || production?.id || null,
           production_name: row
-            ? row.recipe_name
+            ? (row.production_name || row.recipe_name)
             : production ? `${production.recipe_name} - ${production.production_date}` : null,
           batch_reference: row
             ? (formData.batch_reference || rowBatchReference || null)
@@ -1019,6 +1040,11 @@ export default function FoodWaste() {
           wasted_weight_grams: row ? row.waste_grams : (isBatchOverproduction ? safeNumber(formData.quantity) : null),
           produced_weight_grams: row ? safeNumber(row.produced_weight_grams) : null,
           available_weight_grams_before: row ? safeNumber(row.available_weight_grams) : null,
+          batch_overproduction_item_key: row ? getBatchWasteRowKey(row) : null,
+          manifest_item_key: row?.manifest_item_key || null,
+          source_menu_plan_item_key: row?.source_menu_plan_item_key || null,
+          batch_recipe_id: row?.batch_recipe_id || null,
+          batch_recipe_name: row?.batch_recipe_name || null,
           estimated_cost: estimatedCost,
           approval_status: approvalStatus,
           status: approvalStatus === 'pending' ? 'pending_review' : 'logged',
@@ -2086,7 +2112,7 @@ export default function FoodWaste() {
                     <div>
                       <p className="text-sm font-semibold text-slate-900">Batch Overproduction Production Summary</p>
                       <p className="mt-1 text-xs text-slate-600">
-                        Enter recorded food waste in grams against each produced dish. Quantity stays visible and totals these dish rows.
+                        Enter recorded food waste in grams against each filled produced item. Quantity stays visible and totals these item rows.
                       </p>
                     </div>
                     <Badge className="bg-white text-amber-700 border border-amber-200">
@@ -2112,7 +2138,7 @@ export default function FoodWaste() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Dish Name</TableHead>
+                            <TableHead>Produced Item</TableHead>
                             <TableHead>Produced Quantity</TableHead>
                             <TableHead>Recorded Food Waste (g)</TableHead>
                           </TableRow>
@@ -2120,8 +2146,9 @@ export default function FoodWaste() {
                         <TableBody>
                           {batchWasteRows.map((row) => {
                             const isOverAvailable = row.waste_grams > safeNumber(row.available_weight_grams);
+                            const rowKey = getBatchWasteRowKey(row);
                             return (
-                              <TableRow key={row.recipe_id}>
+                              <TableRow key={rowKey}>
                                 <TableCell className="min-w-[220px]">
                                   <div className="font-medium text-slate-900">{row.recipe_name}</div>
                                   <div className="text-xs text-slate-500">
@@ -2140,8 +2167,8 @@ export default function FoodWaste() {
                                     min="0"
                                     step="0.001"
                                     max={safeNumber(row.available_weight_grams) || undefined}
-                                    value={dishWasteGramsByRecipe[row.recipe_id] ?? ''}
-                                    onChange={(event) => handleDishWasteGramsChange(row.recipe_id, event.target.value)}
+                                    value={dishWasteGramsByRecipe[rowKey] ?? ''}
+                                    onChange={(event) => handleDishWasteGramsChange(rowKey, event.target.value)}
                                     className={isOverAvailable ? 'border-red-300 focus-visible:ring-red-500' : ''}
                                     placeholder="0"
                                   />

@@ -1917,7 +1917,25 @@ async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = 
       mealType: normalizedMealType
     })
     : [];
-  const batchOverproductionDishes = buildBatchOverproductionDishSummary(producedItemBatches, productionRows);
+  const existingWasteRows = siteIdValue && wasteDateValue && normalizedMealType
+    ? await scopeEntityRecords(
+      user,
+      'FoodWaste',
+      await listDocuments('FoodWaste', {
+        filters: {
+          site_id: siteIdValue,
+          waste_date: wasteDateValue,
+          meal_type: normalizedMealType
+        },
+        limit: 5000
+      })
+    )
+    : [];
+  const batchOverproductionDishes = buildBatchOverproductionDishSummary(
+    producedItemBatches,
+    productionRows,
+    existingWasteRows
+  );
   const latestProductionCompletedAt = getLatestSuccessfulProductionCompletedAt({
     productions: productionRows,
     producedItemBatches,
@@ -1993,6 +2011,46 @@ function uniqueTextValues(values = []) {
       seen.add(value);
       return true;
     });
+}
+
+function getBatchOverproductionContextKey(record = {}) {
+  return String(
+    record.batch_overproduction_item_key
+      || record.waste_key
+      || record.manifest_item_key
+      || record.source_menu_plan_item_key
+      || ''
+  ).trim();
+}
+
+function findBatchOverproductionContextRow(rows = [], payload = {}) {
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const desiredKey = getBatchOverproductionContextKey(payload);
+  if (desiredKey) {
+    const byKey = normalizedRows.find((row) => uniqueTextValues([
+      row.batch_overproduction_item_key,
+      row.waste_key,
+      row.manifest_item_key,
+      row.source_menu_plan_item_key
+    ]).includes(desiredKey));
+    if (byKey) return byKey;
+  }
+
+  const productionId = String(payload.production_id || '').trim();
+  const recipeId = String(payload.recipe_id || '').trim();
+  if (productionId && recipeId) {
+    const byProductionAndRecipe = normalizedRows.find((row) => (
+      String(row.production_id || '').trim() === productionId
+      && String(row.recipe_id || '').trim() === recipeId
+    ));
+    if (byProductionAndRecipe) return byProductionAndRecipe;
+  }
+
+  if (recipeId) {
+    return normalizedRows.find((row) => String(row.recipe_id || '').trim() === recipeId) || null;
+  }
+
+  return null;
 }
 
 async function getMealServiceSiteIdsForFoodWaste(siteId, executor = null) {
@@ -2266,7 +2324,15 @@ async function updateBatchOverproductionFoodWasteRecord({
     const nextAllocation = allocateBatchOverproductionWaste({
       recipeId: existing.recipe_id || payload.recipe_id,
       wasteWeightGrams: requestedWasteGrams,
-      batches: reversed.batches
+      batches: reversed.batches,
+      productionId: existing.production_id || payload.production_id,
+      manifestItemKey: existing.batch_overproduction_item_key
+        || existing.manifest_item_key
+        || existing.source_menu_plan_item_key
+        || payload.batch_overproduction_item_key
+        || payload.manifest_item_key
+        || payload.source_menu_plan_item_key,
+      sourceAllocations: existingAllocations
     });
     const finalBatchMap = new Map();
     reversed.affectedIds.forEach((batchId) => {
@@ -2309,6 +2375,20 @@ async function updateBatchOverproductionFoodWasteRecord({
       recipe_name: existing.recipe_name || payload.recipe_name || null,
       production_id: payload.production_id || firstAllocation?.production_id || existing.production_id || null,
       production_name: payload.production_name || existing.production_name || null,
+      batch_overproduction_item_key: existing.batch_overproduction_item_key
+        || payload.batch_overproduction_item_key
+        || firstAllocation?.batch_overproduction_item_key
+        || null,
+      manifest_item_key: existing.manifest_item_key
+        || payload.manifest_item_key
+        || firstAllocation?.manifest_item_key
+        || null,
+      source_menu_plan_item_key: existing.source_menu_plan_item_key
+        || payload.source_menu_plan_item_key
+        || firstAllocation?.source_menu_plan_item_key
+        || null,
+      batch_recipe_id: existing.batch_recipe_id || payload.batch_recipe_id || firstAllocation?.batch_recipe_id || null,
+      batch_recipe_name: existing.batch_recipe_name || payload.batch_recipe_name || firstAllocation?.batch_recipe_name || null,
       batch_reference: payload.batch_reference
         || nextAllocation.allocations.map((allocation) => allocation.batch_number).filter(Boolean).join(', ')
         || existing.batch_reference
@@ -4417,12 +4497,15 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
       return response.status(400).json({ message: context.message || 'Food waste recording is closed for this meal.' });
     }
 
-    const matchingProduction = payload.production_id
-      ? context.production_options.find((item) => item.id === payload.production_id) || null
-      : null;
     const isBatchOverproductionWaste = String(payload.waste_category || '').toLowerCase() === 'batch_overproduction'
       && String(payload.waste_scope || '').toLowerCase() === 'batch';
     const isPlateWaste = String(payload.waste_category || '').toLowerCase() === 'plate_waste';
+    const matchingProduction = payload.production_id
+      ? context.production_options.find((item) => item.id === payload.production_id) || null
+      : null;
+    const batchOverproductionContextRow = isBatchOverproductionWaste
+      ? findBatchOverproductionContextRow(context.batch_overproduction_dishes, payload)
+      : null;
 
     const preparedPayload = {
       ...payload,
@@ -4435,10 +4518,20 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
       recording_deadline_at: context.recording_deadline_at,
       menu_plan_id: context.menu_plan?.id || null,
       menu_plan_name: context.menu_plan?.name || null,
-      production_id: matchingProduction?.id || null,
+      production_id: matchingProduction?.id || batchOverproductionContextRow?.production_id || payload.production_id || null,
       production_name: matchingProduction
         ? `${matchingProduction.recipe_name} - ${matchingProduction.production_date}`
-        : payload.production_name || null,
+        : batchOverproductionContextRow?.production_name || payload.production_name || null,
+      recipe_id: batchOverproductionContextRow?.recipe_id || payload.recipe_id || null,
+      recipe_name: batchOverproductionContextRow?.recipe_name || payload.recipe_name || null,
+      batch_overproduction_item_key: batchOverproductionContextRow?.batch_overproduction_item_key
+        || payload.batch_overproduction_item_key
+        || payload.waste_key
+        || null,
+      manifest_item_key: batchOverproductionContextRow?.manifest_item_key || payload.manifest_item_key || null,
+      source_menu_plan_item_key: batchOverproductionContextRow?.source_menu_plan_item_key
+        || payload.source_menu_plan_item_key
+        || null,
       evidence_image_url: evidenceImageUrl,
       image_url: evidenceImageUrl,
       status: payload.status || 'logged'
@@ -4465,7 +4558,12 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
         batchWasteAllocation = allocateBatchOverproductionWaste({
           recipeId: finalPayload.recipe_id,
           wasteWeightGrams,
-          batches: scopedBatches
+          batches: scopedBatches,
+          productionId: finalPayload.production_id,
+          manifestItemKey: finalPayload.batch_overproduction_item_key
+            || finalPayload.manifest_item_key
+            || finalPayload.source_menu_plan_item_key,
+          summaryRow: batchOverproductionContextRow
         });
         const calculatedWasteCost = await calculateProducedOutputWasteCost({
           allocations: batchWasteAllocation.allocations,
@@ -4482,6 +4580,29 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
           wasted_production_equivalent_servings: batchWasteAllocation.wasted_production_equivalent_servings,
           output_allocations: batchWasteAllocation.allocations,
           production_id: finalPayload.production_id || firstAllocation?.production_id || null,
+          production_name: batchOverproductionContextRow?.production_name || finalPayload.production_name || null,
+          recipe_id: batchOverproductionContextRow?.recipe_id || finalPayload.recipe_id || null,
+          recipe_name: batchOverproductionContextRow?.recipe_name || finalPayload.recipe_name || null,
+          produced_weight_grams: batchOverproductionContextRow?.produced_weight_grams
+            ?? finalPayload.produced_weight_grams
+            ?? null,
+          available_weight_grams_before: batchOverproductionContextRow?.available_weight_grams
+            ?? finalPayload.available_weight_grams_before
+            ?? null,
+          batch_overproduction_item_key: batchOverproductionContextRow?.batch_overproduction_item_key
+            || finalPayload.batch_overproduction_item_key
+            || firstAllocation?.batch_overproduction_item_key
+            || null,
+          manifest_item_key: batchOverproductionContextRow?.manifest_item_key
+            || finalPayload.manifest_item_key
+            || firstAllocation?.manifest_item_key
+            || null,
+          source_menu_plan_item_key: batchOverproductionContextRow?.source_menu_plan_item_key
+            || finalPayload.source_menu_plan_item_key
+            || firstAllocation?.source_menu_plan_item_key
+            || null,
+          batch_recipe_id: batchOverproductionContextRow?.batch_recipe_id || firstAllocation?.batch_recipe_id || null,
+          batch_recipe_name: batchOverproductionContextRow?.batch_recipe_name || firstAllocation?.batch_recipe_name || null,
           batch_reference: finalPayload.batch_reference
             || batchWasteAllocation.allocations.map((allocation) => allocation.batch_number).filter(Boolean).join(', ')
             || null
