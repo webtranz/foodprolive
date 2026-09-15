@@ -127,6 +127,7 @@ import {
   transferStock,
   completeProduction,
   reverseCompletedProduction,
+  partialReverseCompletedProduction,
   getProductionReversalBlockers,
   repairProductionReversalBalance,
   consumeProductionInventoryReservation,
@@ -9043,6 +9044,67 @@ app.post('/api/inventory/production/:id/repair-reversal-balance', requireAuth, r
       }
     });
     response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/inventory/production/:id/partial-reverse-completion', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const production = await findDocument('Production', request.params.id);
+    if (!production || !filterRowsByAccessibleSites(
+      [production],
+      scope,
+      ['site_id', 'fulfillment_store_id']
+    ).length) {
+      return response.status(403).json({ message: 'You do not have access to this production record' });
+    }
+    const productionInventorySite = resolveProductionFulfillmentStore(production, scope.sites);
+    if (
+      !scope.unrestricted
+      && !scope.accessibleSiteIds.has(String(productionInventorySite.id))
+    ) {
+      return response.status(403).json({ message: 'You do not have access to this production site inventory' });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+
+    const result = await partialReverseCompletedProduction(request.params.id, request.user, {
+      reason: request.body?.reason || '',
+      lines: Array.isArray(request.body?.lines) ? request.body.lines : [],
+      location
+    });
+    if (result.mutated) {
+      recordChanged('Production');
+      recordChanged('ProductionConsumptionReport');
+      recordChanged('Inventory');
+      recordChanged('InventoryLot');
+      recordChanged('InventoryTransaction');
+      recordChanged('ProducedItemBatch');
+      await auditAction({
+        user: request.user,
+        action: 'PRODUCTION_COMPLETION_PARTIALLY_REVERSED',
+        entity: 'Production',
+        entityId: result.record.id,
+        details: {
+          saved_record: result.record,
+          consumption_report_id: result.consumption_report?.id || null,
+          produced_item_batch_id: result.produced_item_batch?.id || null,
+          returned_line_count: result.returned_lines?.length || 0,
+          partial_reversal_summary: result.partial_reversal_summary || null,
+          reason: request.body?.reason || null
+        }
+      });
+    }
+    response.json({
+      ...result.record,
+      partially_reversed_consumption_report: result.consumption_report || null,
+      adjusted_produced_item_batch: result.produced_item_batch || null,
+      returned_lines: result.returned_lines || [],
+      partial_reversal_summary: result.partial_reversal_summary || null
+    });
   } catch (error) {
     next(error);
   }

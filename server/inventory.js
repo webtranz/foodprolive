@@ -3618,6 +3618,256 @@ function getProductionReversalReturnLayers(line = {}) {
   return sanitizeProductionAllocationLayers(layers);
 }
 
+function getPartialReversalManifestKey(item = {}, index = 0) {
+  const recipeName = normalizeText(item.recipe_name || item.name)
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  const recipeId = normalizeText(item.recipe_id);
+  return normalizeText(
+    item.key
+      || item.original_source_menu_plan_item_key
+      || item.source_menu_plan_item_key
+      || item.menu_plan_item_key
+      || (recipeId ? `recipe:${recipeId}` : '')
+      || (recipeName ? `name:${recipeName}` : '')
+      || `manifest-item-${index}`
+  );
+}
+
+function getPartialReversalManifestName(item = {}) {
+  return normalizeText(item.recipe_name || item.name || item.item_name) || 'Production manifest item';
+}
+
+function getPartialReversalLineQuantity(line = {}) {
+  return Math.max(0, toNumber(
+    line.raw_quantity
+      ?? line.required_quantity
+      ?? line.planned_quantity
+      ?? line.adjusted_quantity
+      ?? line.quantity
+      ?? line.cost_quantity
+      ?? line.recipe_quantity,
+    0
+  ));
+}
+
+function getPartialReversalManifestWeight(item = {}, field) {
+  const direct = positiveNumber(item[field]);
+  if (direct) return direct;
+  if (field === 'raw_weight_grams') {
+    const fallback = positiveNumber(item.recipe_raw_weight_grams)
+      ?? positiveNumber(item.total_raw_weight_grams)
+      ?? positiveNumber(item.total_raw_consumption_weight_grams);
+    if (fallback) return fallback;
+  }
+  if (field === 'yielded_weight_grams') {
+    const fallback = positiveNumber(item.expected_finished_weight_grams)
+      ?? positiveNumber(item.actual_finished_weight_grams)
+      ?? positiveNumber(item.total_yielded_weight_grams);
+    if (fallback) return fallback;
+  }
+  return sumPositiveLineWeight(item.ingredients_used, field);
+}
+
+function partialReversalManifestItemHasFilledProduction(item = {}) {
+  if (positiveNumber(item.production_covers) || positiveNumber(item.expected_servings)) return true;
+  if (getPartialReversalManifestWeight(item, 'raw_weight_grams')) return true;
+  if (getPartialReversalManifestWeight(item, 'yielded_weight_grams')) return true;
+  return (Array.isArray(item.ingredients_used) ? item.ingredients_used : [])
+    .some((line) => getPartialReversalLineQuantity(line) > QUANTITY_EPSILON
+      || positiveNumber(line.raw_weight_grams)
+      || positiveNumber(line.yielded_weight_grams));
+}
+
+function indexManifestItemsByKey(items = []) {
+  const index = new Map();
+  (Array.isArray(items) ? items : []).forEach((item, itemIndex) => {
+    [
+      getPartialReversalManifestKey(item, itemIndex),
+      item.key,
+      item.original_source_menu_plan_item_key,
+      item.source_menu_plan_item_key,
+      item.menu_plan_item_key
+    ].map(normalizeText).filter(Boolean).forEach((key) => {
+      if (!index.has(key)) index.set(key, item);
+    });
+  });
+  return index;
+}
+
+function getProductionPartialReversalManifestItems(production = {}, report = {}) {
+  const productionItems = Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [];
+  const reportItems = Array.isArray(report?.menu_issue_items) ? report.menu_issue_items : [];
+  const primaryItems = productionItems.length > 0 ? productionItems : reportItems;
+  const fallbackByKey = indexManifestItemsByKey(productionItems.length > 0 ? reportItems : productionItems);
+
+  return primaryItems
+    .map((item, index) => {
+      const fallback = getPartialReversalManifestKey(item, index)
+        ? fallbackByKey.get(getPartialReversalManifestKey(item, index))
+        : null;
+      const merged = fallback ? {
+        ...fallback,
+        ...item,
+        ingredients_used: Array.isArray(item.ingredients_used) && item.ingredients_used.length > 0
+          ? item.ingredients_used
+          : (Array.isArray(fallback.ingredients_used) ? fallback.ingredients_used : [])
+      } : item;
+      return {
+        ...merged,
+        key: getPartialReversalManifestKey(merged, index),
+        partial_reversal_index: index
+      };
+    })
+    .filter(partialReversalManifestItemHasFilledProduction);
+}
+
+function scalePartialNumericValue(value, ratio, decimals = 6) {
+  if (value === null || value === undefined || value === '') return value;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  return Number(Math.max(0, numeric * ratio).toFixed(decimals));
+}
+
+function scaleProductionAllocationLayer(layer = {}, ratio) {
+  const quantity = scalePartialNumericValue(layer.quantity, ratio, 6);
+  return {
+    ...layer,
+    quantity,
+    total_cost: scalePartialNumericValue(layer.total_cost, ratio, 2),
+    accounting_total_cost: scalePartialNumericValue(layer.accounting_total_cost, ratio, 2)
+  };
+}
+
+function scaleProductionAllocationLayersByRatio(layers = [], ratio) {
+  if (ratio <= QUANTITY_EPSILON) return [];
+  return sanitizeProductionAllocationLayers(layers)
+    .map((layer) => scaleProductionAllocationLayer(layer, ratio))
+    .filter((layer) => toNumber(layer.quantity, 0) > QUANTITY_EPSILON);
+}
+
+function scaleProductionAllocationLayersToQuantity(layers = [], requestedQuantity = 0) {
+  const safeLayers = sanitizeProductionAllocationLayers(layers)
+    .filter((layer) => toNumber(layer?.quantity, 0) > QUANTITY_EPSILON);
+  const totalQuantity = safeLayers.reduce((sum, layer) => sum + toNumber(layer.quantity, 0), 0);
+  const targetQuantity = Math.min(Math.max(0, toNumber(requestedQuantity, 0)), totalQuantity);
+  if (targetQuantity <= QUANTITY_EPSILON || totalQuantity <= QUANTITY_EPSILON) return [];
+  const ratio = targetQuantity / totalQuantity;
+  let remainingTarget = targetQuantity;
+  return safeLayers
+    .map((layer, index) => {
+      const originalQuantity = toNumber(layer.quantity, 0);
+      const isLast = index === safeLayers.length - 1;
+      const proportionalQuantity = roundQuantity(originalQuantity * ratio);
+      const quantity = Math.min(
+        originalQuantity,
+        remainingTarget,
+        isLast ? remainingTarget : proportionalQuantity
+      );
+      remainingTarget = roundQuantity(Math.max(0, remainingTarget - quantity));
+      const layerRatio = originalQuantity > QUANTITY_EPSILON ? quantity / originalQuantity : 0;
+      return scaleProductionAllocationLayer(layer, layerRatio);
+    })
+    .filter((layer) => toNumber(layer.quantity, 0) > QUANTITY_EPSILON);
+}
+
+function scalePartialProductionLine(line = {}, ratio) {
+  const quantityFields = [
+    'recipe_quantity',
+    'planned_quantity',
+    'actual_requested_quantity',
+    'issued_quantity',
+    'shortage_quantity',
+    'raw_quantity',
+    'net_quantity',
+    'yielded_quantity',
+    'required_quantity',
+    'yield_adjusted_quantity',
+    'cost_quantity',
+    'planned_inventory_quantity',
+    'desired_quantity',
+    'production_covers',
+    'expected_servings',
+    'target_servings'
+  ];
+  const weightFields = ['raw_weight_grams', 'yielded_weight_grams'];
+  const moneyFields = ['posted_cost', 'estimated_cost', 'total_cost', 'estimated_shortage_cost', 'estimated_batch_cost', 'planned_total_cost'];
+  const next = { ...line };
+  quantityFields.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(next, field)) {
+      next[field] = scalePartialNumericValue(next[field], ratio, 6);
+    }
+  });
+  weightFields.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(next, field)) {
+      next[field] = scalePartialNumericValue(next[field], ratio, 3);
+    }
+  });
+  moneyFields.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(next, field)) {
+      next[field] = scalePartialNumericValue(next[field], ratio, 2);
+    }
+  });
+  if (Array.isArray(next.movement_layers)) {
+    next.movement_layers = scaleProductionAllocationLayersByRatio(next.movement_layers, ratio);
+  }
+  if (Array.isArray(next.allocation_layers)) {
+    next.allocation_layers = scaleProductionAllocationLayersByRatio(next.allocation_layers, ratio);
+  }
+  return next;
+}
+
+function productionLineStillActive(line = {}) {
+  return [
+    line.issued_quantity,
+    line.actual_requested_quantity,
+    line.planned_quantity,
+    line.raw_quantity,
+    line.shortage_quantity,
+    line.yielded_weight_grams,
+    line.raw_weight_grams
+  ].some((value) => toNumber(value, 0) > QUANTITY_EPSILON)
+    || getProductionReversalReturnLayers(line).length > 0;
+}
+
+function buildInventoryLotUsageLinesFromConsumption(lines = []) {
+  return (Array.isArray(lines) ? lines : []).flatMap((line) => (
+    getProductionReversalReturnLayers(line).map((layer) => ({
+      item_code: line.item_code || null,
+      ingredient_id: line.ingredient_id || null,
+      ingredient_name: line.ingredient_name || null,
+      unit: line.unit || line.inventory_unit || null,
+      ...layer
+    }))
+  ));
+}
+
+function buildReducedReportSections(report = {}, ingredientLines = []) {
+  const lotLines = buildInventoryLotUsageLinesFromConsumption(ingredientLines);
+  const shortageLines = ingredientLines.filter((line) => toNumber(line.shortage_quantity, 0) > QUANTITY_EPSILON);
+  const standardSections = [
+    {
+      key: 'ingredient_consumption',
+      title: 'Ingredient Consumption',
+      lines: ingredientLines
+    },
+    {
+      key: 'inventory_lot_usage',
+      title: 'Inventory Lots Consumed',
+      lines: lotLines
+    },
+    {
+      key: 'shortages',
+      title: 'Shortages and Exceptions',
+      lines: shortageLines
+    }
+  ];
+  const standardKeys = new Set(standardSections.map((section) => section.key));
+  const remainingSections = (Array.isArray(report.sections) ? report.sections : [])
+    .filter((section) => !standardKeys.has(section?.key));
+  return [...standardSections, ...remainingSections];
+}
+
 function getProducedOutputBalanceNumbers(batch = null) {
   if (!batch) {
     return {
@@ -4044,6 +4294,673 @@ function buildProductionCompletionReversalCommitmentPatch({
   };
 }
 
+function buildProductionPartialReversalCommitmentPatch({
+  production,
+  actor = {},
+  timestamp,
+  reason,
+  returnedLines,
+  remainingLines
+}) {
+  const current = getProductionInventoryCommitment(production);
+  const nextRevision = Math.max(0, toNumber(current.revision, 0)) + 1;
+  const performedBy = actor?.email || actor?.id || 'admin';
+  const operationId = `production:${production.id}:partial-reversal:${timestamp.replace(/[^0-9]/g, '').slice(0, 14)}`;
+  const returnedByIngredientUnit = new Map(
+    (Array.isArray(returnedLines) ? returnedLines : []).map((line) => [
+      `${normalizeText(line.ingredient_id)}::${normalizeIngredientUnit(line.unit || line.inventory_unit)}`,
+      line
+    ])
+  );
+  const fallbackRemainingByIngredientUnit = new Map(
+    (Array.isArray(remainingLines) ? remainingLines : []).map((line) => [
+      `${normalizeText(line.ingredient_id)}::${normalizeIngredientUnit(line.unit || line.inventory_unit)}`,
+      line
+    ])
+  );
+  const nextLines = (Array.isArray(current.lines) ? current.lines : [])
+    .map((line) => {
+      const key = `${normalizeText(line.ingredient_id)}::${normalizeIngredientUnit(line.unit || line.inventory_unit)}`;
+      const returned = returnedByIngredientUnit.get(key);
+      const fallbackRemaining = fallbackRemainingByIngredientUnit.get(key);
+      if (!returned) return sanitizeProductionCommitmentLine(line);
+      const denominator = positiveNumber(line.committed_quantity)
+        ?? positiveNumber(line.consumed_quantity)
+        ?? positiveNumber(fallbackRemaining?.issued_quantity)
+        ?? 0;
+      const returnedQuantity = Math.max(0, toNumber(returned.returned_quantity, 0));
+      const remainingRatio = denominator > QUANTITY_EPSILON
+        ? Math.max(0, 1 - Math.min(1, returnedQuantity / denominator))
+        : 0;
+      return {
+        ...sanitizeProductionCommitmentLine(line),
+        committed_quantity: scalePartialNumericValue(line.committed_quantity, remainingRatio, 6),
+        consumed_quantity: scalePartialNumericValue(line.consumed_quantity, remainingRatio, 6),
+        total_cost: scalePartialNumericValue(line.total_cost, remainingRatio, 2),
+        allocation_layers: scaleProductionAllocationLayersByRatio(line.allocation_layers, remainingRatio)
+      };
+    })
+    .filter((line) => (
+      toNumber(line.committed_quantity, 0) > QUANTITY_EPSILON
+      || toNumber(line.consumed_quantity, 0) > QUANTITY_EPSILON
+      || (Array.isArray(line.allocation_layers) && line.allocation_layers.length > 0)
+    ));
+  const totalConsumed = nextLines.reduce((sum, line) => sum + toNumber(line.consumed_quantity ?? line.committed_quantity, 0), 0);
+  const historyEntry = {
+    revision: nextRevision,
+    operation: 'production_partial_reversal',
+    operation_id: operationId,
+    status: totalConsumed > QUANTITY_EPSILON ? 'consumed' : 'released',
+    actor_id: actor?.id || null,
+    actor_email: actor?.email || null,
+    actor_name: actor?.full_name || actor?.email || null,
+    reason: normalizeText(reason) || 'Admin partially reversed completed production.',
+    timestamp,
+    movements: (Array.isArray(returnedLines) ? returnedLines : []).map((line) => ({
+      direction: 'return',
+      ingredient_id: line.ingredient_id,
+      quantity: line.returned_quantity,
+      unit: line.unit,
+      transaction_id: line.transaction_id
+    }))
+  };
+  const commitment = {
+    ...current,
+    revision: nextRevision,
+    status: historyEntry.status,
+    stock_model: current.stock_model || current.model_version || PRODUCTION_RESERVATION_MODEL,
+    model_version: current.model_version || current.stock_model || PRODUCTION_RESERVATION_MODEL,
+    operation: 'production_partial_reversal',
+    last_operation_id: operationId,
+    idempotency_key: operationId,
+    updated_at: timestamp,
+    updated_by: performedBy,
+    total_reserved_quantity: 0,
+    total_committed_quantity: roundQuantity(totalConsumed),
+    total_consumed_quantity: roundQuantity(totalConsumed),
+    lines: nextLines
+  };
+
+  return {
+    inventory_commitment: commitment,
+    inventory_commitment_revision: nextRevision,
+    inventory_commitment_status: commitment.status,
+    inventory_commitment_operation_id: operationId,
+    inventory_commitment_idempotency_key: operationId,
+    inventory_commitment_updated_at: timestamp,
+    inventory_commitment_updated_by: performedBy,
+    inventory_committed_lines: nextLines,
+    inventory_commitment_history: [
+      ...(Array.isArray(production.inventory_commitment_history)
+        ? production.inventory_commitment_history.slice(-99)
+        : []),
+      historyEntry
+    ]
+  };
+}
+
+function normalizePartialReversalRequests({
+  production = {},
+  report = {},
+  lines = []
+} = {}) {
+  const manifestItems = getProductionPartialReversalManifestItems(production, report);
+  if (manifestItems.length === 0) {
+    const error = new Error('This completed production does not have filled manifest rows available for partial reversal.');
+    error.status = 409;
+    throw error;
+  }
+  const byKey = new Map();
+  manifestItems.forEach((item, index) => {
+    const keys = [
+      getPartialReversalManifestKey(item, index),
+      item.key,
+      item.original_source_menu_plan_item_key,
+      item.source_menu_plan_item_key,
+      item.menu_plan_item_key
+    ].map(normalizeText).filter(Boolean);
+    keys.forEach((key) => {
+      if (!byKey.has(key)) byKey.set(key, { item, index });
+    });
+  });
+  const requestedLines = Array.isArray(lines) ? lines : [];
+  if (requestedLines.length === 0) {
+    const error = new Error('Select at least one production manifest row to partially reverse.');
+    error.status = 400;
+    throw error;
+  }
+
+  const selected = [];
+  const selectedKeys = new Set();
+  for (const requestLine of requestedLines) {
+    const key = normalizeText(
+      requestLine?.manifest_item_key
+        || requestLine?.key
+        || requestLine?.source_menu_plan_item_key
+    );
+    if (!key || selectedKeys.has(key)) continue;
+    const match = byKey.get(key);
+    if (!match) {
+      const error = new Error('A selected production manifest row no longer exists on this completed production.');
+      error.status = 409;
+      throw error;
+    }
+    const yieldedWeight = getPartialReversalManifestWeight(match.item, 'yielded_weight_grams');
+    if (!yieldedWeight || yieldedWeight <= QUANTITY_EPSILON) {
+      const error = new Error(`${getPartialReversalManifestName(match.item)} cannot be partially reversed because its yielded weight is missing.`);
+      error.status = 409;
+      throw error;
+    }
+    const requestedWeight = positiveNumber(
+      requestLine?.reverse_weight_grams
+        ?? requestLine?.yielded_weight_grams
+        ?? requestLine?.weight_grams
+    ) ?? yieldedWeight;
+    if (requestedWeight <= QUANTITY_EPSILON) continue;
+    if (requestedWeight - yieldedWeight > QUANTITY_EPSILON) {
+      const error = new Error(`${getPartialReversalManifestName(match.item)} only has ${roundQuantity(yieldedWeight)} g available to reverse.`);
+      error.status = 409;
+      throw error;
+    }
+    const ratio = Math.min(1, requestedWeight / yieldedWeight);
+    selected.push({
+      key,
+      item: match.item,
+      index: match.index,
+      ratio,
+      reverse_weight_grams: roundQuantity(yieldedWeight * ratio),
+      manifest_item_name: getPartialReversalManifestName(match.item)
+    });
+    selectedKeys.add(key);
+  }
+
+  if (selected.length === 0) {
+    const error = new Error('Enter a positive reversal weight for at least one production manifest row.');
+    error.status = 400;
+    throw error;
+  }
+  return { manifestItems, selected };
+}
+
+function buildPartialReversalIngredientDemandMap(selectedRequests = [], ingredientMap = new Map()) {
+  const demandByIngredient = new Map();
+  selectedRequests.forEach((request) => {
+    const itemLines = Array.isArray(request.item?.ingredients_used) ? request.item.ingredients_used : [];
+    if (itemLines.length === 0) {
+      const error = new Error(`${request.manifest_item_name} cannot be partially reversed because its ingredient snapshot is missing.`);
+      error.status = 409;
+      throw error;
+    }
+    itemLines.forEach((line) => {
+      const ingredientId = normalizeText(line.ingredient_id);
+      if (!ingredientId) return;
+      const ingredient = ingredientMap.get(ingredientId) || {};
+      const quantity = getPartialReversalLineQuantity(line) * request.ratio;
+      if (quantity <= QUANTITY_EPSILON) return;
+      const sourceUnit = normalizeText(line.unit || line.inventory_unit || ingredient.unit);
+      if (!sourceUnit) {
+        const error = new Error(`${line.ingredient_name || ingredientId} is missing a unit in the saved manifest snapshot.`);
+        error.status = 409;
+        throw error;
+      }
+      const entry = demandByIngredient.get(ingredientId) || [];
+      entry.push({
+        ingredient_id: ingredientId,
+        ingredient_name: line.ingredient_name || ingredient.name || ingredientId,
+        quantity,
+        unit: sourceUnit,
+        manifest_item_key: request.key,
+        manifest_item_name: request.manifest_item_name
+      });
+      demandByIngredient.set(ingredientId, entry);
+    });
+  });
+  return demandByIngredient;
+}
+
+function reduceManifestItemsForPartialReversal(manifestItems = [], selectedRequests = [], timestamp, actor = {}, reason = '') {
+  const selectedByKey = new Map(selectedRequests.map((request) => [
+    normalizeText(request.key),
+    request
+  ]));
+  return (Array.isArray(manifestItems) ? manifestItems : [])
+    .map((item, index) => {
+      const key = getPartialReversalManifestKey(item, index);
+      const request = selectedByKey.get(key);
+      if (!request) return item;
+      const remainingRatio = Math.max(0, 1 - request.ratio);
+      const reversedEntry = {
+        type: 'production_partial_reversal',
+        timestamp,
+        actor_id: actor?.id || null,
+        actor_email: actor?.email || null,
+        actor_name: actor?.full_name || actor?.email || null,
+        reason,
+        manifest_item_key: key,
+        manifest_item_name: request.manifest_item_name,
+        reversed_weight_grams: request.reverse_weight_grams,
+        reversal_ratio: roundQuantity(request.ratio)
+      };
+      const nextItem = scalePartialProductionLine(item, remainingRatio);
+      nextItem.key = key;
+      nextItem.recipe_name = item.recipe_name || item.name || request.manifest_item_name;
+      nextItem.partial_reversed_weight_grams = roundQuantity(
+        toNumber(item.partial_reversed_weight_grams, 0) + request.reverse_weight_grams
+      );
+      nextItem.partial_reversal_history = [
+        ...(Array.isArray(item.partial_reversal_history) ? item.partial_reversal_history.slice(-49) : []),
+        reversedEntry
+      ];
+      nextItem.ingredients_used = (Array.isArray(item.ingredients_used) ? item.ingredients_used : [])
+        .map((line) => scalePartialProductionLine(line, remainingRatio))
+        .filter(productionLineStillActive);
+      if (remainingRatio <= QUANTITY_EPSILON || !partialReversalManifestItemHasFilledProduction(nextItem)) {
+        return null;
+      }
+      return nextItem;
+    })
+    .filter(Boolean);
+}
+
+function reduceProductionLinesForPartialReversal(lines = [], returnedLines = []) {
+  const returnedByIndex = new Map(
+    (Array.isArray(returnedLines) ? returnedLines : [])
+      .map((line) => [line.source_line_index, line])
+  );
+  return (Array.isArray(lines) ? lines : [])
+    .map((line, index) => {
+      const returned = returnedByIndex.get(index);
+      if (!returned) return line;
+      const denominator = positiveNumber(line.issued_quantity)
+        ?? getProductionReversalReturnLayers(line).reduce((sum, layer) => sum + toNumber(layer.quantity, 0), 0);
+      const returnedQuantity = Math.max(0, toNumber(returned.returned_quantity, 0));
+      const remainingRatio = denominator > QUANTITY_EPSILON
+        ? Math.max(0, 1 - Math.min(1, returnedQuantity / denominator))
+        : 0;
+      const nextLine = scalePartialProductionLine(line, remainingRatio);
+      nextLine.partial_reversed_quantity = roundQuantity(
+        toNumber(line.partial_reversed_quantity, 0) + returnedQuantity
+      );
+      nextLine.partial_reversal_history = [
+        ...(Array.isArray(line.partial_reversal_history) ? line.partial_reversal_history.slice(-49) : []),
+        {
+          type: 'production_partial_reversal',
+          returned_quantity: roundQuantity(returnedQuantity),
+          unit: returned.unit || line.unit || line.inventory_unit || null,
+          transaction_id: returned.transaction_id || null
+        }
+      ];
+      return nextLine;
+    })
+    .filter(productionLineStillActive);
+}
+
+async function reverseCompletedProductionManifestPartWithExecutor(productionId, actor, options = {}, executor) {
+  const production = await findDocument('Production', productionId, executor, true);
+  if (!production) {
+    const error = new Error('Production record not found');
+    error.status = 404;
+    throw error;
+  }
+  if (String(production.status || '').toLowerCase() !== 'completed') {
+    const error = new Error('Only completed productions can be partially reversed by an administrator');
+    error.status = 409;
+    throw error;
+  }
+  const reason = normalizeText(options?.reason) || 'Admin partially reversed completed production for correction.';
+  const timestamp = nowIso();
+  const report = await findProductionReportForReversal(production, executor);
+  const producedItemBatch = await findProducedItemBatchForReversal(production, executor);
+  if (producedItemBatch && String(producedItemBatch.status || '').toLowerCase() === 'voided') {
+    const error = new Error('This production output batch has already been voided');
+    error.status = 409;
+    throw error;
+  }
+  if (report && String(report.status || '').toLowerCase() === 'reversed') {
+    const error = new Error('This production consumption report has already been reversed');
+    error.status = 409;
+    throw error;
+  }
+  const reversalDiagnostics = await buildProductionReversalDiagnosticsForRecords({
+    production,
+    report,
+    producedItemBatch,
+    location: options?.location || null,
+    lock: true
+  }, executor);
+  if (!reversalDiagnostics.can_reverse) {
+    const dependencyCount = reversalDiagnostics.active_meal_service_rows.length
+      + reversalDiagnostics.active_food_waste_rows.length;
+    const error = new Error(dependencyCount > 0
+      ? 'This production output still has active Meal Service or Food Waste records. Reverse those records before partially reversing this production.'
+      : 'This production output has already been served or recorded as waste. Reverse those Meal Service or Food Waste records before partially reversing this production.');
+    error.status = 409;
+    error.details = reversalDiagnostics;
+    throw error;
+  }
+  assertProducedOutputUnused(producedItemBatch);
+
+  const completionLines = getProductionReversalLines(production, report);
+  if (completionLines.length === 0) {
+    const error = new Error('This production does not have saved consumption lines, so its inventory cannot be partially reversed exactly');
+    error.status = 409;
+    throw error;
+  }
+
+  const { manifestItems, selected } = normalizePartialReversalRequests({
+    production,
+    report,
+    lines: options?.lines || []
+  });
+  const totalSelectedWeight = selected.reduce((sum, request) => sum + request.reverse_weight_grams, 0);
+  const currentProducedWeight = positiveNumber(producedItemBatch?.produced_weight_grams)
+    ?? positiveNumber(production.produced_weight_grams)
+    ?? positiveNumber(production.actual_finished_weight_grams)
+    ?? positiveNumber(report?.expected_finished_weight_grams)
+    ?? positiveNumber(report?.total_yielded_weight_grams)
+    ?? sumPositiveLineWeight(manifestItems, 'yielded_weight_grams');
+  if (!currentProducedWeight || currentProducedWeight <= QUANTITY_EPSILON) {
+    const error = new Error('This production has no active produced output weight available for partial reversal.');
+    error.status = 409;
+    throw error;
+  }
+  if (totalSelectedWeight >= currentProducedWeight - QUANTITY_EPSILON) {
+    const error = new Error('Use the full Reverse Completion action when reversing the entire remaining production.');
+    error.status = 409;
+    throw error;
+  }
+
+  const stockSiteId = producedItemBatch?.site_id || production.fulfillment_store_id || production.site_id;
+  const stockSiteName = producedItemBatch?.site_name || production.fulfillment_store_name || production.site_name;
+  const ingredientCatalog = await listDocuments('Ingredient', { limit: 10000 }, executor);
+  const ingredientMap = new Map(ingredientCatalog.map((ingredient) => [String(ingredient.id), ingredient]));
+  const demandByIngredient = buildPartialReversalIngredientDemandMap(selected, ingredientMap);
+  const returnedLines = [];
+  for (const [index, line] of completionLines.entries()) {
+    const ingredientId = normalizeText(line?.ingredient_id);
+    const ingredientName = normalizeText(line?.ingredient_name) || ingredientId;
+    const unit = normalizeText(line?.unit || line?.inventory_unit);
+    const demandLines = demandByIngredient.get(ingredientId) || [];
+    if (!ingredientId || !unit || demandLines.length === 0) continue;
+    const ingredient = ingredientMap.get(ingredientId) || line;
+    const requestedQuantity = demandLines.reduce((sum, demand) => {
+      const converted = convertProductionQuantityToInventoryUnit({
+        quantity: demand.quantity,
+        sourceUnit: demand.unit,
+        inventoryUnit: unit,
+        ingredient,
+        ingredientName
+      });
+      return sum + converted;
+    }, 0);
+    if (requestedQuantity <= QUANTITY_EPSILON) continue;
+    const returnedLayers = getProductionReversalReturnLayers(line);
+    const layerQuantity = returnedLayers.reduce((sum, layer) => sum + Math.max(0, toNumber(layer?.quantity, 0)), 0);
+    const issuedQuantity = Math.max(0, toNumber(line?.issued_quantity, 0));
+    if (layerQuantity <= QUANTITY_EPSILON) {
+      const error = new Error(`Cannot partially reverse ${ingredientName} because the exact consumed inventory lots are missing`);
+      error.status = 409;
+      throw error;
+    }
+    const returnQuantity = Math.min(
+      Math.max(0, requestedQuantity),
+      layerQuantity,
+      issuedQuantity > QUANTITY_EPSILON ? issuedQuantity : layerQuantity
+    );
+    if (returnQuantity <= QUANTITY_EPSILON) continue;
+    const scaledReturnedLayers = scaleProductionAllocationLayersToQuantity(returnedLayers, returnQuantity);
+    const returned = await returnStockToCommittedLotsWithExecutor({
+      site_id: stockSiteId,
+      site_name: stockSiteName,
+      ingredient_id: ingredientId,
+      ingredient_name: ingredientName,
+      unit,
+      returned_layers: scaledReturnedLayers,
+      transaction_date: toDateOnly(),
+      reference_id: production.id,
+      reference_type: 'production',
+      notes: `Admin partially reversed completed production: ${production.recipe_name || production.id}. ${reason}`,
+      performed_by: actor?.email || actor?.id || 'admin',
+      reason_code: 'production_partial_reversal',
+      source: 'production_partial_reversal',
+      source_type: 'production_reversal',
+      operation: 'partial_completion_reversal',
+      operation_id: `production:${production.id}:partial-reversal:${timestamp.replace(/[^0-9]/g, '').slice(0, 14)}`,
+      idempotency_key: `production:${production.id}:partial-reversal:${timestamp}:${ingredientId}:${index}`,
+      commitment_revision: getProductionInventoryCommitment(production).revision,
+      metadata: {
+        production_id: production.id,
+        consumption_report_id: report?.id || null,
+        produced_item_batch_id: producedItemBatch?.id || null,
+        reason,
+        manifest_items: selected.map((request) => ({
+          key: request.key,
+          name: request.manifest_item_name,
+          reversed_weight_grams: request.reverse_weight_grams
+        }))
+      }
+    }, executor);
+    returnedLines.push({
+      source_line_index: index,
+      ingredient_id: ingredientId,
+      ingredient_name: ingredientName,
+      item_code: line?.item_code || null,
+      unit,
+      requested_quantity: roundQuantity(requestedQuantity),
+      returned_quantity: returned.returned_quantity,
+      total_cost: returned.total_cost,
+      transaction_id: returned.transaction_id,
+      movement_layers: returned.movement_layers
+    });
+  }
+
+  if (returnedLines.length === 0) {
+    const error = new Error('The selected manifest rows did not map to any saved consumed stock lines.');
+    error.status = 409;
+    throw error;
+  }
+
+  const remainingCompletionLines = reduceProductionLinesForPartialReversal(completionLines, returnedLines);
+  if (remainingCompletionLines.length === 0) {
+    const error = new Error('Use the full Reverse Completion action when reversing every consumed stock line.');
+    error.status = 409;
+    throw error;
+  }
+  const remainingMenuItems = reduceManifestItemsForPartialReversal(
+    manifestItems,
+    selected,
+    timestamp,
+    actor,
+    reason
+  );
+  if (remainingMenuItems.length === 0) {
+    const error = new Error('Use the full Reverse Completion action when reversing every production manifest item.');
+    error.status = 409;
+    throw error;
+  }
+
+  const returnedTotalCost = Number(returnedLines.reduce((sum, line) => sum + toNumber(line.total_cost, 0), 0).toFixed(2));
+  const nextTotalCost = Number(Math.max(
+    0,
+    toNumber(report?.total_consumption_cost ?? production.production_cost_total ?? production.ingredient_cost_total, 0) - returnedTotalCost
+  ).toFixed(2));
+  const nextProducedWeight = roundQuantity(Math.max(0, currentProducedWeight - totalSelectedWeight));
+  const nextRawWeight = sumPositiveLineWeight(remainingCompletionLines, 'raw_weight_grams')
+    ?? sumPositiveLineWeight(remainingMenuItems, 'raw_weight_grams');
+  const nextYieldedWeight = sumPositiveLineWeight(remainingMenuItems, 'yielded_weight_grams')
+    ?? nextProducedWeight;
+  const nextItemCount = remainingMenuItems.length;
+  const nextTargetServings = remainingMenuItems.reduce(
+    (sum, item) => sum + Math.max(0, toNumber(item.production_covers ?? item.expected_servings, 0)),
+    0
+  );
+  const nextEventTitle = formatProductionEventTitle({
+    ...production,
+    menu_issue_items: remainingMenuItems,
+    production_issue_item_count: nextItemCount,
+    production_issue_dish_count: nextItemCount
+  }, {
+    fallback: production.recipe_name || production.production_name || 'Production'
+  });
+  const nextPortionSize = positiveNumber(producedItemBatch?.portion_size_grams)
+    ?? positiveNumber(production.portion_size_grams)
+    ?? positiveNumber(report?.portion_size_grams)
+    ?? 0;
+  const nextProducedServings = nextPortionSize > QUANTITY_EPSILON
+    ? roundQuantity(nextProducedWeight / nextPortionSize)
+    : roundQuantity(Math.max(0, toNumber(producedItemBatch?.produced_servings ?? production.produced_servings, 0) - selected.reduce(
+      (sum, request) => sum + toNumber(request.item?.production_covers ?? request.item?.expected_servings, 0) * request.ratio,
+      0
+    )));
+  const partialReversalSummary = {
+    partially_reversed_at: timestamp,
+    partially_reversed_by: actor?.email || actor?.id || 'admin',
+    partially_reversed_by_name: actor?.full_name || actor?.email || null,
+    reason,
+    reversed_manifest_items: selected.map((request) => ({
+      key: request.key,
+      name: request.manifest_item_name,
+      reversed_weight_grams: request.reverse_weight_grams,
+      reversal_ratio: roundQuantity(request.ratio)
+    })),
+    returned_line_count: returnedLines.length,
+    returned_total_cost: returnedTotalCost,
+    returned_lines: returnedLines
+  };
+  const partialHistory = [
+    ...(Array.isArray(production.production_reversal_history)
+      ? production.production_reversal_history.slice(-99)
+      : []),
+    {
+      type: 'partial_completion_reversal',
+      timestamp,
+      actor_id: actor?.id || null,
+      actor_email: actor?.email || null,
+      actor_name: actor?.full_name || actor?.email || null,
+      reason,
+      consumption_report_id: report?.id || null,
+      consumption_report_number: report?.report_number || production.consumption_report_number || null,
+      produced_item_batch_id: producedItemBatch?.id || null,
+      produced_item_batch_number: producedItemBatch?.batch_number || production.produced_item_batch_number || null,
+      reversed_manifest_items: partialReversalSummary.reversed_manifest_items,
+      returned_line_count: returnedLines.length,
+      returned_total_cost: returnedTotalCost
+    }
+  ];
+  const commitmentPatch = buildProductionPartialReversalCommitmentPatch({
+    production,
+    actor,
+    timestamp,
+    reason,
+    returnedLines,
+    remainingLines: remainingCompletionLines
+  });
+  const reportSections = buildReducedReportSections(report || {}, remainingCompletionLines);
+
+  const updatedBatch = producedItemBatch ? await updateDocument('ProducedItemBatch', producedItemBatch.id, {
+    production_name: nextEventTitle,
+    recipe_name: nextEventTitle,
+    production_issue_item_count: nextItemCount,
+    production_issue_dish_count: nextItemCount,
+    menu_issue_items: remainingMenuItems,
+    expected_servings: nextProducedServings,
+    expected_finished_weight_grams: nextProducedWeight,
+    actual_finished_weight_grams: nextProducedWeight,
+    produced_servings: nextProducedServings,
+    produced_weight_grams: nextProducedWeight,
+    remaining_servings: nextProducedServings,
+    remaining_weight_grams: nextProducedWeight,
+    status: 'available',
+    partial_reversal_summary: partialReversalSummary,
+    partial_reversal_history: [
+      ...(Array.isArray(producedItemBatch.partial_reversal_history)
+        ? producedItemBatch.partial_reversal_history.slice(-99)
+        : []),
+      partialReversalSummary
+    ]
+  }, executor) : null;
+
+  const updatedReport = report ? await updateDocument('ProductionConsumptionReport', report.id, {
+    report_name: `${report.report_number || 'PCR'} · ${nextEventTitle}`,
+    production_name: nextEventTitle,
+    recipe_name: nextEventTitle,
+    target_servings: nextTargetServings || nextProducedServings,
+    production_issue_item_count: nextItemCount,
+    production_issue_dish_count: nextItemCount,
+    menu_issue_items: remainingMenuItems,
+    recipe_raw_weight_grams: roundOptionalQuantity(nextRawWeight, 3),
+    total_raw_consumption_weight_grams: roundOptionalQuantity(nextRawWeight, 3),
+    expected_finished_weight_grams: roundOptionalQuantity(nextYieldedWeight, 3),
+    total_yielded_weight_grams: roundOptionalQuantity(nextYieldedWeight, 3),
+    total_consumption_cost: nextTotalCost,
+    total_shortage_cost: Number(remainingCompletionLines.reduce((sum, line) => sum + toNumber(line.estimated_shortage_cost, 0), 0).toFixed(2)),
+    shortage_line_count: remainingCompletionLines.filter((line) => toNumber(line.shortage_quantity, 0) > QUANTITY_EPSILON).length,
+    ingredient_line_count: remainingCompletionLines.length,
+    ingredient_lines: remainingCompletionLines,
+    sections: reportSections,
+    status: 'posted',
+    partial_reversal_summary: partialReversalSummary,
+    partial_reversal_history: [
+      ...(Array.isArray(report.partial_reversal_history) ? report.partial_reversal_history.slice(-99) : []),
+      partialReversalSummary
+    ]
+  }, executor) : null;
+
+  const updatedProduction = await updateDocument('Production', production.id, {
+    ...commitmentPatch,
+    recipe_name: nextEventTitle,
+    target_servings: nextTargetServings || nextProducedServings,
+    ingredient_cost_total: nextTotalCost,
+    production_cost_total: nextTotalCost,
+    cost_per_serving: nextProducedServings > QUANTITY_EPSILON
+      ? Number((nextTotalCost / nextProducedServings).toFixed(2))
+      : null,
+    total_shortage_quantity: Number(remainingCompletionLines.reduce((sum, line) => sum + toNumber(line.shortage_quantity, 0), 0).toFixed(3)),
+    completion_lines: remainingCompletionLines,
+    ingredients_used: remainingCompletionLines,
+    menu_issue_items: remainingMenuItems,
+    production_issue_item_count: nextItemCount,
+    production_issue_dish_count: nextItemCount,
+    source_menu_plan_item_keys: remainingMenuItems.map((item, index) => (
+      item.original_source_menu_plan_item_key || item.source_menu_plan_item_key || item.key || getPartialReversalManifestKey(item, index)
+    )).filter(Boolean),
+    recipe_raw_weight_grams: roundOptionalQuantity(nextRawWeight, 3),
+    total_raw_consumption_weight_grams: roundOptionalQuantity(nextRawWeight, 3),
+    total_yielded_weight_grams: roundOptionalQuantity(nextYieldedWeight, 3),
+    expected_finished_weight_grams: nextProducedWeight,
+    actual_finished_weight_grams: nextProducedWeight,
+    produced_servings: nextProducedServings,
+    produced_weight_grams: nextProducedWeight,
+    partial_reversal_summary: partialReversalSummary,
+    production_reversal_history: partialHistory,
+    last_review_action: 'production_partially_reversed',
+    approval_history: [
+      ...(Array.isArray(production.approval_history) ? production.approval_history : []),
+      {
+        action: 'production_partially_reversed',
+        stage: 'admin',
+        from_status: 'completed',
+        to_status: 'completed',
+        actor_id: actor?.id || null,
+        actor_email: actor?.email || null,
+        actor_name: actor?.full_name || actor?.email || null,
+        reason,
+        note: 'Admin partially reversed selected production manifest rows; the full reversal action remains available for the remaining production.',
+        timestamp
+      }
+    ]
+  }, executor);
+
+  return {
+    record: updatedProduction,
+    consumption_report: updatedReport,
+    produced_item_batch: updatedBatch,
+    returned_lines: returnedLines,
+    partial_reversal_summary: partialReversalSummary,
+    mutated: true
+  };
+}
+
 async function reverseCompletedProductionWithExecutor(productionId, actor, options, executor) {
   const production = await findDocument('Production', productionId, executor, true);
   if (!production) {
@@ -4292,6 +5209,13 @@ async function reverseCompletedProduction(productionId, actor, options = {}, exe
   return runInTransaction(
     executor,
     (client) => reverseCompletedProductionWithExecutor(productionId, actor, options, client)
+  );
+}
+
+async function partialReverseCompletedProduction(productionId, actor, options = {}, executor = null) {
+  return runInTransaction(
+    executor,
+    (client) => reverseCompletedProductionManifestPartWithExecutor(productionId, actor, options, client)
   );
 }
 
@@ -4650,6 +5574,7 @@ export {
   transferStock,
   completeProduction,
   reverseCompletedProduction,
+  partialReverseCompletedProduction,
   getProductionReversalBlockers,
   repairProductionReversalBalance,
   getStockOnHandReport,

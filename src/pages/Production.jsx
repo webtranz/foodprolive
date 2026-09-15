@@ -188,6 +188,38 @@ function getManifestItemMatchKeys(item = {}, index = 0) {
   ].map((value) => String(value || '').trim()).filter(Boolean);
 }
 
+function getManifestItemActionKey(item = {}, index = 0) {
+  return getManifestItemMatchKeys(item, index)[0] || `manifest-item-${index}`;
+}
+
+function manifestItemHasFilledProduction(item = {}) {
+  const rawWeight = sumManifestItemWeight(item, 'raw_weight_grams');
+  const yieldedWeight = sumManifestItemWeight(item, 'yielded_weight_grams');
+  if (positiveOptionalNumber(item.production_covers) !== null || positiveOptionalNumber(item.expected_servings) !== null) return true;
+  if (positiveOptionalNumber(rawWeight) !== null || positiveOptionalNumber(yieldedWeight) !== null) return true;
+  return arrayValue(item.ingredients_used).some((line) => (
+    firstPositivePresent(
+      line.raw_quantity,
+      line.required_quantity,
+      line.planned_quantity,
+      line.adjusted_quantity,
+      line.quantity,
+      line.raw_weight_grams,
+      line.yielded_weight_grams
+    ) !== null
+  ));
+}
+
+function getPartialReversalManifestItems(production = {}) {
+  return arrayValue(production?.menu_issue_items)
+    .map((item, index) => ({
+      ...item,
+      key: getManifestItemActionKey(item, index),
+      partial_reversal_index: index
+    }))
+    .filter(manifestItemHasFilledProduction);
+}
+
 function mergeManifestItem(reportItem = {}, fallbackItem = {}) {
   const reportLines = arrayValue(reportItem.ingredients_used);
   const fallbackLines = arrayValue(fallbackItem.ingredients_used);
@@ -1173,6 +1205,9 @@ export default function Production() {
   const [deleteProduction, setDeleteProduction] = useState(null);
   const [reverseProduction, setReverseProduction] = useState(null);
   const [reverseReason, setReverseReason] = useState('');
+  const [partialReverseProduction, setPartialReverseProduction] = useState(null);
+  const [partialReverseReason, setPartialReverseReason] = useState('');
+  const [partialReverseLines, setPartialReverseLines] = useState({});
   const [inventoryAction, setInventoryAction] = useState(null);
   const [inventoryActionMode, setInventoryActionMode] = useState('adjust');
   const [inventoryActionServings, setInventoryActionServings] = useState(null);
@@ -1690,6 +1725,36 @@ export default function Production() {
         );
       }
       setActionError(error.message || 'Unable to reverse this production completion.');
+    }
+  });
+
+  const partialReverseProductionMutation = useMutation({
+    mutationFn: async ({ production, reason, lines }) => {
+      if (!production?.id) {
+        throw new Error('Select a completed production to partially reverse.');
+      }
+      return base44.inventory.partialReverseCompletedProduction(production.id, {
+        reason,
+        lines
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
+      queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
+      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
+      setPartialReverseProduction(null);
+      setPartialReverseReason('');
+      setPartialReverseLines({});
+      setActionError('');
+      setActionMessage('Selected production manifest rows were partially reversed. The full reversal action is unchanged and remains available for the remaining production.');
+    },
+    onError: (error) => {
+      setActionError(error.message || 'Unable to partially reverse this production completion.');
     }
   });
 
@@ -2845,6 +2910,23 @@ export default function Production() {
     setActionMessage('');
   };
 
+  const openPartialReverseProductionDialog = (production) => {
+    const manifestItems = getPartialReversalManifestItems(production);
+    const initialLines = {};
+    manifestItems.forEach((item, index) => {
+      const key = getManifestItemActionKey(item, index);
+      initialLines[key] = {
+        selected: false,
+        reverse_weight_grams: ''
+      };
+    });
+    setPartialReverseProduction(production);
+    setPartialReverseReason('');
+    setPartialReverseLines(initialLines);
+    setActionError('');
+    setActionMessage('');
+  };
+
   const openConsumptionReport = async (production) => {
     const reportId = production.consumption_report_id;
     if (!reportId || reportLoadingId) return;
@@ -2998,6 +3080,20 @@ export default function Production() {
         >
           <FileText className="mr-1.5 h-4 w-4" />
           {reportLoadingId === String(production.id) ? 'Loading Report...' : 'Consumption Report'}
+        </Button>
+      ) : null}
+      {production.status === 'completed' && isAdmin ? (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => openPartialReverseProductionDialog(production)}
+          disabled={partialReverseProductionMutation.isPending && String(partialReverseProductionMutation.variables?.production?.id || '') === String(production.id)}
+          className="justify-center whitespace-normal border-amber-200 text-xs leading-snug text-amber-700 hover:bg-amber-50"
+        >
+          <History className="mr-1.5 h-4 w-4" />
+          {partialReverseProductionMutation.isPending && String(partialReverseProductionMutation.variables?.production?.id || '') === String(production.id)
+            ? 'Partially Reversing...'
+            : 'Partial Reverse'}
         </Button>
       ) : null}
       {production.status === 'completed' && isAdmin ? (
@@ -3213,6 +3309,44 @@ export default function Production() {
     ?? positiveOptionalNumber(selectedConsumptionReport?.produced_weight_grams)
     ?? sumReportWeights(reportIngredientLines, 'yielded_weight_grams')
     ?? sumManifestItemsWeight(reportManifestItems, 'yielded_weight_grams');
+  const partialReverseManifestItems = useMemo(
+    () => getPartialReversalManifestItems(partialReverseProduction),
+    [partialReverseProduction]
+  );
+  const partialReverseSelectedLines = partialReverseManifestItems
+    .map((item, index) => {
+      const key = getManifestItemActionKey(item, index);
+      const state = partialReverseLines[key] || {};
+      const reverseWeight = optionalNumber(state.reverse_weight_grams);
+      const availableWeight = sumManifestItemWeight(item, 'yielded_weight_grams');
+      return {
+        manifest_item_key: key,
+        reverse_weight_grams: reverseWeight,
+        available_weight_grams: availableWeight,
+        selected: Boolean(state.selected),
+        name: item.recipe_name || item.name || 'Production item'
+      };
+    })
+    .filter((line) => line.selected);
+  const partialReverseTotalWeightGrams = partialReverseSelectedLines.reduce(
+    (sum, line) => sum + Math.max(0, toNumber(line.reverse_weight_grams, 0)),
+    0
+  );
+  const partialReverseInvalidLine = partialReverseSelectedLines.find((line) => (
+    !Number.isFinite(Number(line.reverse_weight_grams))
+    || Number(line.reverse_weight_grams) <= 0
+    || (Number.isFinite(Number(line.available_weight_grams))
+      && Number(line.reverse_weight_grams) - Number(line.available_weight_grams) > 0.000001)
+  ));
+  const partialReverseActionBlocked = Boolean(
+    partialReverseProduction
+    && (
+      partialReverseProductionMutation.isPending
+      || partialReverseSelectedLines.length === 0
+      || partialReverseInvalidLine
+      || !partialReverseReason.trim()
+    )
+  );
   const reverseActionBlocked = Boolean(
     reverseProduction
     && (
@@ -4117,6 +4251,183 @@ export default function Production() {
                 })}
               >
                 {reverseProductionMutation.isPending ? 'Reversing...' : 'Reverse Now'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={Boolean(partialReverseProduction)}
+          onOpenChange={(open) => {
+            if (!open && !partialReverseProductionMutation.isPending) {
+              setPartialReverseProduction(null);
+              setPartialReverseReason('');
+              setPartialReverseLines({});
+              setActionError('');
+            }
+          }}
+        >
+          <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Partial Production Reversal</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 text-sm">
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+                <p className="font-semibold">Admin-only partial reversal for selected manifest rows.</p>
+                <p className="mt-2">
+                  This only reverses the selected production row weight, returns its proportional ingredient stock to the original lots,
+                  and reduces the active produced balance. The full Reverse Completion button and full reversal handling remain unchanged.
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="font-semibold text-slate-900">
+                  {partialReverseProduction?.recipe_name || 'Completed production'}
+                </p>
+                <p className="mt-1 text-slate-600">
+                  Select only the filled production rows you want to reverse. If the whole production must be reversed, use the existing Reverse Completion action instead.
+                </p>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">Reverse</TableHead>
+                      <TableHead>Production row</TableHead>
+                      <TableHead>Produced weight</TableHead>
+                      <TableHead>Estimated cost</TableHead>
+                      <TableHead>Weight to reverse (g)</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {partialReverseManifestItems.map((item, index) => {
+                      const key = getManifestItemActionKey(item, index);
+                      const state = partialReverseLines[key] || {};
+                      const yieldedWeight = sumManifestItemWeight(item, 'yielded_weight_grams');
+                      const isSelected = Boolean(state.selected);
+                      const enteredWeight = optionalNumber(state.reverse_weight_grams);
+                      const isOverAvailable = isSelected
+                        && enteredWeight !== null
+                        && yieldedWeight !== null
+                        && enteredWeight - yieldedWeight > 0.000001;
+                      return (
+                        <TableRow key={key} className={isOverAvailable ? 'bg-red-50/70' : ''}>
+                          <TableCell>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setPartialReverseLines((current) => ({
+                                  ...current,
+                                  [key]: {
+                                    ...(current[key] || {}),
+                                    selected: checked,
+                                    reverse_weight_grams: checked
+                                      ? (current[key]?.reverse_weight_grams || (yieldedWeight !== null ? String(Math.round(yieldedWeight * 1000) / 1000) : ''))
+                                      : current[key]?.reverse_weight_grams || ''
+                                  }
+                                }));
+                              }}
+                              aria-label={`Select ${item.recipe_name || item.name || 'production row'} for partial reversal`}
+                              className="h-4 w-4 rounded border-slate-300"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <p className="font-medium text-slate-900">{item.recipe_name || item.name || 'Production item'}</p>
+                            <p className="text-xs text-slate-500">
+                              {formatReportQuantity(item.production_covers ?? item.expected_servings, 'servings')} · {Array.isArray(item.ingredients_used) ? item.ingredients_used.length : 0} ingredient lines
+                            </p>
+                          </TableCell>
+                          <TableCell>{formatReportWeightFromGrams(yieldedWeight)}</TableCell>
+                          <TableCell>{formatCurrency(item.estimated_batch_cost || item.planned_total_cost || 0)}</TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.001"
+                              value={state.reverse_weight_grams ?? ''}
+                              disabled={!isSelected}
+                              onChange={(event) => setPartialReverseLines((current) => ({
+                                ...current,
+                                [key]: {
+                                  ...(current[key] || {}),
+                                  selected: true,
+                                  reverse_weight_grams: event.target.value
+                                }
+                              }))}
+                              className={isOverAvailable ? 'border-red-300 text-red-700' : ''}
+                            />
+                            {isOverAvailable ? (
+                              <p className="mt-1 text-xs text-red-600">
+                                Maximum available: {formatReportWeightFromGrams(yieldedWeight)}
+                              </p>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {partialReverseManifestItems.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="py-6 text-center text-sm text-slate-500">
+                          No filled production manifest rows are available for partial reversal.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-blue-900">
+                Selected reversal total: <span className="font-semibold">{formatReportWeightFromGrams(partialReverseTotalWeightGrams)}</span>
+              </div>
+              <div>
+                <Label htmlFor="production-partial-reversal-reason">Reason / notes *</Label>
+                <Textarea
+                  id="production-partial-reversal-reason"
+                  value={partialReverseReason}
+                  onChange={(event) => setPartialReverseReason(event.target.value)}
+                  placeholder="Example: One manifest item was posted with incorrect production weight."
+                  className="mt-2 min-h-[100px]"
+                />
+              </div>
+              {partialReverseInvalidLine ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+                  Check the reversal weight for {partialReverseInvalidLine.name}; it must be greater than zero and cannot exceed the row's produced weight.
+                </div>
+              ) : null}
+              {actionError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+                  {actionError}
+                </div>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={partialReverseProductionMutation.isPending}
+                onClick={() => {
+                  setPartialReverseProduction(null);
+                  setPartialReverseReason('');
+                  setPartialReverseLines({});
+                  setActionError('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="bg-amber-600 hover:bg-amber-700"
+                disabled={partialReverseActionBlocked}
+                onClick={() => partialReverseProductionMutation.mutate({
+                  production: partialReverseProduction,
+                  reason: partialReverseReason.trim(),
+                  lines: partialReverseSelectedLines.map((line) => ({
+                    manifest_item_key: line.manifest_item_key,
+                    reverse_weight_grams: Number(line.reverse_weight_grams)
+                  }))
+                })}
+              >
+                {partialReverseProductionMutation.isPending ? 'Partially Reversing...' : 'Reverse Selected Rows'}
               </Button>
             </DialogFooter>
           </DialogContent>

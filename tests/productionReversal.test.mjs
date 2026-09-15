@@ -138,3 +138,34 @@ test('front end exposes an admin-only direct reversal action', () => {
   assert.match(productionPage, /The old card is now audit-only/);
   assert.match(productionPage, /base44\.inventory\.reverseCompletedProduction/);
 });
+
+test('admins can partially reverse selected production manifest rows without changing full reversal', () => {
+  const server = source('server/index.js');
+  const inventory = source('server/inventory.js');
+  const api = source('src/api/base44Client.js');
+  const productionPage = source('src/pages/Production.jsx');
+
+  const fullRouteStart = server.indexOf("app.post('/api/inventory/production/:id/reverse-completion'");
+  const fullRouteEnd = server.indexOf("app.get('/api/inventory/lots'", fullRouteStart);
+  const fullRoute = server.slice(fullRouteStart, fullRouteEnd);
+  assert.match(fullRoute, /reverseCompletedProduction\(request\.params\.id,\s*request\.user/);
+  assert.doesNotMatch(fullRoute, /partialReverseCompletedProduction/);
+
+  assert.match(server, /app\.post\('\/api\/inventory\/production\/:id\/partial-reverse-completion',\s*requireAuth,\s*requireRole\(\['admin'\]\)/);
+  assert.match(server, /partialReverseCompletedProduction\(request\.params\.id,\s*request\.user/);
+  assert.match(server, /PRODUCTION_COMPLETION_PARTIALLY_REVERSED/);
+
+  assert.match(inventory, /async function reverseCompletedProductionManifestPartWithExecutor/);
+  assert.match(inventory, /function getProductionPartialReversalManifestItems/);
+  assert.match(inventory, /operation:\s*'production_partial_reversal'/);
+  assert.match(inventory, /Use the full Reverse Completion action when reversing the entire remaining production/);
+  assert.match(inventory, /assertProducedOutputUnused\(producedItemBatch\)/);
+  assert.match(inventory, /returnStockToCommittedLotsWithExecutor\(/);
+
+  assert.match(api, /partialReverseCompletedProduction\(id,\s*data = \{\}\)/);
+  assert.match(api, /\/api\/inventory\/production\/\$\{id\}\/partial-reverse-completion/);
+  assert.match(productionPage, /Partial Reverse/);
+  assert.match(productionPage, /Partial Production Reversal/);
+  assert.match(productionPage, /The full Reverse Completion button and full reversal handling remain unchanged/);
+  assert.match(productionPage, /base44\.inventory\.partialReverseCompletedProduction/);
+});

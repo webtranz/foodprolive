@@ -902,6 +902,20 @@ export const base44 = {
         return result;
       });
     },
+    partialReverseCompletedProduction(id, data = {}) {
+      return apiRequest(`/api/inventory/production/${id}/partial-reverse-completion`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('Production', { action: 'partial-reverse-completion', result, id });
+        emitEntityChange('ProducedItemBatch', { action: 'partial-reverse', result: result?.adjusted_produced_item_batch });
+        emitEntityChange('ProductionConsumptionReport', { action: 'partial-reverse', result: result?.partially_reversed_consumption_report });
+        emitEntityChange('Inventory', { action: 'production-partial-reversal', result });
+        emitEntityChange('InventoryLot', { action: 'production-partial-reversal', result });
+        emitEntityChange('InventoryTransaction', { action: 'production-partial-reversal', result });
+        return result;
+      });
+    },
     listLots(filters = {}) {
       return apiRequest(`/api/inventory/lots${buildQueryString(filters)}`);
     },
