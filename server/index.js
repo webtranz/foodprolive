@@ -2063,6 +2063,95 @@ function getAllocationWeightGrams(allocation = {}) {
   ));
 }
 
+function isBatchOverproductionFoodWasteRecord(record = {}) {
+  const sourceType = String(record.source_type || '').trim().toLowerCase();
+  const category = String(record.waste_category || '').trim().toLowerCase();
+  const scope = String(record.waste_scope || '').trim().toLowerCase();
+  return sourceType === 'batch_overproduction'
+    || (category === 'batch_overproduction' && scope === 'batch');
+}
+
+function getAllocationBatchId(allocation = {}) {
+  return String(
+    allocation.produced_item_batch_id
+      || allocation.batch_id
+      || allocation.produced_batch_id
+      || ''
+  ).trim();
+}
+
+function reconcileProducedItemBatchWasteBalance(batch = {}) {
+  const portionSize = numericMatch(batch.portion_size_grams, 0);
+  const producedWeight = numericMatch(batch.produced_weight_grams, 0);
+  const producedServings = numericMatch(batch.produced_servings, 0);
+  const servedWeight = roundFoodWasteQuantity(numericMatch(batch.served_weight_grams, 0));
+  const servedServings = roundFoodWasteQuantity(numericMatch(batch.served_servings, 0));
+  const wastedWeight = roundFoodWasteQuantity(Math.min(
+    Math.max(0, numericMatch(batch.wasted_weight_grams, 0)),
+    Math.max(0, producedWeight - servedWeight)
+  ));
+  const remainingWeight = roundFoodWasteQuantity(Math.max(0, producedWeight - servedWeight - wastedWeight));
+  const wastedServings = roundFoodWasteQuantity(portionSize > FOOD_WASTE_QUANTITY_EPSILON
+    ? wastedWeight / portionSize
+    : Math.min(
+      Math.max(0, numericMatch(batch.wasted_servings, 0)),
+      Math.max(0, producedServings - servedServings)
+    ));
+  const remainingServings = roundFoodWasteQuantity(Math.max(0, producedServings - servedServings - wastedServings));
+  const status = remainingWeight <= FOOD_WASTE_QUANTITY_EPSILON
+    ? 'consumed'
+    : servedWeight > FOOD_WASTE_QUANTITY_EPSILON || wastedWeight > FOOD_WASTE_QUANTITY_EPSILON
+      ? 'partial'
+      : 'available';
+
+  return {
+    ...batch,
+    served_servings: servedServings,
+    served_weight_grams: servedWeight,
+    wasted_servings: wastedServings,
+    wasted_weight_grams: wastedWeight,
+    remaining_servings: remainingServings,
+    remaining_weight_grams: remainingWeight,
+    status
+  };
+}
+
+function reverseBatchOverproductionWasteAllocations(batches = [], allocations = []) {
+  const batchMap = new Map((Array.isArray(batches) ? batches : []).map((batch) => [String(batch.id || ''), { ...batch }]));
+  const affectedIds = new Set();
+
+  for (const allocation of Array.isArray(allocations) ? allocations : []) {
+    const batchId = getAllocationBatchId(allocation);
+    const batch = batchMap.get(batchId);
+    if (!batch) {
+      const error = new Error('This batch waste record cannot be edited because one of its original produced-output batches was not found.');
+      error.status = 409;
+      throw error;
+    }
+    const reverseWeight = getAllocationWeightGrams(allocation);
+    const reverseServings = firstPositiveNumber([
+      allocation.wasted_production_equivalent_servings,
+      numericMatch(batch.portion_size_grams, 0) > FOOD_WASTE_QUANTITY_EPSILON
+        ? reverseWeight / numericMatch(batch.portion_size_grams, 0)
+        : 0
+    ]);
+
+    batch.wasted_weight_grams = roundFoodWasteQuantity(
+      Math.max(0, numericMatch(batch.wasted_weight_grams, 0) - reverseWeight)
+    );
+    batch.wasted_servings = roundFoodWasteQuantity(
+      Math.max(0, numericMatch(batch.wasted_servings, 0) - reverseServings)
+    );
+    batchMap.set(batchId, reconcileProducedItemBatchWasteBalance(batch));
+    affectedIds.add(batchId);
+  }
+
+  return {
+    batches: [...batchMap.values()],
+    affectedIds
+  };
+}
+
 async function findDocumentsByIds(entityName, ids = [], executor = null) {
   const uniqueIds = uniqueTextValues(ids);
   if (!uniqueIds.length) return [];
@@ -2145,6 +2234,92 @@ async function calculateProducedOutputWasteCost({ allocations = [], executor = n
   return roundFoodWasteCost(
     allocationRows.reduce((sum, allocation) => sum + getProducedOutputAllocationCost(allocation, costIndexes), 0)
   );
+}
+
+async function updateBatchOverproductionFoodWasteRecord({
+  user,
+  existing,
+  payload
+}) {
+  return withTransaction(async (client) => {
+    const existingAllocations = Array.isArray(existing.output_allocations) ? existing.output_allocations : [];
+    if (!existingAllocations.length) {
+      const error = new Error('This batch overproduction waste record cannot be edited because its original batch allocations are missing.');
+      error.status = 409;
+      throw error;
+    }
+
+    const requestedWasteGrams = normalizeFoodWasteWeightGrams(
+      payload.wasted_weight_grams ?? payload.quantity,
+      payload.unit || 'g'
+    );
+    const scopedBatches = await listBatchOverproductionBatches(user, {
+      siteId: existing.site_id,
+      wasteDate: existing.waste_date,
+      mealType: existing.meal_type,
+      executor: client,
+      lock: true
+    });
+    const reversed = reverseBatchOverproductionWasteAllocations(scopedBatches, existingAllocations);
+    const nextAllocation = allocateBatchOverproductionWaste({
+      recipeId: existing.recipe_id || payload.recipe_id,
+      wasteWeightGrams: requestedWasteGrams,
+      batches: reversed.batches
+    });
+    const finalBatchMap = new Map();
+    reversed.affectedIds.forEach((batchId) => {
+      const restoredBatch = reversed.batches.find((batch) => String(batch.id || '') === batchId);
+      if (restoredBatch) finalBatchMap.set(batchId, restoredBatch);
+    });
+    nextAllocation.batches.forEach((batch) => {
+      finalBatchMap.set(String(batch.id || ''), reconcileProducedItemBatchWasteBalance(batch));
+    });
+
+    for (const batch of finalBatchMap.values()) {
+      await updateDocument('ProducedItemBatch', batch.id, {
+        served_servings: batch.served_servings,
+        served_weight_grams: batch.served_weight_grams,
+        wasted_servings: batch.wasted_servings,
+        wasted_weight_grams: batch.wasted_weight_grams,
+        remaining_servings: batch.remaining_servings,
+        remaining_weight_grams: batch.remaining_weight_grams,
+        status: batch.status
+      }, client);
+    }
+
+    const calculatedWasteCost = await calculateProducedOutputWasteCost({
+      allocations: nextAllocation.allocations,
+      executor: client
+    });
+    const firstAllocation = nextAllocation.allocations[0] || null;
+    const updatedPayload = withFoodWasteCostAndApproval({
+      ...payload,
+      site_id: existing.site_id,
+      site_name: existing.site_name || payload.site_name || '',
+      waste_date: existing.waste_date,
+      meal_type: existing.meal_type,
+      waste_category: 'batch_overproduction',
+      waste_scope: 'batch',
+      source_type: 'batch_overproduction',
+      ingredient_id: null,
+      ingredient_name: null,
+      recipe_id: existing.recipe_id || payload.recipe_id || null,
+      recipe_name: existing.recipe_name || payload.recipe_name || null,
+      production_id: payload.production_id || firstAllocation?.production_id || existing.production_id || null,
+      production_name: payload.production_name || existing.production_name || null,
+      batch_reference: payload.batch_reference
+        || nextAllocation.allocations.map((allocation) => allocation.batch_number).filter(Boolean).join(', ')
+        || existing.batch_reference
+        || null,
+      quantity: nextAllocation.wasted_weight_grams,
+      unit: 'g',
+      wasted_weight_grams: nextAllocation.wasted_weight_grams,
+      wasted_production_equivalent_servings: nextAllocation.wasted_production_equivalent_servings,
+      output_allocations: nextAllocation.allocations
+    }, calculatedWasteCost);
+
+    return updateDocument('FoodWaste', existing.id, updatedPayload, client);
+  });
 }
 
 async function buildConsumptionCostPerGramById(consumptions = [], executor = null) {
@@ -4050,7 +4225,8 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
       mealType
     });
 
-    if (!context.is_within_recording_window) {
+    const adminHistoricalCreateAllowed = hasAdminAccess(request.user) && context.window_status !== 'future_date';
+    if (!context.is_within_recording_window && !adminHistoricalCreateAllowed) {
       return response.status(400).json({ message: context.message || 'Food waste recording is closed for this meal.' });
     }
 
@@ -4275,12 +4451,13 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
 
     const payload = request.body || {};
     const approvalOnly = isApprovalOnlyWastePatch(payload);
+    const adminEdit = hasAdminAccess(request.user);
 
     if (approvalOnly) {
       if (!hasPermission(request.user, 'approve_waste')) {
         return response.status(403).json({ message: 'You do not have permission to approve food waste.' });
       }
-    } else if (!hasAdminAccess(request.user)) {
+    } else if (!adminEdit) {
       return response.status(403).json({ message: 'Only administrators can edit food waste requests.' });
     }
 
@@ -4295,6 +4472,11 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
       waste_date: normalizeDateOnly(payload.waste_date ?? existing.waste_date),
       site_id: String(payload.site_id ?? existing.site_id ?? '').trim()
     };
+    const editingBatchOverproductionWaste = isBatchOverproductionFoodWasteRecord(existing);
+
+    if (editingBatchOverproductionWaste && !isBatchOverproductionFoodWasteRecord(merged)) {
+      return response.status(400).json({ message: 'Batch overproduction waste records must stay linked to their produced-output batch allocation.' });
+    }
 
     if (!approvalOnly) {
       const context = await buildFoodWasteContext(request.user, {
@@ -4303,7 +4485,8 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
         mealType: merged.meal_type
       });
 
-      if (!context.can_edit) {
+      const adminHistoricalEditAllowed = adminEdit && context.window_status !== 'future_date';
+      if (!context.can_edit && !adminHistoricalEditAllowed) {
         return response.status(400).json({ message: context.message || 'Food waste editing is closed for this meal.' });
       }
 
@@ -4318,15 +4501,30 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
       const matchingProduction = merged.production_id
         ? context.production_options.find((item) => item.id === merged.production_id) || null
         : null;
-      merged.production_id = matchingProduction?.id || null;
-      merged.production_name = matchingProduction
-        ? `${matchingProduction.recipe_name} - ${matchingProduction.production_date}`
-        : merged.production_name || null;
+      if (matchingProduction) {
+        merged.production_id = matchingProduction.id;
+        merged.production_name = `${matchingProduction.recipe_name} - ${matchingProduction.production_date}`;
+      } else if (!adminHistoricalEditAllowed) {
+        merged.production_id = null;
+        merged.production_name = merged.production_name || null;
+      } else {
+        merged.production_id = merged.production_id || null;
+        merged.production_name = merged.production_name || null;
+      }
     }
 
     authorizeEntityAction(request.user, 'FoodWaste', 'update', payload, existing);
     const preparedPayload = await prepareEntityPayload(request.user, 'FoodWaste', merged, existing);
-    const updated = await updateDocument('FoodWaste', request.params.id, preparedPayload);
+    const updated = editingBatchOverproductionWaste && !approvalOnly
+      ? await updateBatchOverproductionFoodWasteRecord({
+        user: request.user,
+        existing,
+        payload: preparedPayload
+      })
+      : await updateDocument('FoodWaste', request.params.id, preparedPayload);
+    if (editingBatchOverproductionWaste && !approvalOnly) {
+      recordChanged('ProducedItemBatch');
+    }
     return response.json(buildApiObjectResponse(decorateFoodWasteRecord(updated), { action: approvalOnly ? 'approval' : 'update' }));
   } catch (error) {
     return next(error);

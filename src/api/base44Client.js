@@ -723,6 +723,15 @@ export const base44 = {
       return apiRequest(`/api/food-waste/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('FoodWaste', { action: 'update', result, id });
+        if (data?.source_type === 'batch_overproduction' || data?.waste_category === 'batch_overproduction' || result?.source_type === 'batch_overproduction') {
+          emitEntityChange('ProducedItemBatch', { action: 'food-waste-update', result, id });
+        }
+        if (data?.waste_category === 'plate_waste' || result?.meal_service_adjustment_weight_grams > 0) {
+          emitEntityChange('MealServiceConsumption', { action: 'plate-waste-adjustment', result, id });
+        }
+        return result;
       });
     }
   },

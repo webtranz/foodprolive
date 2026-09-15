@@ -363,6 +363,8 @@ export default function FoodWaste() {
   const productionMap = useMemo(() => new Map(productions.map((item) => [item.id, item])), [productions]);
   const siteMap = useMemo(() => new Map(sites.map((item) => [item.id, item])), [sites]);
   const isBatchOverproduction = formData.waste_category === BATCH_OVERPRODUCTION_CATEGORY;
+  const isBatchOverproductionEntryMode = isBatchOverproduction && !editingWasteId;
+  const editingBatchOverproductionWaste = Boolean(editingWasteId && isBatchOverproduction);
   const batchOverproductionDishes = useMemo(() => (
     wasteContext?.batch_overproduction_dishes
     || wasteContext?.produced_dishes
@@ -375,6 +377,11 @@ export default function FoodWaste() {
     }))
   ), [batchOverproductionDishes, dishWasteGramsByRecipe]);
   const batchWasteTotalGrams = batchWasteRows.reduce((sum, row) => sum + row.waste_grams, 0);
+  const adminWasteWindowOverride = Boolean(isAdmin && wasteContext?.window_status !== 'future_date');
+  const wasteContextAllowsSave = Boolean(
+    wasteContext?.is_within_recording_window
+    || adminWasteWindowOverride
+  );
   const bootstrapLoading = sitesLoading || ingredientsLoading || recipesLoading || productionsLoading || foodWasteLoading || wasteTargetsLoading;
   const bootstrapError = sitesError || ingredientsError || recipesError || productionsError || foodWasteError || wasteTargetsError;
 
@@ -399,7 +406,7 @@ export default function FoodWaste() {
   }, [formData.production_id, productionMap]);
 
   useEffect(() => {
-    if (!isBatchOverproduction) {
+    if (!isBatchOverproductionEntryMode) {
       return;
     }
     setDishWasteGramsByRecipe((current) => {
@@ -411,10 +418,10 @@ export default function FoodWaste() {
       );
       return JSON.stringify(next) === JSON.stringify(current) ? current : next;
     });
-  }, [batchOverproductionDishes, isBatchOverproduction]);
+  }, [batchOverproductionDishes, isBatchOverproductionEntryMode]);
 
   useEffect(() => {
-    if (!isBatchOverproduction) {
+    if (!isBatchOverproductionEntryMode) {
       return;
     }
     const nextQuantity = batchWasteTotalGrams > 0 ? String(Number(batchWasteTotalGrams.toFixed(3))) : '';
@@ -437,7 +444,7 @@ export default function FoodWaste() {
         quantity: nextQuantity
       };
     });
-  }, [batchWasteTotalGrams, isBatchOverproduction]);
+  }, [batchWasteTotalGrams, isBatchOverproductionEntryMode]);
 
   const createWasteMutation = useMutation({
     mutationFn: async (payload) => {
@@ -471,6 +478,9 @@ export default function FoodWaste() {
     mutationFn: ({ id, payload }) => base44.foodWaste.update(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
+      queryClient.invalidateQueries({ queryKey: ['foodWasteContext'] });
+      queryClient.invalidateQueries({ queryKey: ['mealServiceAvailability'] });
+      queryClient.invalidateQueries({ queryKey: ['mealServiceHistory'] });
       setFormOpen(false);
       setEditingWasteId(null);
       setMessage('Waste record updated.');
@@ -842,7 +852,7 @@ export default function FoodWaste() {
   }, [filteredProductions, analyticsWaste, productionMap, recipeMap, siteMap, topWastedIngredients]);
 
   const handleAutoCostPreview = () => {
-    if (isBatchOverproduction) {
+    if (isBatchOverproductionEntryMode) {
       return Number(batchWasteRows.reduce((sum, row) => (
         sum + (row.waste_grams * safeNumber(row.estimated_cost_per_gram))
       ), 0).toFixed(2));
@@ -921,11 +931,7 @@ export default function FoodWaste() {
       setMessage('Select the location for this waste record.');
       return;
     }
-    if (isBatchOverproduction) {
-      if (editingWasteId) {
-        setMessage('Batch Overproduction waste should be corrected by recording a new dish-wise entry.');
-        return;
-      }
+    if (isBatchOverproductionEntryMode) {
       if (!formData.waste_date || !formData.meal_type) {
         setMessage('Select the waste date and meal type before recording batch overproduction waste.');
         return;
@@ -977,7 +983,7 @@ export default function FoodWaste() {
           reason: reason?.label || formData.reason_code,
           avoidable_type: reason?.avoidableType || (formData.preventable ? 'avoidable' : 'unavoidable'),
           preventable: formData.preventable,
-          waste_scope: row ? 'batch' : (production?.id ? 'batch' : 'recipe'),
+          waste_scope: row ? 'batch' : (formData.waste_scope || (production?.id ? 'batch' : 'recipe')),
           ingredient_id: row ? null : ingredient?.id || null,
           ingredient_name: row ? null : ingredient?.name || null,
           recipe_id: row?.recipe_id || recipe?.id || production?.recipe_id || null,
@@ -990,8 +996,8 @@ export default function FoodWaste() {
             ? (formData.batch_reference || rowBatchReference || null)
             : formData.batch_reference || production?.id || null,
           quantity: row ? row.waste_grams : safeNumber(formData.quantity),
-          unit: row ? 'g' : formData.unit,
-          wasted_weight_grams: row ? row.waste_grams : null,
+          unit: row ? 'g' : (isBatchOverproduction ? 'g' : formData.unit),
+          wasted_weight_grams: row ? row.waste_grams : (isBatchOverproduction ? safeNumber(formData.quantity) : null),
           produced_weight_grams: row ? safeNumber(row.produced_weight_grams) : null,
           available_weight_grams_before: row ? safeNumber(row.available_weight_grams) : null,
           estimated_cost: estimatedCost,
@@ -1004,7 +1010,7 @@ export default function FoodWaste() {
         };
       };
 
-      if (isBatchOverproduction) {
+      if (isBatchOverproductionEntryMode) {
         createWasteMutation.mutate(selectedBatchWasteRows.map((row) => (
           buildPayload({
             row,
@@ -1046,10 +1052,6 @@ export default function FoodWaste() {
     }
     if (isMealServiceLeftover(record)) {
       setMessage('Meal Service Leftover records are system managed. Correct them by reversing the related Meal Service request.');
-      return;
-    }
-    if (isBatchOverproductionWasteRecord(record)) {
-      setMessage('Batch Overproduction waste is dish-wise. Correct it by recording a new dish entry.');
       return;
     }
     setEditingWasteId(record.id);
@@ -1794,23 +1796,23 @@ export default function FoodWaste() {
                         >
                           System managed
                         </Badge>
-                      ) : isBatchOverproductionWasteRecord(item) ? (
-                        <Badge
-                          className="bg-amber-100 text-amber-700"
-                          title="Dish-wise batch overproduction waste should be corrected by recording a new dish entry."
-                        >
-                          Dish-wise
-                        </Badge>
                       ) : isAdmin ? (
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={!item.can_edit || String(item.status || '').toLowerCase() === 'reversed'}
+                          disabled={String(item.status || '').toLowerCase() === 'reversed'}
                           onClick={() => handleOpenEditDialog(item)}
                         >
                           <Pencil className="mr-2 h-4 w-4" />
                           Edit
                         </Button>
+                      ) : isBatchOverproductionWasteRecord(item) ? (
+                        <Badge
+                          className="bg-amber-100 text-amber-700"
+                          title="Only administrators can edit dish-wise batch overproduction waste."
+                        >
+                          Dish-wise
+                        </Badge>
                       ) : null}
                     </TableCell>
                   </TableRow>
@@ -1842,7 +1844,7 @@ export default function FoodWaste() {
             <form onSubmit={handleWasteSubmit} className="space-y-4">
               {wasteContext ? (
                 <div className={`rounded-xl border px-4 py-3 text-sm ${
-                  wasteContext.is_within_recording_window
+                  wasteContextAllowsSave
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                     : wasteContext.window_status === 'before_production'
                       ? 'border-blue-200 bg-blue-50 text-blue-800'
@@ -1850,7 +1852,13 @@ export default function FoodWaste() {
                 }`}>
                   <div className="flex flex-wrap items-center gap-2 font-medium">
                     <Clock3 className="h-4 w-4" />
-                    <span>{wasteContext.message}</span>
+                    <span>
+                      {adminWasteWindowOverride && !wasteContext.is_within_recording_window
+                        ? editingWasteId
+                          ? 'Admin historical edit is open for this saved waste record.'
+                          : 'Admin historical entry is open for this waste record.'
+                        : wasteContext.message}
+                    </span>
                   </div>
                   <div className="mt-2 grid gap-2 md:grid-cols-2">
                     <p>
@@ -1888,6 +1896,7 @@ export default function FoodWaste() {
                   <Label>Location</Label>
                   <Select
                     value={formData.site_id}
+                    disabled={editingBatchOverproductionWaste}
                     onValueChange={(value) => setFormData((current) => ({ ...current, site_id: value }))}
                   >
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Select location" /></SelectTrigger>
@@ -1900,11 +1909,21 @@ export default function FoodWaste() {
                 </div>
                 <div>
                   <Label>Waste Date</Label>
-                  <Input type="date" className="mt-1" value={formData.waste_date} onChange={(event) => setFormData((current) => ({ ...current, waste_date: event.target.value }))} />
+                  <Input
+                    type="date"
+                    className="mt-1"
+                    value={formData.waste_date}
+                    disabled={editingBatchOverproductionWaste}
+                    onChange={(event) => setFormData((current) => ({ ...current, waste_date: event.target.value }))}
+                  />
                 </div>
                 <div>
                   <Label>Meal Type</Label>
-                  <Select value={formData.meal_type} onValueChange={(value) => setFormData((current) => ({ ...current, meal_type: value }))}>
+                  <Select
+                    value={formData.meal_type}
+                    disabled={editingBatchOverproductionWaste}
+                    onValueChange={(value) => setFormData((current) => ({ ...current, meal_type: value }))}
+                  >
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {MEAL_TYPE_OPTIONS.map((item) => (
@@ -1915,7 +1934,11 @@ export default function FoodWaste() {
                 </div>
                 <div>
                   <Label>Waste Category</Label>
-                  <Select value={formData.waste_category} onValueChange={handleWasteCategoryChange}>
+                  <Select
+                    value={formData.waste_category}
+                    disabled={editingBatchOverproductionWaste}
+                    onValueChange={handleWasteCategoryChange}
+                  >
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {WASTE_CATEGORIES.map((item) => (
@@ -1975,8 +1998,8 @@ export default function FoodWaste() {
                     step={isBatchOverproduction ? '0.001' : '0.01'}
                     className="mt-1"
                     value={formData.quantity}
-                    readOnly={isBatchOverproduction}
-                    placeholder={isBatchOverproduction ? 'Total from dish rows' : ''}
+                    readOnly={isBatchOverproductionEntryMode}
+                    placeholder={isBatchOverproductionEntryMode ? 'Total from dish rows' : ''}
                     onChange={(event) => setFormData((current) => ({ ...current, quantity: event.target.value }))}
                   />
                   {formData.waste_category === 'plate_waste' ? (
@@ -2000,7 +2023,7 @@ export default function FoodWaste() {
                 </div>
               </div>
 
-              {isBatchOverproduction ? (
+              {isBatchOverproductionEntryMode ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -2154,7 +2177,7 @@ export default function FoodWaste() {
                     || !formData.quantity
                     || (!wasteImageFile && !formData.evidence_image_url)
                     || !formData.meal_type
-                    || !wasteContext?.is_within_recording_window
+                    || !wasteContextAllowsSave
                   }
                 >
                   {createWasteMutation.isPending || updateWasteMutation.isPending || wasteImageUploading

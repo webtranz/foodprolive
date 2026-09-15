@@ -291,6 +291,7 @@ const cases = [
       const server = read('server/index.js');
       assert.match(server, /Add a waste picture before saving this record/);
       assert.match(server, /Select the location and ingredient to remove from inventory/);
+      assert.match(server, /adminHistoricalCreateAllowed/);
       assert.match(server, /deductStock\(\{/);
       assert.match(server, /transaction_type: 'waste'/);
       assert.match(server, /source_type: 'food_waste'/);
@@ -314,12 +315,23 @@ const cases = [
     name: 'limits food waste edit controls to administrators',
     run() {
       const page = read('src/pages/FoodWaste.jsx');
+      const api = read('src/api/base44Client.js');
       const server = read('server/index.js');
       const entities = read('server/entities.js');
       assert.match(page, /const \{ can, isAdmin \} = usePermissions\(\)/);
       assert.match(page, /Only administrators can edit waste requests\./);
       assert.match(page, /isAdmin \? \(/);
+      assert.match(page, /adminWasteWindowOverride/);
+      assert.match(page, /wasteContextAllowsSave/);
+      assert.match(page, /editingBatchOverproductionWaste/);
+      assert.match(page, /isBatchOverproductionEntryMode/);
+      assert.match(page, /disabled=\{String\(item\.status \|\| ''\)\.toLowerCase\(\) === 'reversed'\}/);
+      assert.match(api, /emitEntityChange\('FoodWaste', \{ action: 'update'/);
+      assert.match(api, /emitEntityChange\('ProducedItemBatch', \{ action: 'food-waste-update'/);
       assert.match(server, /Only administrators can edit food waste requests\./);
+      assert.match(server, /adminHistoricalEditAllowed/);
+      assert.match(server, /updateBatchOverproductionFoodWasteRecord/);
+      assert.match(server, /reverseBatchOverproductionWasteAllocations/);
       assert.match(entities, /Only administrators can edit food waste requests/);
       assert.match(entities, /approvalOnlyUpdate[\s\S]*return true/);
     }
@@ -336,7 +348,7 @@ const cases = [
       assert.doesNotMatch(page, /value=\{formData\.waste_scope\}/);
       assert.doesNotMatch(page, /value=\{formData\.recipe_id\}/);
       assert.match(page, /<Label>Quantity<\/Label>/);
-      assert.match(page, /readOnly=\{isBatchOverproduction\}/);
+      assert.match(page, /readOnly=\{isBatchOverproductionEntryMode\}/);
       assert.doesNotMatch(page, /IngredientSearchCombobox/);
       assert.doesNotMatch(page, /formData\.waste_scope === 'ingredient' && formData\.ingredient_id === 'none'/);
       assert.match(page, /function getWasteWeightGrams/);
