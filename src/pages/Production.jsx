@@ -466,6 +466,221 @@ function ProductionReversalDetails({ production }) {
   );
 }
 
+function formatReversalServings(value) {
+  const numeric = optionalNumber(value);
+  return numeric === null ? '—' : `${formatRecipeQuantity(numeric, 'servings')} servings`;
+}
+
+function formatReversalStatus(value) {
+  return String(value || 'open').replace(/_/g, ' ');
+}
+
+function formatProducedOutputDependencyQuantity(row = {}) {
+  const weight = optionalNumber(row.weight_grams);
+  if (weight !== null && Math.abs(weight) > 0) return formatReportWeightFromGrams(weight);
+  const servings = optionalNumber(row.servings);
+  if (servings !== null && Math.abs(servings) > 0) return formatReversalServings(servings);
+  return formatReportQuantity(row.quantity, row.unit);
+}
+
+function ReversalDependencyTable({ title, rows, emptyMessage }) {
+  const records = arrayValue(rows);
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-2">
+        <p className="font-semibold text-slate-900">{title}</p>
+        <Badge variant={records.length ? 'destructive' : 'secondary'}>
+          {records.length} active
+        </Badge>
+      </div>
+      {records.length === 0 ? (
+        <p className="px-3 py-3 text-xs text-emerald-700">{emptyMessage}</p>
+      ) : (
+        <div className="max-h-56 overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Record</TableHead>
+                <TableHead>Item</TableHead>
+                <TableHead>Qty</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {records.map((row) => (
+                <TableRow key={`${row.type || 'record'}-${row.id || row.reference}`}>
+                  <TableCell className="font-mono text-xs text-slate-600">
+                    {row.reference || row.id || '—'}
+                  </TableCell>
+                  <TableCell className="font-medium text-slate-800">
+                    {row.recipe_name || row.recipe_id || 'Produced output'}
+                    <p className="text-xs font-normal text-slate-500">
+                      {[row.date, row.meal_type, row.menu_category].filter(Boolean).join(' · ') || 'Scope not recorded'}
+                    </p>
+                  </TableCell>
+                  <TableCell>{formatProducedOutputDependencyQuantity(row)}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="capitalize">
+                      {formatReversalStatus(row.status || row.approval_status)}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProductionReversalBlockersPanel({
+  diagnostics,
+  isLoading,
+  error,
+  onRepair,
+  repairPending
+}) {
+  if (isLoading) {
+    return (
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+        Checking Meal Service, Food Waste, and produced-output batch balances...
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        Could not load reversal blockers: {error.message || 'Refresh and try again.'}
+      </div>
+    );
+  }
+  if (!diagnostics) return null;
+
+  const batch = diagnostics.produced_item_batch || null;
+  const balanceBlockers = arrayValue(diagnostics.balance_blockers);
+  const statusBlockers = arrayValue(diagnostics.status_blockers);
+  const mealRows = arrayValue(diagnostics.active_meal_service_rows);
+  const wasteRows = arrayValue(diagnostics.active_food_waste_rows);
+  const hasActiveRows = mealRows.length + wasteRows.length > 0;
+
+  return (
+    <div className="space-y-3">
+      <div className={`rounded-xl border px-4 py-3 ${
+        diagnostics.can_reverse
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          : 'border-amber-200 bg-amber-50 text-amber-900'
+      }`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="font-semibold">Blocking records</p>
+            <p className="mt-1 text-sm">{diagnostics.message}</p>
+          </div>
+          {diagnostics.can_reverse ? (
+            <Badge className="w-fit bg-emerald-600">Ready to reverse</Badge>
+          ) : (
+            <Badge variant="outline" className="w-fit border-amber-300 text-amber-800">Action needed</Badge>
+          )}
+        </div>
+      </div>
+
+      {statusBlockers.length > 0 ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+          <p className="font-semibold">Status blocker</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {statusBlockers.map((blocker) => (
+              <li key={blocker.type}>{blocker.label}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {batch ? (
+        <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold text-slate-900">Produced-output batch balance</p>
+              <p className="text-xs text-slate-500">
+                {batch.batch_number || batch.id} · {formatReversalStatus(batch.status)}
+              </p>
+            </div>
+            {balanceBlockers.length > 0 ? (
+              <Badge variant="destructive">{balanceBlockers.length} balance issue{balanceBlockers.length === 1 ? '' : 's'}</Badge>
+            ) : (
+              <Badge className="bg-emerald-600">Clean balance</Badge>
+            )}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-4">
+            {[
+              ['Produced', formatReportWeightFromGrams(batch.produced_weight_grams), formatReversalServings(batch.produced_servings)],
+              ['Remaining', formatReportWeightFromGrams(batch.remaining_weight_grams), formatReversalServings(batch.remaining_servings)],
+              ['Served', formatReportWeightFromGrams(batch.served_weight_grams), formatReversalServings(batch.served_servings)],
+              ['Wasted', formatReportWeightFromGrams(batch.wasted_weight_grams), formatReversalServings(batch.wasted_servings)]
+            ].map(([label, weight, servings]) => (
+              <div key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+                <p className="mt-1 font-semibold text-slate-900">{weight}</p>
+                <p className="text-xs text-slate-500">{servings}</p>
+              </div>
+            ))}
+          </div>
+          {balanceBlockers.length > 0 ? (
+            <ul className="mt-3 space-y-1 text-xs text-amber-800">
+              {balanceBlockers.map((blocker) => (
+                <li key={blocker.type}>
+                  {blocker.label}: {formatReportWeightFromGrams(blocker.weight_grams)} / {formatReversalServings(blocker.servings)}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          No produced-output batch was found for this production.
+        </div>
+      )}
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <ReversalDependencyTable
+          title="Meal Service records"
+          rows={mealRows}
+          emptyMessage="No active Meal Service records are using this output."
+        />
+        <ReversalDependencyTable
+          title="Food Waste records"
+          rows={wasteRows}
+          emptyMessage="No active Food Waste records are using this output."
+        />
+      </div>
+
+      {diagnostics.can_repair_stale_balance ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+          <p className="font-semibold">Stale batch balance repair available</p>
+          <p className="mt-1 text-sm">
+            The dependent Meal Service/Waste records are already reversed, but the produced-output batch still has
+            used counters. Repairing this resets the batch to its original produced balance so the reversal can proceed.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+            disabled={repairPending}
+            onClick={onRepair}
+          >
+            {repairPending ? 'Repairing...' : 'Repair stale batch balance'}
+          </Button>
+        </div>
+      ) : null}
+
+      {!diagnostics.can_reverse && !diagnostics.can_repair_stale_balance && !hasActiveRows && balanceBlockers.length > 0 ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+          This balance cannot be auto-repaired. Review the batch and production report before trying reversal again.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function formatOverrideAction(action) {
   const labels = {
     added: 'Added for production',
@@ -1122,6 +1337,18 @@ export default function Production() {
   });
 
   const {
+    data: reversalDiagnostics,
+    isFetching: reversalDiagnosticsLoading,
+    error: reversalDiagnosticsError,
+    refetch: refetchReversalDiagnostics
+  } = useQuery({
+    queryKey: ['productionReversalDiagnostics', reverseProduction?.id || ''],
+    queryFn: () => base44.inventory.getProductionReversalBlockers(reverseProduction.id),
+    enabled: Boolean(reverseProduction?.id && isAdmin),
+    retry: false
+  });
+
+  const {
     data: issuePlanResponse,
     isLoading: issuePlanLoading,
     error: issuePlanError
@@ -1455,8 +1682,44 @@ export default function Production() {
       setActionError('');
       setActionMessage('Production completion reversed. The old card is now audit-only; create a new admin run for the corrected production.');
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      if (error?.data?.details && variables?.production?.id) {
+        queryClient.setQueryData(
+          ['productionReversalDiagnostics', variables.production.id],
+          error.data.details
+        );
+      }
       setActionError(error.message || 'Unable to reverse this production completion.');
+    }
+  });
+
+  const repairReversalBalanceMutation = useMutation({
+    mutationFn: async ({ production, reason }) => {
+      if (!production?.id) {
+        throw new Error('Select a completed production to repair.');
+      }
+      return base44.inventory.repairProductionReversalBalance(production.id, { reason });
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
+      queryClient.setQueryData(
+        ['productionReversalDiagnostics', reverseProduction?.id || ''],
+        result?.diagnostics || null
+      );
+      refetchReversalDiagnostics();
+      setActionError('');
+      setActionMessage('Stale produced-output balance repaired. Review the blocker panel, then reverse the production.');
+    },
+    onError: (error, variables) => {
+      if (error?.data?.details && variables?.production?.id) {
+        queryClient.setQueryData(
+          ['productionReversalDiagnostics', variables.production.id],
+          error.data.details
+        );
+      }
+      setActionError(error.message || 'Unable to repair the produced-output batch balance.');
     }
   });
 
@@ -2950,6 +3213,15 @@ export default function Production() {
     ?? positiveOptionalNumber(selectedConsumptionReport?.produced_weight_grams)
     ?? sumReportWeights(reportIngredientLines, 'yielded_weight_grams')
     ?? sumManifestItemsWeight(reportManifestItems, 'yielded_weight_grams');
+  const reverseActionBlocked = Boolean(
+    reverseProduction
+    && (
+      !reversalDiagnostics
+      || reversalDiagnosticsLoading
+      || reversalDiagnosticsError
+      || !reversalDiagnostics.can_reverse
+    )
+  );
 
   return (
     <>
@@ -3770,13 +4042,14 @@ export default function Production() {
         <Dialog
           open={Boolean(reverseProduction)}
           onOpenChange={(open) => {
-            if (!open && !reverseProductionMutation.isPending) {
+            if (!open && !reverseProductionMutation.isPending && !repairReversalBalanceMutation.isPending) {
               setReverseProduction(null);
               setReverseReason('');
+              setActionError('');
             }
           }}
         >
-          <DialogContent className="max-w-xl">
+          <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Reverse Completed Production</DialogTitle>
             </DialogHeader>
@@ -3795,6 +4068,16 @@ export default function Production() {
                 If any finished output has already been used by Meal Service or Food Waste, reverse those dependent
                 records first. The app will block this reversal until the output is unused.
               </div>
+              <ProductionReversalBlockersPanel
+                diagnostics={reversalDiagnostics}
+                isLoading={Boolean(reverseProduction && reversalDiagnosticsLoading)}
+                error={reversalDiagnosticsError}
+                repairPending={repairReversalBalanceMutation.isPending}
+                onRepair={() => repairReversalBalanceMutation.mutate({
+                  production: reverseProduction,
+                  reason: reverseReason
+                })}
+              />
               <div>
                 <Label htmlFor="production-reversal-reason">Reason / notes</Label>
                 <Textarea
@@ -3815,7 +4098,7 @@ export default function Production() {
               <Button
                 type="button"
                 variant="outline"
-                disabled={reverseProductionMutation.isPending}
+                disabled={reverseProductionMutation.isPending || repairReversalBalanceMutation.isPending}
                 onClick={() => {
                   setReverseProduction(null);
                   setReverseReason('');
@@ -3827,7 +4110,7 @@ export default function Production() {
               <Button
                 type="button"
                 className="bg-red-600 hover:bg-red-700"
-                disabled={reverseProductionMutation.isPending}
+                disabled={reverseProductionMutation.isPending || repairReversalBalanceMutation.isPending || reverseActionBlocked}
                 onClick={() => reverseProductionMutation.mutate({
                   production: reverseProduction,
                   reason: reverseReason

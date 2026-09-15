@@ -3618,52 +3618,353 @@ function getProductionReversalReturnLayers(line = {}) {
   return sanitizeProductionAllocationLayers(layers);
 }
 
-function assertProducedOutputUnused(batch = null) {
-  if (!batch) return;
+function getProducedOutputBalanceNumbers(batch = null) {
+  if (!batch) {
+    return {
+      produced_servings: 0,
+      produced_weight_grams: 0,
+      remaining_servings: 0,
+      remaining_weight_grams: 0,
+      served_servings: 0,
+      served_weight_grams: 0,
+      wasted_servings: 0,
+      wasted_weight_grams: 0,
+      unavailable_servings: 0,
+      unavailable_weight_grams: 0
+    };
+  }
   const producedServings = toNumber(batch.produced_servings, 0);
   const producedWeight = toNumber(batch.produced_weight_grams, 0);
   const remainingServings = toNumber(batch.remaining_servings, 0);
   const remainingWeight = toNumber(batch.remaining_weight_grams, 0);
-  const usedServings = toNumber(batch.served_servings, 0) + toNumber(batch.wasted_servings, 0);
-  const usedWeight = toNumber(batch.served_weight_grams, 0) + toNumber(batch.wasted_weight_grams, 0);
-  const unavailableServings = Math.max(0, producedServings - remainingServings);
-  const unavailableWeight = Math.max(0, producedWeight - remainingWeight);
-  if (
-    usedServings > QUANTITY_EPSILON
-    || usedWeight > QUANTITY_EPSILON
-    || unavailableServings > QUANTITY_EPSILON
-    || unavailableWeight > QUANTITY_EPSILON
-  ) {
-    const error = new Error('This production output has already been served or recorded as waste. Reverse those Meal Service or Food Waste records before reversing this production.');
-    error.status = 409;
-    throw error;
-  }
+  const servedServings = toNumber(batch.served_servings, 0);
+  const servedWeight = toNumber(batch.served_weight_grams, 0);
+  const wastedServings = toNumber(batch.wasted_servings, 0);
+  const wastedWeight = toNumber(batch.wasted_weight_grams, 0);
+  return {
+    produced_servings: roundQuantity(producedServings),
+    produced_weight_grams: roundQuantity(producedWeight),
+    remaining_servings: roundQuantity(remainingServings),
+    remaining_weight_grams: roundQuantity(remainingWeight),
+    served_servings: roundQuantity(servedServings),
+    served_weight_grams: roundQuantity(servedWeight),
+    wasted_servings: roundQuantity(wastedServings),
+    wasted_weight_grams: roundQuantity(wastedWeight),
+    unavailable_servings: roundQuantity(Math.max(0, producedServings - remainingServings)),
+    unavailable_weight_grams: roundQuantity(Math.max(0, producedWeight - remainingWeight))
+  };
 }
 
-async function findProductionReportForReversal(production, executor) {
+function getProducedOutputBalanceBlockers(batch = null) {
+  if (!batch) return [];
+  const balance = getProducedOutputBalanceNumbers(batch);
+  const blockers = [];
+  if (balance.served_servings > QUANTITY_EPSILON || balance.served_weight_grams > QUANTITY_EPSILON) {
+    blockers.push({
+      type: 'served_output_balance',
+      label: 'Served output still recorded on batch',
+      servings: balance.served_servings,
+      weight_grams: balance.served_weight_grams
+    });
+  }
+  if (balance.wasted_servings > QUANTITY_EPSILON || balance.wasted_weight_grams > QUANTITY_EPSILON) {
+    blockers.push({
+      type: 'wasted_output_balance',
+      label: 'Wasted output still recorded on batch',
+      servings: balance.wasted_servings,
+      weight_grams: balance.wasted_weight_grams
+    });
+  }
+  if (balance.unavailable_servings > QUANTITY_EPSILON || balance.unavailable_weight_grams > QUANTITY_EPSILON) {
+    blockers.push({
+      type: 'remaining_output_balance',
+      label: 'Batch remaining balance is below the produced output',
+      servings: balance.unavailable_servings,
+      weight_grams: balance.unavailable_weight_grams
+    });
+  }
+  return blockers;
+}
+
+function assertProducedOutputUnused(batch = null) {
+  const balanceBlockers = getProducedOutputBalanceBlockers(batch);
+  if (balanceBlockers.length === 0) return;
+  const error = new Error('This production output has already been served or recorded as waste. Reverse those Meal Service or Food Waste records before reversing this production.');
+  error.status = 409;
+  error.details = {
+    produced_item_batch_id: batch?.id || null,
+    produced_item_batch_number: batch?.batch_number || null,
+    balance: getProducedOutputBalanceNumbers(batch),
+    balance_blockers: balanceBlockers
+  };
+  throw error;
+}
+
+function getProducedOutputAllocationBatchId(allocation = {}) {
+  return normalizeText(
+    allocation.produced_item_batch_id
+      || allocation.batch_id
+      || allocation.produced_batch_id
+  );
+}
+
+function allocationReferencesProducedOutput(allocation = {}, batch = {}, production = {}) {
+  const batchId = normalizeText(batch?.id);
+  const productionId = normalizeText(production?.id || batch?.production_id);
+  const allocationBatchId = getProducedOutputAllocationBatchId(allocation);
+  const allocationProductionId = normalizeText(allocation.production_id);
+  return Boolean(
+    (batchId && allocationBatchId && allocationBatchId === batchId)
+    || (productionId && allocationProductionId && allocationProductionId === productionId)
+  );
+}
+
+function recordReferencesProducedOutput(record = {}, batch = {}, production = {}, {
+  allocationFields = ['allocations'],
+  allowDirectProductionMatch = false
+} = {}) {
+  const batchId = normalizeText(batch?.id);
+  const productionId = normalizeText(production?.id || batch?.production_id);
+  const directBatchId = getProducedOutputAllocationBatchId(record);
+  const directProductionId = normalizeText(record.production_id);
+  if (batchId && directBatchId && directBatchId === batchId) return true;
+  if (allowDirectProductionMatch && productionId && directProductionId && directProductionId === productionId) {
+    return true;
+  }
+  return allocationFields.some((field) => (
+    Array.isArray(record?.[field])
+    && record[field].some((allocation) => allocationReferencesProducedOutput(allocation, batch, production))
+  ));
+}
+
+function isInactiveOutputDependency(record = {}) {
+  const status = normalizeText(record.status).toLowerCase();
+  const approvalStatus = normalizeText(record.approval_status).toLowerCase();
+  return ['reversed', 'voided', 'cancelled', 'canceled', 'rejected'].includes(status)
+    || ['reversed', 'voided', 'cancelled', 'canceled', 'rejected'].includes(approvalStatus);
+}
+
+function compactProducedOutputDependency(record = {}, type = 'record') {
+  const consumedWeight = toNumber(record.consumed_weight_grams, 0);
+  const allocatedWeight = toNumber(record.allocated_weight_grams, 0);
+  const wastedWeight = toNumber(record.wasted_weight_grams ?? record.waste_weight_grams, 0);
+  const quantity = toNumber(record.quantity, 0);
+  return {
+    id: record.id || null,
+    type,
+    reference: normalizeText(
+      record.service_reference
+        || record.request_number
+        || record.waste_reference
+        || record.batch_reference
+        || record.id
+    ),
+    date: record.service_date || record.waste_date || record.production_date || null,
+    meal_type: record.meal_type || null,
+    menu_type: record.menu_type || null,
+    menu_category: record.menu_category || null,
+    recipe_id: record.recipe_id || null,
+    recipe_name: record.recipe_name || record.ingredient_name || record.production_name || null,
+    movement_type: record.movement_type || null,
+    source_type: record.source_type || null,
+    waste_category: record.waste_category || null,
+    waste_scope: record.waste_scope || null,
+    status: record.status || null,
+    approval_status: record.approval_status || null,
+    servings: roundQuantity(toNumber(
+      record.consumed_production_equivalent_servings
+        ?? record.consumed_servings
+        ?? record.wasted_production_equivalent_servings
+        ?? record.servings,
+      0
+    )),
+    weight_grams: roundQuantity(Math.abs(
+      consumedWeight || allocatedWeight || wastedWeight || (record.unit === 'g' ? quantity : 0)
+    )),
+    quantity: roundQuantity(quantity),
+    unit: record.unit || null
+  };
+}
+
+async function listActiveProducedOutputDependencies({
+  production = {},
+  batch = null,
+  location = null,
+  lock = false
+} = {}, executor = null) {
+  if (!batch) {
+    return { meal_service_rows: [], food_waste_rows: [] };
+  }
+
+  const siteId = normalizeText(batch.site_id || production.fulfillment_store_id || production.site_id);
+  const productionDate = normalizeText(batch.production_date || production.production_date);
+  const mealType = normalizeText(batch.meal_type || production.meal_type);
+  const consumptionFilters = {};
+  if (siteId) consumptionFilters.site_id = siteId;
+  if (productionDate) consumptionFilters.service_date = productionDate;
+  if (mealType) consumptionFilters.meal_type = mealType;
+  const foodWasteFilters = {};
+  if (siteId) foodWasteFilters.site_id = siteId;
+  if (productionDate) foodWasteFilters.waste_date = productionDate;
+  if (mealType) foodWasteFilters.meal_type = mealType;
+
+  const [consumptions, wasteRecords] = await Promise.all([
+    listDocuments('MealServiceConsumption', {
+      filters: consumptionFilters,
+      sort: '-created_date',
+      limit: 10000,
+      lock,
+      location
+    }, executor || undefined).catch(() => []),
+    listDocuments('FoodWaste', {
+      filters: foodWasteFilters,
+      sort: '-created_date',
+      limit: 10000,
+      lock,
+      location
+    }, executor || undefined).catch(() => [])
+  ]);
+
+  const reversedConsumptionIds = new Set(
+    consumptions
+      .filter((record) => normalizeText(record.movement_type).toLowerCase() === 'reversal')
+      .map((record) => normalizeText(record.reverses_consumption_id))
+      .filter(Boolean)
+  );
+  const mealServiceRows = consumptions
+    .filter((record) => normalizeText(record.movement_type || 'consumption').toLowerCase() === 'consumption')
+    .filter((record) => !isInactiveOutputDependency(record))
+    .filter((record) => !reversedConsumptionIds.has(normalizeText(record.id)))
+    .filter((record) => recordReferencesProducedOutput(record, batch, production, { allocationFields: ['allocations'] }))
+    .map((record) => compactProducedOutputDependency(record, 'meal_service'));
+
+  const foodWasteRows = wasteRecords
+    .filter((record) => !isInactiveOutputDependency(record))
+    .filter((record) => recordReferencesProducedOutput(record, batch, production, {
+      allocationFields: ['output_allocations', 'allocations'],
+      allowDirectProductionMatch: true
+    }))
+    .map((record) => compactProducedOutputDependency(record, 'food_waste'));
+
+  return {
+    meal_service_rows: mealServiceRows,
+    food_waste_rows: foodWasteRows
+  };
+}
+
+async function buildProductionReversalDiagnosticsForRecords({
+  production,
+  report = null,
+  producedItemBatch = null,
+  location = null,
+  lock = false
+} = {}, executor = null) {
+  const productionStatus = normalizeText(production?.status).toLowerCase();
+  const reportStatus = normalizeText(report?.status).toLowerCase();
+  const batchStatus = normalizeText(producedItemBatch?.status).toLowerCase();
+  const statusBlockers = [];
+  if (!production) {
+    statusBlockers.push({ type: 'missing_production', label: 'Production record was not found' });
+  } else if (productionStatus !== 'completed') {
+    statusBlockers.push({ type: 'production_status', label: 'Only completed productions can be reversed', status: production?.status || null });
+  }
+  if (producedItemBatch && batchStatus === 'voided') {
+    statusBlockers.push({ type: 'batch_voided', label: 'Produced output batch has already been voided', status: producedItemBatch.status || null });
+  }
+  if (report && reportStatus === 'reversed') {
+    statusBlockers.push({ type: 'report_reversed', label: 'Production consumption report has already been reversed', status: report.status || null });
+  }
+
+  const balanceBlockers = getProducedOutputBalanceBlockers(producedItemBatch);
+  const dependencies = await listActiveProducedOutputDependencies({
+    production,
+    batch: producedItemBatch,
+    location,
+    lock
+  }, executor);
+  const activeDependencyCount = dependencies.meal_service_rows.length + dependencies.food_waste_rows.length;
+  const canRepairStaleBalance = Boolean(
+    production
+    && producedItemBatch
+    && productionStatus === 'completed'
+    && batchStatus !== 'voided'
+    && reportStatus !== 'reversed'
+    && balanceBlockers.length > 0
+    && activeDependencyCount === 0
+  );
+
+  return {
+    production: production ? {
+      id: production.id,
+      name: production.recipe_name || production.name || null,
+      status: production.status || null,
+      production_date: production.production_date || null,
+      site_id: production.site_id || null,
+      fulfillment_store_id: production.fulfillment_store_id || null,
+      meal_type: production.meal_type || null,
+      menu_type: production.menu_type || null,
+      menu_category: production.menu_category || null
+    } : null,
+    consumption_report: report ? {
+      id: report.id,
+      report_number: report.report_number || null,
+      status: report.status || null
+    } : null,
+    produced_item_batch: producedItemBatch ? {
+      id: producedItemBatch.id,
+      batch_number: producedItemBatch.batch_number || null,
+      status: producedItemBatch.status || null,
+      production_id: producedItemBatch.production_id || null,
+      production_name: producedItemBatch.production_name || producedItemBatch.recipe_name || null,
+      production_date: producedItemBatch.production_date || null,
+      site_id: producedItemBatch.site_id || null,
+      site_name: producedItemBatch.site_name || null,
+      meal_type: producedItemBatch.meal_type || null,
+      menu_type: producedItemBatch.menu_type || null,
+      menu_category: producedItemBatch.menu_category || null,
+      portion_size_grams: roundQuantity(toNumber(producedItemBatch.portion_size_grams, 0)),
+      ...getProducedOutputBalanceNumbers(producedItemBatch)
+    } : null,
+    status_blockers: statusBlockers,
+    balance_blockers: balanceBlockers,
+    active_meal_service_rows: dependencies.meal_service_rows,
+    active_food_waste_rows: dependencies.food_waste_rows,
+    can_reverse: statusBlockers.length === 0 && balanceBlockers.length === 0 && activeDependencyCount === 0,
+    can_repair_stale_balance: canRepairStaleBalance,
+    message: activeDependencyCount > 0
+      ? 'Reverse the listed Meal Service or Food Waste records first.'
+      : canRepairStaleBalance
+        ? 'No active child records remain, but the produced-output batch balance is stale. Admin can repair the batch balance before reversing.'
+        : balanceBlockers.length > 0
+          ? 'The produced-output batch still has used balances.'
+          : 'No active produced-output usage blockers detected.'
+  };
+}
+
+async function findProductionReportForReversal(production, executor, { lock = true } = {}) {
   const reportId = normalizeText(production?.consumption_report_id);
   if (reportId) {
-    const report = await findDocument('ProductionConsumptionReport', reportId, executor, true);
+    const report = await findDocument('ProductionConsumptionReport', reportId, executor, lock);
     if (report) return report;
   }
   const reports = await listDocuments('ProductionConsumptionReport', {
     filters: { production_id: production.id },
     limit: 50,
-    lock: true
+    lock
   }, executor);
   return reports.find((report) => String(report.status || '').toLowerCase() !== 'reversed') || reports[0] || null;
 }
 
-async function findProducedItemBatchForReversal(production, executor) {
+async function findProducedItemBatchForReversal(production, executor, { lock = true } = {}) {
   const batchId = normalizeText(production?.produced_item_batch_id);
   if (batchId) {
-    const batch = await findDocument('ProducedItemBatch', batchId, executor, true);
+    const batch = await findDocument('ProducedItemBatch', batchId, executor, lock);
     if (batch) return batch;
   }
   const batches = await listDocuments('ProducedItemBatch', {
     filters: { production_id: production.id },
     limit: 50,
-    lock: true
+    lock
   }, executor);
   return batches.find((batch) => String(batch.status || '').toLowerCase() !== 'voided') || batches[0] || null;
 }
@@ -3770,6 +4071,22 @@ async function reverseCompletedProductionWithExecutor(productionId, actor, optio
   if (report && String(report.status || '').toLowerCase() === 'reversed') {
     const error = new Error('This production consumption report has already been reversed');
     error.status = 409;
+    throw error;
+  }
+  const reversalDiagnostics = await buildProductionReversalDiagnosticsForRecords({
+    production,
+    report,
+    producedItemBatch,
+    lock: true
+  }, executor);
+  if (!reversalDiagnostics.can_reverse) {
+    const dependencyCount = reversalDiagnostics.active_meal_service_rows.length
+      + reversalDiagnostics.active_food_waste_rows.length;
+    const error = new Error(dependencyCount > 0
+      ? 'This production output still has active Meal Service or Food Waste records. Reverse the listed records before reversing this production.'
+      : 'This production output has already been served or recorded as waste. Reverse those Meal Service or Food Waste records before reversing this production.');
+    error.status = 409;
+    error.details = reversalDiagnostics;
     throw error;
   }
   assertProducedOutputUnused(producedItemBatch);
@@ -3975,6 +4292,102 @@ async function reverseCompletedProduction(productionId, actor, options = {}, exe
   return runInTransaction(
     executor,
     (client) => reverseCompletedProductionWithExecutor(productionId, actor, options, client)
+  );
+}
+
+async function getProductionReversalBlockers(productionId, { location = null } = {}, executor = null) {
+  const production = await findDocument('Production', productionId, executor || undefined, false);
+  if (!production) {
+    const error = new Error('Production record not found');
+    error.status = 404;
+    throw error;
+  }
+  const report = await findProductionReportForReversal(production, executor || undefined, { lock: false });
+  const producedItemBatch = await findProducedItemBatchForReversal(production, executor || undefined, { lock: false });
+  return buildProductionReversalDiagnosticsForRecords({
+    production,
+    report,
+    producedItemBatch,
+    location,
+    lock: false
+  }, executor || undefined);
+}
+
+async function repairProductionReversalBalanceWithExecutor(productionId, actor, options, executor) {
+  const production = await findDocument('Production', productionId, executor, true);
+  if (!production) {
+    const error = new Error('Production record not found');
+    error.status = 404;
+    throw error;
+  }
+  const report = await findProductionReportForReversal(production, executor, { lock: true });
+  const producedItemBatch = await findProducedItemBatchForReversal(production, executor, { lock: true });
+  const diagnostics = await buildProductionReversalDiagnosticsForRecords({
+    production,
+    report,
+    producedItemBatch,
+    location: options?.location || null,
+    lock: true
+  }, executor);
+  if (!diagnostics.can_repair_stale_balance) {
+    const dependencyCount = diagnostics.active_meal_service_rows.length
+      + diagnostics.active_food_waste_rows.length;
+    const error = new Error(dependencyCount > 0
+      ? 'Repair is blocked because active Meal Service or Food Waste records still use this output.'
+      : 'No stale produced-output balance was found to repair.');
+    error.status = 409;
+    error.details = diagnostics;
+    throw error;
+  }
+
+  const timestamp = nowIso();
+  const repairedBy = actor?.email || actor?.id || 'admin';
+  const reason = normalizeText(options?.reason) || 'Admin repaired stale produced-output balance before production reversal.';
+  const repairedBatch = await updateDocument('ProducedItemBatch', producedItemBatch.id, {
+    served_servings: 0,
+    served_weight_grams: 0,
+    wasted_servings: 0,
+    wasted_weight_grams: 0,
+    remaining_servings: getProducedOutputBalanceNumbers(producedItemBatch).produced_servings,
+    remaining_weight_grams: getProducedOutputBalanceNumbers(producedItemBatch).produced_weight_grams,
+    status: 'available',
+    reversal_balance_repaired_at: timestamp,
+    reversal_balance_repaired_by: repairedBy,
+    reversal_balance_repaired_by_name: actor?.full_name || actor?.email || null,
+    reversal_balance_repair_reason: reason,
+    reversal_balance_repair_history: [
+      ...(Array.isArray(producedItemBatch.reversal_balance_repair_history)
+        ? producedItemBatch.reversal_balance_repair_history.slice(-99)
+        : []),
+      {
+        timestamp,
+        actor_id: actor?.id || null,
+        actor_email: actor?.email || null,
+        actor_name: actor?.full_name || actor?.email || null,
+        reason,
+        previous_balance: diagnostics.produced_item_batch
+      }
+    ]
+  }, executor);
+
+  const repairedDiagnostics = await buildProductionReversalDiagnosticsForRecords({
+    production,
+    report,
+    producedItemBatch: repairedBatch,
+    location: options?.location || null,
+    lock: true
+  }, executor);
+  return {
+    repaired: true,
+    produced_item_batch: repairedBatch,
+    diagnostics: repairedDiagnostics
+  };
+}
+
+async function repairProductionReversalBalance(productionId, actor, options = {}, executor = null) {
+  return runInTransaction(
+    executor,
+    (client) => repairProductionReversalBalanceWithExecutor(productionId, actor, options, client)
   );
 }
 
@@ -4237,6 +4650,8 @@ export {
   transferStock,
   completeProduction,
   reverseCompletedProduction,
+  getProductionReversalBlockers,
+  repairProductionReversalBalance,
   getStockOnHandReport,
   getStockMovementReport,
   getExpiryReport,

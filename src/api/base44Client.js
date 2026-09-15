@@ -875,6 +875,19 @@ export const base44 = {
         return result;
       });
     },
+    getProductionReversalBlockers(id) {
+      return apiRequest(`/api/inventory/production/${id}/reversal-blockers`);
+    },
+    repairProductionReversalBalance(id, data = {}) {
+      return apiRequest(`/api/inventory/production/${id}/repair-reversal-balance`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('ProducedItemBatch', { action: 'repair-reversal-balance', result: result?.produced_item_batch });
+        emitEntityChange('Production', { action: 'repair-reversal-balance', result, id });
+        return result;
+      });
+    },
     reverseCompletedProduction(id, data = {}) {
       return apiRequest(`/api/inventory/production/${id}/reverse-completion`, {
         method: 'POST',

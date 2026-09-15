@@ -22,6 +22,33 @@ test('admins can directly reverse completed production without creating a separa
   assert.doesNotMatch(route, /pending_reversal|submit.*reversal|approve.*reversal/i);
 });
 
+test('admins can diagnose and repair stale produced-output balances before reversal', () => {
+  const server = source('server/index.js');
+  const inventory = source('server/inventory.js');
+  const api = source('src/api/base44Client.js');
+  const productionPage = source('src/pages/Production.jsx');
+
+  assert.match(server, /app\.get\('\/api\/inventory\/production\/:id\/reversal-blockers',\s*requireAuth,\s*requireRole\(\['admin'\]\)/);
+  assert.match(server, /app\.post\('\/api\/inventory\/production\/:id\/repair-reversal-balance',\s*requireAuth,\s*requireRole\(\['admin'\]\)/);
+  assert.match(server, /getProductionReversalBlockers\(request\.params\.id,\s*\{\s*location\s*\}\)/);
+  assert.match(server, /repairProductionReversalBalance\(request\.params\.id,\s*request\.user/);
+  assert.match(server, /PRODUCTION_REVERSAL_BALANCE_REPAIRED/);
+
+  assert.match(inventory, /async function getProductionReversalBlockers\(/);
+  assert.match(inventory, /async function repairProductionReversalBalance/);
+  assert.match(inventory, /active_meal_service_rows/);
+  assert.match(inventory, /active_food_waste_rows/);
+  assert.match(inventory, /can_repair_stale_balance/);
+
+  assert.match(api, /getProductionReversalBlockers\(id\)/);
+  assert.match(api, /repairProductionReversalBalance\(id,\s*data = \{\}\)/);
+  assert.match(productionPage, /Blocking records/);
+  assert.match(productionPage, /Repair stale batch balance/);
+  assert.match(inventory, /No active produced-output usage blockers detected/);
+  assert.match(productionPage, /base44\.inventory\.getProductionReversalBlockers/);
+  assert.match(productionPage, /base44\.inventory\.repairProductionReversalBalance/);
+});
+
 test('production reversal uses saved completion evidence and freezes the old attempt as audit only', () => {
   const inventory = source('server/inventory.js');
   const start = inventory.indexOf('async function reverseCompletedProductionWithExecutor(');

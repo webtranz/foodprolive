@@ -127,6 +127,8 @@ import {
   transferStock,
   completeProduction,
   reverseCompletedProduction,
+  getProductionReversalBlockers,
+  repairProductionReversalBalance,
   consumeProductionInventoryReservation,
   reconcileProductionInventoryCommitment,
   releaseProductionInventoryCommitment,
@@ -8798,6 +8800,77 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
       ...result.record,
       produced_item_batch: result.produced_item_batch || null
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/inventory/production/:id/reversal-blockers', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const production = await findDocument('Production', request.params.id);
+    if (!production || !filterRowsByAccessibleSites(
+      [production],
+      scope,
+      ['site_id', 'fulfillment_store_id']
+    ).length) {
+      return response.status(403).json({ message: 'You do not have access to this production record' });
+    }
+    const productionInventorySite = resolveProductionFulfillmentStore(production, scope.sites);
+    if (
+      !scope.unrestricted
+      && !scope.accessibleSiteIds.has(String(productionInventorySite.id))
+    ) {
+      return response.status(403).json({ message: 'You do not have access to this production site inventory' });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+    response.json(await getProductionReversalBlockers(request.params.id, { location }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/inventory/production/:id/repair-reversal-balance', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const production = await findDocument('Production', request.params.id);
+    if (!production || !filterRowsByAccessibleSites(
+      [production],
+      scope,
+      ['site_id', 'fulfillment_store_id']
+    ).length) {
+      return response.status(403).json({ message: 'You do not have access to this production record' });
+    }
+    const productionInventorySite = resolveProductionFulfillmentStore(production, scope.sites);
+    if (
+      !scope.unrestricted
+      && !scope.accessibleSiteIds.has(String(productionInventorySite.id))
+    ) {
+      return response.status(403).json({ message: 'You do not have access to this production site inventory' });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+    const result = await repairProductionReversalBalance(request.params.id, request.user, {
+      reason: request.body?.reason || '',
+      location
+    });
+    recordChanged('ProducedItemBatch');
+    recordChanged('Production');
+    await auditAction({
+      user: request.user,
+      action: 'PRODUCTION_REVERSAL_BALANCE_REPAIRED',
+      entity: 'Production',
+      entityId: request.params.id,
+      details: {
+        produced_item_batch_id: result.produced_item_batch?.id || null,
+        reason: request.body?.reason || null,
+        diagnostics: result.diagnostics || null
+      }
+    });
+    response.json(result);
   } catch (error) {
     next(error);
   }
