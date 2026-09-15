@@ -8,6 +8,7 @@ import {
 import { calculateYieldOutputQuantity } from '../../shared/ingredientYield.js';
 import { getItemCode } from '../../shared/itemCode.js';
 import { expandRecipeIngredients } from '../../shared/recipeComposition.js';
+import { calculateFrozenProductionLineWeight } from '../../shared/productionReconciliation.js';
 import {
   clearRecipeLineWeight,
   getRecipeLinePrepExemptPercent,
@@ -211,16 +212,19 @@ export function buildMenuPlanIssueItems(plan, { mealView = 'all', recipes = [] }
     const mealType = normalizeIssueMealType(meal?.meal_type);
     const recipeId = String(meal?.recipe_id || '').trim();
     const expectedServings = finiteProductionNumber(meal?.expected_servings, 0);
-    if (!mealType || !recipeId || expectedServings <= 0 || (meal.recipe_link_status && meal.recipe_link_status !== 'linked')) {
+    const recipe = recipes.find((entry) => sameId(entry.id, recipeId)) || null;
+    const recipeLinkStatus = meal.recipe_link_status || (recipe ? 'linked' : recipeId ? 'missing' : '');
+    const recipeName = String(meal?.recipe_name || recipe?.name || meal?.item_name || meal?.name || '').trim();
+    const hasPlannedProductionLine = Boolean(recipeId || recipeName);
+    if (!mealType || !hasPlannedProductionLine) {
       return [];
     }
     if (selectedMealView !== 'all' && selectedMealView !== mealType) {
       return [];
     }
 
-    const recipe = recipes.find((entry) => sameId(entry.id, recipeId)) || {};
     return [{
-      key: `${plan?.id || 'menu-plan'}::${mealType}::${recipeId}::${index}`,
+      key: `${plan?.id || 'menu-plan'}::${mealType}::${recipeId || recipeName || 'planned-item'}::${index}`,
       source_menu_plan_id: plan?.id || '',
       source_menu_plan_item_index: index,
       site_id: plan?.site_id || meal?.site_id || '',
@@ -231,11 +235,18 @@ export function buildMenuPlanIssueItems(plan, { mealView = 'all', recipes = [] }
       menu_type: plan?.cuisine_type || plan?.menu_type || meal?.cuisine_type || meal?.menu_type || 'general',
       menu_category: plan?.menu_category || meal?.menu_category || 'senior',
       recipe_id: recipeId,
-      recipe_name: meal?.recipe_name || recipe.name || 'Selected recipe',
+      recipe_code: meal?.recipe_code || recipe?.recipe_code || '',
+      recipe_link_status: recipeLinkStatus,
+      recipe_name: recipeName || 'Planned item',
       expected_servings: expectedServings,
       production_covers: 0,
       planned_total_cost: finiteProductionNumber(meal?.total_cost, 0),
       cost_per_serving: finiteProductionNumber(meal?.cost_per_serving, 0),
+      production_blocked_reason: recipe && expectedServings > 0
+        ? ''
+        : !recipe
+          ? 'This menu-planning row is visible for manifest completeness, but it cannot be issued until it is linked to a recipe.'
+          : 'Enter production covers or Production Size (Kg) before issuing this menu-planning row.',
       selected: true
     }];
   });
@@ -428,6 +439,13 @@ export function buildProductionIngredientLine({
   };
 
   const derivedAction = deriveProductionLineOverrideAction(line);
+  const weightSnapshot = calculateFrozenProductionLineWeight({
+    ...line,
+    raw_quantity: rawQuantity,
+    planned_quantity: rawQuantity,
+    required_quantity: rawQuantity,
+    unit
+  }, ingredientData);
   const snapshotLine = { ...line };
   delete snapshotLine.aggregate_shortage;
   delete snapshotLine.aggregate_required_quantity;
@@ -435,6 +453,11 @@ export function buildProductionIngredientLine({
 
   return {
     ...snapshotLine,
+    raw_weight_grams: weightSnapshot.raw_weight_grams,
+    yielded_weight_grams: weightSnapshot.yielded_weight_grams,
+    weight_calculation_source: weightSnapshot.source || snapshotLine.weight_calculation_source || null,
+    yield_calculation_source: weightSnapshot.yield_source || snapshotLine.yield_calculation_source || snapshotLine.yield_source || null,
+    weight_snapshot_version: 1,
     production_override_action: snapshotLine.production_override_action || derivedAction || ''
   };
 }

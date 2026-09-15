@@ -94,6 +94,15 @@ function optionalNumber(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function positiveOptionalNumber(value) {
+  const numeric = optionalNumber(value);
+  return numeric !== null && numeric > 0 ? numeric : null;
+}
+
+function firstPositivePresent(...values) {
+  return values.map(positiveOptionalNumber).find((value) => value !== null) ?? null;
+}
+
 function formatReportQuantity(quantity, unit) {
   const numeric = optionalNumber(quantity);
   if (numeric === null) return '—';
@@ -133,18 +142,18 @@ function sumReportWeights(lines = [], field) {
 }
 
 function sumManifestItemWeight(item = {}, field) {
-  const direct = optionalNumber(item[field]);
+  const direct = positiveOptionalNumber(item[field]);
   if (direct !== null) return direct;
   if (field === 'raw_weight_grams') {
-    const rawTotal = optionalNumber(item.recipe_raw_weight_grams)
-      ?? optionalNumber(item.total_raw_weight_grams)
-      ?? optionalNumber(item.total_raw_consumption_weight_grams);
+    const rawTotal = positiveOptionalNumber(item.recipe_raw_weight_grams)
+      ?? positiveOptionalNumber(item.total_raw_weight_grams)
+      ?? positiveOptionalNumber(item.total_raw_consumption_weight_grams);
     if (rawTotal !== null) return rawTotal;
   }
   if (field === 'yielded_weight_grams') {
-    const yieldedTotal = optionalNumber(item.expected_finished_weight_grams)
-      ?? optionalNumber(item.actual_finished_weight_grams)
-      ?? optionalNumber(item.total_yielded_weight_grams);
+    const yieldedTotal = positiveOptionalNumber(item.expected_finished_weight_grams)
+      ?? positiveOptionalNumber(item.actual_finished_weight_grams)
+      ?? positiveOptionalNumber(item.total_yielded_weight_grams);
     if (yieldedTotal !== null) return yieldedTotal;
   }
   return sumReportWeights(item.ingredients_used, field);
@@ -296,21 +305,20 @@ function mergeConsumptionReportWithProduction(report = {}, production = {}) {
     target_servings: firstPresent(report.target_servings, production.target_servings, production.produced_servings, 0),
     output_calculation_source: report.output_calculation_source || production.output_calculation_source || null,
     quantity_basis: report.quantity_basis || production.quantity_basis || null,
-    recipe_raw_weight_grams: firstPresent(report.recipe_raw_weight_grams, production.recipe_raw_weight_grams),
-    expected_finished_weight_grams: firstPresent(
+    recipe_raw_weight_grams: firstPositivePresent(report.recipe_raw_weight_grams, production.recipe_raw_weight_grams),
+    expected_finished_weight_grams: firstPositivePresent(
       report.expected_finished_weight_grams,
       production.expected_finished_weight_grams,
       production.actual_finished_weight_grams
     ),
-    actual_finished_weight_grams: firstPresent(report.actual_finished_weight_grams, production.actual_finished_weight_grams),
-    total_raw_consumption_weight_grams: firstPresent(
+    total_raw_consumption_weight_grams: firstPositivePresent(
       report.total_raw_consumption_weight_grams,
       production.total_raw_consumption_weight_grams,
       production.recipe_raw_weight_grams,
       sumReportWeights(ingredientLines, 'raw_weight_grams'),
       sumManifestItemsWeight(menuIssueItems, 'raw_weight_grams')
     ),
-    total_yielded_weight_grams: firstPresent(
+    total_yielded_weight_grams: firstPositivePresent(
       report.total_yielded_weight_grams,
       production.total_yielded_weight_grams,
       production.expected_finished_weight_grams,
@@ -319,8 +327,8 @@ function mergeConsumptionReportWithProduction(report = {}, production = {}) {
       sumReportWeights(ingredientLines, 'yielded_weight_grams'),
       sumManifestItemsWeight(menuIssueItems, 'yielded_weight_grams')
     ),
-    portion_size_grams: firstPresent(report.portion_size_grams, production.portion_size_grams),
-    expected_yield_servings: firstPresent(report.expected_yield_servings, production.expected_yield_servings),
+    portion_size_grams: firstPositivePresent(report.portion_size_grams, production.portion_size_grams),
+    expected_yield_servings: firstPositivePresent(report.expected_yield_servings, production.expected_yield_servings),
     ingredient_line_count: firstPresent(report.ingredient_line_count, ingredientLines.length),
     ingredient_lines: ingredientLines
   };
@@ -2932,14 +2940,14 @@ export default function Production() {
     && reportSourceRecipeNames.size < reportManifestItems.length;
   const reportLotLines = getReportSectionLines(selectedConsumptionReport, 'inventory_lot_usage');
   const reportShortageLines = getReportSectionLines(selectedConsumptionReport, 'shortages');
-  const reportTotalRawWeightGrams = optionalNumber(selectedConsumptionReport?.total_raw_consumption_weight_grams)
-    ?? optionalNumber(selectedConsumptionReport?.recipe_raw_weight_grams)
+  const reportTotalRawWeightGrams = positiveOptionalNumber(selectedConsumptionReport?.total_raw_consumption_weight_grams)
+    ?? positiveOptionalNumber(selectedConsumptionReport?.recipe_raw_weight_grams)
     ?? sumReportWeights(reportIngredientLines, 'raw_weight_grams')
     ?? sumManifestItemsWeight(reportManifestItems, 'raw_weight_grams');
-  const reportTotalYieldedWeightGrams = optionalNumber(selectedConsumptionReport?.total_yielded_weight_grams)
-    ?? optionalNumber(selectedConsumptionReport?.expected_finished_weight_grams)
-    ?? optionalNumber(selectedConsumptionReport?.actual_finished_weight_grams)
-    ?? optionalNumber(selectedConsumptionReport?.produced_weight_grams)
+  const reportTotalYieldedWeightGrams = positiveOptionalNumber(selectedConsumptionReport?.total_yielded_weight_grams)
+    ?? positiveOptionalNumber(selectedConsumptionReport?.expected_finished_weight_grams)
+    ?? positiveOptionalNumber(selectedConsumptionReport?.actual_finished_weight_grams)
+    ?? positiveOptionalNumber(selectedConsumptionReport?.produced_weight_grams)
     ?? sumReportWeights(reportIngredientLines, 'yielded_weight_grams')
     ?? sumManifestItemsWeight(reportManifestItems, 'yielded_weight_grams');
 
@@ -3514,7 +3522,7 @@ export default function Production() {
 
                     {visibleIssueItems.length === 0 ? (
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                        No saved menu items with servings were found for this meal scope.
+                        No saved menu-planning production lines were found for this meal scope.
                       </div>
                     ) : visibleIssueItems.map((item) => {
                       const alreadyIssued = isIssueItemAlreadyIssued(item);
@@ -3558,11 +3566,21 @@ export default function Production() {
                                 {issueInventoryReady && itemShortageCount > 0 ? (
                                   <Badge className="bg-red-600">{itemShortageCount} short</Badge>
                                 ) : null}
+                                {item.production_blocked_reason ? (
+                                  <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+                                    Needs recipe setup
+                                  </Badge>
+                                ) : null}
                               </div>
                               <p className="mt-2 break-words font-semibold text-slate-950">{item.recipe_name}</p>
                               <p className="mt-1 text-xs text-slate-500">
                                 Planned {formatRecipeQuantity(item.expected_servings, 'servings')} servings · Est. cost {formatCurrency(itemCost || item.planned_total_cost)}
                               </p>
+                              {item.production_blocked_reason ? (
+                                <p className="mt-1 text-xs font-medium text-amber-700">
+                                  {item.production_blocked_reason}
+                                </p>
+                              ) : null}
                             </button>
                           </div>
                           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">

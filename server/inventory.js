@@ -400,6 +400,106 @@ export function buildAutomaticProductionCompletionPlan({
   };
 }
 
+function sumPositiveLineWeight(lines = [], field) {
+  const total = (Array.isArray(lines) ? lines : []).reduce((sum, line) => {
+    const value = positiveNumber(line?.[field]);
+    return value ? sum + value : sum;
+  }, 0);
+  return total > 0 ? roundQuantity(total) : null;
+}
+
+function enrichCompletedMenuIssueItems({
+  production = {},
+  completionProduction = {},
+  ingredientCatalog = [],
+  recipeCatalog = []
+} = {}) {
+  const manifestItems = Array.isArray(production.menu_issue_items)
+    ? production.menu_issue_items
+    : [];
+  if (manifestItems.length === 0) return [];
+
+  const recipes = Array.isArray(recipeCatalog) ? recipeCatalog : [];
+  const ingredients = Array.isArray(ingredientCatalog) ? ingredientCatalog : [];
+
+  return manifestItems.map((item, itemIndex) => {
+    const itemLines = Array.isArray(item.ingredients_used) ? item.ingredients_used : [];
+    const itemRecipe = recipes.find((candidate) => (
+      String(candidate?.id || '') === String(item.recipe_id || '')
+    )) || {};
+    const targetServings = positiveNumber(item.production_covers)
+      ?? positiveNumber(item.expected_servings)
+      ?? null;
+    const itemYieldSummary = itemLines.length > 0
+      ? buildAutomaticProductionYieldSummary({
+        production: {
+          ...production,
+          ...item,
+          id: production.id,
+          recipe_id: item.recipe_id || production.recipe_id,
+          recipe_name: item.recipe_name || production.recipe_name,
+          target_servings: targetServings,
+          ingredients_used: itemLines,
+          yield_adjustment_version: 2,
+          quantity_semantics: 'raw_recipe_to_yielded_output_v2'
+        },
+        recipe: itemRecipe,
+        ingredients
+      })
+      : { line_weights: [] };
+    const enrichedLines = itemLines.map((line, lineIndex) => {
+      const lineWeight = itemYieldSummary.line_weights?.[lineIndex] || {};
+      return {
+        ...line,
+        raw_weight_grams: roundOptionalQuantity(
+          lineWeight.raw_weight_grams ?? line.raw_weight_grams,
+          3
+        ),
+        yielded_weight_grams: roundOptionalQuantity(
+          lineWeight.yielded_weight_grams ?? line.yielded_weight_grams,
+          3
+        ),
+        weight_calculation_source: line.weight_calculation_source || lineWeight.source || null,
+        yield_calculation_source: line.yield_calculation_source || lineWeight.yield_source || line.yield_source || null,
+        weight_snapshot_version: 1
+      };
+    });
+    const rawWeight = positiveNumber(item.raw_weight_grams)
+      ?? positiveNumber(itemYieldSummary.recipe_raw_weight_grams)
+      ?? sumPositiveLineWeight(enrichedLines, 'raw_weight_grams');
+    const yieldedWeight = positiveNumber(item.yielded_weight_grams)
+      ?? positiveNumber(item.expected_finished_weight_grams)
+      ?? positiveNumber(itemYieldSummary.expected_finished_weight_grams)
+      ?? sumPositiveLineWeight(enrichedLines, 'yielded_weight_grams');
+
+    return {
+      ...item,
+      key: item.key || item.original_source_menu_plan_item_key || item.source_menu_plan_item_key || `manifest-item-${itemIndex}`,
+      recipe_id: item.recipe_id || null,
+      recipe_name: item.recipe_name || item.name || 'Planned item',
+      expected_servings: roundOptionalQuantity(item.expected_servings),
+      production_covers: roundOptionalQuantity(targetServings),
+      estimated_batch_cost: roundOptionalQuantity(
+        item.estimated_batch_cost ?? item.planned_total_cost,
+        2
+      ),
+      raw_weight_grams: roundOptionalQuantity(rawWeight, 3),
+      yielded_weight_grams: roundOptionalQuantity(yieldedWeight, 3),
+      expected_finished_weight_grams: roundOptionalQuantity(yieldedWeight, 3),
+      portion_size_grams: roundOptionalQuantity(
+        itemYieldSummary.portion_size_grams ?? item.portion_size_grams,
+        3
+      ),
+      expected_yield_servings: roundOptionalQuantity(
+        itemYieldSummary.expected_yield_servings ?? item.expected_yield_servings,
+        6
+      ),
+      output_calculation_source: itemYieldSummary.output_calculation_source || item.output_calculation_source || completionProduction.output_calculation_source || null,
+      ingredients_used: enrichedLines
+    };
+  });
+}
+
 export function buildStockDeductionQuantitySummary({
   remainingToDeduct = 0,
   requestedQuantity = 0,
@@ -3329,43 +3429,20 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     (sum, line) => sum + toNumber(line.yielded_weight_grams, 0),
     0
   );
-  const menuIssueItems = Array.isArray(production.menu_issue_items)
-    ? production.menu_issue_items.map((item) => ({
-      key: item.key,
-      recipe_id: item.recipe_id,
-      recipe_name: item.recipe_name,
-      expected_servings: roundOptionalQuantity(item.expected_servings),
-      production_covers: roundOptionalQuantity(item.production_covers),
-      estimated_batch_cost: roundOptionalQuantity(item.estimated_batch_cost, 2),
-      raw_weight_grams: roundOptionalQuantity(
-        item.raw_weight_grams
-          ?? (Array.isArray(item.ingredients_used) && item.ingredients_used.length > 0
-            ? item.ingredients_used.reduce((sum, line) => sum + toNumber(line?.raw_weight_grams, 0), 0)
-            : null),
-        3
-      ),
-      yielded_weight_grams: roundOptionalQuantity(
-        item.yielded_weight_grams
-          ?? item.expected_finished_weight_grams
-          ?? (Array.isArray(item.ingredients_used) && item.ingredients_used.length > 0
-            ? item.ingredients_used.reduce((sum, line) => sum + toNumber(line?.yielded_weight_grams, 0), 0)
-            : null),
-        3
-      ),
-      ingredients_used: Array.isArray(item.ingredients_used)
-        ? item.ingredients_used.map((line) => ({
-          ingredient_id: line.ingredient_id,
-          item_code: line.item_code,
-          ingredient_name: line.ingredient_name,
-          quantity: roundOptionalQuantity(line.planned_quantity ?? line.raw_quantity ?? line.quantity),
-          unit: line.unit,
-          raw_weight_grams: roundOptionalQuantity(line.raw_weight_grams, 3),
-          yielded_weight_grams: roundOptionalQuantity(line.yielded_weight_grams, 3),
-          yield_percent: roundOptionalQuantity(line.yield_percent, 2)
-        }))
-        : []
-    }))
-    : [];
+  const menuIssueItems = enrichCompletedMenuIssueItems({
+    production,
+    completionProduction,
+    ingredientCatalog,
+    recipeCatalog
+  });
+  const manifestRawWeightGrams = sumPositiveLineWeight(menuIssueItems, 'raw_weight_grams');
+  const manifestYieldedWeightGrams = sumPositiveLineWeight(menuIssueItems, 'yielded_weight_grams');
+  const reportRawWeightGrams = positiveNumber(totalRawConsumptionWeightGrams)
+    ?? positiveNumber(completionProduction.recipe_raw_weight_grams)
+    ?? manifestRawWeightGrams;
+  const reportYieldedWeightGrams = positiveNumber(totalYieldedWeightGrams)
+    ?? positiveNumber(completionProduction.expected_finished_weight_grams)
+    ?? manifestYieldedWeightGrams;
   const report = await createDocument('ProductionConsumptionReport', {
     report_number: reportNumber,
     report_name: reportName,
@@ -3399,16 +3476,10 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     quantity_basis: plannedQuantityBasis,
     reconciliation_mode: 'automatic_yield_plan',
     output_calculation_source: automaticPlan.output_calculation_source,
-    recipe_raw_weight_grams: completionProduction.recipe_raw_weight_grams,
-    expected_finished_weight_grams: completionProduction.expected_finished_weight_grams,
-    total_raw_consumption_weight_grams: roundOptionalQuantity(
-      totalRawConsumptionWeightGrams || completionProduction.recipe_raw_weight_grams,
-      3
-    ),
-    total_yielded_weight_grams: roundOptionalQuantity(
-      totalYieldedWeightGrams || completionProduction.expected_finished_weight_grams,
-      3
-    ),
+    recipe_raw_weight_grams: roundOptionalQuantity(reportRawWeightGrams, 3),
+    expected_finished_weight_grams: roundOptionalQuantity(reportYieldedWeightGrams, 3),
+    total_raw_consumption_weight_grams: roundOptionalQuantity(reportRawWeightGrams, 3),
+    total_yielded_weight_grams: roundOptionalQuantity(reportYieldedWeightGrams, 3),
     portion_size_grams: completionProduction.portion_size_grams,
     expected_yield_servings: completionProduction.expected_yield_servings,
     total_consumption_cost: Number(totalProductionCost.toFixed(2)),
@@ -3436,10 +3507,18 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     ],
     status: 'posted'
   }, executor);
+  const completionProductionForPosting = {
+    ...completionProduction,
+    menu_issue_items: menuIssueItems,
+    recipe_raw_weight_grams: roundOptionalQuantity(reportRawWeightGrams, 3),
+    expected_finished_weight_grams: roundOptionalQuantity(reportYieldedWeightGrams, 3),
+    total_raw_consumption_weight_grams: roundOptionalQuantity(reportRawWeightGrams, 3),
+    total_yielded_weight_grams: roundOptionalQuantity(reportYieldedWeightGrams, 3)
+  };
 
   const producedItemResult = await createProducedItemBatchForCompletion({
     production: {
-      ...completionProduction,
+      ...completionProductionForPosting,
       consumption_report_id: report.id,
       consumption_report_number: report.report_number
     },
@@ -3464,16 +3543,21 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     total_shortage_quantity: Number(totalShortageQuantity.toFixed(3)),
     shortage_totals_by_unit: shortageTotalsByUnit,
     completion_lines: consumptionSummary,
+    menu_issue_items: menuIssueItems,
     consumption_report_id: report.id,
     consumption_report_number: report.report_number,
     consumption_report_name: report.report_name,
     consumption_report_generated_at: completedAt,
     production_issue_item_count: productionItemCount,
     production_issue_dish_count: productionItemCount,
+    recipe_raw_weight_grams: roundOptionalQuantity(reportRawWeightGrams, 3),
+    total_raw_consumption_weight_grams: roundOptionalQuantity(reportRawWeightGrams, 3),
+    total_yielded_weight_grams: roundOptionalQuantity(reportYieldedWeightGrams, 3),
     portion_size_grams: producedItemBatch.portion_size_grams,
     expected_finished_weight_grams: producedItemBatch.expected_finished_weight_grams,
     actual_finished_weight_grams: producedItemBatch.actual_finished_weight_grams,
     produced_servings: producedItemBatch.produced_servings,
+    produced_weight_grams: producedItemBatch.produced_weight_grams,
     produced_item_batch_id: producedItemBatch.id,
     produced_item_batch_number: producedItemBatch.batch_number,
     reconciliation_mode: 'automatic_yield_plan',
