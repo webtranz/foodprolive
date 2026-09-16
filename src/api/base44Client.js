@@ -295,6 +295,11 @@ export const base44 = {
       })}`);
     }
   },
+  database: {
+    getAudit({ includeOk = false } = {}) {
+      return apiRequest(`/api/database/audit${buildQueryString({ include_ok: includeOk ? 'true' : '' })}`);
+    }
+  },
   budgets: {
     getPlanningContext(filters = {}) {
       return apiRequest(`/api/budgets/planning-context${buildQueryString({

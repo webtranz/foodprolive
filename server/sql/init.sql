@@ -456,6 +456,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_production_events_issue_group_unique
 CREATE INDEX IF NOT EXISTS idx_production_events_scope
   ON production_events(warehouse_id, production_date, meal_period, menu_type, menu_category, status);
 
+CREATE INDEX IF NOT EXISTS idx_production_events_food_cost
+  ON production_events(production_date, warehouse_id, meal_period, menu_type, menu_category)
+  WHERE status = 'completed';
+
 CREATE TABLE IF NOT EXISTS production_manifest_lines (
   production_line_id TEXT PRIMARY KEY,
   production_id TEXT NOT NULL REFERENCES production_events(production_id) ON DELETE CASCADE,
@@ -486,6 +490,10 @@ CREATE INDEX IF NOT EXISTS idx_production_manifest_lines_event
 
 CREATE INDEX IF NOT EXISTS idx_production_manifest_lines_recipe
   ON production_manifest_lines(recipe_version_id);
+
+CREATE INDEX IF NOT EXISTS idx_production_manifest_lines_active_output
+  ON production_manifest_lines(production_id, recipe_version_id, ingredient_id)
+  WHERE status NOT IN ('voided', 'reversed', 'cancelled');
 
 CREATE TABLE IF NOT EXISTS production_consumption_lines (
   consumption_line_id TEXT PRIMARY KEY,
@@ -545,6 +553,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_produced_output_batches_line_unique
 
 CREATE INDEX IF NOT EXISTS idx_produced_output_batches_fifo
   ON produced_output_batches(warehouse_id, status, created_at, output_batch_id);
+
+CREATE INDEX IF NOT EXISTS idx_produced_output_batches_report
+  ON produced_output_batches(production_id, production_line_id, warehouse_id, status);
 
 CREATE TABLE IF NOT EXISTS meal_service_headers (
   meal_service_id TEXT PRIMARY KEY,
@@ -629,6 +640,9 @@ CREATE TABLE IF NOT EXISTS food_waste_lines (
 CREATE INDEX IF NOT EXISTS idx_food_waste_lines_output_batch
   ON food_waste_lines(output_batch_id, status);
 
+CREATE INDEX IF NOT EXISTS idx_food_waste_lines_audit
+  ON food_waste_lines(food_waste_id, output_batch_id, production_line_id, ingredient_id, status);
+
 CREATE TABLE IF NOT EXISTS inventory_transactions (
   inventory_transaction_id TEXT PRIMARY KEY,
   inventory_id TEXT REFERENCES warehouse_inventory(inventory_id) ON DELETE RESTRICT,
@@ -692,6 +706,7 @@ CREATE TABLE IF NOT EXISTS meal_service_consumptions (
   output_batch_id TEXT REFERENCES produced_output_batches(output_batch_id) ON DELETE RESTRICT,
   production_id TEXT REFERENCES production_events(production_id) ON DELETE RESTRICT,
   recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE RESTRICT,
+  reverses_consumption_id TEXT REFERENCES meal_service_consumptions(meal_consumption_id) ON DELETE RESTRICT,
   idempotency_key TEXT NOT NULL,
   service_reference TEXT NOT NULL,
   movement_type TEXT NOT NULL DEFAULT 'consumption',
@@ -715,6 +730,13 @@ CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_header
 CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_report
   ON meal_service_consumptions(service_date, meal_period, status);
 
+CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_reversal
+  ON meal_service_consumptions(reverses_consumption_id)
+  WHERE reverses_consumption_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_food_cost
+  ON meal_service_consumptions(service_date, meal_period, movement_type, status, meal_service_id, output_batch_id, production_id);
+
 ALTER TABLE areas ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
@@ -731,6 +753,7 @@ ALTER TABLE production_consumption_lines ADD COLUMN IF NOT EXISTS payload JSONB 
 ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE meal_service_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS reverses_consumption_id TEXT REFERENCES meal_service_consumptions(meal_consumption_id) ON DELETE RESTRICT;
 ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 
@@ -1098,7 +1121,7 @@ ON CONFLICT (meal_service_id) DO NOTHING;
 
 INSERT INTO meal_service_consumptions (
   meal_consumption_id, meal_service_id, output_batch_id, production_id, recipe_version_id,
-  idempotency_key, service_reference, movement_type, service_date, meal_period,
+  reverses_consumption_id, idempotency_key, service_reference, movement_type, service_date, meal_period,
   consumed_weight_grams, consumed_servings, cost, status, payload, created_at, updated_at
 )
 SELECT
@@ -1107,6 +1130,7 @@ SELECT
   output_batch.output_batch_id,
   production.production_id,
   recipe.recipe_version_id,
+  NULLIF(COALESCE(record.data->>'reverses_consumption_id', record.data->>'source_consumption_id', record.data->>'original_consumption_id'), ''),
   record.data->>'idempotency_key',
   record.data->>'service_reference',
   COALESCE(NULLIF(record.data->>'movement_type', ''), 'consumption'),
@@ -1130,6 +1154,16 @@ WHERE record.entity_name = 'MealServiceConsumption'
   AND COALESCE(record.data->>'idempotency_key', '') <> ''
   AND COALESCE(record.data->>'service_reference', '') <> ''
 ON CONFLICT (meal_consumption_id) DO NOTHING;
+
+UPDATE meal_service_consumptions target
+SET reverses_consumption_id = NULLIF(COALESCE(target.payload->>'reverses_consumption_id', target.payload->>'source_consumption_id', target.payload->>'original_consumption_id'), '')
+WHERE target.reverses_consumption_id IS NULL
+  AND NULLIF(COALESCE(target.payload->>'reverses_consumption_id', target.payload->>'source_consumption_id', target.payload->>'original_consumption_id'), '') IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM meal_service_consumptions source
+    WHERE source.meal_consumption_id = NULLIF(COALESCE(target.payload->>'reverses_consumption_id', target.payload->>'source_consumption_id', target.payload->>'original_consumption_id'), '')
+  );
 
 INSERT INTO food_waste_records (
   food_waste_id, waste_reference, idempotency_key, warehouse_id, waste_date, meal_period,

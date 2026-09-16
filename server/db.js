@@ -759,6 +759,7 @@ function rowToMealServiceConsumption(row = {}) {
     produced_item_batch_id: row.output_batch_id || null,
     production_id: row.production_id || null,
     recipe_id: row.recipe_version_id || null,
+    reverses_consumption_id: row.reverses_consumption_id || null,
     idempotency_key: row.idempotency_key,
     service_reference: row.service_reference,
     movement_type: row.movement_type || 'consumption',
@@ -1506,12 +1507,13 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
     await query(
       `INSERT INTO meal_service_consumptions (
         meal_consumption_id, meal_service_id, output_batch_id, production_id, recipe_version_id,
-        idempotency_key, service_reference, movement_type, service_date, meal_period,
+        reverses_consumption_id, idempotency_key, service_reference, movement_type, service_date, meal_period,
         consumed_weight_grams, consumed_servings, cost, status, payload, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
       ON CONFLICT (meal_consumption_id) DO UPDATE SET
         meal_service_id = EXCLUDED.meal_service_id, output_batch_id = EXCLUDED.output_batch_id,
         production_id = EXCLUDED.production_id, recipe_version_id = EXCLUDED.recipe_version_id,
+        reverses_consumption_id = EXCLUDED.reverses_consumption_id,
         idempotency_key = EXCLUDED.idempotency_key, service_reference = EXCLUDED.service_reference,
         movement_type = EXCLUDED.movement_type, service_date = EXCLUDED.service_date,
         meal_period = EXCLUDED.meal_period, consumed_weight_grams = EXCLUDED.consumed_weight_grams,
@@ -1523,6 +1525,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
         record.produced_item_batch_id || allocation.produced_item_batch_id || allocation.batch_id || null,
         record.production_id || allocation.production_id || null,
         record.recipe_id || null,
+        record.reverses_consumption_id || record.source_consumption_id || record.original_consumption_id || null,
         record.idempotency_key,
         record.service_reference,
         record.movement_type || 'consumption',

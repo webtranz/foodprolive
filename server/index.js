@@ -179,12 +179,6 @@ import {
   validateFoodWasteContextInput
 } from './menuPlanningApi.js';
 import {
-  buildConfirmedFoodCostRows,
-  buildPendingProductionRows,
-  groupFoodCostRows,
-  safeFoodCostNumber
-} from '../shared/foodCostReport.js';
-import {
   allocateBatchOverproductionWaste,
   buildBatchOverproductionDishSummary,
   buildFoodWasteMenuPlanSummary,
@@ -241,6 +235,10 @@ import {
   resolveLegacyProductionMenuClassification,
   updateMealServicePortionSize
 } from './mealService.js';
+import {
+  getNormalizedDatabaseAudit,
+  loadNormalizedFoodCostReport
+} from './normalizedOperationalReports.js';
 import {
   createObjectKey,
   getStoredObject,
@@ -714,182 +712,11 @@ async function decorateEntityRecords(entity, records = [], user = null) {
   return records;
 }
 
-function offsetDateOnly(days = 0) {
-  const value = new Date();
-  value.setDate(value.getDate() + days);
-  return value.toISOString().slice(0, 10);
-}
-
-function normalizedFoodCostDate(value, fallback) {
-  const candidate = String(value || fallback || '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(candidate) ? candidate : fallback;
-}
-
-function collectFoodCostRelatedLocationIds(sites = [], locationId = 'all') {
-  if (!locationId || locationId === 'all') return null;
-  const siteMap = new Map(sites.map((site) => [String(site.id), site]));
-  const related = new Set([String(locationId)]);
-
-  let selectedCursor = siteMap.get(String(locationId));
-  while (selectedCursor?.parent_site_id) {
-    related.add(String(selectedCursor.parent_site_id));
-    selectedCursor = siteMap.get(String(selectedCursor.parent_site_id));
-  }
-
-  sites.forEach((site) => {
-    let cursor = site;
-    while (cursor?.parent_site_id) {
-      if (String(cursor.parent_site_id) === String(locationId)) {
-        related.add(String(site.id));
-        break;
-      }
-      cursor = siteMap.get(String(cursor.parent_site_id));
-    }
-  });
-
-  return related;
-}
-
-function buildFoodCostScopedQuery(filters, dateField) {
-  const entityFilters = {};
-  if (filters.mealType !== 'all') entityFilters.meal_type = filters.mealType;
-  return {
-    filters: entityFilters,
-    rangeFilters: {
-      [dateField]: {
-        gte: filters.startDate,
-        lte: filters.endDate
-      }
-    }
-  };
-}
-
 async function loadFoodCostReportForUser(user, rawFilters = {}) {
-  const endDate = normalizedFoodCostDate(rawFilters.end_date ?? rawFilters.endDate, offsetDateOnly(0));
-  const startDate = normalizedFoodCostDate(rawFilters.start_date ?? rawFilters.startDate, offsetDateOnly(-30));
-  const filters = {
-    startDate: startDate <= endDate ? startDate : endDate,
-    endDate: startDate <= endDate ? endDate : startDate,
-    locationId: String(rawFilters.location_id ?? rawFilters.locationId ?? 'all').trim() || 'all',
-    category: String(rawFilters.category || 'all').trim() || 'all',
-    mealType: String(rawFilters.meal_type ?? rawFilters.mealType ?? 'all').trim().toLowerCase() || 'all',
-    menuType: String(rawFilters.menu_type ?? rawFilters.menuType ?? 'all').trim().toLowerCase() || 'all',
-    view: String(rawFilters.view || 'detail').trim().toLowerCase() || 'detail'
-  };
-  const productionReportQuery = buildFoodCostScopedQuery(filters, 'production_date');
-  const mealServiceReportQuery = buildFoodCostScopedQuery(filters, 'service_date');
-  const [siteContext, productionContext, mealServiceContext, batchContext, recipeContext, ingredientContext] = await Promise.all([
-    getEntityLocationContext(user, 'Site'),
-    getEntityLocationContext(user, 'Production'),
-    getEntityLocationContext(user, 'MealServiceConsumption'),
-    getEntityLocationContext(user, 'ProducedItemBatch'),
-    getEntityLocationContext(user, 'Recipe'),
-    getEntityLocationContext(user, 'Ingredient')
-  ]);
-  const [
-    sites,
-    productions,
-    mealServiceConsumptions,
-    producedItemBatches,
-    recipes,
-    ingredients
-  ] = await Promise.all([
-    listDocuments('Site', { location: siteContext.location })
-      .then((records) => scopeEntityRecords(user, 'Site', records, siteContext.scope)),
-    listDocuments('Production', {
-      filters: productionReportQuery.filters,
-      rangeFilters: productionReportQuery.rangeFilters,
-      sort: '-production_date',
-      location: productionContext.location
-    }).then((records) => scopeEntityRecords(user, 'Production', records, productionContext.scope)),
-    listDocuments('MealServiceConsumption', {
-      filters: mealServiceReportQuery.filters,
-      rangeFilters: mealServiceReportQuery.rangeFilters,
-      sort: '-service_date',
-      location: mealServiceContext.location
-    }).then((records) => scopeEntityRecords(user, 'MealServiceConsumption', records, mealServiceContext.scope)),
-    listDocuments('ProducedItemBatch', {
-      filters: productionReportQuery.filters,
-      rangeFilters: productionReportQuery.rangeFilters,
-      sort: '-production_date',
-      location: batchContext.location
-    }).then((records) => scopeEntityRecords(user, 'ProducedItemBatch', records, batchContext.scope)),
-    listDocuments('Recipe', { limit: 5000, location: recipeContext.location })
-      .then((records) => scopeEntityRecords(user, 'Recipe', records, recipeContext.scope))
-      .then((records) => decorateEntityRecords('Recipe', records, user)),
-    listDocuments('Ingredient', { limit: 5000, location: ingredientContext.location })
-      .then((records) => scopeEntityRecords(user, 'Ingredient', records, ingredientContext.scope))
-  ]);
-  const recipeMap = new Map(recipes.map((recipe) => [String(recipe.id), recipe]));
-  const relatedLocationIds = collectFoodCostRelatedLocationIds(sites, filters.locationId);
-  const matchesDate = (value) => value && value >= filters.startDate && value <= filters.endDate;
-  const matchesLocation = (siteId) => filters.locationId === 'all' || relatedLocationIds?.has(String(siteId || ''));
-  const matchesCategory = (category) => filters.category === 'all' || category === filters.category;
-  const matchesMealType = (mealType) => filters.mealType === 'all' || (mealType || 'unspecified') === filters.mealType;
-  const matchesMenuType = (menuType) => filters.menuType === 'all' || (menuType || 'general') === filters.menuType;
-
-  const filteredProductions = productions.filter((production) => {
-    const recipe = recipeMap.get(String(production.recipe_id || ''));
-    const category = production.menu_category || recipe?.category || '';
-    const menuType = production.menu_type || production.cuisine_type || recipe?.menu_type || recipe?.cuisine_type || 'general';
-    return matchesDate(production.production_date)
-      && matchesLocation(production.site_id)
-      && matchesCategory(category)
-      && matchesMealType(production.meal_type)
-      && matchesMenuType(menuType);
+  return loadNormalizedFoodCostReport({
+    rawFilters,
+    accessibleSiteIds: await accessibleSiteIds(user)
   });
-  const filteredConsumptions = mealServiceConsumptions.filter((consumption) => {
-    const recipe = recipeMap.get(String(consumption.recipe_id || ''));
-    const category = consumption.menu_category || recipe?.category || '';
-    const menuType = consumption.menu_type || recipe?.menu_type || recipe?.cuisine_type || 'general';
-    return matchesDate(consumption.service_date)
-      && matchesLocation(consumption.site_id)
-      && matchesCategory(category)
-      && matchesMealType(consumption.meal_type)
-      && matchesMenuType(menuType);
-  });
-  const rows = groupFoodCostRows(buildConfirmedFoodCostRows({
-    consumptions: filteredConsumptions,
-    productions,
-    producedItemBatches,
-    recipes,
-    ingredients
-  }), filters.view);
-  const pendingProductionRows = buildPendingProductionRows({
-    consumptions: mealServiceConsumptions,
-    productions: filteredProductions,
-    producedItemBatches,
-    recipes,
-    ingredients
-  });
-  const summary = rows.reduce((totals, row) => ({
-    total_cost: totals.total_cost + safeFoodCostNumber(row.total_cost),
-    servings: totals.servings + safeFoodCostNumber(row.servings ?? row.total_servings)
-  }), { total_cost: 0, servings: 0 });
-  const categories = [...new Set([
-    ...recipes.map((recipe) => recipe.category).filter(Boolean),
-    ...productions.map((production) => production.menu_category).filter(Boolean),
-    ...mealServiceConsumptions.map((consumption) => consumption.menu_category).filter(Boolean)
-  ])].sort();
-  const menuTypes = [...new Set([
-    ...recipes.map((recipe) => recipe.menu_type || recipe.cuisine_type).filter(Boolean),
-    ...productions.map((production) => production.menu_type || production.cuisine_type).filter(Boolean),
-    ...mealServiceConsumptions.map((consumption) => consumption.menu_type).filter(Boolean)
-  ])].sort();
-
-  return {
-    filters,
-    rows,
-    pending_production_rows: pendingProductionRows,
-    summary: {
-      total_cost: summary.total_cost,
-      servings: summary.servings,
-      average_cost_per_serving: summary.servings > 0 ? summary.total_cost / summary.servings : 0
-    },
-    categories,
-    menu_types: menuTypes,
-    generated_at: new Date().toISOString()
-  };
 }
 
 app.get('/api/events', requireAuth, async (request, response, next) => {
@@ -6949,6 +6776,28 @@ app.get('/api/activity/audit-logs', requireAuth, requirePermission('view_audit_l
       actorId: request.user.id
     });
     response.json({ logs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/database/audit', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    response.set('Cache-Control', 'private, no-store');
+    const audit = await getNormalizedDatabaseAudit({
+      includeOk: String(request.query.include_ok || '').toLowerCase() === 'true'
+    });
+    await auditAction({
+      user: request.user,
+      action: 'DATABASE_AUDIT_VIEWED',
+      entity: 'Database',
+      entityId: 'normalized-core',
+      details: {
+        status: audit.status,
+        issue_count: audit.checks.filter((check) => check.severity !== 'ok').length
+      }
+    });
+    response.json(audit);
   } catch (error) {
     next(error);
   }
