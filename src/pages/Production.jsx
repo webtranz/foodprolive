@@ -1278,8 +1278,32 @@ export default function Production() {
   const [issueAdminReissueEnabled, setIssueAdminReissueEnabled] = useState(false);
 
   const queryClient = useQueryClient();
-  const invalidateCurrentProductionScope = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['productions', selectedDate] });
+  const invalidateCurrentProductionScope = useCallback(({
+    approvalQueue = false,
+    inventory = false,
+    materialRequests = false,
+    output = false
+  } = {}) => {
+    const activeExact = { exact: true, refetchType: 'active' };
+    queryClient.invalidateQueries({ queryKey: ['productions', selectedDate], ...activeExact });
+    queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights', selectedDate], ...activeExact });
+    queryClient.invalidateQueries({ queryKey: ['foodWasteForProduction', selectedDate], ...activeExact });
+    if (approvalQueue) {
+      queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'], ...activeExact });
+    }
+    if (materialRequests) {
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'], ...activeExact });
+    }
+    if (inventory) {
+      queryClient.invalidateQueries({ queryKey: ['inventory'], ...activeExact });
+      queryClient.invalidateQueries({ queryKey: ['inventoryLots'], ...activeExact });
+      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'], ...activeExact });
+      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'], ...activeExact });
+    }
+    if (output) {
+      queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'], ...activeExact });
+      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'], ...activeExact });
+    }
   }, [queryClient, selectedDate]);
 
   const resetIssueDialogState = () => {
@@ -1354,9 +1378,7 @@ export default function Production() {
         : base44.entities.Production.create(data)
     ),
     onSuccess: () => {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      invalidateCurrentProductionScope({ materialRequests: true });
       setFormOpen(false);
       setEditingProduction(null);
       setActionError('');
@@ -1413,9 +1435,7 @@ export default function Production() {
       return { mode: 'created', records: created };
     },
     onSuccess: (result) => {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      invalidateCurrentProductionScope({ materialRequests: true });
       setIssueDialogOpen(false);
       resetIssueDialogState();
       setActionError('');
@@ -1466,14 +1486,7 @@ export default function Production() {
     if (!latestJob) return;
     setCompletionJob(latestJob);
     if (latestJob.status === 'completed') {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
-      queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
-      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
+      invalidateCurrentProductionScope({ inventory: true, output: true });
       setActionMessage('Production completed and finished output is available.');
       setActionError('');
       setCompletionOpen(false);
@@ -1510,15 +1523,13 @@ export default function Production() {
 
   useEffect(() => {
     const unsubscribeProduction = base44.entities.Production.subscribe(() => {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });
+      invalidateCurrentProductionScope({ approvalQueue: true });
     });
     const unsubscribeRequests = base44.entities.MaterialRequest.subscribe(() => {
-      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'], exact: true, refetchType: 'active' });
     });
     const unsubscribeInventory = base44.entities.Inventory.subscribe(() => {
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'], exact: true, refetchType: 'active' });
     });
     return () => {
       unsubscribeProduction();
@@ -1731,18 +1742,11 @@ export default function Production() {
       await base44.entities.Production.update(id, { status });
     },
     onSuccess: (result, variables) => {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
-      queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
-      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
       if (variables?.status === 'completed') {
         const job = result?.job || result?.completion_job || getProductionCompletionJobFromRecord(result);
         if (job) setCompletionJob(job);
         if (isActiveProductionCompletionJob(job)) {
+          invalidateCurrentProductionScope();
           setActionMessage(job.message || 'Production completion is running in the background.');
           setActionError('');
           return;
@@ -1751,7 +1755,12 @@ export default function Production() {
           setActionError(job.error || job.message || 'Production completion failed.');
           return;
         }
+        invalidateCurrentProductionScope({ inventory: true, output: true });
         setActionMessage('Production completed and finished output is available.');
+      } else if (variables?.status === 'in_progress') {
+        invalidateCurrentProductionScope({ inventory: true, output: true });
+      } else {
+        invalidateCurrentProductionScope();
       }
       setCompletionOpen(false);
       setCompletionProduction(null);
@@ -1775,13 +1784,7 @@ export default function Production() {
       });
     },
     onSuccess: () => {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
+      invalidateCurrentProductionScope({ approvalQueue: true, inventory: true });
       setInventoryAction(null);
       setInventoryActionReason('');
       setInventoryActionServings(null);
@@ -1800,9 +1803,7 @@ export default function Production() {
       return base44.entities.Production.delete(production.id);
     },
     onSuccess: () => {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+      invalidateCurrentProductionScope({ materialRequests: true });
       setDeleteProduction(null);
       setActionError('');
       setActionMessage('Draft production request deleted.');
@@ -1820,14 +1821,7 @@ export default function Production() {
       return base44.inventory.reverseCompletedProduction(production.id, { reason });
     },
     onSuccess: () => {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
-      queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
-      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
+      invalidateCurrentProductionScope({ inventory: true, output: true });
       setReverseProduction(null);
       setReverseReason('');
       setActionError('');
@@ -1855,14 +1849,7 @@ export default function Production() {
       });
     },
     onSuccess: () => {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
-      queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
-      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
+      invalidateCurrentProductionScope({ inventory: true, output: true });
       setPartialReverseProduction(null);
       setPartialReverseReason('');
       setPartialReverseLines({});
@@ -1882,9 +1869,7 @@ export default function Production() {
       return base44.inventory.repairProductionReversalBalance(production.id, { reason });
     },
     onSuccess: (result) => {
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
+      invalidateCurrentProductionScope({ output: true });
       queryClient.setQueryData(
         ['productionReversalDiagnostics', reverseProduction?.id || ''],
         result?.diagnostics || null
@@ -2889,14 +2874,11 @@ export default function Production() {
           ...(action === 'approve' ? { fulfillment_store_id: reviewInventorySiteId } : {})
         });
       }
-      invalidateCurrentProductionScope();
-      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
-      queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
-      queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
-      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
+      invalidateCurrentProductionScope({
+        approvalQueue: true,
+        inventory: true,
+        materialRequests: true
+      });
       setShowApprovalDialog(false);
       setSelectedProduction(null);
       setReviewNotes('');
