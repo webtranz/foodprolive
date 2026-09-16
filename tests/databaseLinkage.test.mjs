@@ -46,6 +46,63 @@ function createSiteDeletionExecutor({ sites = [], documents = [], users = [] } =
         return { rowCount: allDocuments.length, rows: allDocuments };
       }
 
+      if (/FROM areas/i.test(normalizedSql) && /UNION ALL/i.test(normalizedSql)) {
+        const rows = sites.map((site) => {
+          const type = String(site.type || 'area').toLowerCase();
+          const timestamp = new Date().toISOString();
+          if (type === 'project') {
+            return {
+              id: site.id,
+              name: site.name,
+              type: 'project',
+              parent_site_id: site.parent_site_id || null,
+              area_code: null,
+              project_code: site.project_code || null,
+              warehouse_code: null,
+              d365_warehouse_id: null,
+              status: site.status || 'active',
+              source_name: site.source_name || null,
+              payload: site,
+              created_at: site.created_date || timestamp,
+              updated_at: site.updated_date || timestamp
+            };
+          }
+          if (type === 'store' || type === 'warehouse') {
+            return {
+              id: site.id,
+              name: site.name,
+              type: 'store',
+              parent_site_id: site.parent_site_id || null,
+              area_code: null,
+              project_code: null,
+              warehouse_code: site.project_code || null,
+              d365_warehouse_id: site.d365_warehouse_id || null,
+              status: site.status || 'active',
+              source_name: site.source_name || null,
+              payload: site,
+              created_at: site.created_date || timestamp,
+              updated_at: site.updated_date || timestamp
+            };
+          }
+          return {
+            id: site.id,
+            name: site.name,
+            type: 'area',
+            parent_site_id: null,
+            area_code: site.project_code || null,
+            project_code: null,
+            warehouse_code: null,
+            d365_warehouse_id: null,
+            status: site.status || 'active',
+            source_name: site.source_name || null,
+            payload: site,
+            created_at: site.created_date || timestamp,
+            updated_at: site.updated_date || timestamp
+          };
+        });
+        return { rowCount: rows.length, rows };
+      }
+
       if (/FROM users/i.test(normalizedSql)) {
         const targetIds = new Set((Array.isArray(params[0]) ? params[0] : params).flat().filter(Boolean).map(String));
         const match = users.find((user) => (
@@ -58,7 +115,7 @@ function createSiteDeletionExecutor({ sites = [], documents = [], users = [] } =
         };
       }
 
-      if (/FROM (pos_|purchase_|goods_|supplier_)/i.test(normalizedSql)) {
+      if (/FROM (pos_|purchase_|goods_|supplier_|warehouse_inventory|inventory_lots|inventory_transactions|menu_plans|production_events|produced_output_batches|meal_service_headers|food_waste_records)/i.test(normalizedSql)) {
         return { rowCount: 1, rows: [{ dependency_count: 0, sample_ids: [] }] };
       }
 
@@ -71,6 +128,14 @@ function createSiteDeletionExecutor({ sites = [], documents = [], users = [] } =
           rowCount: ids.length,
           rows: ids.map((id) => ({ id, data: sites.find((site) => String(site.id) === String(id)) }))
         };
+      }
+
+      if (/^DELETE FROM (warehouses|projects|areas)/i.test(normalizedSql)) {
+        deleteCalls.push({ sql: normalizedSql, params });
+        const ids = (Array.isArray(params[0]) ? params[0] : params).flat().filter((value) => (
+          sites.some((site) => String(site.id) === String(value))
+        ));
+        return { rowCount: ids.length, rows: [] };
       }
 
       throw new Error(`Unexpected site deletion query: ${normalizedSql}`);
@@ -338,6 +403,26 @@ const cases = [
         'trg_validate_goods_receipt_item_order_link',
         'trg_validate_supplier_invoice_chain',
         'chk_goods_receipt_items_order_item_required',
+        'CREATE TABLE IF NOT EXISTS areas',
+        'CREATE TABLE IF NOT EXISTS projects',
+        'CREATE TABLE IF NOT EXISTS warehouses',
+        'CREATE TABLE IF NOT EXISTS ingredients',
+        'CREATE TABLE IF NOT EXISTS warehouse_inventory',
+        'CREATE TABLE IF NOT EXISTS inventory_lots',
+        'CREATE TABLE IF NOT EXISTS recipes',
+        'CREATE TABLE IF NOT EXISTS recipe_versions',
+        'CREATE TABLE IF NOT EXISTS menu_plans',
+        'CREATE TABLE IF NOT EXISTS production_events',
+        'CREATE TABLE IF NOT EXISTS production_manifest_lines',
+        'CREATE TABLE IF NOT EXISTS produced_output_batches',
+        'CREATE TABLE IF NOT EXISTS meal_service_headers',
+        'CREATE TABLE IF NOT EXISTS meal_service_consumptions',
+        'CREATE TABLE IF NOT EXISTS food_waste_records',
+        'idx_menu_plans_scope_unique',
+        'idx_production_events_issue_group_unique',
+        'idx_produced_output_batches_number_unique',
+        'idx_meal_service_headers_scope',
+        'idx_food_waste_records_scope',
         'idx_entity_records_inventory_site_ingredient_unique',
         'idx_pos_sales_items_order',
         'idx_purchase_request_items_request',

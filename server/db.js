@@ -20,6 +20,8 @@ import {
 } from '../shared/managementDashboardRoles.js';
 import {
   isCanonicalSiteType,
+  normalizeSiteType,
+  SITE_HIERARCHY_TYPES,
   validateCanonicalSiteParent,
   validateSiteChildrenForParent
 } from '../shared/siteHierarchy.js';
@@ -479,6 +481,1162 @@ function sortRecords(records, sort) {
   });
 }
 
+const normalizedCoreEnabled = process.env.FOODPRO_NORMALIZED_CORE !== 'false';
+const normalizedCoreEntities = new Set([
+  'Site',
+  'Ingredient',
+  'Inventory',
+  'InventoryLot',
+  'InventoryTransaction',
+  'Recipe',
+  'MenuPlan',
+  'Production',
+  'ProductionConsumptionReport',
+  'ProducedItemBatch',
+  'MealServiceAttendance',
+  'MealServiceConsumption',
+  'FoodWaste'
+]);
+
+function usesNormalizedCore(entity) {
+  return normalizedCoreEnabled && normalizedCoreEntities.has(entity);
+}
+
+function toNumberOrNull(value) {
+  if (value === null || typeof value === 'undefined' || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function toNumberOrZero(value) {
+  return toNumberOrNull(value) ?? 0;
+}
+
+function toDateOnlyOrNull(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const match = text.match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : null;
+}
+
+function jsonPayload(record = {}) {
+  return JSON.stringify(record || {});
+}
+
+function rowTimestamp(value) {
+  return value?.toISOString?.() || value || null;
+}
+
+function withPayload(row = {}, explicit = {}) {
+  const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+  const { __entity: entity, ...fields } = explicit;
+  return hydrateDerivedFields(entity || '', {
+    ...payload,
+    ...fields,
+    created_date: payload.created_date || rowTimestamp(row.created_at),
+    updated_date: payload.updated_date || rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToSite(row = {}) {
+  return withPayload(row, {
+    __entity: 'Site',
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    parent_site_id: row.parent_site_id || null,
+    project_code: row.project_code || row.warehouse_code || row.area_code || row.project_code || null,
+    d365_warehouse_id: row.d365_warehouse_id || null,
+    source_name: row.source_name || null,
+    is_active: row.status !== 'inactive',
+    status: row.status || 'active'
+  });
+}
+
+function rowToIngredient(row = {}) {
+  return withPayload(row, {
+    __entity: 'Ingredient',
+    id: row.ingredient_id,
+    name: row.name,
+    item_code: row.item_code,
+    ingredient_code: row.ingredient_code || null,
+    sku: row.sku || null,
+    d365_item_id: row.d365_item_id || null,
+    unit: row.base_unit,
+    base_unit: row.base_unit,
+    category: row.category_id || null,
+    source_name: row.source_name || null,
+    is_active: row.status !== 'inactive',
+    status: row.status || 'active'
+  });
+}
+
+function rowToInventory(row = {}) {
+  return withPayload(row, {
+    __entity: 'Inventory',
+    id: row.inventory_id,
+    site_id: row.warehouse_id,
+    ingredient_id: row.ingredient_id,
+    available_quantity: Number(row.available_quantity || 0),
+    reserved_quantity: Number(row.reserved_quantity || 0),
+    on_hand_quantity: Number(row.on_hand_quantity || 0),
+    quantity: Number(row.on_hand_quantity || row.available_quantity || 0),
+    average_unit_cost: Number(row.average_unit_cost || 0),
+    last_unit_cost: Number(row.last_unit_cost || 0),
+    unit: row.stock_unit,
+    status: row.status || 'active',
+    source_name: row.source_name || null
+  });
+}
+
+function rowToInventoryLot(row = {}) {
+  return withPayload(row, {
+    __entity: 'InventoryLot',
+    id: row.lot_id,
+    inventory_id: row.inventory_id,
+    site_id: row.warehouse_id,
+    ingredient_id: row.ingredient_id,
+    batch_number: row.batch_number || null,
+    received_date: row.received_date || null,
+    stock_date: row.stock_date || null,
+    expiry_date: row.expiry_date || null,
+    original_quantity: Number(row.original_quantity || 0),
+    remaining_quantity: Number(row.remaining_quantity || 0),
+    unit: row.unit,
+    unit_cost: Number(row.unit_cost || 0),
+    status: row.status || 'active',
+    source_name: row.source_name || null
+  });
+}
+
+function rowToInventoryTransaction(row = {}) {
+  return withPayload(row, {
+    __entity: 'InventoryTransaction',
+    id: row.inventory_transaction_id,
+    inventory_id: row.inventory_id || null,
+    site_id: row.warehouse_id || null,
+    ingredient_id: row.ingredient_id || null,
+    inventory_lot_id: row.lot_id || null,
+    transaction_type: row.transaction_type,
+    transaction_date: row.transaction_date || null,
+    quantity: Number(row.quantity || 0),
+    unit: row.unit || null,
+    unit_cost: Number(row.unit_cost || 0),
+    total_cost: Number(row.total_cost || 0),
+    reference_type: row.reference_type || null,
+    reference_id: row.reference_id || null,
+    reason_code: row.reason_code || null,
+    idempotency_key: row.idempotency_key || null,
+    status: row.status || 'posted',
+    source_name: row.source_name || null
+  });
+}
+
+function rowToRecipe(row = {}) {
+  return withPayload(row, {
+    __entity: 'Recipe',
+    id: row.recipe_version_id,
+    recipe_master_id: row.recipe_id,
+    name: row.display_name,
+    recipe_code: row.recipe_code || null,
+    cuisine_type: row.cuisine_type || null,
+    category: row.menu_category || null,
+    menu_category: row.menu_category || null,
+    portion_size_grams: row.serving_size_grams === null ? null : Number(row.serving_size_grams || 0),
+    batch_yield: Number(row.batch_yield || 1),
+    total_recipe_weight_grams: row.total_recipe_weight_grams === null ? null : Number(row.total_recipe_weight_grams || 0),
+    total_cost: Number(row.total_cost || 0),
+    cost_per_serving: Number(row.cost_per_serving || 0),
+    site_scope: row.warehouse_id ? 'warehouse' : row.project_id ? 'project' : row.area_id ? 'area' : 'global',
+    site_ids: [row.warehouse_id, row.project_id, row.area_id].filter(Boolean),
+    status: row.status || 'active',
+    is_active: row.status !== 'inactive',
+    source_name: row.source_name || null
+  });
+}
+
+function rowToMenuPlan(row = {}) {
+  return withPayload(row, {
+    __entity: 'MenuPlan',
+    id: row.menu_plan_id,
+    site_id: row.warehouse_id,
+    plan_date: row.plan_date,
+    cuisine_type: row.menu_type,
+    menu_type: row.menu_type,
+    menu_category: row.menu_category,
+    meal_type: row.meal_period,
+    status: row.status || 'planned',
+    source_name: row.source_name || null,
+    created_by: row.created_by || null
+  });
+}
+
+function rowToProduction(row = {}) {
+  return withPayload(row, {
+    __entity: 'Production',
+    id: row.production_id,
+    menu_plan_id: row.menu_plan_id || null,
+    site_id: row.warehouse_id,
+    fulfillment_store_id: row.warehouse_id,
+    production_date: row.production_date,
+    meal_type: row.meal_period,
+    menu_type: row.menu_type,
+    cuisine_type: row.menu_type,
+    menu_category: row.menu_category,
+    status: row.status || 'planned',
+    issue_group_key: row.issue_group_key || null,
+    completed_by: row.completed_by || null,
+    completed_at: row.completed_at || null,
+    reversed_by: row.reversed_by || null,
+    reversed_at: row.reversed_at || null,
+    reversal_reason: row.reversal_reason || null,
+    source_name: row.source_name || null
+  });
+}
+
+function rowToProductionConsumptionReport(row = {}) {
+  return withPayload(row, {
+    __entity: 'ProductionConsumptionReport',
+    id: row.report_id,
+    report_number: row.report_number,
+    production_id: row.production_id,
+    site_id: row.warehouse_id || null,
+    production_date: row.production_date || null,
+    total_consumption_cost: Number(row.total_consumption_cost || 0),
+    total_shortage_cost: Number(row.total_shortage_cost || 0),
+    status: row.status || 'posted'
+  });
+}
+
+function rowToProducedItemBatch(row = {}) {
+  return withPayload(row, {
+    __entity: 'ProducedItemBatch',
+    id: row.output_batch_id,
+    production_id: row.production_id,
+    production_line_id: row.production_line_id,
+    site_id: row.warehouse_id,
+    recipe_id: row.recipe_version_id || row.ingredient_id || null,
+    batch_number: row.batch_number,
+    initial_weight_grams: Number(row.initial_weight_grams || 0),
+    remaining_weight_grams: Number(row.remaining_weight_grams || 0),
+    produced_weight_grams: Number(row.initial_weight_grams || 0),
+    available_weight_grams: Number(row.remaining_weight_grams || 0),
+    initial_servings: row.initial_servings === null ? null : Number(row.initial_servings || 0),
+    remaining_servings: row.remaining_servings === null ? null : Number(row.remaining_servings || 0),
+    unit_cost: Number(row.unit_cost || 0),
+    total_cost: Number(row.total_cost || 0),
+    status: row.status || 'active',
+    source_name: row.source_name || null
+  });
+}
+
+function rowToMealServiceAttendance(row = {}) {
+  return withPayload(row, {
+    __entity: 'MealServiceAttendance',
+    id: row.meal_service_id,
+    service_reference: row.service_reference,
+    idempotency_key: row.idempotency_key,
+    site_id: row.warehouse_id,
+    service_date: row.service_date,
+    meal_type: row.meal_period,
+    menu_type: row.menu_type,
+    menu_category: row.menu_category,
+    serving_size_grams: Number(row.serving_size_grams || 0),
+    covers: Number(row.covers || 0),
+    status: row.status || 'posted',
+    posted_by: row.posted_by || null,
+    reversed_by: row.reversed_by || null,
+    reversed_at: row.reversed_at || null,
+    source_name: row.source_name || null
+  });
+}
+
+function rowToMealServiceConsumption(row = {}) {
+  return withPayload(row, {
+    __entity: 'MealServiceConsumption',
+    id: row.meal_consumption_id,
+    meal_service_attendance_id: row.meal_service_id,
+    produced_item_batch_id: row.output_batch_id || null,
+    production_id: row.production_id || null,
+    recipe_id: row.recipe_version_id || null,
+    idempotency_key: row.idempotency_key,
+    service_reference: row.service_reference,
+    movement_type: row.movement_type || 'consumption',
+    service_date: row.service_date || null,
+    meal_type: row.meal_period || null,
+    consumed_weight_grams: Number(row.consumed_weight_grams || 0),
+    consumed_servings: Number(row.consumed_servings || 0),
+    cost: Number(row.cost || 0),
+    status: row.status || 'posted'
+  });
+}
+
+function rowToFoodWaste(row = {}) {
+  return withPayload(row, {
+    __entity: 'FoodWaste',
+    id: row.food_waste_id,
+    waste_reference: row.waste_reference || null,
+    idempotency_key: row.idempotency_key || null,
+    site_id: row.warehouse_id,
+    waste_date: row.waste_date,
+    meal_type: row.meal_period || null,
+    menu_type: row.menu_type || null,
+    menu_category: row.menu_category || null,
+    waste_category: row.waste_category,
+    reason_code: row.reason_code || null,
+    approval_status: row.approval_status || 'pending',
+    status: row.status || 'posted',
+    recorded_by: row.recorded_by || null,
+    reversed_by: row.reversed_by || null,
+    reversed_at: row.reversed_at || null,
+    reversal_reason: row.reversal_reason || null,
+    source_name: row.source_name || null
+  });
+}
+
+const normalizedSimpleConfigs = {
+  Ingredient: {
+    table: 'ingredients',
+    idColumn: 'ingredient_id',
+    mapper: rowToIngredient,
+    select: 'SELECT * FROM ingredients',
+    insertSql: `INSERT INTO ingredients (
+      ingredient_id, item_code, ingredient_code, sku, d365_item_id, name, base_unit,
+      category_id, status, source_name, payload, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)`,
+    values(record) {
+      const itemCode = String(record.item_code || record.ingredient_code || record.sku || record.d365_item_id || record.id).trim();
+      return [
+        record.id,
+        itemCode,
+        record.ingredient_code || null,
+        record.sku || null,
+        record.d365_item_id || null,
+        record.name,
+        record.base_unit || record.unit || record.conversion_unit || 'EA',
+        record.category || record.category_id || null,
+        record.status || (record.is_active === false ? 'inactive' : 'active'),
+        record.source_name || null,
+        jsonPayload(record),
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE ingredients SET
+      item_code = $2, ingredient_code = $3, sku = $4, d365_item_id = $5, name = $6,
+      base_unit = $7, category_id = $8, status = $9, source_name = $10,
+      payload = $11::jsonb, updated_at = $12
+      WHERE ingredient_id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 11), record.updated_date || nowIso()];
+    }
+  },
+  Inventory: {
+    table: 'warehouse_inventory',
+    idColumn: 'inventory_id',
+    mapper: rowToInventory,
+    select: 'SELECT * FROM warehouse_inventory',
+    insertSql: `INSERT INTO warehouse_inventory (
+      inventory_id, warehouse_id, ingredient_id, available_quantity, reserved_quantity,
+      on_hand_quantity, average_unit_cost, last_unit_cost, stock_unit, status,
+      source_name, payload, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14)`,
+    values(record) {
+      return [
+        record.id,
+        record.site_id || record.warehouse_id,
+        record.ingredient_id,
+        toNumberOrZero(record.available_quantity ?? record.quantity),
+        toNumberOrZero(record.reserved_quantity),
+        toNumberOrZero(record.on_hand_quantity ?? record.quantity ?? record.available_quantity),
+        toNumberOrZero(record.average_unit_cost ?? record.cost_per_unit),
+        toNumberOrZero(record.last_unit_cost ?? record.cost_per_unit),
+        record.stock_unit || record.unit || 'EA',
+        record.status || 'active',
+        record.source_name || null,
+        jsonPayload(record),
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE warehouse_inventory SET
+      warehouse_id = $2, ingredient_id = $3, available_quantity = $4, reserved_quantity = $5,
+      on_hand_quantity = $6, average_unit_cost = $7, last_unit_cost = $8, stock_unit = $9,
+      status = $10, source_name = $11, payload = $12::jsonb, updated_at = $13
+      WHERE inventory_id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 12), record.updated_date || nowIso()];
+    }
+  },
+  InventoryLot: {
+    table: 'inventory_lots',
+    idColumn: 'lot_id',
+    mapper: rowToInventoryLot,
+    select: 'SELECT * FROM inventory_lots',
+    insertSql: `INSERT INTO inventory_lots (
+      lot_id, inventory_id, warehouse_id, ingredient_id, batch_number, received_date, stock_date,
+      expiry_date, original_quantity, remaining_quantity, unit, unit_cost, status, source_name,
+      payload, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)`,
+    values(record) {
+      return [
+        record.id,
+        record.inventory_id,
+        record.site_id || record.warehouse_id,
+        record.ingredient_id,
+        record.batch_number || null,
+        toDateOnlyOrNull(record.received_date),
+        toDateOnlyOrNull(record.stock_date),
+        toDateOnlyOrNull(record.expiry_date),
+        toNumberOrZero(record.original_quantity ?? record.quantity),
+        toNumberOrZero(record.remaining_quantity ?? record.quantity),
+        record.unit || 'EA',
+        toNumberOrZero(record.unit_cost ?? record.cost_per_unit),
+        record.status || 'active',
+        record.source_name || null,
+        jsonPayload(record),
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE inventory_lots SET
+      inventory_id = $2, warehouse_id = $3, ingredient_id = $4, batch_number = $5,
+      received_date = $6, stock_date = $7, expiry_date = $8, original_quantity = $9,
+      remaining_quantity = $10, unit = $11, unit_cost = $12, status = $13,
+      source_name = $14, payload = $15::jsonb, updated_at = $16
+      WHERE lot_id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 15), record.updated_date || nowIso()];
+    }
+  },
+  InventoryTransaction: {
+    table: 'inventory_transactions',
+    idColumn: 'inventory_transaction_id',
+    mapper: rowToInventoryTransaction,
+    select: 'SELECT * FROM inventory_transactions',
+    insertSql: `INSERT INTO inventory_transactions (
+      inventory_transaction_id, inventory_id, warehouse_id, ingredient_id, lot_id,
+      transaction_type, transaction_date, quantity, unit, unit_cost, total_cost,
+      reference_type, reference_id, reason_code, idempotency_key, status, source_name,
+      payload, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)`,
+    values(record) {
+      return [
+        record.id,
+        record.inventory_id || null,
+        record.site_id || record.warehouse_id || null,
+        record.ingredient_id || null,
+        record.lot_id || record.inventory_lot_id || null,
+        record.transaction_type || record.type || 'adjustment',
+        toDateOnlyOrNull(record.transaction_date || record.date || record.created_date),
+        toNumberOrZero(record.quantity),
+        record.unit || null,
+        toNumberOrZero(record.unit_cost ?? record.cost_per_unit),
+        toNumberOrZero(record.total_cost ?? record.value),
+        record.reference_type || null,
+        record.reference_id || null,
+        record.reason_code || null,
+        record.idempotency_key || null,
+        record.status || 'posted',
+        record.source_name || null,
+        jsonPayload(record),
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE inventory_transactions SET
+      inventory_id = $2, warehouse_id = $3, ingredient_id = $4, lot_id = $5,
+      transaction_type = $6, transaction_date = $7, quantity = $8, unit = $9,
+      unit_cost = $10, total_cost = $11, reference_type = $12, reference_id = $13,
+      reason_code = $14, idempotency_key = $15, status = $16, source_name = $17,
+      payload = $18::jsonb, updated_at = $19
+      WHERE inventory_transaction_id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 18), record.updated_date || nowIso()];
+    }
+  }
+};
+
+function normalizedSelectForEntity(entity) {
+  if (entity === 'Site') {
+    return `SELECT area_id AS id, name, 'area' AS type, NULL::text AS parent_site_id,
+                   area_code, NULL::text AS project_code, NULL::text AS warehouse_code,
+                   NULL::text AS d365_warehouse_id, status, source_name, payload, created_at, updated_at
+            FROM areas
+            UNION ALL
+            SELECT project_id AS id, name, 'project' AS type, area_id AS parent_site_id,
+                   NULL::text AS area_code, project_code, NULL::text AS warehouse_code,
+                   NULL::text AS d365_warehouse_id, status, source_name, payload, created_at, updated_at
+            FROM projects
+            UNION ALL
+            SELECT warehouse_id AS id, name, 'store' AS type, project_id AS parent_site_id,
+                   NULL::text AS area_code, NULL::text AS project_code, warehouse_code,
+                   d365_warehouse_id, status, source_name, payload, created_at, updated_at
+            FROM warehouses`;
+  }
+  if (entity === 'Recipe') {
+    return `SELECT version.*, recipe.canonical_name
+            FROM recipe_versions version
+            JOIN recipes recipe ON recipe.recipe_id = version.recipe_id`;
+  }
+  if (entity === 'MenuPlan') return 'SELECT * FROM menu_plans';
+  if (entity === 'Production') return 'SELECT * FROM production_events';
+  if (entity === 'ProductionConsumptionReport') return 'SELECT * FROM production_consumption_reports';
+  if (entity === 'ProducedItemBatch') return 'SELECT * FROM produced_output_batches';
+  if (entity === 'MealServiceAttendance') return 'SELECT * FROM meal_service_headers';
+  if (entity === 'MealServiceConsumption') return 'SELECT * FROM meal_service_consumptions';
+  if (entity === 'FoodWaste') return 'SELECT * FROM food_waste_records';
+  return normalizedSimpleConfigs[entity]?.select || null;
+}
+
+function normalizedIdColumn(entity) {
+  return ({
+    Site: 'id',
+    Recipe: 'recipe_version_id',
+    MenuPlan: 'menu_plan_id',
+    Production: 'production_id',
+    ProductionConsumptionReport: 'report_id',
+    ProducedItemBatch: 'output_batch_id',
+    MealServiceAttendance: 'meal_service_id',
+    MealServiceConsumption: 'meal_consumption_id',
+    FoodWaste: 'food_waste_id'
+  })[entity] || normalizedSimpleConfigs[entity]?.idColumn;
+}
+
+function normalizedMapper(entity) {
+  return ({
+    Site: rowToSite,
+    Recipe: rowToRecipe,
+    MenuPlan: rowToMenuPlan,
+    Production: rowToProduction,
+    ProductionConsumptionReport: rowToProductionConsumptionReport,
+    ProducedItemBatch: rowToProducedItemBatch,
+    MealServiceAttendance: rowToMealServiceAttendance,
+    MealServiceConsumption: rowToMealServiceConsumption,
+    FoodWaste: rowToFoodWaste
+  })[entity] || normalizedSimpleConfigs[entity]?.mapper;
+}
+
+function normalizedOrder(records, sort) {
+  return sortRecords(records, sort || '-updated_date');
+}
+
+async function listNormalizedDocuments(
+  entity,
+  { filters = {}, rangeFilters = {}, sort, limit, offset = 0, lock = false, location = null } = {},
+  executor = pool
+) {
+  const select = normalizedSelectForEntity(entity);
+  const mapper = normalizedMapper(entity);
+  if (!select || !mapper) return null;
+  const lockClause = lock && entity !== 'Site' ? 'FOR UPDATE' : '';
+  const result = await query(`SELECT * FROM (${select}) normalized_record ${lockClause}`, [], executor);
+  let records = result.rows.map(mapper);
+  records = records.filter((record) => matchesFilter(record, filters));
+  if (rangeFilters && typeof rangeFilters === 'object') {
+    records = records.filter((record) => Object.entries(rangeFilters).every(([field, bounds]) => {
+      const value = record[field];
+      if (bounds?.gte && String(value || '') < String(bounds.gte)) return false;
+      if (bounds?.lte && String(value || '') > String(bounds.lte)) return false;
+      return true;
+    }));
+  }
+  if (location && !location.unrestricted) {
+    const allowed = new Set([...(location.accessibleSiteIds || [])].map(String));
+    records = records.filter((record) => {
+      if (entity === 'Site') return allowed.has(String(record.id));
+      const siteIds = [record.site_id, record.fulfillment_store_id, record.warehouse_id]
+        .filter(Boolean)
+        .map(String);
+      if (!siteIds.length && entity === 'Recipe' && record.site_scope === 'global') return true;
+      return siteIds.length ? siteIds.every((siteId) => allowed.has(siteId)) : true;
+    });
+  }
+  const ordered = normalizedOrder(records, sort);
+  const start = Math.max(0, Number(offset) || 0);
+  return typeof limit === 'number' ? ordered.slice(start, start + limit) : ordered.slice(start);
+}
+
+async function findNormalizedDocument(entity, id, executor = pool, lock = false) {
+  const select = normalizedSelectForEntity(entity);
+  const idColumn = normalizedIdColumn(entity);
+  const mapper = normalizedMapper(entity);
+  if (!select || !idColumn || !mapper) return null;
+  const lockClause = lock && entity !== 'Site' ? 'FOR UPDATE' : '';
+  const result = await query(
+    `SELECT * FROM (${select}) normalized_record WHERE ${idColumn} = $1 LIMIT 1 ${lockClause}`,
+    [id],
+    executor
+  );
+  return result.rowCount ? mapper(result.rows[0]) : null;
+}
+
+async function insertOrUpdateNormalizedSite(record, existing = null, executor = pool) {
+  const type = normalizeSiteType(record.type || existing?.type || SITE_HIERARCHY_TYPES.AREA);
+  const createdAt = record.created_date || existing?.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  if (existing && normalizeSiteType(existing.type) !== type) {
+    await deleteNormalizedDocument('Site', existing.id, executor);
+  }
+  if (type === SITE_HIERARCHY_TYPES.AREA) {
+    await query(
+      `INSERT INTO areas (area_id, area_code, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)
+       ON CONFLICT (area_id) DO UPDATE SET
+         area_code = EXCLUDED.area_code, name = EXCLUDED.name, legacy_site_id = EXCLUDED.legacy_site_id,
+         status = EXCLUDED.status, source_name = EXCLUDED.source_name, payload = EXCLUDED.payload,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.area_code || record.project_code || null,
+        record.name,
+        record.legacy_site_id || record.id,
+        record.status || (record.is_active === false ? 'inactive' : 'active'),
+        record.source_name || null,
+        jsonPayload(record),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  } else if (type === SITE_HIERARCHY_TYPES.PROJECT) {
+    await query(
+      `INSERT INTO projects (project_id, area_id, project_code, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
+       ON CONFLICT (project_id) DO UPDATE SET
+         area_id = EXCLUDED.area_id, project_code = EXCLUDED.project_code, name = EXCLUDED.name,
+         legacy_site_id = EXCLUDED.legacy_site_id, status = EXCLUDED.status, source_name = EXCLUDED.source_name,
+         payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.parent_site_id,
+        record.project_code || null,
+        record.name,
+        record.legacy_site_id || record.id,
+        record.status || (record.is_active === false ? 'inactive' : 'active'),
+        record.source_name || null,
+        jsonPayload(record),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  } else {
+    await query(
+      `INSERT INTO warehouses (warehouse_id, project_id, warehouse_code, d365_warehouse_id, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)
+       ON CONFLICT (warehouse_id) DO UPDATE SET
+         project_id = EXCLUDED.project_id, warehouse_code = EXCLUDED.warehouse_code,
+         d365_warehouse_id = EXCLUDED.d365_warehouse_id, name = EXCLUDED.name,
+         legacy_site_id = EXCLUDED.legacy_site_id, status = EXCLUDED.status, source_name = EXCLUDED.source_name,
+         payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.parent_site_id,
+        record.warehouse_code || record.project_code || null,
+        record.d365_warehouse_id || null,
+        record.name,
+        record.legacy_site_id || record.id,
+        record.status || (record.is_active === false ? 'inactive' : 'active'),
+        record.source_name || null,
+        jsonPayload(record),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+  return findNormalizedDocument('Site', record.id, executor);
+}
+
+async function insertOrUpdateNormalizedRecipe(record, existing = null, executor = pool) {
+  const masterId = record.recipe_master_id || record.recipe_id || existing?.recipe_master_id || record.id;
+  const createdAt = record.created_date || existing?.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  await query(
+    `INSERT INTO recipes (recipe_id, canonical_name, description, status, source_name, payload, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)
+     ON CONFLICT (recipe_id) DO UPDATE SET
+       canonical_name = EXCLUDED.canonical_name, description = EXCLUDED.description,
+       status = EXCLUDED.status, source_name = EXCLUDED.source_name,
+       payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+    [
+      masterId,
+      record.canonical_name || record.name,
+      record.description || null,
+      record.status || (record.is_active === false ? 'inactive' : 'active'),
+      record.source_name || null,
+      jsonPayload(record),
+      createdAt,
+      updatedAt
+    ],
+    executor
+  );
+  const scopeIds = Array.isArray(record.site_ids) ? record.site_ids.filter(Boolean).map(String) : [];
+  const scope = String(record.site_scope || '').toLowerCase();
+  const warehouseId = record.warehouse_id || (scope === 'warehouse' || scope === 'store' ? scopeIds[0] : null);
+  const projectId = record.project_id || (scope === 'project' ? scopeIds[0] : null);
+  const areaId = record.area_id || (scope === 'area' ? scopeIds[0] : null);
+  await query(
+    `INSERT INTO recipe_versions (
+      recipe_version_id, recipe_id, area_id, project_id, warehouse_id, recipe_code,
+      display_name, version_label, cuisine_type, menu_category, serving_size_grams,
+      batch_yield, total_recipe_weight_grams, total_cost, cost_per_serving,
+      status, source_name, payload, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)
+    ON CONFLICT (recipe_version_id) DO UPDATE SET
+      recipe_id = EXCLUDED.recipe_id, area_id = EXCLUDED.area_id, project_id = EXCLUDED.project_id,
+      warehouse_id = EXCLUDED.warehouse_id, recipe_code = EXCLUDED.recipe_code,
+      display_name = EXCLUDED.display_name, version_label = EXCLUDED.version_label,
+      cuisine_type = EXCLUDED.cuisine_type, menu_category = EXCLUDED.menu_category,
+      serving_size_grams = EXCLUDED.serving_size_grams, batch_yield = EXCLUDED.batch_yield,
+      total_recipe_weight_grams = EXCLUDED.total_recipe_weight_grams, total_cost = EXCLUDED.total_cost,
+      cost_per_serving = EXCLUDED.cost_per_serving, status = EXCLUDED.status,
+      source_name = EXCLUDED.source_name, payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      masterId,
+      areaId,
+      projectId,
+      warehouseId,
+      record.recipe_code || null,
+      record.name,
+      record.version_label || 'v1',
+      record.cuisine_type || null,
+      record.menu_category || record.category || null,
+      toNumberOrNull(record.portion_size_grams || record.serving_size_grams),
+      toNumberOrZero(record.batch_yield) || 1,
+      toNumberOrNull(record.total_recipe_weight_grams),
+      toNumberOrZero(record.total_cost),
+      toNumberOrZero(record.cost_per_serving),
+      record.status || (record.is_active === false ? 'inactive' : 'active'),
+      record.source_name || null,
+      jsonPayload(record),
+      createdAt,
+      updatedAt
+    ],
+    executor
+  );
+  await query('DELETE FROM recipe_ingredient_lines WHERE recipe_version_id = $1', [record.id], executor);
+  const lines = Array.isArray(record.ingredients) ? record.ingredients : [];
+  for (const [index, line] of lines.entries()) {
+    if (!line?.ingredient_id) continue;
+    await query(
+      `INSERT INTO recipe_ingredient_lines (
+        recipe_line_id, recipe_version_id, ingredient_id, line_number, quantity, unit,
+        converted_quantity, converted_unit, raw_weight_grams, yield_percent, yielded_weight_grams,
+        cost, source_name, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [
+        line.id || `${record.id}:line:${index + 1}`,
+        record.id,
+        line.ingredient_id,
+        index + 1,
+        toNumberOrZero(line.quantity),
+        line.unit || 'EA',
+        toNumberOrNull(line.converted_quantity),
+        line.converted_unit || null,
+        toNumberOrNull(line.raw_weight_grams),
+        toNumberOrNull(line.yield_percent) ?? 100,
+        toNumberOrNull(line.yielded_weight_grams),
+        toNumberOrZero(line.cost ?? line.line_cost),
+        line.source_name || record.source_name || null,
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+  return findNormalizedDocument('Recipe', record.id, executor);
+}
+
+async function ensureProductionManifestLine(record, executor = pool) {
+  const lineId = record.production_line_id || record.source_event_recipe_id || `${record.id}:line:1`;
+  const existingLine = await query(
+    'SELECT production_line_id FROM production_manifest_lines WHERE production_line_id = $1 LIMIT 1',
+    [lineId],
+    executor
+  );
+  if (existingLine.rowCount) return lineId;
+  await query(
+    `INSERT INTO production_manifest_lines (
+      production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
+      ingredient_id, item_name, requested_servings, requested_weight_grams, produced_servings,
+      produced_weight_grams, estimated_cost, actual_cost, status, source_name, payload,
+      created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
+    ON CONFLICT (production_line_id) DO NOTHING`,
+    [
+      lineId,
+      record.id || record.production_id,
+      record.menu_plan_line_id || null,
+      1,
+      record.recipe_id || null,
+      record.ingredient_id || null,
+      record.production_name || record.recipe_name || record.name || 'Production item',
+      toNumberOrNull(record.target_servings || record.production_covers || record.produced_servings),
+      toNumberOrNull(record.requested_weight_grams || record.production_size_grams),
+      toNumberOrNull(record.produced_servings || record.production_covers),
+      toNumberOrNull(record.produced_weight_grams || record.finished_weight_grams || record.production_size_grams),
+      toNumberOrZero(record.estimated_cost || record.estimated_batch_cost),
+      toNumberOrZero(record.actual_cost || record.production_cost_total || record.total_cost),
+      'active',
+      record.source_name || null,
+      jsonPayload(record),
+      record.created_date || nowIso(),
+      record.updated_date || nowIso()
+    ],
+    executor
+  );
+  return lineId;
+}
+
+async function insertOrUpdateNormalizedDocument(entity, record, existing = null, executor = pool) {
+  if (entity === 'Site') return insertOrUpdateNormalizedSite(record, existing, executor);
+  if (entity === 'Recipe') return insertOrUpdateNormalizedRecipe(record, existing, executor);
+
+  const config = normalizedSimpleConfigs[entity];
+  if (config) {
+    const sql = existing ? config.updateSql : config.insertSql;
+    const values = existing ? config.updateValues(record) : config.values(record);
+    await query(sql, values, executor);
+    return findNormalizedDocument(entity, record.id, executor);
+  }
+
+  const createdAt = record.created_date || existing?.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  if (entity === 'MenuPlan') {
+    await query(
+      `INSERT INTO menu_plans (
+        menu_plan_id, warehouse_id, plan_date, meal_period, menu_type, menu_category,
+        status, source_name, created_by, payload, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+      ON CONFLICT (menu_plan_id) DO UPDATE SET
+        warehouse_id = EXCLUDED.warehouse_id, plan_date = EXCLUDED.plan_date,
+        meal_period = EXCLUDED.meal_period, menu_type = EXCLUDED.menu_type,
+        menu_category = EXCLUDED.menu_category, status = EXCLUDED.status,
+        source_name = EXCLUDED.source_name, created_by = EXCLUDED.created_by,
+        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.site_id || record.warehouse_id,
+        toDateOnlyOrNull(record.plan_date),
+        record.meal_type || 'all',
+        record.menu_type || record.cuisine_type || 'general',
+        record.menu_category || 'senior',
+        record.status || 'planned',
+        record.source_name || null,
+        record.created_by || null,
+        jsonPayload(record),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+    return findNormalizedDocument(entity, record.id, executor);
+  }
+  if (entity === 'Production') {
+    await query(
+      `INSERT INTO production_events (
+        production_id, menu_plan_id, warehouse_id, production_date, meal_period,
+        menu_type, menu_category, status, issue_group_key, payload, started_by,
+        completed_by, completed_at, reversed_by, reversed_at, reversal_reason,
+        source_name, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+      ON CONFLICT (production_id) DO UPDATE SET
+        menu_plan_id = EXCLUDED.menu_plan_id, warehouse_id = EXCLUDED.warehouse_id,
+        production_date = EXCLUDED.production_date, meal_period = EXCLUDED.meal_period,
+        menu_type = EXCLUDED.menu_type, menu_category = EXCLUDED.menu_category,
+        status = EXCLUDED.status, issue_group_key = EXCLUDED.issue_group_key,
+        payload = EXCLUDED.payload, started_by = EXCLUDED.started_by,
+        completed_by = EXCLUDED.completed_by, completed_at = EXCLUDED.completed_at,
+        reversed_by = EXCLUDED.reversed_by, reversed_at = EXCLUDED.reversed_at,
+        reversal_reason = EXCLUDED.reversal_reason, source_name = EXCLUDED.source_name,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.menu_plan_id || record.source_event_id || null,
+        record.fulfillment_store_id || record.site_id || record.warehouse_id,
+        toDateOnlyOrNull(record.production_date || record.date),
+        record.meal_type || 'breakfast',
+        record.menu_type || record.cuisine_type || 'general',
+        record.menu_category || 'senior',
+        record.status || 'planned',
+        record.issue_group_key || record.id,
+        jsonPayload(record),
+        record.started_by || null,
+        record.completed_by || null,
+        record.completed_at || null,
+        record.reversed_by || null,
+        record.reversed_at || null,
+        record.reversal_reason || null,
+        record.source_name || null,
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+    await ensureProductionManifestLine(record, executor);
+    return findNormalizedDocument(entity, record.id, executor);
+  }
+  if (entity === 'ProductionConsumptionReport') {
+    await query(
+      `INSERT INTO production_consumption_reports (
+        report_id, report_number, production_id, warehouse_id, production_date,
+        total_consumption_cost, total_shortage_cost, status, payload, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)
+      ON CONFLICT (report_id) DO UPDATE SET
+        report_number = EXCLUDED.report_number, production_id = EXCLUDED.production_id,
+        warehouse_id = EXCLUDED.warehouse_id, production_date = EXCLUDED.production_date,
+        total_consumption_cost = EXCLUDED.total_consumption_cost,
+        total_shortage_cost = EXCLUDED.total_shortage_cost, status = EXCLUDED.status,
+        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.report_number,
+        record.production_id,
+        record.site_id || record.warehouse_id || null,
+        toDateOnlyOrNull(record.production_date),
+        toNumberOrZero(record.total_consumption_cost),
+        toNumberOrZero(record.total_shortage_cost),
+        record.status || 'posted',
+        jsonPayload(record),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+    return findNormalizedDocument(entity, record.id, executor);
+  }
+  if (entity === 'ProducedItemBatch') {
+    const productionLineId = await ensureProductionManifestLine({
+      ...record,
+      id: record.production_id,
+      production_id: record.production_id,
+      recipe_id: record.recipe_id,
+      production_name: record.production_name || record.recipe_name
+    }, executor);
+    await query(
+      `INSERT INTO produced_output_batches (
+        output_batch_id, production_id, production_line_id, warehouse_id, recipe_version_id,
+        ingredient_id, batch_number, initial_weight_grams, remaining_weight_grams,
+        initial_servings, remaining_servings, unit_cost, total_cost, status, source_name,
+        payload, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
+      ON CONFLICT (output_batch_id) DO UPDATE SET
+        production_id = EXCLUDED.production_id, production_line_id = EXCLUDED.production_line_id,
+        warehouse_id = EXCLUDED.warehouse_id, recipe_version_id = EXCLUDED.recipe_version_id,
+        ingredient_id = EXCLUDED.ingredient_id, batch_number = EXCLUDED.batch_number,
+        initial_weight_grams = EXCLUDED.initial_weight_grams,
+        remaining_weight_grams = EXCLUDED.remaining_weight_grams,
+        initial_servings = EXCLUDED.initial_servings, remaining_servings = EXCLUDED.remaining_servings,
+        unit_cost = EXCLUDED.unit_cost, total_cost = EXCLUDED.total_cost,
+        status = EXCLUDED.status, source_name = EXCLUDED.source_name,
+        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.production_id,
+        productionLineId,
+        record.site_id || record.warehouse_id,
+        record.recipe_id || null,
+        record.ingredient_id || null,
+        record.batch_number,
+        toNumberOrZero(record.initial_weight_grams ?? record.produced_weight_grams),
+        toNumberOrZero(record.remaining_weight_grams ?? record.available_weight_grams ?? record.produced_weight_grams),
+        toNumberOrNull(record.initial_servings ?? record.produced_servings),
+        toNumberOrNull(record.remaining_servings ?? record.available_servings ?? record.produced_servings),
+        toNumberOrZero(record.unit_cost),
+        toNumberOrZero(record.total_cost),
+        record.status || 'active',
+        record.source_name || null,
+        jsonPayload(record),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+    return findNormalizedDocument(entity, record.id, executor);
+  }
+  if (entity === 'MealServiceAttendance') {
+    await query(
+      `INSERT INTO meal_service_headers (
+        meal_service_id, service_reference, idempotency_key, warehouse_id, service_date,
+        meal_period, menu_type, menu_category, serving_size_grams, covers, status,
+        payload, posted_by, reversed_by, reversed_at, source_name, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18)
+      ON CONFLICT (meal_service_id) DO UPDATE SET
+        service_reference = EXCLUDED.service_reference, idempotency_key = EXCLUDED.idempotency_key,
+        warehouse_id = EXCLUDED.warehouse_id, service_date = EXCLUDED.service_date,
+        meal_period = EXCLUDED.meal_period, menu_type = EXCLUDED.menu_type,
+        menu_category = EXCLUDED.menu_category, serving_size_grams = EXCLUDED.serving_size_grams,
+        covers = EXCLUDED.covers, status = EXCLUDED.status, payload = EXCLUDED.payload,
+        posted_by = EXCLUDED.posted_by, reversed_by = EXCLUDED.reversed_by,
+        reversed_at = EXCLUDED.reversed_at, source_name = EXCLUDED.source_name,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.service_reference,
+        record.idempotency_key,
+        record.site_id || record.warehouse_id,
+        toDateOnlyOrNull(record.service_date),
+        record.meal_type || 'breakfast',
+        record.menu_type || 'general',
+        record.menu_category || 'senior',
+        toNumberOrZero(record.serving_size_grams || record.portion_size_grams),
+        toNumberOrZero(record.covers || record.attendee_count),
+        record.status || 'posted',
+        jsonPayload(record),
+        record.posted_by || record.performed_by || null,
+        record.reversed_by || null,
+        record.reversed_at || null,
+        record.source_name || null,
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+    return findNormalizedDocument(entity, record.id, executor);
+  }
+  if (entity === 'MealServiceConsumption') {
+    const allocation = Array.isArray(record.allocations) ? record.allocations[0] || {} : {};
+    await query(
+      `INSERT INTO meal_service_consumptions (
+        meal_consumption_id, meal_service_id, output_batch_id, production_id, recipe_version_id,
+        idempotency_key, service_reference, movement_type, service_date, meal_period,
+        consumed_weight_grams, consumed_servings, cost, status, payload, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)
+      ON CONFLICT (meal_consumption_id) DO UPDATE SET
+        meal_service_id = EXCLUDED.meal_service_id, output_batch_id = EXCLUDED.output_batch_id,
+        production_id = EXCLUDED.production_id, recipe_version_id = EXCLUDED.recipe_version_id,
+        idempotency_key = EXCLUDED.idempotency_key, service_reference = EXCLUDED.service_reference,
+        movement_type = EXCLUDED.movement_type, service_date = EXCLUDED.service_date,
+        meal_period = EXCLUDED.meal_period, consumed_weight_grams = EXCLUDED.consumed_weight_grams,
+        consumed_servings = EXCLUDED.consumed_servings, cost = EXCLUDED.cost,
+        status = EXCLUDED.status, payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.meal_service_attendance_id,
+        record.produced_item_batch_id || allocation.produced_item_batch_id || allocation.batch_id || null,
+        record.production_id || allocation.production_id || null,
+        record.recipe_id || null,
+        record.idempotency_key,
+        record.service_reference,
+        record.movement_type || 'consumption',
+        toDateOnlyOrNull(record.service_date),
+        record.meal_type || null,
+        toNumberOrZero(record.consumed_weight_grams || record.required_weight_grams),
+        toNumberOrZero(record.consumed_servings || record.required_servings),
+        toNumberOrZero(record.cost || record.total_cost),
+        record.status || 'posted',
+        jsonPayload(record),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+    return findNormalizedDocument(entity, record.id, executor);
+  }
+  if (entity === 'FoodWaste') {
+    await query(
+      `INSERT INTO food_waste_records (
+        food_waste_id, waste_reference, idempotency_key, warehouse_id, waste_date, meal_period,
+        menu_type, menu_category, waste_category, reason_code, approval_status, status,
+        recorded_by, reversed_by, reversed_at, reversal_reason, source_name, payload,
+        created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)
+      ON CONFLICT (food_waste_id) DO UPDATE SET
+        waste_reference = EXCLUDED.waste_reference, idempotency_key = EXCLUDED.idempotency_key,
+        warehouse_id = EXCLUDED.warehouse_id, waste_date = EXCLUDED.waste_date,
+        meal_period = EXCLUDED.meal_period, menu_type = EXCLUDED.menu_type,
+        menu_category = EXCLUDED.menu_category, waste_category = EXCLUDED.waste_category,
+        reason_code = EXCLUDED.reason_code, approval_status = EXCLUDED.approval_status,
+        status = EXCLUDED.status, recorded_by = EXCLUDED.recorded_by,
+        reversed_by = EXCLUDED.reversed_by, reversed_at = EXCLUDED.reversed_at,
+        reversal_reason = EXCLUDED.reversal_reason, source_name = EXCLUDED.source_name,
+        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.waste_reference || record.service_reference || null,
+        record.idempotency_key || null,
+        record.site_id || record.warehouse_id,
+        toDateOnlyOrNull(record.waste_date),
+        record.meal_type || null,
+        record.menu_type || null,
+        record.menu_category || null,
+        record.waste_category || 'ingredient',
+        record.reason_code || null,
+        record.approval_status || 'pending',
+        record.status || 'posted',
+        record.recorded_by || null,
+        record.reversed_by || null,
+        record.reversed_at || null,
+        record.reversal_reason || null,
+        record.source_name || null,
+        jsonPayload(record),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+    return findNormalizedDocument(entity, record.id, executor);
+  }
+  return null;
+}
+
+async function createNormalizedDocument(entity, record, executor = pool) {
+  return insertOrUpdateNormalizedDocument(entity, record, null, executor);
+}
+
+async function updateNormalizedDocument(entity, id, record, existing, executor = pool) {
+  return insertOrUpdateNormalizedDocument(entity, { ...record, id }, existing, executor);
+}
+
+async function deleteNormalizedDocument(entity, id, executor = pool) {
+  if (entity === 'Site') {
+    const existing = await findNormalizedDocument('Site', id, executor, true);
+    if (!existing) return false;
+    const type = normalizeSiteType(existing.type);
+    const table = type === SITE_HIERARCHY_TYPES.AREA
+      ? 'areas'
+      : type === SITE_HIERARCHY_TYPES.PROJECT
+        ? 'projects'
+        : 'warehouses';
+    const idColumn = type === SITE_HIERARCHY_TYPES.AREA
+      ? 'area_id'
+      : type === SITE_HIERARCHY_TYPES.PROJECT
+        ? 'project_id'
+        : 'warehouse_id';
+    const result = await query(`DELETE FROM ${table} WHERE ${idColumn} = $1`, [id], executor);
+    return result.rowCount > 0;
+  }
+  if (entity === 'Recipe') {
+    const result = await query('DELETE FROM recipe_versions WHERE recipe_version_id = $1', [id], executor);
+    return result.rowCount > 0;
+  }
+  const config = normalizedSimpleConfigs[entity];
+  if (config) {
+    const result = await query(`DELETE FROM ${config.table} WHERE ${config.idColumn} = $1`, [id], executor);
+    return result.rowCount > 0;
+  }
+  const tableByEntity = {
+    MenuPlan: ['menu_plans', 'menu_plan_id'],
+    Production: ['production_events', 'production_id'],
+    ProductionConsumptionReport: ['production_consumption_reports', 'report_id'],
+    ProducedItemBatch: ['produced_output_batches', 'output_batch_id'],
+    MealServiceAttendance: ['meal_service_headers', 'meal_service_id'],
+    MealServiceConsumption: ['meal_service_consumptions', 'meal_consumption_id'],
+    FoodWaste: ['food_waste_records', 'food_waste_id']
+  };
+  const target = tableByEntity[entity];
+  if (!target) return false;
+  const result = await query(`DELETE FROM ${target[0]} WHERE ${target[1]} = $1`, [id], executor);
+  return result.rowCount > 0;
+}
+
 async function query(text, params = [], executor = pool) {
   return executor.query(text, params);
 }
@@ -670,6 +1828,19 @@ async function validateSiteChildrenAfterStructureChange(existing, record, execut
   const parentChanged = String(existing.parent_site_id || '') !== String(record.parent_site_id || '');
   if (!typeChanged && !parentChanged) return;
 
+  if (usesNormalizedCore('Site')) {
+    const children = (await listNormalizedDocuments('Site', {
+      filters: { parent_site_id: String(record.id) }
+    }, executor)) || [];
+    const hierarchyError = validateSiteChildrenForParent(record, children);
+    if (hierarchyError) {
+      const error = new Error(hierarchyError);
+      error.status = 409;
+      throw error;
+    }
+    return;
+  }
+
   const result = await query(
     `SELECT data
        FROM entity_records
@@ -706,17 +1877,38 @@ const normalizedReferenceChecks = {
     { label: 'purchase request', sql: 'SELECT id FROM purchase_requests WHERE site_id = $1 LIMIT 1' },
     { label: 'purchase order', sql: 'SELECT id FROM purchase_orders WHERE site_id = $1 LIMIT 1' },
     { label: 'goods receipt', sql: 'SELECT id FROM goods_receipts WHERE site_id = $1 LIMIT 1' },
-    { label: 'supplier price history', sql: 'SELECT id FROM supplier_price_history WHERE site_id = $1 LIMIT 1' }
+    { label: 'supplier price history', sql: 'SELECT id FROM supplier_price_history WHERE site_id = $1 LIMIT 1' },
+    { label: 'project', sql: 'SELECT project_id AS id FROM projects WHERE area_id = $1 LIMIT 1' },
+    { label: 'warehouse', sql: 'SELECT warehouse_id AS id FROM warehouses WHERE project_id = $1 LIMIT 1' },
+    { label: 'warehouse inventory', sql: 'SELECT inventory_id AS id FROM warehouse_inventory WHERE warehouse_id = $1 LIMIT 1' },
+    { label: 'inventory lot', sql: 'SELECT lot_id AS id FROM inventory_lots WHERE warehouse_id = $1 LIMIT 1' },
+    { label: 'menu plan', sql: 'SELECT menu_plan_id AS id FROM menu_plans WHERE warehouse_id = $1 LIMIT 1' },
+    { label: 'production event', sql: 'SELECT production_id AS id FROM production_events WHERE warehouse_id = $1 LIMIT 1' },
+    { label: 'produced output batch', sql: 'SELECT output_batch_id AS id FROM produced_output_batches WHERE warehouse_id = $1 LIMIT 1' },
+    { label: 'meal service', sql: 'SELECT meal_service_id AS id FROM meal_service_headers WHERE warehouse_id = $1 LIMIT 1' },
+    { label: 'food waste record', sql: 'SELECT food_waste_id AS id FROM food_waste_records WHERE warehouse_id = $1 LIMIT 1' }
   ],
   Ingredient: [
     { label: 'purchase request item', sql: 'SELECT id FROM purchase_request_items WHERE ingredient_id = $1 LIMIT 1' },
     { label: 'purchase order item', sql: 'SELECT id FROM purchase_order_items WHERE ingredient_id = $1 LIMIT 1' },
     { label: 'goods receipt item', sql: 'SELECT id FROM goods_receipt_items WHERE ingredient_id = $1 LIMIT 1' },
-    { label: 'supplier price history', sql: 'SELECT id FROM supplier_price_history WHERE ingredient_id = $1 LIMIT 1' }
+    { label: 'supplier price history', sql: 'SELECT id FROM supplier_price_history WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'warehouse inventory', sql: 'SELECT inventory_id AS id FROM warehouse_inventory WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'inventory lot', sql: 'SELECT lot_id AS id FROM inventory_lots WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'recipe ingredient line', sql: 'SELECT recipe_line_id AS id FROM recipe_ingredient_lines WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'production manifest line', sql: 'SELECT production_line_id AS id FROM production_manifest_lines WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'production consumption line', sql: 'SELECT consumption_line_id AS id FROM production_consumption_lines WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'produced output batch', sql: 'SELECT output_batch_id AS id FROM produced_output_batches WHERE ingredient_id = $1 LIMIT 1' },
+    { label: 'food waste line', sql: 'SELECT food_waste_line_id AS id FROM food_waste_lines WHERE ingredient_id = $1 LIMIT 1' }
   ],
   Recipe: [
     { label: 'POS recipe mapping', sql: 'SELECT id FROM pos_recipe_mapping WHERE recipe_id = $1 LIMIT 1' },
-    { label: 'POS sales item', sql: 'SELECT id FROM pos_sales_items WHERE recipe_id = $1 LIMIT 1' }
+    { label: 'POS sales item', sql: 'SELECT id FROM pos_sales_items WHERE recipe_id = $1 LIMIT 1' },
+    { label: 'recipe ingredient line', sql: 'SELECT recipe_line_id AS id FROM recipe_ingredient_lines WHERE recipe_version_id = $1 LIMIT 1' },
+    { label: 'menu plan line', sql: 'SELECT menu_plan_line_id AS id FROM menu_plan_lines WHERE recipe_version_id = $1 LIMIT 1' },
+    { label: 'production manifest line', sql: 'SELECT production_line_id AS id FROM production_manifest_lines WHERE recipe_version_id = $1 LIMIT 1' },
+    { label: 'produced output batch', sql: 'SELECT output_batch_id AS id FROM produced_output_batches WHERE recipe_version_id = $1 LIMIT 1' },
+    { label: 'meal service consumption', sql: 'SELECT meal_consumption_id AS id FROM meal_service_consumptions WHERE recipe_version_id = $1 LIMIT 1' }
   ]
 };
 
@@ -792,6 +1984,70 @@ const siteSubtreeReferenceChecks = Object.freeze([
     table: 'supplier_price_history',
     sql: `SELECT id FROM supplier_price_history
            WHERE site_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'warehouse_inventory',
+    label: 'warehouse inventory',
+    table: 'warehouse_inventory',
+    sql: `SELECT inventory_id AS id FROM warehouse_inventory
+           WHERE warehouse_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'inventory_lots',
+    label: 'inventory lots',
+    table: 'inventory_lots',
+    sql: `SELECT lot_id AS id FROM inventory_lots
+           WHERE warehouse_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'inventory_transactions',
+    label: 'inventory transactions',
+    table: 'inventory_transactions',
+    sql: `SELECT inventory_transaction_id AS id FROM inventory_transactions
+           WHERE warehouse_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'menu_plans',
+    label: 'menu plans',
+    table: 'menu_plans',
+    sql: `SELECT menu_plan_id AS id FROM menu_plans
+           WHERE warehouse_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'production_events',
+    label: 'production events',
+    table: 'production_events',
+    sql: `SELECT production_id AS id FROM production_events
+           WHERE warehouse_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'produced_output_batches',
+    label: 'produced output batches',
+    table: 'produced_output_batches',
+    sql: `SELECT output_batch_id AS id FROM produced_output_batches
+           WHERE warehouse_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'meal_service_headers',
+    label: 'meal services',
+    table: 'meal_service_headers',
+    sql: `SELECT meal_service_id AS id FROM meal_service_headers
+           WHERE warehouse_id = ANY($1::text[])
+           FOR SHARE`
+  },
+  {
+    key: 'food_waste_records',
+    label: 'food waste records',
+    table: 'food_waste_records',
+    sql: `SELECT food_waste_id AS id FROM food_waste_records
+           WHERE warehouse_id = ANY($1::text[])
            FOR SHARE`
   }
 ]);
@@ -879,18 +2135,19 @@ async function deleteSiteSubtreeWithExecutor(rootId, executor) {
     ['site-hierarchy'],
     executor
   );
-  const siteResult = await query(
-    `SELECT id, data
-       FROM entity_records
-      WHERE entity_name = 'Site'
-      FOR UPDATE`,
-    [],
-    executor
-  );
-  const sites = siteResult.rows.map((row) => ({
-    ...(row.data && typeof row.data === 'object' ? row.data : {}),
-    id: String(row.data?.id || row.id)
-  }));
+  const sites = usesNormalizedCore('Site')
+    ? (await listNormalizedDocuments('Site', {}, executor)).map((site) => ({ ...site, id: String(site.id) }))
+    : (await query(
+      `SELECT id, data
+         FROM entity_records
+        WHERE entity_name = 'Site'
+        FOR UPDATE`,
+      [],
+      executor
+    )).rows.map((row) => ({
+      ...(row.data && typeof row.data === 'object' ? row.data : {}),
+      id: String(row.data?.id || row.id)
+    }));
   const siteById = new Map(sites.map((site) => [String(site.id), site]));
   if (!siteById.has(normalizedRootId)) {
     const error = new Error('Site not found');
@@ -958,29 +2215,64 @@ async function deleteSiteSubtreeWithExecutor(rootId, executor) {
     throw error;
   }
 
-  const deleteResult = await query(
-    `DELETE FROM entity_records
-      WHERE entity_name = 'Site'
-        AND id = ANY($1::text[])
-      RETURNING id`,
-    [subtreeIds],
-    executor
-  );
-  if (deleteResult.rowCount !== subtree.length) {
+  let deletedCount = 0;
+  if (usesNormalizedCore('Site')) {
+    const storeIds = subtree
+      .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE)
+      .map((site) => String(site.id));
+    const projectIds = subtree
+      .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT)
+      .map((site) => String(site.id));
+    const areaIds = subtree
+      .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.AREA)
+      .map((site) => String(site.id));
+    if (storeIds.length) {
+      deletedCount += (await query(
+        'DELETE FROM warehouses WHERE warehouse_id = ANY($1::text[])',
+        [storeIds],
+        executor
+      )).rowCount;
+    }
+    if (projectIds.length) {
+      deletedCount += (await query(
+        'DELETE FROM projects WHERE project_id = ANY($1::text[])',
+        [projectIds],
+        executor
+      )).rowCount;
+    }
+    if (areaIds.length) {
+      deletedCount += (await query(
+        'DELETE FROM areas WHERE area_id = ANY($1::text[])',
+        [areaIds],
+        executor
+      )).rowCount;
+    }
+  } else {
+    const deleteResult = await query(
+      `DELETE FROM entity_records
+        WHERE entity_name = 'Site'
+          AND id = ANY($1::text[])
+        RETURNING id`,
+      [subtreeIds],
+      executor
+    );
+    deletedCount = deleteResult.rowCount;
+  }
+  if (deletedCount !== subtree.length) {
     const error = new Error('Site hierarchy changed while it was being deleted. Retry the operation.');
     error.status = 409;
     error.code = 'SITE_DELETE_CONFLICT';
     error.details = {
       root_site_id: normalizedRootId,
       expected_count: subtree.length,
-      deleted_count: deleteResult.rowCount
+      deleted_count: deletedCount
     };
     throw error;
   }
 
   return {
     root_site_id: normalizedRootId,
-    deleted_count: deleteResult.rowCount,
+    deleted_count: deletedCount,
     deleted_site_ids: subtreeIds,
     deleted_sites: subtree
   };
@@ -1399,6 +2691,10 @@ async function listDocuments(
     return typeof limit === 'number' ? sorted.slice(start, start + limit) : sorted.slice(start);
   }
 
+  if (usesNormalizedCore(entity)) {
+    return listNormalizedDocuments(entity, { filters, rangeFilters, sort, limit, offset, lock, location }, executor);
+  }
+
   const built = buildEntityListQuery({ entity, filters, rangeFilters, sort, limit, offset, lock, location });
   const result = await query(built.text, built.parameters, executor);
   return result.rows.map((row) => hydrateDerivedFields(entity, row.data));
@@ -1419,6 +2715,21 @@ async function listDocumentsPage(
     return {
       items: sorted.slice(safeOffset, safeOffset + safeLimit),
       total_count: sorted.length,
+      limit: safeLimit,
+      offset: safeOffset
+    };
+  }
+
+  if (usesNormalizedCore(entity)) {
+    const allItems = await listNormalizedDocuments(entity, {
+      filters,
+      rangeFilters,
+      sort,
+      location
+    }, executor);
+    return {
+      items: allItems.slice(safeOffset, safeOffset + safeLimit),
+      total_count: allItems.length,
       limit: safeLimit,
       offset: safeOffset
     };
@@ -1466,6 +2777,10 @@ async function findDocument(entity, id, executor = pool, lock = false) {
     return sanitizeUser(await findUserById(id, executor));
   }
 
+  if (usesNormalizedCore(entity)) {
+    return findNormalizedDocument(entity, id, executor, lock);
+  }
+
   const result = await query(
     `SELECT data
      FROM entity_records
@@ -1500,6 +2815,10 @@ async function createDocument(entity, payload, executor = null) {
   const record = normalizeRecord(entity, validated);
   await validateDocumentRelationships(entity, record, null, executor);
   await ensureEntityUniqueness(entity, record, null, executor);
+
+  if (usesNormalizedCore(entity)) {
+    return createNormalizedDocument(entity, record, executor);
+  }
 
   await query(
     `INSERT INTO entity_records (id, entity_name, data, created_at, updated_at)
@@ -1559,6 +2878,10 @@ async function updateDocument(entity, id, patch, executor = null) {
   }
   await ensureEntityUniqueness(entity, record, id, executor);
 
+  if (usesNormalizedCore(entity)) {
+    return updateNormalizedDocument(entity, id, record, existing, executor);
+  }
+
   await query(
     `UPDATE entity_records
      SET data = $3::jsonb, updated_at = $4
@@ -1582,6 +2905,9 @@ async function deleteDocument(entity, id, executor = null) {
   }
 
   await ensureDocumentNotReferenced(entity, id, executor);
+  if (usesNormalizedCore(entity)) {
+    return deleteNormalizedDocument(entity, id, executor);
+  }
   const result = await query(
     'DELETE FROM entity_records WHERE entity_name = $1 AND id = $2',
     [entity, id],
@@ -1598,6 +2924,10 @@ async function deleteDocumentRecordOnly(entity, id, executor = null) {
   ensureKnownEntity(entity);
   if (entity === 'User') {
     throw new Error('User records must be deleted through deleteDocument');
+  }
+
+  if (usesNormalizedCore(entity)) {
+    return deleteNormalizedDocument(entity, id, executor);
   }
 
   const result = await query(

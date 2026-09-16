@@ -125,6 +125,1080 @@ BEGIN
 END;
 $trigger$;
 
+-- ---------------------------------------------------------------------------
+-- Phase 1 normalized operational schema
+-- ---------------------------------------------------------------------------
+-- The legacy application stores most operational records in entity_records as
+-- JSONB documents. The tables below are the relational target model for the
+-- core FoodPro flows. They are additive in Phase 1: existing JSON reads/writes
+-- continue to work while data is backfilled and endpoints are moved over in
+-- controlled follow-up phases.
+
+CREATE TABLE IF NOT EXISTS areas (
+  area_id TEXT PRIMARY KEY,
+  area_code TEXT,
+  name TEXT NOT NULL,
+  legacy_site_id TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_areas_area_code_unique
+  ON areas (LOWER(BTRIM(area_code)))
+  WHERE COALESCE(BTRIM(area_code), '') <> '';
+
+CREATE TABLE IF NOT EXISTS projects (
+  project_id TEXT PRIMARY KEY,
+  area_id TEXT NOT NULL REFERENCES areas(area_id) ON DELETE RESTRICT,
+  project_code TEXT,
+  name TEXT NOT NULL,
+  legacy_site_id TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_project_code_unique
+  ON projects (LOWER(BTRIM(project_code)))
+  WHERE COALESCE(BTRIM(project_code), '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_projects_area ON projects(area_id);
+
+CREATE TABLE IF NOT EXISTS warehouses (
+  warehouse_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+  warehouse_code TEXT,
+  d365_warehouse_id TEXT,
+  name TEXT NOT NULL,
+  legacy_site_id TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouses_warehouse_code_unique
+  ON warehouses (LOWER(BTRIM(warehouse_code)))
+  WHERE COALESCE(BTRIM(warehouse_code), '') <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouses_d365_unique
+  ON warehouses (LOWER(BTRIM(d365_warehouse_id)))
+  WHERE COALESCE(BTRIM(d365_warehouse_id), '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_warehouses_project ON warehouses(project_id);
+
+CREATE TABLE IF NOT EXISTS ingredients (
+  ingredient_id TEXT PRIMARY KEY,
+  item_code TEXT NOT NULL,
+  ingredient_code TEXT,
+  sku TEXT,
+  d365_item_id TEXT,
+  name TEXT NOT NULL,
+  base_unit TEXT NOT NULL,
+  category_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredients_item_code_unique
+  ON ingredients (LOWER(BTRIM(item_code)))
+  WHERE COALESCE(BTRIM(item_code), '') <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredients_ingredient_code_unique
+  ON ingredients (LOWER(BTRIM(ingredient_code)))
+  WHERE COALESCE(BTRIM(ingredient_code), '') <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredients_sku_unique
+  ON ingredients (LOWER(BTRIM(sku)))
+  WHERE COALESCE(BTRIM(sku), '') <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredients_d365_unique
+  ON ingredients (LOWER(BTRIM(d365_item_id)))
+  WHERE COALESCE(BTRIM(d365_item_id), '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_ingredients_name_search
+  ON ingredients USING gin (LOWER(name) gin_trgm_ops);
+
+CREATE TABLE IF NOT EXISTS ingredient_unit_conversions (
+  conversion_id TEXT PRIMARY KEY,
+  ingredient_id TEXT NOT NULL REFERENCES ingredients(ingredient_id) ON DELETE CASCADE,
+  from_unit TEXT NOT NULL,
+  to_unit TEXT NOT NULL,
+  factor NUMERIC(18, 8) NOT NULL CHECK (factor > 0),
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (ingredient_id, from_unit, to_unit)
+);
+
+CREATE TABLE IF NOT EXISTS warehouse_inventory (
+  inventory_id TEXT PRIMARY KEY,
+  warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  ingredient_id TEXT NOT NULL REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  available_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  reserved_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  on_hand_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  average_unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  last_unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  stock_unit TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (warehouse_id, ingredient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_ingredient
+  ON warehouse_inventory(ingredient_id);
+
+CREATE TABLE IF NOT EXISTS inventory_lots (
+  lot_id TEXT PRIMARY KEY,
+  inventory_id TEXT NOT NULL REFERENCES warehouse_inventory(inventory_id) ON DELETE CASCADE,
+  warehouse_id TEXT NOT NULL,
+  ingredient_id TEXT NOT NULL,
+  batch_number TEXT,
+  received_date DATE,
+  stock_date DATE,
+  expiry_date DATE,
+  original_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  remaining_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL,
+  unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY (warehouse_id, ingredient_id)
+    REFERENCES warehouse_inventory(warehouse_id, ingredient_id)
+    ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_lots_fifo
+  ON inventory_lots(warehouse_id, ingredient_id, expiry_date, stock_date, lot_id)
+  WHERE status NOT IN ('voided', 'closed');
+
+CREATE TABLE IF NOT EXISTS recipes (
+  recipe_id TEXT PRIMARY KEY,
+  canonical_name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_recipes_canonical_name_unique
+  ON recipes (LOWER(BTRIM(canonical_name)))
+  WHERE COALESCE(BTRIM(canonical_name), '') <> ''
+    AND status NOT IN ('archived', 'voided');
+
+CREATE TABLE IF NOT EXISTS recipe_versions (
+  recipe_version_id TEXT PRIMARY KEY,
+  recipe_id TEXT NOT NULL REFERENCES recipes(recipe_id) ON DELETE CASCADE,
+  area_id TEXT REFERENCES areas(area_id) ON DELETE RESTRICT,
+  project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
+  warehouse_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  recipe_code TEXT,
+  display_name TEXT NOT NULL,
+  version_label TEXT NOT NULL DEFAULT 'v1',
+  cuisine_type TEXT,
+  menu_category TEXT,
+  serving_size_grams NUMERIC(18, 6),
+  batch_yield NUMERIC(18, 6) NOT NULL DEFAULT 1,
+  total_recipe_weight_grams NUMERIC(18, 6),
+  total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  cost_per_serving NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (
+    (warehouse_id IS NOT NULL AND project_id IS NULL AND area_id IS NULL)
+    OR (warehouse_id IS NULL AND project_id IS NOT NULL AND area_id IS NULL)
+    OR (warehouse_id IS NULL AND project_id IS NULL AND area_id IS NOT NULL)
+    OR (warehouse_id IS NULL AND project_id IS NULL AND area_id IS NULL)
+  )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_versions_scope_code_unique
+  ON recipe_versions (
+    COALESCE(warehouse_id, project_id, area_id, '__APP__'),
+    LOWER(BTRIM(recipe_code))
+  )
+  WHERE COALESCE(BTRIM(recipe_code), '') <> ''
+    AND status NOT IN ('archived', 'voided');
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_versions_scope_name_unique
+  ON recipe_versions (
+    COALESCE(warehouse_id, project_id, area_id, '__APP__'),
+    LOWER(BTRIM(display_name))
+  )
+  WHERE COALESCE(BTRIM(display_name), '') <> ''
+    AND status NOT IN ('archived', 'voided');
+
+CREATE INDEX IF NOT EXISTS idx_recipe_versions_recipe
+  ON recipe_versions(recipe_id);
+
+CREATE TABLE IF NOT EXISTS recipe_ingredient_lines (
+  recipe_line_id TEXT PRIMARY KEY,
+  recipe_version_id TEXT NOT NULL REFERENCES recipe_versions(recipe_version_id) ON DELETE CASCADE,
+  ingredient_id TEXT NOT NULL REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  line_number INTEGER NOT NULL DEFAULT 0,
+  quantity NUMERIC(18, 6) NOT NULL CHECK (quantity >= 0),
+  unit TEXT NOT NULL,
+  converted_quantity NUMERIC(18, 6),
+  converted_unit TEXT,
+  raw_weight_grams NUMERIC(18, 6),
+  yield_percent NUMERIC(8, 4) NOT NULL DEFAULT 100 CHECK (yield_percent >= 0),
+  yielded_weight_grams NUMERIC(18, 6),
+  cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (recipe_version_id, line_number, ingredient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recipe_ingredient_lines_ingredient
+  ON recipe_ingredient_lines(ingredient_id);
+
+CREATE TABLE IF NOT EXISTS menu_plans (
+  menu_plan_id TEXT PRIMARY KEY,
+  warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  plan_date DATE NOT NULL,
+  meal_period TEXT NOT NULL,
+  menu_type TEXT NOT NULL,
+  menu_category TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'planned',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_menu_plans_scope_unique
+  ON menu_plans (
+    warehouse_id,
+    plan_date,
+    LOWER(BTRIM(meal_period)),
+    LOWER(BTRIM(menu_type)),
+    LOWER(BTRIM(menu_category))
+  )
+  WHERE status NOT IN ('cancelled', 'voided', 'archived');
+
+CREATE TABLE IF NOT EXISTS menu_plan_lines (
+  menu_plan_line_id TEXT PRIMARY KEY,
+  menu_plan_id TEXT NOT NULL REFERENCES menu_plans(menu_plan_id) ON DELETE CASCADE,
+  line_number INTEGER NOT NULL DEFAULT 0,
+  line_type TEXT NOT NULL DEFAULT 'recipe' CHECK (line_type IN ('recipe', 'ingredient', 'manual')),
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE RESTRICT,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  item_name TEXT NOT NULL,
+  planned_servings NUMERIC(18, 6),
+  planned_weight_grams NUMERIC(18, 6),
+  planned_unit TEXT,
+  estimated_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'planned',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (
+    recipe_version_id IS NOT NULL
+    OR ingredient_id IS NOT NULL
+    OR COALESCE(BTRIM(item_name), '') <> ''
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_menu_plan_lines_plan
+  ON menu_plan_lines(menu_plan_id, line_number);
+
+CREATE TABLE IF NOT EXISTS production_events (
+  production_id TEXT PRIMARY KEY,
+  menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE RESTRICT,
+  warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  production_date DATE NOT NULL,
+  meal_period TEXT NOT NULL,
+  menu_type TEXT NOT NULL,
+  menu_category TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'planned',
+  issue_group_key TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  started_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  completed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  completed_at TIMESTAMPTZ,
+  reversed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reversed_at TIMESTAMPTZ,
+  reversal_reason TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_production_events_issue_group_unique
+  ON production_events(warehouse_id, issue_group_key)
+  WHERE COALESCE(BTRIM(issue_group_key), '') <> ''
+    AND status NOT IN ('voided', 'reversed', 'cancelled');
+
+CREATE INDEX IF NOT EXISTS idx_production_events_scope
+  ON production_events(warehouse_id, production_date, meal_period, menu_type, menu_category, status);
+
+CREATE TABLE IF NOT EXISTS production_manifest_lines (
+  production_line_id TEXT PRIMARY KEY,
+  production_id TEXT NOT NULL REFERENCES production_events(production_id) ON DELETE CASCADE,
+  menu_plan_line_id TEXT REFERENCES menu_plan_lines(menu_plan_line_id) ON DELETE RESTRICT,
+  line_number INTEGER NOT NULL DEFAULT 0,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE RESTRICT,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  item_name TEXT NOT NULL,
+  requested_servings NUMERIC(18, 6),
+  requested_weight_grams NUMERIC(18, 6),
+  produced_servings NUMERIC(18, 6),
+  produced_weight_grams NUMERIC(18, 6),
+  estimated_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  actual_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (
+    COALESCE(produced_weight_grams, requested_weight_grams, 0) > 0
+    OR COALESCE(produced_servings, requested_servings, 0) > 0
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_manifest_lines_event
+  ON production_manifest_lines(production_id, line_number);
+
+CREATE INDEX IF NOT EXISTS idx_production_manifest_lines_recipe
+  ON production_manifest_lines(recipe_version_id);
+
+CREATE TABLE IF NOT EXISTS production_consumption_lines (
+  consumption_line_id TEXT PRIMARY KEY,
+  production_id TEXT NOT NULL REFERENCES production_events(production_id) ON DELETE CASCADE,
+  production_line_id TEXT NOT NULL REFERENCES production_manifest_lines(production_line_id) ON DELETE CASCADE,
+  ingredient_id TEXT NOT NULL REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  inventory_id TEXT REFERENCES warehouse_inventory(inventory_id) ON DELETE RESTRICT,
+  lot_id TEXT REFERENCES inventory_lots(lot_id) ON DELETE RESTRICT,
+  quantity NUMERIC(18, 6) NOT NULL CHECK (quantity >= 0),
+  unit TEXT NOT NULL,
+  raw_weight_grams NUMERIC(18, 6),
+  yielded_weight_grams NUMERIC(18, 6),
+  cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'posted',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_consumption_lines_event
+  ON production_consumption_lines(production_id);
+
+CREATE INDEX IF NOT EXISTS idx_production_consumption_lines_lot
+  ON production_consumption_lines(lot_id);
+
+CREATE TABLE IF NOT EXISTS produced_output_batches (
+  output_batch_id TEXT PRIMARY KEY,
+  production_id TEXT NOT NULL REFERENCES production_events(production_id) ON DELETE RESTRICT,
+  production_line_id TEXT NOT NULL REFERENCES production_manifest_lines(production_line_id) ON DELETE RESTRICT,
+  warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE RESTRICT,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  batch_number TEXT NOT NULL,
+  initial_weight_grams NUMERIC(18, 6) NOT NULL CHECK (initial_weight_grams >= 0),
+  remaining_weight_grams NUMERIC(18, 6) NOT NULL CHECK (remaining_weight_grams >= 0),
+  initial_servings NUMERIC(18, 6),
+  remaining_servings NUMERIC(18, 6),
+  unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (remaining_weight_grams <= initial_weight_grams)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_produced_output_batches_number_unique
+  ON produced_output_batches(LOWER(BTRIM(batch_number)))
+  WHERE COALESCE(BTRIM(batch_number), '') <> ''
+    AND status NOT IN ('voided', 'reversed');
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_produced_output_batches_line_unique
+  ON produced_output_batches(production_line_id)
+  WHERE status NOT IN ('voided', 'reversed');
+
+CREATE INDEX IF NOT EXISTS idx_produced_output_batches_fifo
+  ON produced_output_batches(warehouse_id, status, created_at, output_batch_id);
+
+CREATE TABLE IF NOT EXISTS meal_service_headers (
+  meal_service_id TEXT PRIMARY KEY,
+  service_reference TEXT NOT NULL UNIQUE,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  service_date DATE NOT NULL,
+  meal_period TEXT NOT NULL,
+  menu_type TEXT NOT NULL,
+  menu_category TEXT NOT NULL,
+  serving_size_grams NUMERIC(18, 6) NOT NULL CHECK (serving_size_grams > 0),
+  covers NUMERIC(18, 6) NOT NULL CHECK (covers >= 0),
+  status TEXT NOT NULL DEFAULT 'posted',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  posted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reversed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reversed_at TIMESTAMPTZ,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_meal_service_headers_scope
+  ON meal_service_headers(warehouse_id, service_date, meal_period, menu_type, menu_category, status);
+
+CREATE TABLE IF NOT EXISTS meal_service_lines (
+  meal_service_line_id TEXT PRIMARY KEY,
+  meal_service_id TEXT NOT NULL REFERENCES meal_service_headers(meal_service_id) ON DELETE CASCADE,
+  output_batch_id TEXT NOT NULL REFERENCES produced_output_batches(output_batch_id) ON DELETE RESTRICT,
+  served_covers NUMERIC(18, 6) NOT NULL CHECK (served_covers >= 0),
+  served_weight_grams NUMERIC(18, 6) NOT NULL CHECK (served_weight_grams >= 0),
+  cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'posted',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_meal_service_lines_batch
+  ON meal_service_lines(output_batch_id, status);
+
+CREATE TABLE IF NOT EXISTS food_waste_records (
+  food_waste_id TEXT PRIMARY KEY,
+  waste_reference TEXT,
+  idempotency_key TEXT UNIQUE,
+  warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  waste_date DATE NOT NULL,
+  meal_period TEXT,
+  menu_type TEXT,
+  menu_category TEXT,
+  waste_category TEXT NOT NULL,
+  reason_code TEXT,
+  approval_status TEXT NOT NULL DEFAULT 'pending',
+  status TEXT NOT NULL DEFAULT 'posted',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  recorded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reversed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reversed_at TIMESTAMPTZ,
+  reversal_reason TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_food_waste_records_scope
+  ON food_waste_records(warehouse_id, waste_date, meal_period, menu_type, menu_category, waste_category, status);
+
+CREATE TABLE IF NOT EXISTS food_waste_lines (
+  food_waste_line_id TEXT PRIMARY KEY,
+  food_waste_id TEXT NOT NULL REFERENCES food_waste_records(food_waste_id) ON DELETE CASCADE,
+  output_batch_id TEXT REFERENCES produced_output_batches(output_batch_id) ON DELETE RESTRICT,
+  production_line_id TEXT REFERENCES production_manifest_lines(production_line_id) ON DELETE RESTRICT,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  waste_weight_grams NUMERIC(18, 6) NOT NULL CHECK (waste_weight_grams > 0),
+  cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'posted',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_food_waste_lines_output_batch
+  ON food_waste_lines(output_batch_id, status);
+
+CREATE TABLE IF NOT EXISTS inventory_transactions (
+  inventory_transaction_id TEXT PRIMARY KEY,
+  inventory_id TEXT REFERENCES warehouse_inventory(inventory_id) ON DELETE RESTRICT,
+  warehouse_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  lot_id TEXT REFERENCES inventory_lots(lot_id) ON DELETE RESTRICT,
+  transaction_type TEXT NOT NULL,
+  transaction_date DATE,
+  quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  unit TEXT,
+  unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  reference_type TEXT,
+  reference_id TEXT,
+  reason_code TEXT,
+  idempotency_key TEXT,
+  status TEXT NOT NULL DEFAULT 'posted',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_transactions_idempotency_unique
+  ON inventory_transactions(idempotency_key)
+  WHERE COALESCE(BTRIM(idempotency_key), '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_inventory_transactions_reference
+  ON inventory_transactions(reference_type, reference_id, reason_code);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_transactions_scope
+  ON inventory_transactions(warehouse_id, transaction_date, transaction_type, status);
+
+CREATE TABLE IF NOT EXISTS production_consumption_reports (
+  report_id TEXT PRIMARY KEY,
+  report_number TEXT NOT NULL,
+  production_id TEXT NOT NULL REFERENCES production_events(production_id) ON DELETE RESTRICT,
+  warehouse_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  production_date DATE,
+  total_consumption_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  total_shortage_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'posted',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_production_consumption_reports_production_unique
+  ON production_consumption_reports(production_id)
+  WHERE status <> 'reversed';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_production_consumption_reports_number_unique
+  ON production_consumption_reports(LOWER(BTRIM(report_number)));
+
+CREATE INDEX IF NOT EXISTS idx_production_consumption_reports_scope
+  ON production_consumption_reports(warehouse_id, production_date, status);
+
+CREATE TABLE IF NOT EXISTS meal_service_consumptions (
+  meal_consumption_id TEXT PRIMARY KEY,
+  meal_service_id TEXT NOT NULL REFERENCES meal_service_headers(meal_service_id) ON DELETE CASCADE,
+  output_batch_id TEXT REFERENCES produced_output_batches(output_batch_id) ON DELETE RESTRICT,
+  production_id TEXT REFERENCES production_events(production_id) ON DELETE RESTRICT,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE RESTRICT,
+  idempotency_key TEXT NOT NULL,
+  service_reference TEXT NOT NULL,
+  movement_type TEXT NOT NULL DEFAULT 'consumption',
+  service_date DATE,
+  meal_period TEXT,
+  consumed_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  consumed_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'posted',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_service_consumptions_idempotency_unique
+  ON meal_service_consumptions(idempotency_key);
+
+CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_header
+  ON meal_service_consumptions(meal_service_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_report
+  ON meal_service_consumptions(service_date, meal_period, status);
+
+ALTER TABLE areas ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE warehouse_inventory ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE recipes ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE recipe_versions ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE menu_plans ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE menu_plan_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE production_consumption_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE meal_service_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- Backfill core legacy JSON documents into the normalized cutover tables. The
+-- INSERT order follows the real foreign-key chain so a restart is safe and
+-- idempotent. Rows with missing parents are skipped instead of inventing links.
+INSERT INTO areas (area_id, area_code, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
+SELECT
+  record.id,
+  NULLIF(BTRIM(COALESCE(record.data->>'area_code', record.data->>'project_code')), ''),
+  COALESCE(NULLIF(BTRIM(record.data->>'name'), ''), record.id),
+  record.id,
+  COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'Site'
+  AND LOWER(COALESCE(NULLIF(record.data->>'type', ''), 'area')) IN ('area', 'company', 'region')
+ON CONFLICT (area_id) DO NOTHING;
+
+INSERT INTO projects (project_id, area_id, project_code, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
+SELECT
+  record.id,
+  record.data->>'parent_site_id',
+  NULLIF(BTRIM(record.data->>'project_code'), ''),
+  COALESCE(NULLIF(BTRIM(record.data->>'name'), ''), record.id),
+  record.id,
+  COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN areas parent_area ON parent_area.area_id = record.data->>'parent_site_id'
+WHERE record.entity_name = 'Site'
+  AND LOWER(COALESCE(record.data->>'type', '')) IN ('project', 'location', 'branch', 'camp', 'headquarters')
+ON CONFLICT (project_id) DO NOTHING;
+
+INSERT INTO warehouses (
+  warehouse_id, project_id, warehouse_code, d365_warehouse_id, name, legacy_site_id,
+  status, source_name, payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  record.data->>'parent_site_id',
+  NULLIF(BTRIM(COALESCE(record.data->>'warehouse_code', record.data->>'project_code')), ''),
+  NULLIF(BTRIM(record.data->>'d365_warehouse_id'), ''),
+  COALESCE(NULLIF(BTRIM(record.data->>'name'), ''), record.id),
+  record.id,
+  COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN projects parent_project ON parent_project.project_id = record.data->>'parent_site_id'
+WHERE record.entity_name = 'Site'
+  AND LOWER(COALESCE(record.data->>'type', '')) IN ('store', 'warehouse', 'kitchen')
+ON CONFLICT (warehouse_id) DO NOTHING;
+
+INSERT INTO ingredients (
+  ingredient_id, item_code, ingredient_code, sku, d365_item_id, name, base_unit,
+  category_id, status, source_name, payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(
+    NULLIF(BTRIM(record.data->>'item_code'), ''),
+    NULLIF(BTRIM(record.data->>'ingredient_code'), ''),
+    NULLIF(BTRIM(record.data->>'sku'), ''),
+    NULLIF(BTRIM(record.data->>'d365_item_id'), ''),
+    record.id
+  ),
+  NULLIF(BTRIM(record.data->>'ingredient_code'), ''),
+  NULLIF(BTRIM(record.data->>'sku'), ''),
+  NULLIF(BTRIM(record.data->>'d365_item_id'), ''),
+  COALESCE(NULLIF(BTRIM(record.data->>'name'), ''), record.id),
+  COALESCE(NULLIF(BTRIM(COALESCE(record.data->>'base_unit', record.data->>'unit', record.data->>'conversion_unit')), ''), 'EA'),
+  NULLIF(BTRIM(COALESCE(record.data->>'category_id', record.data->>'category')), ''),
+  COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'Ingredient'
+ON CONFLICT (ingredient_id) DO NOTHING;
+
+INSERT INTO warehouse_inventory (
+  inventory_id, warehouse_id, ingredient_id, available_quantity, reserved_quantity,
+  on_hand_quantity, average_unit_cost, last_unit_cost, stock_unit, status,
+  source_name, payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  record.data->>'site_id',
+  record.data->>'ingredient_id',
+  COALESCE(NULLIF(record.data->>'available_quantity', '')::numeric, NULLIF(record.data->>'quantity', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'reserved_quantity', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'on_hand_quantity', '')::numeric, NULLIF(record.data->>'quantity', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'average_unit_cost', '')::numeric, NULLIF(record.data->>'cost_per_unit', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'last_unit_cost', '')::numeric, NULLIF(record.data->>'cost_per_unit', '')::numeric, 0),
+  COALESCE(NULLIF(BTRIM(record.data->>'unit'), ''), ingredient.base_unit, 'EA'),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN warehouses warehouse ON warehouse.warehouse_id = record.data->>'site_id'
+JOIN ingredients ingredient ON ingredient.ingredient_id = record.data->>'ingredient_id'
+WHERE record.entity_name = 'Inventory'
+ON CONFLICT (inventory_id) DO NOTHING;
+
+INSERT INTO inventory_lots (
+  lot_id, inventory_id, warehouse_id, ingredient_id, batch_number, received_date, stock_date,
+  expiry_date, original_quantity, remaining_quantity, unit, unit_cost, status, source_name,
+  payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  inventory.inventory_id,
+  record.data->>'site_id',
+  record.data->>'ingredient_id',
+  NULLIF(record.data->>'batch_number', ''),
+  NULLIF(record.data->>'received_date', '')::date,
+  NULLIF(record.data->>'stock_date', '')::date,
+  NULLIF(record.data->>'expiry_date', '')::date,
+  COALESCE(NULLIF(record.data->>'original_quantity', '')::numeric, NULLIF(record.data->>'quantity', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'remaining_quantity', '')::numeric, NULLIF(record.data->>'quantity', '')::numeric, 0),
+  COALESCE(NULLIF(BTRIM(record.data->>'unit'), ''), inventory.stock_unit),
+  COALESCE(NULLIF(record.data->>'unit_cost', '')::numeric, NULLIF(record.data->>'cost_per_unit', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN warehouse_inventory inventory
+  ON inventory.warehouse_id = record.data->>'site_id'
+ AND inventory.ingredient_id = record.data->>'ingredient_id'
+WHERE record.entity_name = 'InventoryLot'
+ON CONFLICT (lot_id) DO NOTHING;
+
+INSERT INTO recipes (recipe_id, canonical_name, description, status, source_name, payload, created_at, updated_at)
+SELECT
+  record.id,
+  COALESCE(NULLIF(BTRIM(record.data->>'name'), ''), record.id),
+  NULLIF(record.data->>'description', ''),
+  COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'Recipe'
+ON CONFLICT (recipe_id) DO NOTHING;
+
+INSERT INTO recipe_versions (
+  recipe_version_id, recipe_id, area_id, project_id, warehouse_id, recipe_code,
+  display_name, version_label, cuisine_type, menu_category, serving_size_grams,
+  batch_yield, total_recipe_weight_grams, total_cost, cost_per_serving,
+  status, source_name, payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  record.id,
+  CASE WHEN record.data->>'site_scope' = 'area' THEN record.data->'site_ids'->>0 ELSE NULL END,
+  CASE WHEN record.data->>'site_scope' = 'project' THEN record.data->'site_ids'->>0 ELSE NULL END,
+  CASE WHEN record.data->>'site_scope' IN ('warehouse', 'store') THEN record.data->'site_ids'->>0 ELSE NULL END,
+  NULLIF(BTRIM(record.data->>'recipe_code'), ''),
+  COALESCE(NULLIF(BTRIM(record.data->>'name'), ''), record.id),
+  COALESCE(NULLIF(record.data->>'version_label', ''), 'v1'),
+  NULLIF(record.data->>'cuisine_type', ''),
+  NULLIF(COALESCE(record.data->>'menu_category', record.data->>'category'), ''),
+  NULLIF(COALESCE(record.data->>'portion_size_grams', record.data->>'serving_size_grams'), '')::numeric,
+  COALESCE(NULLIF(record.data->>'batch_yield', '')::numeric, 1),
+  NULLIF(record.data->>'total_recipe_weight_grams', '')::numeric,
+  COALESCE(NULLIF(record.data->>'total_cost', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'cost_per_serving', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN recipes recipe ON recipe.recipe_id = record.id
+WHERE record.entity_name = 'Recipe'
+ON CONFLICT (recipe_version_id) DO NOTHING;
+
+INSERT INTO menu_plans (
+  menu_plan_id, warehouse_id, plan_date, meal_period, menu_type, menu_category,
+  status, source_name, created_by, payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  record.data->>'site_id',
+  (record.data->>'plan_date')::date,
+  COALESCE(NULLIF(record.data->>'meal_type', ''), 'all'),
+  COALESCE(NULLIF(COALESCE(record.data->>'menu_type', record.data->>'cuisine_type'), ''), 'general'),
+  COALESCE(NULLIF(record.data->>'menu_category', ''), 'senior'),
+  COALESCE(NULLIF(record.data->>'status', ''), 'planned'),
+  NULLIF(record.data->>'source_name', ''),
+  NULLIF(record.data->>'created_by', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN warehouses warehouse ON warehouse.warehouse_id = record.data->>'site_id'
+WHERE record.entity_name = 'MenuPlan'
+  AND COALESCE(record.data->>'plan_date', '') <> ''
+ON CONFLICT (menu_plan_id) DO NOTHING;
+
+INSERT INTO production_events (
+  production_id, menu_plan_id, warehouse_id, production_date, meal_period, menu_type,
+  menu_category, status, issue_group_key, payload, started_by, completed_by, completed_at,
+  reversed_by, reversed_at, reversal_reason, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  menu_plan.menu_plan_id,
+  COALESCE(NULLIF(record.data->>'fulfillment_store_id', ''), record.data->>'site_id'),
+  (record.data->>'production_date')::date,
+  COALESCE(NULLIF(record.data->>'meal_type', ''), 'breakfast'),
+  COALESCE(NULLIF(COALESCE(record.data->>'menu_type', record.data->>'cuisine_type'), ''), 'general'),
+  COALESCE(NULLIF(record.data->>'menu_category', ''), 'senior'),
+  COALESCE(NULLIF(record.data->>'status', ''), 'planned'),
+  COALESCE(NULLIF(record.data->>'issue_group_key', ''), record.id),
+  record.data || jsonb_build_object('id', record.id),
+  NULLIF(record.data->>'started_by', ''),
+  NULLIF(record.data->>'completed_by', ''),
+  NULLIF(record.data->>'completed_at', '')::timestamptz,
+  NULLIF(record.data->>'reversed_by', ''),
+  NULLIF(record.data->>'reversed_at', '')::timestamptz,
+  NULLIF(record.data->>'reversal_reason', ''),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN warehouses warehouse ON warehouse.warehouse_id = COALESCE(NULLIF(record.data->>'fulfillment_store_id', ''), record.data->>'site_id')
+LEFT JOIN menu_plans menu_plan ON menu_plan.menu_plan_id = NULLIF(COALESCE(record.data->>'menu_plan_id', record.data->>'source_event_id'), '')
+WHERE record.entity_name = 'Production'
+  AND COALESCE(record.data->>'production_date', '') <> ''
+ON CONFLICT (production_id) DO NOTHING;
+
+INSERT INTO production_manifest_lines (
+  production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
+  ingredient_id, item_name, requested_servings, requested_weight_grams, produced_servings,
+  produced_weight_grams, estimated_cost, actual_cost, status, source_name, payload,
+  created_at, updated_at
+)
+SELECT
+  COALESCE(NULLIF(record.data->>'source_event_recipe_id', ''), record.id || ':line:1'),
+  record.id,
+  NULL,
+  1,
+  recipe.recipe_version_id,
+  ingredient.ingredient_id,
+  COALESCE(NULLIF(record.data->>'recipe_name', ''), NULLIF(record.data->>'production_name', ''), record.id),
+  NULLIF(COALESCE(record.data->>'target_servings', record.data->>'produced_servings'), '')::numeric,
+  NULLIF(COALESCE(record.data->>'requested_weight_grams', record.data->>'production_size_grams'), '')::numeric,
+  NULLIF(COALESCE(record.data->>'produced_servings', record.data->>'production_covers'), '')::numeric,
+  NULLIF(COALESCE(record.data->>'produced_weight_grams', record.data->>'finished_weight_grams', record.data->>'production_size_grams'), '')::numeric,
+  COALESCE(NULLIF(COALESCE(record.data->>'estimated_cost', record.data->>'estimated_batch_cost'), '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(record.data->>'actual_cost', record.data->>'production_cost_total', record.data->>'total_cost'), '')::numeric, 0),
+  'active',
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN production_events production ON production.production_id = record.id
+LEFT JOIN recipe_versions recipe ON recipe.recipe_version_id = NULLIF(record.data->>'recipe_id', '')
+LEFT JOIN ingredients ingredient ON ingredient.ingredient_id = NULLIF(record.data->>'ingredient_id', '')
+WHERE record.entity_name = 'Production'
+ON CONFLICT (production_line_id) DO NOTHING;
+
+INSERT INTO produced_output_batches (
+  output_batch_id, production_id, production_line_id, warehouse_id, recipe_version_id, ingredient_id,
+  batch_number, initial_weight_grams, remaining_weight_grams, initial_servings, remaining_servings,
+  unit_cost, total_cost, status, source_name, payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  record.data->>'production_id',
+  line.production_line_id,
+  record.data->>'site_id',
+  recipe.recipe_version_id,
+  ingredient.ingredient_id,
+  COALESCE(NULLIF(record.data->>'batch_number', ''), record.id),
+  COALESCE(NULLIF(COALESCE(record.data->>'initial_weight_grams', record.data->>'produced_weight_grams'), '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(record.data->>'remaining_weight_grams', record.data->>'available_weight_grams', record.data->>'produced_weight_grams'), '')::numeric, 0),
+  NULLIF(COALESCE(record.data->>'initial_servings', record.data->>'produced_servings'), '')::numeric,
+  NULLIF(COALESCE(record.data->>'remaining_servings', record.data->>'available_servings', record.data->>'produced_servings'), '')::numeric,
+  COALESCE(NULLIF(record.data->>'unit_cost', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'total_cost', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN production_events production ON production.production_id = record.data->>'production_id'
+JOIN production_manifest_lines line ON line.production_id = production.production_id
+JOIN warehouses warehouse ON warehouse.warehouse_id = record.data->>'site_id'
+LEFT JOIN recipe_versions recipe ON recipe.recipe_version_id = NULLIF(record.data->>'recipe_id', '')
+LEFT JOIN ingredients ingredient ON ingredient.ingredient_id = NULLIF(record.data->>'ingredient_id', '')
+WHERE record.entity_name = 'ProducedItemBatch'
+ON CONFLICT (output_batch_id) DO NOTHING;
+
+INSERT INTO production_consumption_reports (
+  report_id, report_number, production_id, warehouse_id, production_date,
+  total_consumption_cost, total_shortage_cost, status, payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'report_number', ''), record.id),
+  record.data->>'production_id',
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'production_date', '')::date,
+  COALESCE(NULLIF(record.data->>'total_consumption_cost', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'total_shortage_cost', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN production_events production ON production.production_id = record.data->>'production_id'
+WHERE record.entity_name = 'ProductionConsumptionReport'
+ON CONFLICT (report_id) DO NOTHING;
+
+INSERT INTO meal_service_headers (
+  meal_service_id, service_reference, idempotency_key, warehouse_id, service_date,
+  meal_period, menu_type, menu_category, serving_size_grams, covers, status,
+  payload, posted_by, reversed_by, reversed_at, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  record.data->>'service_reference',
+  record.data->>'idempotency_key',
+  record.data->>'site_id',
+  (record.data->>'service_date')::date,
+  COALESCE(NULLIF(record.data->>'meal_type', ''), 'breakfast'),
+  COALESCE(NULLIF(record.data->>'menu_type', ''), 'general'),
+  COALESCE(NULLIF(record.data->>'menu_category', ''), 'senior'),
+  COALESCE(NULLIF(COALESCE(record.data->>'serving_size_grams', record.data->>'portion_size_grams'), '')::numeric, 1),
+  COALESCE(NULLIF(COALESCE(record.data->>'covers', record.data->>'attendee_count'), '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
+  record.data || jsonb_build_object('id', record.id),
+  NULLIF(COALESCE(record.data->>'posted_by', record.data->>'performed_by'), ''),
+  NULLIF(record.data->>'reversed_by', ''),
+  NULLIF(record.data->>'reversed_at', '')::timestamptz,
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN warehouses warehouse ON warehouse.warehouse_id = record.data->>'site_id'
+WHERE record.entity_name = 'MealServiceAttendance'
+  AND COALESCE(record.data->>'service_reference', '') <> ''
+  AND COALESCE(record.data->>'idempotency_key', '') <> ''
+  AND COALESCE(record.data->>'service_date', '') <> ''
+ON CONFLICT (meal_service_id) DO NOTHING;
+
+INSERT INTO meal_service_consumptions (
+  meal_consumption_id, meal_service_id, output_batch_id, production_id, recipe_version_id,
+  idempotency_key, service_reference, movement_type, service_date, meal_period,
+  consumed_weight_grams, consumed_servings, cost, status, payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  record.data->>'meal_service_attendance_id',
+  output_batch.output_batch_id,
+  production.production_id,
+  recipe.recipe_version_id,
+  record.data->>'idempotency_key',
+  record.data->>'service_reference',
+  COALESCE(NULLIF(record.data->>'movement_type', ''), 'consumption'),
+  NULLIF(record.data->>'service_date', '')::date,
+  NULLIF(record.data->>'meal_type', ''),
+  COALESCE(NULLIF(COALESCE(record.data->>'consumed_weight_grams', record.data->>'required_weight_grams'), '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(record.data->>'consumed_servings', record.data->>'required_servings'), '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(record.data->>'cost', record.data->>'total_cost'), '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN meal_service_headers header ON header.meal_service_id = record.data->>'meal_service_attendance_id'
+LEFT JOIN produced_output_batches output_batch
+  ON output_batch.output_batch_id = NULLIF(COALESCE(record.data->>'produced_item_batch_id', record.data->'allocations'->0->>'produced_item_batch_id', record.data->'allocations'->0->>'batch_id'), '')
+LEFT JOIN production_events production
+  ON production.production_id = NULLIF(COALESCE(record.data->>'production_id', record.data->'allocations'->0->>'production_id'), '')
+LEFT JOIN recipe_versions recipe ON recipe.recipe_version_id = NULLIF(record.data->>'recipe_id', '')
+WHERE record.entity_name = 'MealServiceConsumption'
+  AND COALESCE(record.data->>'idempotency_key', '') <> ''
+  AND COALESCE(record.data->>'service_reference', '') <> ''
+ON CONFLICT (meal_consumption_id) DO NOTHING;
+
+INSERT INTO food_waste_records (
+  food_waste_id, waste_reference, idempotency_key, warehouse_id, waste_date, meal_period,
+  menu_type, menu_category, waste_category, reason_code, approval_status, status,
+  recorded_by, reversed_by, reversed_at, reversal_reason, source_name, payload,
+  created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(COALESCE(record.data->>'waste_reference', record.data->>'service_reference'), ''),
+  NULLIF(record.data->>'idempotency_key', ''),
+  record.data->>'site_id',
+  (record.data->>'waste_date')::date,
+  NULLIF(record.data->>'meal_type', ''),
+  NULLIF(record.data->>'menu_type', ''),
+  NULLIF(record.data->>'menu_category', ''),
+  COALESCE(NULLIF(record.data->>'waste_category', ''), 'ingredient'),
+  NULLIF(record.data->>'reason_code', ''),
+  COALESCE(NULLIF(record.data->>'approval_status', ''), 'pending'),
+  COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
+  NULLIF(record.data->>'recorded_by', ''),
+  NULLIF(record.data->>'reversed_by', ''),
+  NULLIF(record.data->>'reversed_at', '')::timestamptz,
+  NULLIF(record.data->>'reversal_reason', ''),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN warehouses warehouse ON warehouse.warehouse_id = record.data->>'site_id'
+WHERE record.entity_name = 'FoodWaste'
+  AND COALESCE(record.data->>'waste_date', '') <> ''
+ON CONFLICT (food_waste_id) DO NOTHING;
+
+INSERT INTO food_waste_lines (
+  food_waste_line_id, food_waste_id, output_batch_id, production_line_id, ingredient_id,
+  waste_weight_grams, cost, status, payload, created_at, updated_at
+)
+SELECT
+  record.id || ':line:1',
+  record.id,
+  output_batch.output_batch_id,
+  NULL,
+  ingredient.ingredient_id,
+  COALESCE(
+    NULLIF(COALESCE(record.data->>'waste_weight_grams', record.data->>'quantity_grams'), '')::numeric,
+    CASE WHEN LOWER(COALESCE(record.data->>'unit', 'g')) = 'kg'
+      THEN COALESCE(NULLIF(record.data->>'quantity', '')::numeric, 0) * 1000
+      ELSE COALESCE(NULLIF(record.data->>'quantity', '')::numeric, 0)
+    END
+  ),
+  COALESCE(NULLIF(COALESCE(record.data->>'estimated_cost', record.data->>'waste_cost', record.data->>'total_cost'), '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN food_waste_records waste ON waste.food_waste_id = record.id
+LEFT JOIN produced_output_batches output_batch
+  ON output_batch.output_batch_id = NULLIF(COALESCE(record.data->>'produced_item_batch_id', record.data->'output_allocations'->0->>'produced_item_batch_id'), '')
+LEFT JOIN ingredients ingredient ON ingredient.ingredient_id = NULLIF(record.data->>'ingredient_id', '')
+WHERE record.entity_name = 'FoodWaste'
+  AND COALESCE(
+    NULLIF(COALESCE(record.data->>'waste_weight_grams', record.data->>'quantity_grams'), '')::numeric,
+    NULLIF(record.data->>'quantity', '')::numeric,
+    0
+  ) > 0
+ON CONFLICT (food_waste_line_id) DO NOTHING;
+
 -- Backfill location ownership for legacy production-quality records whenever a
 -- trustworthy production or batch link is available. Records without such a
 -- link remain unattributed and are intentionally excluded from scoped reports.
