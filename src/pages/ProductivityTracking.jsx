@@ -13,12 +13,19 @@ import { format, subDays } from 'date-fns';
 import StatCard from '@/components/ui/StatCard';
 import { downloadCSV } from '../components/utils/exportData';
 
+const MASTER_DATA_QUERY_OPTIONS = {
+  staleTime: 10 * 60 * 1000,
+  gcTime: 60 * 60 * 1000
+};
+
+const REPORT_DATA_QUERY_OPTIONS = {
+  staleTime: 60 * 1000,
+  gcTime: 10 * 60 * 1000
+};
+
 export default function ProductivityTracking() {
   const [selectedSite, setSelectedSite] = useState('all');
   const [dateRange, setDateRange] = useState('month');
-
-  const { data: sites = [] } = useQuery({ queryKey: ['sites'], queryFn: () => base44.entities.Site.list() });
-  const { data: productions = [] } = useQuery({ queryKey: ['productions'], queryFn: () => base44.entities.Production.list('-production_date', 500) });
 
   const dateFilter = useMemo(() => {
     const today = new Date();
@@ -27,6 +34,36 @@ export default function ProductivityTracking() {
     if (dateRange === 'quarter') return subDays(today, 90);
     return subDays(today, 365);
   }, [dateRange]);
+  const dateRangeFilters = useMemo(() => ({
+    startDate: format(dateFilter, 'yyyy-MM-dd'),
+    endDate: format(new Date(), 'yyyy-MM-dd')
+  }), [dateFilter]);
+  const scopedEntityFilters = useMemo(() => (
+    selectedSite === 'all' ? {} : { site_id: selectedSite }
+  ), [selectedSite]);
+
+  const { data: sites = [] } = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => base44.entities.Site.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+  const { data: productions = [] } = useQuery({
+    queryKey: ['productions', 'productivityTracking', scopedEntityFilters, dateRangeFilters],
+    queryFn: () => base44.entities.Production.filter(
+      scopedEntityFilters,
+      '-production_date',
+      1000,
+      {
+        rangeFilters: {
+          production_date: {
+            gte: dateRangeFilters.startDate,
+            lte: dateRangeFilters.endDate
+          }
+        }
+      }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
 
   const filteredProds = useMemo(() => productions.filter(p => {
     const matchesSite = selectedSite === 'all' || p.site_id === selectedSite;

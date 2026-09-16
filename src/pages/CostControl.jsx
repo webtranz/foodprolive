@@ -21,16 +21,18 @@ import {
 import { getItemCode } from '../../shared/itemCode.js';
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+const MASTER_DATA_QUERY_OPTIONS = {
+  staleTime: 10 * 60 * 1000,
+  gcTime: 60 * 60 * 1000
+};
+const REPORT_DATA_QUERY_OPTIONS = {
+  staleTime: 60 * 1000,
+  gcTime: 10 * 60 * 1000
+};
 
 export default function CostControl() {
   const [selectedSite, setSelectedSite] = useState('all');
   const [dateRange, setDateRange] = useState('month');
-
-  const { data: sites = [] } = useQuery({ queryKey: ['sites'], queryFn: () => base44.entities.Site.list() });
-  const { data: productions = [] } = useQuery({ queryKey: ['productions'], queryFn: () => base44.entities.Production.list('-production_date', 500) });
-  const { data: foodWaste = [] } = useQuery({ queryKey: ['foodWaste'], queryFn: () => base44.entities.FoodWaste.list('-waste_date', 500) });
-  const { data: recipes = [] } = useQuery({ queryKey: ['recipes'], queryFn: () => base44.entities.Recipe.list() });
-  const { data: ingredients = [] } = useQuery({ queryKey: ['ingredients'], queryFn: () => base44.entities.Ingredient.list() });
 
   const dateFilter = useMemo(() => {
     const today = new Date();
@@ -39,6 +41,63 @@ export default function CostControl() {
     if (dateRange === 'quarter') return subDays(today, 90);
     return subDays(today, 365);
   }, [dateRange]);
+  const dateRangeFilters = useMemo(() => ({
+    startDate: format(dateFilter, 'yyyy-MM-dd'),
+    endDate: format(new Date(), 'yyyy-MM-dd')
+  }), [dateFilter]);
+  const scopedEntityFilters = useMemo(() => (
+    selectedSite === 'all' ? {} : { site_id: selectedSite }
+  ), [selectedSite]);
+
+  const { data: sites = [] } = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => base44.entities.Site.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+  const { data: productions = [] } = useQuery({
+    queryKey: ['productions', 'costControl', scopedEntityFilters, dateRangeFilters],
+    queryFn: () => base44.entities.Production.filter(
+      scopedEntityFilters,
+      '-production_date',
+      1000,
+      {
+        rangeFilters: {
+          production_date: {
+            gte: dateRangeFilters.startDate,
+            lte: dateRangeFilters.endDate
+          }
+        }
+      }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+  const { data: foodWaste = [] } = useQuery({
+    queryKey: ['foodWaste', 'costControl', scopedEntityFilters, dateRangeFilters],
+    queryFn: () => base44.entities.FoodWaste.filter(
+      scopedEntityFilters,
+      '-waste_date',
+      1000,
+      {
+        rangeFilters: {
+          waste_date: {
+            gte: dateRangeFilters.startDate,
+            lte: dateRangeFilters.endDate
+          }
+        }
+      }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+  const { data: recipes = [] } = useQuery({
+    queryKey: ['recipes'],
+    queryFn: () => base44.entities.Recipe.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+  const { data: ingredients = [] } = useQuery({
+    queryKey: ['ingredients'],
+    queryFn: () => base44.entities.Ingredient.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
 
   const filteredProductions = useMemo(() => productions.filter(p => {
     const matchesSite = selectedSite === 'all' || p.site_id === selectedSite;

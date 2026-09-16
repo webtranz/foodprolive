@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
@@ -37,6 +37,15 @@ const STAGE_COLORS = {
   completed: 'bg-green-600'
 };
 
+const OPERATIONAL_QUERY_OPTIONS = {
+  staleTime: 60 * 1000,
+  gcTime: 10 * 60 * 1000
+};
+
+function toDateOnly(date) {
+  return date.toISOString().split('T')[0];
+}
+
 export default function BatchTracking() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showStageDialog, setShowStageDialog] = useState(false);
@@ -51,15 +60,38 @@ export default function BatchTracking() {
   const [stageNotes, setStageNotes] = useState('');
 
   const queryClient = useQueryClient();
+  const productionPlanRange = useMemo(() => {
+    const endDate = new Date();
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 90);
+    return {
+      startDate: toDateOnly(startDate),
+      endDate: toDateOnly(endDate)
+    };
+  }, []);
 
   const { data: batches = [] } = useQuery({
     queryKey: ['productionBatches'],
-    queryFn: () => base44.entities.ProductionBatch.list('-production_date', 100)
+    queryFn: () => base44.entities.ProductionBatch.list('-production_date', 100),
+    ...OPERATIONAL_QUERY_OPTIONS
   });
 
   const { data: productions = [] } = useQuery({
-    queryKey: ['productionPlansForBatchTracking'],
-    queryFn: () => base44.entities.Production.list('-production_date', 500)
+    queryKey: ['productionPlansForBatchTracking', productionPlanRange],
+    queryFn: () => base44.entities.Production.filter(
+      {},
+      '-production_date',
+      500,
+      {
+        rangeFilters: {
+          production_date: {
+            gte: productionPlanRange.startDate,
+            lte: productionPlanRange.endDate
+          }
+        }
+      }
+    ),
+    ...OPERATIONAL_QUERY_OPTIONS
   });
   const productionPlans = productions.filter(production => production.site_id && production.recipe_id);
 

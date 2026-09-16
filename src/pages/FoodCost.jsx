@@ -21,6 +21,30 @@ import {
   titleCaseFoodCost
 } from '../../shared/foodCostReport.js';
 
+const MASTER_DATA_QUERY_OPTIONS = {
+  staleTime: 10 * 60 * 1000,
+  gcTime: 60 * 60 * 1000
+};
+
+const REPORT_DATA_QUERY_OPTIONS = {
+  staleTime: 60 * 1000,
+  gcTime: 10 * 60 * 1000
+};
+
+function buildScopedReportQuery(filters, dateField) {
+  const entityFilters = {};
+  if (filters.mealType !== 'all') entityFilters.meal_type = filters.mealType;
+  return {
+    filters: entityFilters,
+    rangeFilters: {
+      [dateField]: {
+        gte: filters.startDate,
+        lte: filters.endDate
+      }
+    }
+  };
+}
+
 export default function FoodCost() {
   const [filters, setFilters] = useState({
     startDate: format(subDays(new Date(), 30), 'yyyy-MM-dd'),
@@ -32,12 +56,60 @@ export default function FoodCost() {
     view: 'detail'
   });
 
-  const { data: sites = [] } = useQuery({ queryKey: ['sites'], queryFn: () => base44.entities.Site.list() });
-  const { data: recipes = [] } = useQuery({ queryKey: ['recipes'], queryFn: () => base44.entities.Recipe.list() });
-  const { data: ingredients = [] } = useQuery({ queryKey: ['ingredients'], queryFn: () => base44.entities.Ingredient.list() });
-  const { data: productions = [] } = useQuery({ queryKey: ['foodCostProductionsPage'], queryFn: () => base44.entities.Production.list('-production_date', 5000) });
-  const { data: mealServiceConsumptions = [] } = useQuery({ queryKey: ['foodCostMealServiceConsumptionsPage'], queryFn: () => base44.entities.MealServiceConsumption.list('-service_date', 5000) });
-  const { data: producedItemBatches = [] } = useQuery({ queryKey: ['foodCostProducedItemBatchesPage'], queryFn: () => base44.entities.ProducedItemBatch.list('-production_date', 5000) });
+  const productionReportQuery = useMemo(
+    () => buildScopedReportQuery(filters, 'production_date'),
+    [filters.startDate, filters.endDate, filters.mealType]
+  );
+  const mealServiceReportQuery = useMemo(
+    () => buildScopedReportQuery(filters, 'service_date'),
+    [filters.startDate, filters.endDate, filters.mealType]
+  );
+
+  const { data: sites = [] } = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => base44.entities.Site.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+  const { data: recipes = [] } = useQuery({
+    queryKey: ['recipes'],
+    queryFn: () => base44.entities.Recipe.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+  const { data: ingredients = [] } = useQuery({
+    queryKey: ['ingredients'],
+    queryFn: () => base44.entities.Ingredient.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+  const { data: productions = [] } = useQuery({
+    queryKey: ['foodCostProductionsPage', productionReportQuery],
+    queryFn: () => base44.entities.Production.filter(
+      productionReportQuery.filters,
+      '-production_date',
+      5000,
+      { rangeFilters: productionReportQuery.rangeFilters }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+  const { data: mealServiceConsumptions = [] } = useQuery({
+    queryKey: ['foodCostMealServiceConsumptionsPage', mealServiceReportQuery],
+    queryFn: () => base44.entities.MealServiceConsumption.filter(
+      mealServiceReportQuery.filters,
+      '-service_date',
+      5000,
+      { rangeFilters: mealServiceReportQuery.rangeFilters }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+  const { data: producedItemBatches = [] } = useQuery({
+    queryKey: ['foodCostProducedItemBatchesPage', productionReportQuery],
+    queryFn: () => base44.entities.ProducedItemBatch.filter(
+      productionReportQuery.filters,
+      '-production_date',
+      5000,
+      { rangeFilters: productionReportQuery.rangeFilters }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
 
   const recipeMap = useMemo(
     () => new Map(recipes.map((recipe) => [String(recipe.id), recipe])),

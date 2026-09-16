@@ -78,6 +78,16 @@ const UNAVAILABLE_LOT_STATUSES = new Set([
   'blocked', 'quarantined', 'quarantine', 'hold', 'on_hold', 'recalled', 'expired'
 ]);
 
+const MASTER_DATA_QUERY_OPTIONS = {
+  staleTime: 10 * 60 * 1000,
+  gcTime: 60 * 60 * 1000
+};
+
+const INVENTORY_REPORT_QUERY_OPTIONS = {
+  staleTime: 30 * 1000,
+  gcTime: 10 * 60 * 1000
+};
+
 function getLotDisplayStatus(lot) {
   if (Number(lot?.remaining_quantity || 0) <= 0) return 'consumed';
   const persisted = String(lot?.status || 'active').trim().toLowerCase();
@@ -701,10 +711,20 @@ export default function Inventory() {
   const [selectedStockIngredient, setSelectedStockIngredient] = useState(null);
 
   const queryClient = useQueryClient();
+  const upcomingProductionRange = useMemo(() => {
+    const today = new Date();
+    const nextWeek = new Date(today);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    return {
+      startDate: format(today, 'yyyy-MM-dd'),
+      endDate: format(nextWeek, 'yyyy-MM-dd')
+    };
+  }, []);
 
   const { data: sites = [] } = useQuery({
     queryKey: ['sites'],
-    queryFn: () => base44.entities.Site.list()
+    queryFn: () => base44.entities.Site.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const stockSites = useMemo(
@@ -717,17 +737,32 @@ export default function Inventory() {
 
   const { data: ingredients = [] } = useQuery({
     queryKey: ['ingredients'],
-    queryFn: () => base44.entities.Ingredient.list()
+    queryFn: () => base44.entities.Ingredient.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const { data: productions = [] } = useQuery({
-    queryKey: ['productions'],
-    queryFn: () => base44.entities.Production.list('-production_date', 100)
+    queryKey: ['productions', 'inventoryUpcomingNeeds', upcomingProductionRange],
+    queryFn: () => base44.entities.Production.filter(
+      {},
+      'production_date',
+      200,
+      {
+        rangeFilters: {
+          production_date: {
+            gte: upcomingProductionRange.startDate,
+            lte: upcomingProductionRange.endDate
+          }
+        }
+      }
+    ),
+    ...INVENTORY_REPORT_QUERY_OPTIONS
   });
 
   const { data: stockOnHand = [], isLoading } = useQuery({
     queryKey: ['inventory', 'stock-on-hand'],
-    queryFn: () => base44.inventory.getStockOnHand()
+    queryFn: () => base44.inventory.getStockOnHand(),
+    ...INVENTORY_REPORT_QUERY_OPTIONS
   });
 
   const { data: movementReport = [] } = useQuery({

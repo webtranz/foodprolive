@@ -1060,6 +1060,18 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_production_status_date_ci
   )
   WHERE entity_name = 'Production';
 
+CREATE INDEX IF NOT EXISTS idx_entity_records_production_site_date_meal_scope
+  ON entity_records (
+    (data->>'site_id'),
+    (data->>'fulfillment_store_id'),
+    (data->>'production_date'),
+    (data->>'meal_type'),
+    (data->>'menu_type'),
+    (data->>'menu_category'),
+    (data->>'status')
+  )
+  WHERE entity_name = 'Production';
+
 CREATE INDEX IF NOT EXISTS idx_entity_records_material_request_site_date_status_ci
   ON entity_records (
     (data->>'site_id'),
@@ -1078,6 +1090,10 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_transaction_site_date_ci
 
 CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_site_expiry
   ON entity_records ((data->>'site_id'), (data->>'expiry_date'), (data->>'status'))
+  WHERE entity_name = 'InventoryLot';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_site_ingredient_status
+  ON entity_records ((data->>'site_id'), (data->>'ingredient_id'), (data->>'status'))
   WHERE entity_name = 'InventoryLot';
 
 CREATE INDEX IF NOT EXISTS idx_entity_records_attendance_site_date_status_ci
@@ -1118,6 +1134,18 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_food_waste_site_date_meal
 
 CREATE INDEX IF NOT EXISTS idx_entity_records_food_waste_status_lookup
   ON entity_records ((data->>'approval_status'), (data->>'status'), (data->>'production_id'))
+  WHERE entity_name = 'FoodWaste';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_food_waste_report_filters
+  ON entity_records (
+    (data->>'waste_date'),
+    (data->>'site_id'),
+    (data->>'meal_type'),
+    (data->>'waste_category'),
+    (data->>'reason_code'),
+    (data->>'waste_scope'),
+    (data->>'status')
+  )
   WHERE entity_name = 'FoodWaste';
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_menu_plan_pr_schedule_site_unique
@@ -1217,6 +1245,18 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_report_date
   )
   WHERE entity_name = 'ProducedItemBatch';
 
+CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_report_scope
+  ON entity_records (
+    (data->>'production_date'),
+    (data->>'site_id'),
+    (data->>'meal_type'),
+    (data->>'menu_type'),
+    (data->>'menu_category'),
+    (data->>'status'),
+    id
+  )
+  WHERE entity_name = 'ProducedItemBatch';
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_idempotency_unique
   ON entity_records ((data->>'idempotency_key'))
   WHERE entity_name = 'MealServiceAttendance'
@@ -1305,6 +1345,19 @@ CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_menu_report
     (data->>'meal_type'),
     (data->>'menu_type'),
     (data->>'menu_category'),
+    id
+  )
+  WHERE entity_name = 'MealServiceConsumption';
+
+CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_report_status
+  ON entity_records (
+    (data->>'service_date'),
+    (data->>'site_id'),
+    (data->>'meal_type'),
+    (data->>'menu_type'),
+    (data->>'menu_category'),
+    (data->>'movement_type'),
+    (data->>'status'),
     id
   )
   WHERE entity_name = 'MealServiceConsumption';

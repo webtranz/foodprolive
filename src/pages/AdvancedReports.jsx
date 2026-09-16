@@ -124,6 +124,30 @@ const scheduleTemplate = {
   next_run_date: format(addDays(new Date(), 7), 'yyyy-MM-dd')
 };
 
+const MASTER_DATA_QUERY_OPTIONS = {
+  staleTime: 10 * 60 * 1000,
+  gcTime: 60 * 60 * 1000
+};
+
+const REPORT_DATA_QUERY_OPTIONS = {
+  staleTime: 60 * 1000,
+  gcTime: 10 * 60 * 1000
+};
+
+function buildScopedReportQuery(filters, dateField) {
+  const entityFilters = {};
+  if (filters.mealType !== 'all') entityFilters.meal_type = filters.mealType;
+  return {
+    filters: entityFilters,
+    rangeFilters: {
+      [dateField]: {
+        gte: filters.startDate,
+        lte: filters.endDate
+      }
+    }
+  };
+}
+
 export default function AdvancedReports() {
   const { accessLevel, permissions, can, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
@@ -140,15 +164,86 @@ export default function AdvancedReports() {
   const [scheduleForm, setScheduleForm] = useState(scheduleTemplate);
   const [emailStatus, setEmailStatus] = useState('');
 
-  const { data: sites = [] } = useQuery({ queryKey: ['sites'], queryFn: () => base44.entities.Site.list() });
-  const { data: ingredients = [] } = useQuery({ queryKey: ['ingredients'], queryFn: () => base44.entities.Ingredient.list() });
-  const { data: recipes = [] } = useQuery({ queryKey: ['recipes'], queryFn: () => base44.entities.Recipe.list() });
-  const { data: productions = [] } = useQuery({ queryKey: ['productions'], queryFn: () => base44.entities.Production.list('-production_date', 500) });
-  const { data: mealServiceConsumptions = [] } = useQuery({ queryKey: ['advancedMealServiceConsumptions'], queryFn: () => base44.entities.MealServiceConsumption.list('-service_date', 5000) });
-  const { data: producedItemBatches = [] } = useQuery({ queryKey: ['advancedProducedItemBatches'], queryFn: () => base44.entities.ProducedItemBatch.list('-production_date', 5000) });
-  const { data: waste = [] } = useQuery({ queryKey: ['foodWaste'], queryFn: () => base44.entities.FoodWaste.list('-waste_date', 500) });
-  const { data: purchaseOrders = [] } = useQuery({ queryKey: ['procurementOrders'], queryFn: () => base44.procurement.listOrders() });
-  const { data: inventoryValuation = [] } = useQuery({ queryKey: ['inventoryValuation'], queryFn: () => base44.inventory.getValuation() });
+  const productionReportQuery = useMemo(
+    () => buildScopedReportQuery(filters, 'production_date'),
+    [filters.startDate, filters.endDate, filters.mealType]
+  );
+  const mealServiceReportQuery = useMemo(
+    () => buildScopedReportQuery(filters, 'service_date'),
+    [filters.startDate, filters.endDate, filters.mealType]
+  );
+  const wasteReportQuery = useMemo(
+    () => buildScopedReportQuery(filters, 'waste_date'),
+    [filters.startDate, filters.endDate, filters.mealType]
+  );
+
+  const { data: sites = [] } = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => base44.entities.Site.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+  const { data: ingredients = [] } = useQuery({
+    queryKey: ['ingredients'],
+    queryFn: () => base44.entities.Ingredient.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+  const { data: recipes = [] } = useQuery({
+    queryKey: ['recipes'],
+    queryFn: () => base44.entities.Recipe.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+  const { data: productions = [] } = useQuery({
+    queryKey: ['productions', 'advancedReports', productionReportQuery],
+    queryFn: () => base44.entities.Production.filter(
+      productionReportQuery.filters,
+      '-production_date',
+      2000,
+      { rangeFilters: productionReportQuery.rangeFilters }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+  const { data: mealServiceConsumptions = [] } = useQuery({
+    queryKey: ['advancedMealServiceConsumptions', mealServiceReportQuery],
+    queryFn: () => base44.entities.MealServiceConsumption.filter(
+      mealServiceReportQuery.filters,
+      '-service_date',
+      5000,
+      { rangeFilters: mealServiceReportQuery.rangeFilters }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+  const { data: producedItemBatches = [] } = useQuery({
+    queryKey: ['advancedProducedItemBatches', productionReportQuery],
+    queryFn: () => base44.entities.ProducedItemBatch.filter(
+      productionReportQuery.filters,
+      '-production_date',
+      5000,
+      { rangeFilters: productionReportQuery.rangeFilters }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+  const { data: waste = [] } = useQuery({
+    queryKey: ['foodWaste', 'advancedReports', wasteReportQuery],
+    queryFn: () => base44.entities.FoodWaste.filter(
+      wasteReportQuery.filters,
+      '-waste_date',
+      2000,
+      { rangeFilters: wasteReportQuery.rangeFilters }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+  const { data: purchaseOrders = [] } = useQuery({
+    queryKey: ['procurementOrders'],
+    queryFn: () => base44.procurement.listOrders(),
+    staleTime: 2 * 60 * 1000,
+    gcTime: 15 * 60 * 1000
+  });
+  const { data: inventoryValuation = [] } = useQuery({
+    queryKey: ['inventoryValuation'],
+    queryFn: () => base44.inventory.getValuation(),
+    staleTime: 60 * 1000,
+    gcTime: 10 * 60 * 1000
+  });
   const { data: salesSummary = [] } = useQuery({
     queryKey: ['salesSummary', filters.startDate, filters.endDate, filters.locationId],
     queryFn: () => base44.pos.getSalesSummary({

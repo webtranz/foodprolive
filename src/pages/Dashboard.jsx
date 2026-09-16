@@ -73,6 +73,16 @@ const STATUS_COLORS = {
   cancelled: '#ef4444'
 };
 
+const MASTER_DATA_QUERY_OPTIONS = {
+  staleTime: 10 * 60 * 1000,
+  gcTime: 60 * 60 * 1000
+};
+
+const DASHBOARD_DATA_QUERY_OPTIONS = {
+  staleTime: 60 * 1000,
+  gcTime: 10 * 60 * 1000
+};
+
 const KPI_CARD_STYLES = [
   { iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
   { iconBg: 'bg-blue-50', iconColor: 'text-blue-600' },
@@ -135,42 +145,98 @@ function DefaultDashboard() {
 
   const { data: sites = [], isLoading: sitesLoading } = useQuery({
     queryKey: ['sites'],
-    queryFn: () => base44.entities.Site.list()
+    queryFn: () => base44.entities.Site.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const { data: productions = [], isLoading: productionsLoading } = useQuery({
-    queryKey: ['productions'],
-    queryFn: () => base44.entities.Production.list('-production_date', 500)
+    queryKey: ['productions', 'dashboard', filters.startDate, filters.endDate],
+    queryFn: () => base44.entities.Production.filter(
+      {},
+      '-production_date',
+      1000,
+      {
+        rangeFilters: {
+          production_date: {
+            gte: filters.startDate,
+            lte: filters.endDate
+          }
+        }
+      }
+    ),
+    ...DASHBOARD_DATA_QUERY_OPTIONS
   });
 
   const { data: recipes = [], isLoading: recipesLoading } = useQuery({
     queryKey: ['recipes'],
-    queryFn: () => base44.entities.Recipe.list()
+    queryFn: () => base44.entities.Recipe.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const { data: foodWaste = [], isLoading: wasteLoading } = useQuery({
-    queryKey: ['foodWaste'],
-    queryFn: () => base44.entities.FoodWaste.list('-waste_date', 500)
+    queryKey: ['foodWaste', 'dashboard', filters.startDate, filters.endDate],
+    queryFn: () => base44.entities.FoodWaste.filter(
+      {},
+      '-waste_date',
+      1000,
+      {
+        rangeFilters: {
+          waste_date: {
+            gte: filters.startDate,
+            lte: filters.endDate
+          }
+        }
+      }
+    ),
+    ...DASHBOARD_DATA_QUERY_OPTIONS
   });
 
   const { data: inventory = [], isLoading: inventoryLoading } = useQuery({
     queryKey: ['inventory'],
-    queryFn: () => base44.inventory.getStockOnHand()
+    queryFn: () => base44.inventory.getStockOnHand(),
+    ...DASHBOARD_DATA_QUERY_OPTIONS
   });
 
   const { data: ingredients = [], isLoading: ingredientsLoading } = useQuery({
     queryKey: ['ingredients'],
-    queryFn: () => base44.entities.Ingredient.list()
+    queryFn: () => base44.entities.Ingredient.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const { data: inventoryTransactions = [], isLoading: transactionsLoading } = useQuery({
-    queryKey: ['inventoryTransactions'],
-    queryFn: () => base44.entities.InventoryTransaction.list('-transaction_date', 500)
+    queryKey: ['inventoryTransactions', 'dashboard', filters.startDate, filters.endDate],
+    queryFn: () => base44.entities.InventoryTransaction.filter(
+      {},
+      '-transaction_date',
+      1000,
+      {
+        rangeFilters: {
+          transaction_date: {
+            gte: filters.startDate,
+            lte: filters.endDate
+          }
+        }
+      }
+    ),
+    ...DASHBOARD_DATA_QUERY_OPTIONS
   });
 
   const { data: purchaseOrders = [], isLoading: purchaseOrdersLoading } = useQuery({
-    queryKey: ['purchaseOrders'],
-    queryFn: () => base44.entities.PurchaseOrder.list('-order_date', 200)
+    queryKey: ['purchaseOrders', 'dashboard', filters.startDate, filters.endDate],
+    queryFn: () => base44.entities.PurchaseOrder.filter(
+      {},
+      '-order_date',
+      500,
+      {
+        rangeFilters: {
+          order_date: {
+            gte: filters.startDate,
+            lte: filters.endDate
+          }
+        }
+      }
+    ),
+    ...DASHBOARD_DATA_QUERY_OPTIONS
   });
 
   const siteMap = useMemo(

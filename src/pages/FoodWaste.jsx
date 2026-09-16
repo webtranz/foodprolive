@@ -277,6 +277,16 @@ function createDefaultWasteForm() {
   };
 }
 
+const MASTER_DATA_QUERY_OPTIONS = {
+  staleTime: 10 * 60 * 1000,
+  gcTime: 60 * 60 * 1000
+};
+
+const WASTE_REPORT_QUERY_OPTIONS = {
+  staleTime: 60 * 1000,
+  gcTime: 10 * 60 * 1000
+};
+
 export default function FoodWaste() {
   const queryClient = useQueryClient();
   const { can, isAdmin } = usePermissions();
@@ -307,6 +317,30 @@ export default function FoodWaste() {
     target_month: format(new Date(), 'yyyy-MM'),
     notes: ''
   });
+  const wasteListFilters = useMemo(() => ({
+    start_date: filters.startDate,
+    end_date: filters.endDate,
+    site_id: filters.locationId === 'all' ? '' : filters.locationId,
+    waste_category: filters.wasteCategory === 'all' ? '' : filters.wasteCategory,
+    reason_code: filters.reasonCode === 'all' ? '' : filters.reasonCode,
+    scope: filters.scope === 'all' ? '' : filters.scope,
+    meal_type: filters.mealType === 'all' ? '' : filters.mealType,
+    limit: 2000
+  }), [filters]);
+  const productionWasteQuery = useMemo(() => {
+    const entityFilters = {};
+    if (filters.locationId !== 'all') entityFilters.site_id = filters.locationId;
+    if (filters.mealType !== 'all') entityFilters.meal_type = filters.mealType;
+    return {
+      filters: entityFilters,
+      rangeFilters: {
+        production_date: {
+          gte: filters.startDate,
+          lte: filters.endDate
+        }
+      }
+    };
+  }, [filters]);
 
   const {
     data: sites = [],
@@ -314,7 +348,8 @@ export default function FoodWaste() {
     error: sitesError
   } = useQuery({
     queryKey: ['sites'],
-    queryFn: () => base44.entities.Site.list()
+    queryFn: () => base44.entities.Site.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const {
@@ -323,7 +358,8 @@ export default function FoodWaste() {
     error: ingredientsError
   } = useQuery({
     queryKey: ['ingredients'],
-    queryFn: () => base44.entities.Ingredient.list()
+    queryFn: () => base44.entities.Ingredient.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const {
@@ -332,7 +368,8 @@ export default function FoodWaste() {
     error: recipesError
   } = useQuery({
     queryKey: ['recipes'],
-    queryFn: () => base44.entities.Recipe.list()
+    queryFn: () => base44.entities.Recipe.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const {
@@ -340,8 +377,14 @@ export default function FoodWaste() {
     isLoading: productionsLoading,
     error: productionsError
   } = useQuery({
-    queryKey: ['productionsForWaste'],
-    queryFn: () => base44.entities.Production.list('-production_date', 1000)
+    queryKey: ['productionsForWaste', productionWasteQuery],
+    queryFn: () => base44.entities.Production.filter(
+      productionWasteQuery.filters,
+      '-production_date',
+      1000,
+      { rangeFilters: productionWasteQuery.rangeFilters }
+    ),
+    ...WASTE_REPORT_QUERY_OPTIONS
   });
 
   const {
@@ -349,8 +392,9 @@ export default function FoodWaste() {
     isLoading: foodWasteLoading,
     error: foodWasteError
   } = useQuery({
-    queryKey: ['foodWaste'],
-    queryFn: () => base44.foodWaste.list()
+    queryKey: ['foodWaste', wasteListFilters],
+    queryFn: () => base44.foodWaste.list(wasteListFilters),
+    ...WASTE_REPORT_QUERY_OPTIONS
   });
 
   const {
@@ -369,7 +413,9 @@ export default function FoodWaste() {
     error: wasteTargetsError
   } = useQuery({
     queryKey: ['wasteTargets'],
-    queryFn: () => base44.entities.WasteTarget.list('-target_month', 500)
+    queryFn: () => base44.entities.WasteTarget.list('-target_month', 500),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000
   });
 
   const ingredientMap = useMemo(() => new Map(ingredients.map((item) => [item.id, item])), [ingredients]);

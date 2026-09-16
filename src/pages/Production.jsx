@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -82,6 +82,16 @@ const MEAL_TYPES = [
   { value: 'dinner', label: 'Dinner' },
   { value: 'snack', label: 'Snack' }
 ];
+
+const MASTER_DATA_QUERY_OPTIONS = {
+  staleTime: 10 * 60 * 1000,
+  gcTime: 60 * 60 * 1000
+};
+
+const OPERATIONAL_QUERY_OPTIONS = {
+  staleTime: 30 * 1000,
+  gcTime: 10 * 60 * 1000
+};
 
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
@@ -1228,6 +1238,9 @@ export default function Production() {
   const [issueAdminReissueEnabled, setIssueAdminReissueEnabled] = useState(false);
 
   const queryClient = useQueryClient();
+  const invalidateCurrentProductionScope = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['productions', selectedDate] });
+  }, [queryClient, selectedDate]);
 
   const resetIssueDialogState = () => {
     setIssueSource(null);
@@ -1243,17 +1256,20 @@ export default function Production() {
 
   const { data: sites = [], error: sitesError, isPending: sitesLoading } = useQuery({
     queryKey: ['sites'],
-    queryFn: () => base44.entities.Site.list()
+    queryFn: () => base44.entities.Site.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const { data: recipes = [], error: recipesError, isPending: recipesLoading } = useQuery({
     queryKey: ['recipes'],
-    queryFn: () => base44.entities.Recipe.list()
+    queryFn: () => base44.entities.Recipe.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const { data: ingredients = [], error: ingredientsError, isPending: ingredientsLoading } = useQuery({
     queryKey: ['ingredients'],
-    queryFn: () => base44.entities.Ingredient.list()
+    queryFn: () => base44.entities.Ingredient.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
   });
 
   const { data: productions = [], isLoading, error: productionsError } = useQuery({
@@ -1262,12 +1278,15 @@ export default function Production() {
       production_date: selectedDate
     }, '-production_date'),
     enabled: Boolean(selectedDate),
-    refetchInterval: 300000
+    refetchInterval: 300000,
+    ...OPERATIONAL_QUERY_OPTIONS
   });
 
   const { data: productionHistory = [] } = useQuery({
-    queryKey: ['productionHistoryForWasteInsights'],
-    queryFn: () => base44.entities.Production.list('-production_date', 1000)
+    queryKey: ['productionHistoryForWasteInsights', selectedDate],
+    queryFn: () => base44.entities.Production.filter({ production_date: selectedDate }, '-production_date', 500),
+    enabled: Boolean(selectedDate),
+    ...OPERATIONAL_QUERY_OPTIONS
   });
 
   const { data: materialRequests = [], error: materialRequestsError } = useQuery({
@@ -1278,9 +1297,14 @@ export default function Production() {
   });
 
   const { data: foodWaste = [] } = useQuery({
-    queryKey: ['foodWasteForProduction'],
-    queryFn: () => base44.entities.FoodWaste.list('-waste_date', 1000),
-    enabled: can('manage_waste')
+    queryKey: ['foodWasteForProduction', selectedDate],
+    queryFn: () => base44.foodWaste.list({
+      start_date: selectedDate,
+      end_date: selectedDate,
+      limit: 1000
+    }),
+    enabled: can('manage_waste') && Boolean(selectedDate),
+    ...OPERATIONAL_QUERY_OPTIONS
   });
 
   const createMutation = useMutation({
@@ -1290,7 +1314,7 @@ export default function Production() {
         : base44.entities.Production.create(data)
     ),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       setFormOpen(false);
@@ -1349,7 +1373,7 @@ export default function Production() {
       return { mode: 'created', records: created };
     },
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       setIssueDialogOpen(false);
@@ -1408,7 +1432,7 @@ export default function Production() {
 
   useEffect(() => {
     const unsubscribeProduction = base44.entities.Production.subscribe(() => {
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });
     });
@@ -1423,7 +1447,7 @@ export default function Production() {
       unsubscribeRequests();
       unsubscribeInventory();
     };
-  }, [queryClient]);
+  }, [invalidateCurrentProductionScope, queryClient]);
 
   const visibleSites = useMemo(() => (
     isAdmin
@@ -1630,7 +1654,7 @@ export default function Production() {
       await base44.entities.Production.update(id, { status });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
@@ -1659,7 +1683,7 @@ export default function Production() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
@@ -1684,7 +1708,7 @@ export default function Production() {
       return base44.entities.Production.delete(production.id);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       setDeleteProduction(null);
@@ -1704,7 +1728,7 @@ export default function Production() {
       return base44.inventory.reverseCompletedProduction(production.id, { reason });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
@@ -1739,7 +1763,7 @@ export default function Production() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
@@ -1766,7 +1790,7 @@ export default function Production() {
       return base44.inventory.repairProductionReversalBalance(production.id, { reason });
     },
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
       queryClient.setQueryData(
@@ -2773,7 +2797,7 @@ export default function Production() {
           ...(action === 'approve' ? { fulfillment_store_id: reviewInventorySiteId } : {})
         });
       }
-      queryClient.invalidateQueries({ queryKey: ['productions'] });
+      invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'] });

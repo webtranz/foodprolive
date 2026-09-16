@@ -201,16 +201,16 @@ function createEntityModule(entity) {
       if (typeof limit === 'number') params.set('limit', String(limit));
       return apiRequest(`/api/entities/${entity}?${params.toString()}`);
     },
-    filter(filters = {}, sort, limit) {
+    filter(filters = {}, sort, limit, { rangeFilters = {} } = {}) {
       return apiRequest(`/api/entities/${entity}/filter`, {
         method: 'POST',
-        body: JSON.stringify({ filters, sort, limit })
+        body: JSON.stringify({ filters, rangeFilters, sort, limit })
       });
     },
-    page({ filters = {}, sort, page = 1, limit = 50 } = {}) {
+    page({ filters = {}, rangeFilters = {}, sort, page = 1, limit = 50 } = {}) {
       return apiRequest(`/api/entities/${entity}/page`, {
         method: 'POST',
-        body: JSON.stringify({ filters, sort, page, limit })
+        body: JSON.stringify({ filters, rangeFilters, sort, page, limit })
       });
     },
     create(data) {

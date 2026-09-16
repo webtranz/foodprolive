@@ -4492,19 +4492,42 @@ app.get('/api/food-waste/context', requireAuth, requirePermission('manage_waste'
 
 app.get('/api/food-waste', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
   try {
+    const siteId = String(request.query.site_id || '').trim();
+    const wasteCategory = String(request.query.waste_category || '').trim();
+    const reasonCode = String(request.query.reason_code || '').trim();
+    const wasteScope = String(request.query.scope || '').trim();
+    const mealType = String(request.query.meal_type || '').trim();
+    const filters = {};
+    if (siteId) filters.site_id = siteId;
+    if (wasteCategory) filters.waste_category = wasteCategory;
+    if (reasonCode) filters.reason_code = reasonCode;
+    if (wasteScope) filters.waste_scope = wasteScope;
+    if (mealType) filters.meal_type = mealType;
+
+    const rangeFilters = {};
+    if (request.query.start_date || request.query.end_date) {
+      rangeFilters.waste_date = {
+        gte: request.query.start_date,
+        lte: request.query.end_date
+      };
+    }
+    const { scope: authScope, location } = await getEntityLocationContext(request.user, 'FoodWaste');
     const records = await listDocuments('FoodWaste', {
       sort: request.query.sort || '-waste_date',
-      limit: request.query.limit ? Number(request.query.limit) : 1000
+      limit: request.query.limit ? Number(request.query.limit) : 1000,
+      filters,
+      rangeFilters,
+      location
     });
-    const scopedRecords = await scopeEntityRecords(request.user, 'FoodWaste', records);
+    const scopedRecords = await scopeEntityRecords(request.user, 'FoodWaste', records, authScope);
     const filteredRecords = filterFoodWasteRows(scopedRecords, {
       start_date: request.query.start_date,
       end_date: request.query.end_date,
-      site_id: String(request.query.site_id || '').trim(),
-      waste_category: String(request.query.waste_category || '').trim(),
-      reason_code: String(request.query.reason_code || '').trim(),
-      scope: String(request.query.scope || '').trim(),
-      meal_type: String(request.query.meal_type || '').trim()
+      site_id: siteId,
+      waste_category: wasteCategory,
+      reason_code: reasonCode,
+      scope: wasteScope,
+      meal_type: mealType
     });
 
     const isAdministrator = hasAdminAccess(request.user);
@@ -5129,6 +5152,7 @@ app.post('/api/entities/:entity/filter', requireAuth, async (request, response, 
     const shouldScopeUsersBeforeLimit = entity === 'User' && Boolean(scope && !scope.unrestricted);
     const records = await listDocuments(entity, {
       filters: request.body?.filters || {},
+      rangeFilters: request.body?.rangeFilters || {},
       sort: request.body?.sort,
       limit: shouldScopeUsersBeforeLimit ? undefined : request.body?.limit,
       location
@@ -5153,12 +5177,13 @@ app.post('/api/entities/:entity/page', requireAuth, async (request, response, ne
     const limit = Math.min(200, Math.max(1, Math.trunc(Number(request.body?.limit) || 50)));
     const offset = (page - 1) * limit;
     const filters = request.body?.filters || {};
+    const rangeFilters = request.body?.rangeFilters || {};
     const sort = request.body?.sort;
     const { scope, location } = await getEntityLocationContext(request.user, entity);
 
     let pageResult;
     if (entity === 'User' && scope && !scope.unrestricted) {
-      const records = await listDocuments(entity, { filters, sort });
+      const records = await listDocuments(entity, { filters, rangeFilters, sort });
       const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
       pageResult = {
         items: scopedRecords.slice(offset, offset + limit),
@@ -5167,7 +5192,7 @@ app.post('/api/entities/:entity/page', requireAuth, async (request, response, ne
         offset
       };
     } else {
-      pageResult = await listDocumentsPage(entity, { filters, sort, limit, offset, location });
+      pageResult = await listDocumentsPage(entity, { filters, rangeFilters, sort, limit, offset, location });
       pageResult.items = await scopeEntityRecords(request.user, entity, pageResult.items, scope);
     }
 

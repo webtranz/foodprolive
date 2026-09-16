@@ -17,29 +17,19 @@ import { formatCurrency } from '@/lib/currency';
 import { formatRecipeQuantity } from '../../shared/recipeNumbers.js';
 import { getItemCode } from '../../shared/itemCode.js';
 
+const MASTER_DATA_QUERY_OPTIONS = {
+  staleTime: 10 * 60 * 1000,
+  gcTime: 60 * 60 * 1000
+};
+
+const REPORT_DATA_QUERY_OPTIONS = {
+  staleTime: 60 * 1000,
+  gcTime: 10 * 60 * 1000
+};
+
 export default function Reports() {
   const [selectedSite, setSelectedSite] = useState('all');
   const [dateRange, setDateRange] = useState('week');
-
-  const { data: sites = [] } = useQuery({
-    queryKey: ['sites'],
-    queryFn: () => base44.entities.Site.list()
-  });
-
-  const { data: productions = [] } = useQuery({
-    queryKey: ['productions'],
-    queryFn: () => base44.entities.Production.list('-production_date', 500)
-  });
-
-  const { data: foodWaste = [] } = useQuery({
-    queryKey: ['foodWaste'],
-    queryFn: () => base44.entities.FoodWaste.list('-waste_date', 500)
-  });
-
-  const { data: ingredients = [] } = useQuery({
-    queryKey: ['ingredients'],
-    queryFn: () => base44.entities.Ingredient.list()
-  });
 
   // Calculate date range
   const dateFilter = useMemo(() => {
@@ -49,6 +39,61 @@ export default function Reports() {
     if (dateRange === 'quarter') return subDays(today, 90);
     return subDays(today, 365);
   }, [dateRange]);
+  const dateRangeFilters = useMemo(() => ({
+    startDate: format(dateFilter, 'yyyy-MM-dd'),
+    endDate: format(new Date(), 'yyyy-MM-dd')
+  }), [dateFilter]);
+  const scopedEntityFilters = useMemo(() => (
+    selectedSite === 'all' ? {} : { site_id: selectedSite }
+  ), [selectedSite]);
+
+  const { data: sites = [] } = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => base44.entities.Site.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
+
+  const { data: productions = [] } = useQuery({
+    queryKey: ['productions', 'reports', scopedEntityFilters, dateRangeFilters],
+    queryFn: () => base44.entities.Production.filter(
+      scopedEntityFilters,
+      '-production_date',
+      1000,
+      {
+        rangeFilters: {
+          production_date: {
+            gte: dateRangeFilters.startDate,
+            lte: dateRangeFilters.endDate
+          }
+        }
+      }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+
+  const { data: foodWaste = [] } = useQuery({
+    queryKey: ['foodWaste', 'reports', scopedEntityFilters, dateRangeFilters],
+    queryFn: () => base44.entities.FoodWaste.filter(
+      scopedEntityFilters,
+      '-waste_date',
+      1000,
+      {
+        rangeFilters: {
+          waste_date: {
+            gte: dateRangeFilters.startDate,
+            lte: dateRangeFilters.endDate
+          }
+        }
+      }
+    ),
+    ...REPORT_DATA_QUERY_OPTIONS
+  });
+
+  const { data: ingredients = [] } = useQuery({
+    queryKey: ['ingredients'],
+    queryFn: () => base44.entities.Ingredient.list(),
+    ...MASTER_DATA_QUERY_OPTIONS
+  });
 
   // Filter data
   const filteredProductions = useMemo(() => {
