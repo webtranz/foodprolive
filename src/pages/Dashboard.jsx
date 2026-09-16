@@ -1096,6 +1096,17 @@ const ADMIN_DASHBOARD_LABELS = {
   [DASHBOARD_VIEWS.PROJECT_MANAGER]: 'Project Manager View'
 };
 
+function normalizeAdminDashboardPreviewView(view) {
+  if (view === DASHBOARD_VIEWS.GENERAL_MANAGER || view === DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER) {
+    return DASHBOARD_VIEWS.HEAD_OFFICE;
+  }
+  return view;
+}
+
+const ADMIN_DASHBOARD_PREVIEW_ORDER = Array.from(new Set(
+  ADMIN_DASHBOARD_VIEW_ORDER.map(normalizeAdminDashboardPreviewView)
+));
+
 function DashboardPermissionLoading() {
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
@@ -1115,10 +1126,10 @@ function DashboardPermissionLoading() {
 function AdminDashboardCarousel() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [managementDateRange, setManagementDateRange] = useState(getInitialManagementDateRange);
-  const activeView = ADMIN_DASHBOARD_VIEW_ORDER[activeIndex];
+  const activeView = ADMIN_DASHBOARD_PREVIEW_ORDER[activeIndex];
   const move = (offset) => {
     setActiveIndex((current) => (
-      (current + offset + ADMIN_DASHBOARD_VIEW_ORDER.length) % ADMIN_DASHBOARD_VIEW_ORDER.length
+      (current + offset + ADMIN_DASHBOARD_PREVIEW_ORDER.length) % ADMIN_DASHBOARD_PREVIEW_ORDER.length
     ));
   };
 
@@ -1149,7 +1160,7 @@ function AdminDashboardCarousel() {
             </Button>
             <div className="min-w-[190px] rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-center" aria-live="polite">
               <p className="text-sm font-semibold text-slate-900">{ADMIN_DASHBOARD_LABELS[activeView]}</p>
-              <p className="text-[11px] text-slate-500">{activeIndex + 1} of {ADMIN_DASHBOARD_VIEW_ORDER.length}</p>
+              <p className="text-[11px] text-slate-500">{activeIndex + 1} of {ADMIN_DASHBOARD_PREVIEW_ORDER.length}</p>
             </div>
             <Button
               type="button"
@@ -1165,7 +1176,7 @@ function AdminDashboardCarousel() {
         </div>
 
         <div className="mx-auto mt-3 flex max-w-[1680px] flex-wrap items-center justify-center gap-2" aria-label="Dashboard perspectives">
-          {ADMIN_DASHBOARD_VIEW_ORDER.map((view, index) => (
+          {ADMIN_DASHBOARD_PREVIEW_ORDER.map((view, index) => (
             <button
               key={view}
               type="button"

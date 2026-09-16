@@ -10199,12 +10199,23 @@ app.get('/api/health/ready', async (_request, response) => {
   }
 });
 
+function setFrontendStaticCacheHeaders(response, filePath) {
+  if (filePath.endsWith('.html')) {
+    response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('Expires', '0');
+  }
+}
+
 if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
+  app.use(express.static(distDir, { setHeaders: setFrontendStaticCacheHeaders }));
   app.get('*', (request, response, next) => {
     if (request.path.startsWith('/api/') || request.path.startsWith('/uploads/')) {
       return next();
     }
+    response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('Expires', '0');
     return response.sendFile(path.join(distDir, 'index.html'));
   });
 }
