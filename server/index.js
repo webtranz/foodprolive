@@ -8944,35 +8944,167 @@ app.post('/api/inventory/production/:id/repair-menu-classification', requireAuth
   }
 });
 
-app.post('/api/inventory/production/:id/complete', requireAuth, requirePermission('complete_production'), async (request, response, next) => {
-  try {
-    const scope = await getLocationScope(request.user);
-    const production = await findDocument('Production', request.params.id);
-    if (!production || !filterRowsByAccessibleSites(
-      [production],
-      scope,
-      ['site_id', 'fulfillment_store_id']
-    ).length) {
-      return response.status(403).json({ message: 'You do not have access to this production record' });
-    }
-    const requestedFulfillmentStoreId = String(request.body?.fulfillment_store_id || '').trim();
-    const productionInventorySite = resolveProductionFulfillmentStore({
-      ...production,
-      fulfillment_store_id: production.fulfillment_store_id || requestedFulfillmentStoreId
-    }, scope.sites);
-    if (
-      !scope.unrestricted
-      && !scope.accessibleSiteIds.has(String(productionInventorySite.id))
+const PRODUCTION_COMPLETION_ACTIVE_STATUSES = new Set(['queued', 'processing']);
+const PRODUCTION_COMPLETION_FINAL_STATUSES = new Set(['completed', 'failed']);
+const productionCompletionQueue = [];
+const productionCompletionActiveIds = new Set();
+let productionCompletionRunningCount = 0;
+const productionCompletionConcurrency = Math.max(
+  1,
+  Math.min(
+    8,
+    Number.parseInt(process.env.PRODUCTION_COMPLETION_WORKERS || '2', 10) || 2
+  )
+);
+
+function normalizeProductionCompletionJobStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(normalized)) return normalized;
+  if (PRODUCTION_COMPLETION_FINAL_STATUSES.has(normalized)) return normalized;
+  return '';
+}
+
+function clampProductionCompletionProgress(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function serializeProductionCompletionJob(production = {}, overrides = {}) {
+  const productionStatus = normalizeProductionStatus(production.status);
+  let status = normalizeProductionCompletionJobStatus(
+    overrides.status ?? production.completion_job_status
+  );
+  if (productionStatus === 'completed') {
+    status = 'completed';
+  }
+  const id = String(overrides.id ?? production.completion_job_id ?? '').trim();
+  if (!id && !status) return null;
+  const progress = clampProductionCompletionProgress(
+    overrides.progress ?? production.completion_job_progress,
+    status === 'completed' ? 100 : 0
+  );
+  return {
+    id,
+    production_id: String(overrides.production_id ?? production.id ?? '').trim(),
+    status: status || 'queued',
+    progress,
+    message: String(overrides.message ?? production.completion_job_message ?? '').trim(),
+    error: String(overrides.error ?? production.completion_job_error ?? '').trim(),
+    requested_at: overrides.requested_at ?? production.completion_job_requested_at ?? null,
+    started_at: overrides.started_at ?? production.completion_job_started_at ?? null,
+    completed_at: overrides.completed_at ?? production.completion_job_completed_at ?? null,
+    requested_by: String(overrides.requested_by ?? production.completion_job_requested_by ?? '').trim(),
+    requested_by_name: String(overrides.requested_by_name ?? production.completion_job_requested_by_name ?? '').trim(),
+    production_status: productionStatus,
+    produced_item_batch_id: production.produced_item_batch_id || null,
+    consumption_report_id: production.consumption_report_id || null,
+    consumption_report_number: production.consumption_report_number || null
+  };
+}
+
+function productionCompletionJobPatch(jobId, status, fields = {}) {
+  const now = new Date().toISOString();
+  const patch = {
+    completion_job_id: jobId,
+    completion_job_status: status,
+    completion_job_updated_at: now,
+    ...fields
+  };
+  if (typeof patch.completion_job_progress !== 'undefined') {
+    patch.completion_job_progress = clampProductionCompletionProgress(patch.completion_job_progress);
+  }
+  return patch;
+}
+
+async function updateProductionCompletionJob(productionId, patch) {
+  const updated = await updateDocument('Production', productionId, patch);
+  recordChanged('Production');
+  return updated;
+}
+
+async function resolveProductionCompletionRequest(request) {
+  const scope = await getLocationScope(request.user);
+  const production = await findDocument('Production', request.params.id);
+  if (!production || !filterRowsByAccessibleSites(
+    [production],
+    scope,
+    ['site_id', 'fulfillment_store_id']
+  ).length) {
+    const error = new Error('You do not have access to this production record');
+    error.status = 403;
+    throw error;
+  }
+  const requestedFulfillmentStoreId = String(
+    request.body?.fulfillment_store_id
+    || request.query?.fulfillment_store_id
+    || ''
+  ).trim();
+  const productionInventorySite = resolveProductionFulfillmentStore({
+    ...production,
+    fulfillment_store_id: production.fulfillment_store_id || requestedFulfillmentStoreId
+  }, scope.sites);
+  if (
+    !scope.unrestricted
+    && !scope.accessibleSiteIds.has(String(productionInventorySite.id))
+  ) {
+    const error = new Error('You do not have access to this production site inventory');
+    error.status = 403;
+    throw error;
+  }
+  if (requestedFulfillmentStoreId && requestedFulfillmentStoreId !== String(productionInventorySite.id)) {
+    const error = new Error('The production inventory location cannot be changed at completion');
+    error.status = 409;
+    throw error;
+  }
+  return { production, productionInventorySite };
+}
+
+function scheduleProductionCompletionQueueDrain() {
+  setImmediate(() => {
+    while (
+      productionCompletionRunningCount < productionCompletionConcurrency
+      && productionCompletionQueue.length > 0
     ) {
-      return response.status(403).json({ message: 'You do not have access to this production site inventory' });
+      const work = productionCompletionQueue.shift();
+      productionCompletionRunningCount += 1;
+      runProductionCompletionWork(work).finally(() => {
+        productionCompletionRunningCount = Math.max(0, productionCompletionRunningCount - 1);
+        productionCompletionActiveIds.delete(String(work.productionId));
+        if (productionCompletionQueue.length > 0) {
+          scheduleProductionCompletionQueueDrain();
+        }
+      });
     }
-    if (requestedFulfillmentStoreId && requestedFulfillmentStoreId !== String(productionInventorySite.id)) {
-      return response.status(409).json({ message: 'The production inventory location cannot be changed at completion' });
-    }
+  });
+}
+
+function enqueueProductionCompletionWork(work) {
+  const productionId = String(work.productionId || '').trim();
+  if (!productionId || productionCompletionActiveIds.has(productionId)) {
+    return false;
+  }
+  productionCompletionActiveIds.add(productionId);
+  productionCompletionQueue.push(work);
+  scheduleProductionCompletionQueueDrain();
+  return true;
+}
+
+async function runProductionCompletionWork(work) {
+  const jobId = work.jobId || randomUUID();
+  const productionId = String(work.productionId || '').trim();
+  const actor = work.actor || {};
+  try {
+    await updateProductionCompletionJob(productionId, productionCompletionJobPatch(jobId, 'processing', {
+      completion_job_progress: 20,
+      completion_job_message: 'Reconciling approved ingredients and preparing finished output.',
+      completion_job_started_at: new Date().toISOString(),
+      completion_job_error: ''
+    }));
     // Resolve inventory from the production location, including legacy records.
-    // Raw reconciliation and finished yield are recalculated server-side.
-    const result = await completeProduction(request.params.id, request.user, {
-      fulfillment_store_id: productionInventorySite.id
+    // Raw reconciliation and finished yield are recalculated server-side by completeProduction.
+    const result = await completeProduction(productionId, actor, {
+      fulfillment_store_id: work.fulfillmentStoreId
     });
     if (result.mutated) {
       recordChanged('Production');
@@ -8982,7 +9114,7 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
       recordChanged('InventoryTransaction');
       recordChanged('ProducedItemBatch');
       await auditAction({
-        user: request.user,
+        user: actor,
         action: 'PRODUCTION_CONSUMPTION_POSTED',
         entity: 'Production',
         entityId: result.record.id,
@@ -8994,9 +9126,109 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
         }
       });
     }
+    await updateProductionCompletionJob(productionId, productionCompletionJobPatch(jobId, 'completed', {
+      completion_job_progress: 100,
+      completion_job_message: 'Production completed and finished output is available.',
+      completion_job_completed_at: new Date().toISOString(),
+      completion_job_error: ''
+    }));
+  } catch (error) {
+    await updateProductionCompletionJob(productionId, productionCompletionJobPatch(jobId, 'failed', {
+      completion_job_progress: 100,
+      completion_job_message: error.message || 'Production completion failed.',
+      completion_job_completed_at: new Date().toISOString(),
+      completion_job_error: error.message || 'Production completion failed.'
+    })).catch((updateError) => {
+      console.error('Unable to mark production completion job as failed', updateError);
+    });
+  }
+}
+
+app.get('/api/inventory/production/:id/completion-job', requireAuth, requirePermission('complete_production'), async (request, response, next) => {
+  try {
+    const { production, productionInventorySite } = await resolveProductionCompletionRequest(request);
+    const job = serializeProductionCompletionJob(production);
+    if (job && PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(job.status)) {
+      enqueueProductionCompletionWork({
+        productionId: production.id,
+        jobId: job.id,
+        actor: request.user,
+        fulfillmentStoreId: productionInventorySite.id
+      });
+    }
     response.json({
-      ...result.record,
-      produced_item_batch: result.produced_item_batch || null
+      job,
+      production_status: normalizeProductionStatus(production.status),
+      produced_item_batch_id: production.produced_item_batch_id || null,
+      consumption_report_id: production.consumption_report_id || null,
+      consumption_report_number: production.consumption_report_number || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/inventory/production/:id/complete', requireAuth, requirePermission('complete_production'), async (request, response, next) => {
+  try {
+    const { production, productionInventorySite } = await resolveProductionCompletionRequest(request);
+    const existingJob = serializeProductionCompletionJob(production);
+    if (normalizeProductionStatus(production.status) === 'completed') {
+      const completedJob = serializeProductionCompletionJob(production, {
+        id: existingJob?.id || production.completion_job_id || `completed-${production.id}`,
+        status: 'completed',
+        progress: 100,
+        message: 'Production is already completed.'
+      });
+      return response.json({
+        ...production,
+        queued: false,
+        completion_job: completedJob,
+        job: completedJob,
+        produced_item_batch: null
+      });
+    }
+
+    if (existingJob && PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(existingJob.status)) {
+      enqueueProductionCompletionWork({
+        productionId: production.id,
+        jobId: existingJob.id,
+        actor: request.user,
+        fulfillmentStoreId: productionInventorySite.id
+      });
+      return response.status(202).json({
+        ...production,
+        queued: true,
+        completion_job: existingJob,
+        job: existingJob,
+        produced_item_batch: null
+      });
+    }
+
+    const jobId = randomUUID();
+    const now = new Date().toISOString();
+    const queuedProduction = await updateProductionCompletionJob(production.id, productionCompletionJobPatch(jobId, 'queued', {
+      completion_job_progress: 5,
+      completion_job_message: 'Production completion has been queued.',
+      completion_job_requested_at: now,
+      completion_job_started_at: null,
+      completion_job_completed_at: null,
+      completion_job_error: '',
+      completion_job_requested_by: request.user.email || request.user.id || '',
+      completion_job_requested_by_name: request.user.full_name || request.user.email || ''
+    }));
+    const queuedJob = serializeProductionCompletionJob(queuedProduction);
+    enqueueProductionCompletionWork({
+      productionId: production.id,
+      jobId,
+      actor: request.user,
+      fulfillmentStoreId: productionInventorySite.id
+    });
+    return response.status(202).json({
+      ...queuedProduction,
+      queued: true,
+      completion_job: queuedJob,
+      job: queuedJob,
+      produced_item_batch: null
     });
   } catch (error) {
     next(error);

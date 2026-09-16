@@ -93,6 +93,45 @@ const OPERATIONAL_QUERY_OPTIONS = {
   gcTime: 10 * 60 * 1000
 };
 
+const ACTIVE_COMPLETION_JOB_STATUSES = new Set(['queued', 'processing']);
+
+function getProductionCompletionJobFromRecord(record = {}) {
+  const embeddedJob = record?.completion_job || record?.job || null;
+  const recordStatus = String(record?.production_status || record?.status || '').trim().toLowerCase();
+  const rawStatus = String(
+    embeddedJob?.status
+    || record?.completion_job_status
+    || ''
+  ).trim().toLowerCase();
+  const status = recordStatus === 'completed' && ACTIVE_COMPLETION_JOB_STATUSES.has(rawStatus)
+    ? 'completed'
+    : rawStatus;
+  const id = String(
+    embeddedJob?.id
+    || record?.completion_job_id
+    || ''
+  ).trim();
+  if (!id && !status) return null;
+  const numericProgress = Number(embeddedJob?.progress ?? record?.completion_job_progress ?? 0);
+  return {
+    id,
+    production_id: embeddedJob?.production_id || record?.id || '',
+    status: status || 'queued',
+    progress: Number.isFinite(numericProgress)
+      ? Math.max(0, Math.min(100, numericProgress))
+      : 0,
+    message: embeddedJob?.message || record?.completion_job_message || '',
+    error: embeddedJob?.error || record?.completion_job_error || '',
+    requested_at: embeddedJob?.requested_at || record?.completion_job_requested_at || null,
+    started_at: embeddedJob?.started_at || record?.completion_job_started_at || null,
+    completed_at: embeddedJob?.completed_at || record?.completion_job_completed_at || null
+  };
+}
+
+function isActiveProductionCompletionJob(job) {
+  return ACTIVE_COMPLETION_JOB_STATUSES.has(String(job?.status || '').trim().toLowerCase());
+}
+
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -1209,6 +1248,7 @@ export default function Production() {
   const [reviewAction, setReviewAction] = useState('');
   const [completionOpen, setCompletionOpen] = useState(false);
   const [completionProduction, setCompletionProduction] = useState(null);
+  const [completionJob, setCompletionJob] = useState(null);
   const [selectedConsumptionReport, setSelectedConsumptionReport] = useState(null);
   const [reportLoadingId, setReportLoadingId] = useState('');
   const [historyProduction, setHistoryProduction] = useState(null);
@@ -1406,6 +1446,44 @@ export default function Production() {
     enabled: Boolean(reverseProduction?.id && isAdmin),
     retry: false
   });
+
+  const completionJobForPolling = completionJob || getProductionCompletionJobFromRecord(completionProduction);
+  const shouldPollCompletionJob = Boolean(
+    completionOpen
+    && completionProduction?.id
+    && isActiveProductionCompletionJob(completionJobForPolling)
+  );
+  const { data: completionJobResponse } = useQuery({
+    queryKey: ['productionCompletionJob', completionProduction?.id || ''],
+    queryFn: () => base44.inventory.getProductionCompletionJob(completionProduction.id),
+    enabled: shouldPollCompletionJob,
+    refetchInterval: shouldPollCompletionJob ? 1500 : false,
+    retry: false
+  });
+
+  useEffect(() => {
+    const latestJob = completionJobResponse?.job || null;
+    if (!latestJob) return;
+    setCompletionJob(latestJob);
+    if (latestJob.status === 'completed') {
+      invalidateCurrentProductionScope();
+      queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryLots'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
+      queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
+      queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
+      setActionMessage('Production completed and finished output is available.');
+      setActionError('');
+      setCompletionOpen(false);
+      setCompletionProduction(null);
+      setCompletionJob(null);
+    }
+    if (latestJob.status === 'failed') {
+      setActionError(latestJob.error || latestJob.message || 'Production completion failed.');
+    }
+  }, [completionJobResponse, invalidateCurrentProductionScope, queryClient]);
 
   const {
     data: issuePlanResponse,
@@ -1642,8 +1720,7 @@ export default function Production() {
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }) => {
       if (status === 'completed') {
-        await base44.inventory.completeProduction(id);
-        return;
+        return base44.inventory.completeProduction(id);
       }
 
       if (status === 'in_progress') {
@@ -1653,7 +1730,7 @@ export default function Production() {
 
       await base44.entities.Production.update(id, { status });
     },
-    onSuccess: () => {
+    onSuccess: (result, variables) => {
       invalidateCurrentProductionScope();
       queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
@@ -1662,8 +1739,23 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['inventoryMovements'] });
       queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'] });
       queryClient.invalidateQueries({ queryKey: ['producedItemBatches'] });
+      if (variables?.status === 'completed') {
+        const job = result?.job || result?.completion_job || getProductionCompletionJobFromRecord(result);
+        if (job) setCompletionJob(job);
+        if (isActiveProductionCompletionJob(job)) {
+          setActionMessage(job.message || 'Production completion is running in the background.');
+          setActionError('');
+          return;
+        }
+        if (job?.status === 'failed') {
+          setActionError(job.error || job.message || 'Production completion failed.');
+          return;
+        }
+        setActionMessage('Production completed and finished output is available.');
+      }
       setCompletionOpen(false);
       setCompletionProduction(null);
+      setCompletionJob(null);
       setActionError('');
     },
     onError: (error) => {
@@ -2923,7 +3015,9 @@ export default function Production() {
 
   const openCompletionDialog = (production) => {
     setCompletionProduction(production);
+    setCompletionJob(getProductionCompletionJobFromRecord(production));
     setActionError('');
+    setActionMessage('');
     setCompletionOpen(true);
   };
 
@@ -2987,6 +3081,8 @@ export default function Production() {
     const productionStatus = isProductionReversedAuditRecord(production)
       ? 'reversed'
       : String(production.status || '').toLowerCase();
+    const productionCompletionJob = getProductionCompletionJobFromRecord(production);
+    const productionCompletionIsActive = isActiveProductionCompletionJob(productionCompletionJob);
     const canDeleteDraftProduction = isAdmin && ['draft', 'planned', 'changes_requested'].includes(productionStatus);
     const startActionLabel = productionInventoryState.is_legacy_consumption
       ? 'Start Production (Legacy Stock Already Deducted)'
@@ -3091,7 +3187,11 @@ export default function Production() {
           disabled={isStatusActionPending(production, 'completed')}
           className="justify-center whitespace-normal bg-emerald-600 text-xs leading-snug hover:bg-emerald-700"
         >
-          {isStatusActionPending(production, 'completed') ? 'Completing...' : 'Reconcile & Complete'}
+          {productionCompletionIsActive
+            ? (productionCompletionJob?.status === 'queued' ? 'Completion Queued...' : 'Completing...')
+            : isStatusActionPending(production, 'completed')
+              ? 'Starting Completion...'
+              : 'Reconcile & Complete'}
         </Button>
       ) : null}
       {production.status === 'completed' && production.consumption_report_id ? (
@@ -3207,6 +3307,18 @@ export default function Production() {
     yielded_weight_grams: completionYieldSummary.line_weights[index]?.yielded_weight_grams ?? null,
     reconciliation_source: completionYieldSummary.line_weights[index]?.source || 'automatic_yield_plan'
   }));
+  const displayedCompletionJob = completionJob || getProductionCompletionJobFromRecord(completionProduction);
+  const completionJobIsActive = isActiveProductionCompletionJob(displayedCompletionJob);
+  const completionJobProgress = Math.max(0, Math.min(100, Number(displayedCompletionJob?.progress || 0)));
+  const completionJobStatusLabel = displayedCompletionJob?.status === 'queued'
+    ? 'Queued'
+    : displayedCompletionJob?.status === 'processing'
+      ? 'Processing'
+      : displayedCompletionJob?.status === 'completed'
+        ? 'Completed'
+        : displayedCompletionJob?.status === 'failed'
+          ? 'Failed'
+          : '';
   const canRequestSelectedChanges = can('review_production_request') && can('request_changes_production');
   const canRejectSelected = can('review_production_request') && can('reject_production_request');
   const canApproveSelected = can('review_production_request') && can('approve_production_request');
@@ -4817,6 +4929,7 @@ export default function Production() {
             setCompletionOpen(open);
             if (!open) {
               setCompletionProduction(null);
+              setCompletionJob(null);
               setActionError('');
             }
           }}
@@ -4828,6 +4941,41 @@ export default function Production() {
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
               Completion is fully automatic. The approved raw ingredient snapshot is reconciled without manual quantities, and its frozen yield-adjusted weight becomes the finished production balance without deducting inventory twice.
             </div>
+            {displayedCompletionJob ? (
+              <div className={`rounded-lg border px-4 py-3 text-sm ${
+                displayedCompletionJob.status === 'failed'
+                  ? 'border-red-200 bg-red-50 text-red-800'
+                  : displayedCompletionJob.status === 'completed'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : 'border-blue-200 bg-blue-50 text-blue-900'
+              }`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium">
+                    Completion status{completionJobStatusLabel ? `: ${completionJobStatusLabel}` : ''}
+                  </p>
+                  <span>{formatRecipeQuantity(completionJobProgress, '%')}%</span>
+                </div>
+                <div className="mt-2 h-2 rounded-full bg-white/80">
+                  <div
+                    className={`h-2 rounded-full ${
+                      displayedCompletionJob.status === 'failed'
+                        ? 'bg-red-500'
+                        : displayedCompletionJob.status === 'completed'
+                          ? 'bg-emerald-600'
+                          : 'bg-blue-600'
+                    }`}
+                    style={{ width: `${completionJobProgress}%` }}
+                  />
+                </div>
+                <p className="mt-2">
+                  {displayedCompletionJob.error || displayedCompletionJob.message || (
+                    completionJobIsActive
+                      ? 'The server is completing this production in the background.'
+                      : 'No completion update is available yet.'
+                  )}
+                </p>
+              </div>
+            ) : null}
             {actionError ? (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
             ) : null}
@@ -4942,17 +5090,26 @@ export default function Production() {
               <Button
                 className="bg-emerald-700 hover:bg-emerald-800"
                 disabled={updateStatusMutation.isPending
+                  || completionJobIsActive
                   || !completionInventorySiteId
                   || inventoryDataLoading
                   || Boolean(inventoryDataError)
                   || completionDerivedServings == null
                   || completionRawReconciliation.length === 0}
-                onClick={() => updateStatusMutation.mutate({
-                  id: completionProduction.id,
-                  status: 'completed'
-                })}
+                onClick={() => {
+                  setActionError('');
+                  setActionMessage('');
+                  updateStatusMutation.mutate({
+                    id: completionProduction.id,
+                    status: 'completed'
+                  });
+                }}
               >
-                {updateStatusMutation.isPending ? 'Completing...' : 'Complete Automatically'}
+                {completionJobIsActive
+                  ? (displayedCompletionJob?.status === 'queued' ? 'Queued...' : 'Completing...')
+                  : updateStatusMutation.isPending
+                    ? 'Starting...'
+                    : 'Complete Automatically'}
               </Button>
             </DialogFooter>
           </DialogContent>

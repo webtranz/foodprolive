@@ -871,9 +871,14 @@ export const base44 = {
         body: JSON.stringify(data)
       }).then((result) => {
         emitEntityChange('Production', { action: 'complete', result, id });
-        emitEntityChange('ProducedItemBatch', { action: 'create', result: result?.produced_item_batch });
+        if (result?.produced_item_batch) {
+          emitEntityChange('ProducedItemBatch', { action: 'create', result: result.produced_item_batch });
+        }
         return result;
       });
+    },
+    getProductionCompletionJob(id) {
+      return apiRequest(`/api/inventory/production/${id}/completion-job`);
     },
     getProductionReversalBlockers(id) {
       return apiRequest(`/api/inventory/production/${id}/reversal-blockers`);

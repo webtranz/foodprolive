@@ -426,7 +426,11 @@ test('completion implementation does not read client raw actuals or finished-yie
   const routeEnd = indexSource.indexOf('\napp.', routeStart + 1);
   const route = indexSource.slice(routeStart, routeEnd);
   assert.ok(routeStart >= 0 && routeEnd > routeStart);
-  assert.match(route, /const productionInventorySite = resolveProductionFulfillmentStore\(/);
-  assert.match(route, /fulfillment_store_id: productionInventorySite\.id/);
+  assert.match(indexSource, /async function resolveProductionCompletionRequest\(request\)/);
+  assert.match(indexSource, /const productionInventorySite = resolveProductionFulfillmentStore\(/);
+  assert.match(route, /resolveProductionCompletionRequest\(request\)/);
+  assert.match(route, /enqueueProductionCompletionWork\(/);
+  assert.match(route, /response\.status\(202\)/);
+  assert.doesNotMatch(route, /completeProduction\(/);
   assert.doesNotMatch(route, /completeProduction\([^;]*request\.body/);
 });
