@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format, subDays } from 'date-fns';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -327,6 +327,38 @@ export default function FoodWaste() {
     meal_type: filters.mealType === 'all' ? '' : filters.mealType,
     limit: 2000
   }), [filters]);
+  const invalidateCurrentWasteScope = useCallback(({
+    context = true,
+    inventory = false,
+    mealService = false
+  } = {}) => {
+    const activeExact = { exact: true, refetchType: 'active' };
+    queryClient.invalidateQueries({ queryKey: ['foodWaste', wasteListFilters], ...activeExact });
+    if (context && formData.site_id && formData.waste_date && formData.meal_type) {
+      queryClient.invalidateQueries({
+        queryKey: ['foodWasteContext', formData.site_id, formData.waste_date, formData.meal_type],
+        ...activeExact
+      });
+    }
+    if (inventory) {
+      queryClient.invalidateQueries({ queryKey: ['inventory'], ...activeExact });
+    }
+    if (mealService && formData.site_id && formData.waste_date && formData.meal_type) {
+      const siteId = String(formData.site_id);
+      const serviceDate = String(formData.waste_date);
+      const mealType = String(formData.meal_type);
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey || [];
+          return ['mealServiceAvailability', 'mealServiceHistory'].includes(key[0])
+            && String(key[1] || '') === siteId
+            && String(key[2] || '') === serviceDate
+            && String(key[3] || '') === mealType;
+        },
+        refetchType: 'active'
+      });
+    }
+  }, [formData.meal_type, formData.site_id, formData.waste_date, queryClient, wasteListFilters]);
   const productionWasteQuery = useMemo(() => {
     const entityFilters = {};
     if (filters.locationId !== 'all') entityFilters.site_id = filters.locationId;
@@ -532,11 +564,7 @@ export default function FoodWaste() {
       return results;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['foodWasteContext'] });
-      queryClient.invalidateQueries({ queryKey: ['mealServiceAvailability'] });
-      queryClient.invalidateQueries({ queryKey: ['mealServiceHistory'] });
+      invalidateCurrentWasteScope({ inventory: true, mealService: true });
       setFormOpen(false);
       setEditingWasteId(null);
       setMessage('Waste record saved.');
@@ -551,11 +579,7 @@ export default function FoodWaste() {
   const updateWasteMutation = useMutation({
     mutationFn: ({ id, payload }) => base44.foodWaste.update(id, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['foodWasteContext'] });
-      queryClient.invalidateQueries({ queryKey: ['mealServiceAvailability'] });
-      queryClient.invalidateQueries({ queryKey: ['mealServiceHistory'] });
+      invalidateCurrentWasteScope({ inventory: true, mealService: true });
       setFormOpen(false);
       setEditingWasteId(null);
       setMessage('Waste record updated.');
@@ -570,11 +594,7 @@ export default function FoodWaste() {
   const reverseWasteMutation = useMutation({
     mutationFn: ({ id, reason }) => base44.foodWaste.reverse(id, { reason }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['foodWasteContext'] });
-      queryClient.invalidateQueries({ queryKey: ['mealServiceAvailability'] });
-      queryClient.invalidateQueries({ queryKey: ['mealServiceHistory'] });
+      invalidateCurrentWasteScope({ inventory: true, mealService: true });
       setReverseWasteDialog({ open: false, record: null, reason: '' });
       setMessage('Waste record reversed.');
     },
@@ -588,7 +608,7 @@ export default function FoodWaste() {
       approved_at: approval_status === 'approved' ? new Date().toISOString() : null
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['foodWaste'] });
+      invalidateCurrentWasteScope({ context: false });
       setMessage('Waste approval updated.');
     },
     onError: (error) => setMessage(error.message || 'Failed to update approval')

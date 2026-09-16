@@ -68,6 +68,11 @@ assert.match(advancedReportsPage, /rangeFilters: wasteReportQuery\.rangeFilters/
 assert.doesNotMatch(advancedReportsPage, /Production\.list\('-production_date', 500\)/);
 assert.match(foodWastePage, /base44\.foodWaste\.list\(wasteListFilters\)/);
 assert.match(foodWastePage, /productionsForWaste', productionWasteQuery/);
+assert.match(foodWastePage, /invalidateCurrentWasteScope/);
+assert.match(foodWastePage, /queryKey: \['foodWaste', wasteListFilters\]/);
+assert.match(foodWastePage, /predicate: \(query\)/);
+assert.match(foodWastePage, /'mealServiceAvailability', 'mealServiceHistory'/);
+assert.match(foodWastePage, /invalidateCurrentWasteScope\(\{ inventory: true, mealService: true \}\)/);
 assert.match(productionPage, /invalidateCurrentProductionScope/);
 assert.match(productionPage, /foodWasteForProduction', selectedDate/);
 assert.match(productionPage, /productionCompletionJob/);
