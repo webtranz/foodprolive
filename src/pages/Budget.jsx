@@ -19,7 +19,7 @@ import { normalizeSiteType, SITE_HIERARCHY_TYPES } from '../../shared/siteHierar
 const BUDGET_SOURCE_MODULE = 'budget_planning';
 const ACTIVE_STATUSES = new Set(['', 'active', 'published']);
 const AREA_SCOPE_ROLES = new Set(['admin', 'general_manager', 'assistant_general_manager', 'area_manager']);
-const AREA_SCOPE_DASHBOARDS = new Set(['gm', 'agm', 'area_manager']);
+const AREA_SCOPE_DASHBOARDS = new Set(['head_office', 'gm', 'agm', 'area_manager']);
 
 const PROJECT_BUDGET_MODES = [
   { value: 'meal', label: 'Daily meal-wise' },

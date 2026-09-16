@@ -2,6 +2,7 @@ import { normalizeSiteType } from './siteHierarchy.js';
 
 export const DASHBOARD_VIEWS = Object.freeze({
   DEFAULT: 'default',
+  HEAD_OFFICE: 'head_office',
   GENERAL_MANAGER: 'gm',
   GM: 'gm',
   ASSISTANT_GENERAL_MANAGER: 'agm',
@@ -13,8 +14,7 @@ export const DASHBOARD_VIEWS = Object.freeze({
 
 export const ADMIN_DASHBOARD_VIEW_ORDER = Object.freeze([
   DASHBOARD_VIEWS.DEFAULT,
-  DASHBOARD_VIEWS.GENERAL_MANAGER,
-  DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER,
+  DASHBOARD_VIEWS.HEAD_OFFICE,
   DASHBOARD_VIEWS.AREA_MANAGER,
   DASHBOARD_VIEWS.PROJECT_MANAGER
 ]);
@@ -76,16 +76,16 @@ export const MANAGEMENT_ROLE_DEFINITIONS = Object.freeze({
     role_key: 'general_manager',
     name: 'General Manager',
     access_level: 'manager',
-    dashboard_variant: DASHBOARD_VIEWS.GENERAL_MANAGER,
-    description: 'Executive operational visibility across assigned locations and their descendants.',
+    dashboard_variant: DASHBOARD_VIEWS.HEAD_OFFICE,
+    description: 'Head Office visibility across assigned locations and their descendants.',
     permissions: managementDashboardPermissions
   }),
   assistant_general_manager: Object.freeze({
     role_key: 'assistant_general_manager',
     name: 'Assistant General Manager',
     access_level: 'manager',
-    dashboard_variant: DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER,
-    description: 'Operational follow-up visibility across assigned locations and their descendants.',
+    dashboard_variant: DASHBOARD_VIEWS.HEAD_OFFICE,
+    description: 'Head Office operational follow-up visibility across assigned locations and their descendants.',
     permissions: managementDashboardPermissions
   }),
   area_manager: Object.freeze({
@@ -109,6 +109,7 @@ export const MANAGEMENT_ROLE_DEFINITIONS = Object.freeze({
 export const MANAGEMENT_ROLE_KEYS = Object.freeze(Object.keys(MANAGEMENT_ROLE_DEFINITIONS));
 
 const MANAGEMENT_SCOPE_TYPES = Object.freeze({
+  [DASHBOARD_VIEWS.HEAD_OFFICE]: new Set(['area', 'project']),
   [DASHBOARD_VIEWS.GENERAL_MANAGER]: new Set(['area', 'project']),
   [DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER]: new Set(['area', 'project']),
   [DASHBOARD_VIEWS.AREA_MANAGER]: new Set(['area']),
@@ -384,18 +385,22 @@ const adminAliases = new Set([
 ]);
 
 const dashboardViewAliases = new Map([
-  ['general_manager', DASHBOARD_VIEWS.GENERAL_MANAGER],
-  ['general_manager_view', DASHBOARD_VIEWS.GENERAL_MANAGER],
-  ['generalmanager', DASHBOARD_VIEWS.GENERAL_MANAGER],
-  ['gm', DASHBOARD_VIEWS.GENERAL_MANAGER],
-  ['gm_view', DASHBOARD_VIEWS.GENERAL_MANAGER],
-  ['assistant_general_manager', DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER],
-  ['assistant_general_manager_view', DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER],
-  ['assistant_gm', DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER],
-  ['asst_general_manager', DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER],
-  ['deputy_general_manager', DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER],
-  ['agm', DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER],
-  ['agm_view', DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER],
+  ['head_office', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['head_office_view', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['headoffice', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['ho', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['general_manager', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['general_manager_view', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['generalmanager', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['gm', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['gm_view', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['assistant_general_manager', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['assistant_general_manager_view', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['assistant_gm', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['asst_general_manager', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['deputy_general_manager', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['agm', DASHBOARD_VIEWS.HEAD_OFFICE],
+  ['agm_view', DASHBOARD_VIEWS.HEAD_OFFICE],
   ['area_manager', DASHBOARD_VIEWS.AREA_MANAGER],
   ['area_manager_view', DASHBOARD_VIEWS.AREA_MANAGER],
   ['area_mgr', DASHBOARD_VIEWS.AREA_MANAGER],

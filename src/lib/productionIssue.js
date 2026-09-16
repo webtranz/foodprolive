@@ -60,6 +60,43 @@ export function finiteProductionNumber(value, fallback = 0) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function firstFiniteProductionNumber(candidates = [], fallback = 0) {
+  for (const candidate of candidates) {
+    if (candidate === null || typeof candidate === 'undefined' || candidate === '') continue;
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return fallback;
+}
+
+function resolveProductionLineUnitCost({ sourceLine = {}, ingredientData = {}, inventoryRow = null, preferSelectedIngredientCost = false } = {}) {
+  const selectedIngredientCosts = [
+    inventoryRow?.average_unit_cost,
+    inventoryRow?.last_unit_cost,
+    inventoryRow?.unit_cost,
+    inventoryRow?.cost_per_unit,
+    inventoryRow?.last_cost,
+    ingredientData.cost_per_unit,
+    ingredientData.last_cost,
+    ingredientData.average_cost,
+    ingredientData.last_purchase_price,
+    ingredientData.standard_cost
+  ];
+  const savedLineCosts = [
+    sourceLine.unit_cost,
+    sourceLine.actual_unit_cost,
+    sourceLine.cost_per_unit,
+    sourceLine.average_cost,
+    sourceLine.last_cost
+  ];
+  return firstFiniteProductionNumber(
+    preferSelectedIngredientCost
+      ? [...selectedIngredientCosts, ...savedLineCosts]
+      : [...savedLineCosts, ...selectedIngredientCosts],
+    0
+  );
+}
+
 export function buildProductionInventoryConversionSummary({
   ingredient = {},
   rawQuantity = 0,
@@ -359,6 +396,15 @@ export function buildProductionIngredientLine({
   const shortage = Math.max(0, requiredInventoryQty - availableStock);
   const retainedFraction = recipeLineRetainedFraction(sourceLine);
   const prepExemptPercent = getRecipeLinePrepExemptPercent(sourceLine);
+  const isAddedOverride = sourceLine.production_override_action === 'added' || override.production_override_action === 'added';
+  const originalQuantity = isAddedOverride ? 0 : getLineOriginalQuantity(sourceLine, rawQuantity);
+  const originalIngredientId = isAddedOverride ? null : (getLineOriginalIngredientId(sourceLine) || ingredientId);
+  const originalIngredientName = isAddedOverride ? '' : (getLineOriginalIngredientName(sourceLine) || sourceLine.ingredient_name || ingredientData.name || 'Ingredient');
+  const originalUnit = isAddedOverride ? unit : (getLineOriginalUnit(sourceLine) || unit);
+  const isReplacementOverride = !isAddedOverride
+    && originalIngredientId
+    && ingredientId
+    && !sameId(originalIngredientId, ingredientId);
   const yieldOutput = processingAid
     ? {
         yielded_quantity: 0,
@@ -376,20 +422,13 @@ export function buildProductionIngredientLine({
           yield_source: output.yield_source
         };
       })();
-  const unitCost = finiteProductionNumber(
-    sourceLine.unit_cost
-      ?? ingredientData.cost_per_unit
-      ?? ingredientData.average_cost
-      ?? ingredientData.last_purchase_price
-      ?? 0,
-    0
-  );
+  const unitCost = resolveProductionLineUnitCost({
+    sourceLine,
+    ingredientData,
+    inventoryRow,
+    preferSelectedIngredientCost: isReplacementOverride || isAddedOverride
+  });
   const estimatedCost = calculateIngredientCost(rawQuantity, unit, ingredientData, unitCost);
-  const isAddedOverride = sourceLine.production_override_action === 'added' || override.production_override_action === 'added';
-  const originalQuantity = isAddedOverride ? 0 : getLineOriginalQuantity(sourceLine, rawQuantity);
-  const originalIngredientId = isAddedOverride ? null : (getLineOriginalIngredientId(sourceLine) || ingredientId);
-  const originalIngredientName = isAddedOverride ? '' : (getLineOriginalIngredientName(sourceLine) || sourceLine.ingredient_name || ingredientData.name || 'Ingredient');
-  const originalUnit = isAddedOverride ? unit : (getLineOriginalUnit(sourceLine) || unit);
   const line = {
     ...clearRecipeLineWeight(sourceLine),
     ...override,
@@ -432,6 +471,7 @@ export function buildProductionIngredientLine({
     sufficient: availableStock >= requiredInventoryQty,
     unit_cost: Number(unitCost.toFixed(2)),
     estimated_cost: Number(estimatedCost.toFixed(2)),
+    cost_ingredient_id: ingredientId || null,
     original_ingredient_id: originalIngredientId || null,
     original_ingredient_name: originalIngredientName || null,
     original_raw_quantity: roundStandardDecimal(originalQuantity, getRecipeQuantityPrecision(originalUnit || unit)),
@@ -769,6 +809,7 @@ export function buildProductionIngredientsForSubmit(lines = []) {
       cost_unit: line.cost_unit,
       unit_cost: line.unit_cost,
       estimated_cost: line.estimated_cost,
+      cost_ingredient_id: line.cost_ingredient_id || line.ingredient_id || null,
       production_override_action: action,
       production_override_source: line.production_override_source || '',
       production_override_reason: line.production_override_reason || line.ai_suggestion_reason || '',

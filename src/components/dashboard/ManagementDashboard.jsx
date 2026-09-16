@@ -51,14 +51,19 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatCurrency, formatNumber } from '@/lib/currency';
 
 const VIEW_CONFIG = {
+  head_office: {
+    title: 'Head Office Dashboard',
+    eyebrow: 'Head Office · Combined performance, exceptions and follow-up across assigned locations',
+    scopeLabel: 'Location scope'
+  },
   gm: {
-    title: 'FoodPro Dashboard',
-    eyebrow: 'GM View · Enterprise performance across your assigned locations',
+    title: 'Head Office Dashboard',
+    eyebrow: 'Head Office · Combined performance, exceptions and follow-up across assigned locations',
     scopeLabel: 'Location scope'
   },
   agm: {
-    title: 'FoodPro Dashboard',
-    eyebrow: 'AGM View · Operational exceptions and follow-up across locations',
+    title: 'Head Office Dashboard',
+    eyebrow: 'Head Office · Combined performance, exceptions and follow-up across assigned locations',
     scopeLabel: 'Location scope'
   },
   area_manager: {
@@ -139,11 +144,12 @@ const ACTION_ICONS = {
 
 function normalizeView(value) {
   const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (['gm', 'general_manager', 'generalmanager'].includes(normalized)) return 'gm';
-  if (['agm', 'assistant_general_manager', 'assistantgeneralmanager'].includes(normalized)) return 'agm';
+  if (['head_office', 'headoffice', 'ho'].includes(normalized)) return 'head_office';
+  if (['gm', 'general_manager', 'generalmanager'].includes(normalized)) return 'head_office';
+  if (['agm', 'assistant_general_manager', 'assistantgeneralmanager'].includes(normalized)) return 'head_office';
   if (['area', 'area_manager', 'areamanager'].includes(normalized)) return 'area_manager';
   if (['pm', 'project', 'project_manager', 'projectmanager'].includes(normalized)) return 'project_manager';
-  return 'gm';
+  return 'head_office';
 }
 
 function todayValue() {
@@ -604,7 +610,7 @@ function SecondaryMetrics({ metrics, view }) {
   let cards;
   if (view === 'project_manager') {
     cards = [...base, { key: 'menu_plan_completion', label: 'Menu Plan', value: `${number(metrics.menu_plan_completion, 0)}% Complete`, icon: CalendarCheck2, tone: 'emerald' }];
-  } else if (view === 'agm') {
+  } else if (view === 'agm' || view === 'head_office') {
     cards = [
       { key: 'open_exceptions', label: 'Open Exceptions', value: number(metrics.open_exceptions), icon: AlertCircle, tone: 'amber' },
       ...base,
@@ -689,7 +695,7 @@ function Toolbar({
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" disabled={navigationDisabled} onClick={onLocations}><Building2 className="mr-2 h-4 w-4" />View Multiple Location Stats</Button>
         <Button type="button" variant="outline" disabled={navigationDisabled} onClick={onCompare}><BarChart3 className="mr-2 h-4 w-4" />Compare Locations</Button>
-        {view === 'agm' ? <Button type="button" disabled={navigationDisabled} className="bg-emerald-700 hover:bg-emerald-800" onClick={onFollowUp}><ClipboardCheck className="mr-2 h-4 w-4" />Operations Follow-up</Button> : null}
+        {view === 'agm' || view === 'head_office' ? <Button type="button" disabled={navigationDisabled} className="bg-emerald-700 hover:bg-emerald-800" onClick={onFollowUp}><ClipboardCheck className="mr-2 h-4 w-4" />Operations Follow-up</Button> : null}
         {isFetching ? <div className="flex items-center px-2 text-xs text-slate-500"><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />Refreshing</div> : null}
       </div>
     </div>
@@ -909,6 +915,17 @@ export default function ManagementDashboard({
             <ActionsPanel actions={actions} title="Approvals & Exceptions" panelRef={actionsRef} linksEnabled={actionLinksEnabled} />
           </div>
           <ProjectCharts trends={trends} meals={meals} panelRef={chartRef} />
+        </>
+      ) : normalizedView === 'head_office' ? (
+        <>
+          <LocationTable locations={locations} mode="gm" panelRef={locationRef} />
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,2.1fr)_minmax(280px,0.8fr)]">
+            <div className="min-w-0">
+              <GmCharts trends={trends} locations={locations} locationSeries={locationSeries} panelRef={chartRef} />
+            </div>
+            <ActionsPanel actions={actions} title="Head Office Actions" panelRef={actionsRef} linksEnabled={actionLinksEnabled} />
+          </div>
+          <LocationTable locations={locations} mode="agm" />
         </>
       ) : normalizedView === 'agm' ? (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,2.4fr)_minmax(280px,0.8fr)]">

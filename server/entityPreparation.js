@@ -363,19 +363,40 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
     const retainedFraction = recipeLineRetainedFraction(line);
     const unit = line?.unit || ingredient.unit || line?.inventory_unit || 'unit';
     const rawQuantity = productionLineNumber(line, 0);
+    const originalIngredientId = line?.original_ingredient_id || line?.override_original_ingredient_id || '';
+    const isAddedOverride = String(line?.production_override_action || '').toLowerCase() === 'added';
+    const isReplacementOverride = !isAddedOverride
+      && originalIngredientId
+      && line?.ingredient_id
+      && String(originalIngredientId) !== String(line.ingredient_id);
+    const lineCostBelongsToCurrentIngredient = line?.cost_ingredient_id
+      && line?.ingredient_id
+      && String(line.cost_ingredient_id) === String(line.ingredient_id);
     const yieldedQuantity = processingAid
       ? 0
       : Number.isFinite(Number(line?.yielded_quantity ?? line?.yield_adjusted_quantity ?? line?.net_quantity))
       ? Math.max(0, Number(line?.yielded_quantity ?? line?.yield_adjusted_quantity ?? line?.net_quantity))
       : rawQuantity;
     const unitCost = Number(
-      line?.unit_cost
+      (isReplacementOverride || isAddedOverride) && !lineCostBelongsToCurrentIngredient
+        ? ingredient.cost_per_unit
+          ?? ingredient.last_cost
+          ?? ingredient.average_cost
+          ?? ingredient.last_purchase_price
+          ?? ingredient.standard_cost
+          ?? line?.unit_cost
+          ?? 0
+        : line?.unit_cost
         ?? ingredient.cost_per_unit
         ?? ingredient.last_cost
         ?? ingredient.average_cost
+        ?? ingredient.last_purchase_price
+        ?? ingredient.standard_cost
         ?? 0
     ) || 0;
-    const estimatedCost = Number.isFinite(Number(line?.estimated_cost))
+    const canTrustSubmittedEstimatedCost = Number.isFinite(Number(line?.estimated_cost))
+      && (!(isReplacementOverride || isAddedOverride) || lineCostBelongsToCurrentIngredient);
+    const estimatedCost = canTrustSubmittedEstimatedCost
       ? Number(line.estimated_cost)
       : calculateIngredientCost(rawQuantity, unit, ingredient, unitCost);
     const yieldPercent = processingAid ? 0 : Number.isFinite(Number(line?.yield_percent))
@@ -412,6 +433,7 @@ function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCat
       cost_unit: line?.cost_unit || ingredient.unit || unit,
       unit_cost: Number(unitCost.toFixed(2)),
       estimated_cost: Number(estimatedCost.toFixed(2)),
+      cost_ingredient_id: line?.ingredient_id || null,
       prep_exempt_percent: prepExemptPercent,
       retained_fraction: Number(retainedFraction.toFixed(4))
     };

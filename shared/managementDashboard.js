@@ -1065,8 +1065,8 @@ function buildActions(view, metrics, records, rangeStart, rangeEnd, period = nul
     .filter((record) => safeNumber(record.estimated_cost ?? record.waste_cost) >= HIGH_WASTE_COST_THRESHOLD).length;
   const values = {
     procurement: { key: 'procurement', label: 'PR Approvals', count: metrics.approvals.procurement, href: '/ProcurementModule', tone: 'blue' },
-    production: { key: 'production', label: view === DASHBOARD_VIEWS.GENERAL_MANAGER ? 'Production Approvals' : 'Production Requests', count: metrics.approvals.production, href: '/Production', tone: 'green' },
-    waste: { key: 'waste', label: view === DASHBOARD_VIEWS.GENERAL_MANAGER ? 'Waste Approvals' : 'Waste Review', count: metrics.approvals.waste, href: '/FoodWaste', tone: 'amber' },
+    production: { key: 'production', label: view === DASHBOARD_VIEWS.HEAD_OFFICE || view === DASHBOARD_VIEWS.GENERAL_MANAGER ? 'Production Approvals' : 'Production Requests', count: metrics.approvals.production, href: '/Production', tone: 'green' },
+    waste: { key: 'waste', label: view === DASHBOARD_VIEWS.HEAD_OFFICE || view === DASHBOARD_VIEWS.GENERAL_MANAGER ? 'Waste Approvals' : 'Waste Review', count: metrics.approvals.waste, href: '/FoodWaste', tone: 'amber' },
     inventory: { key: 'inventory', label: view === DASHBOARD_VIEWS.PROJECT_MANAGER ? 'Inventory Shortage' : 'Low Stock', count: metrics.stock_risk, href: '/Inventory', tone: 'amber' },
     supplier: { key: 'supplier', label: view === DASHBOARD_VIEWS.AREA_MANAGER ? 'Late Supplier' : 'Supplier Exceptions', count: metrics.supplier_exceptions, href: '/ProcurementModule', tone: 'violet' },
     attendance: { key: 'attendance', label: view === DASHBOARD_VIEWS.AREA_MANAGER ? 'Attendance Gap' : 'Attendance Gaps', count: metrics.attendance_gaps, href: '/MealService', tone: 'rose' },
@@ -1075,6 +1075,7 @@ function buildActions(view, metrics, records, rangeStart, rangeEnd, period = nul
 
   if (view === DASHBOARD_VIEWS.PROJECT_MANAGER) return [values.procurement, values.production, values.waste, values.inventory];
   if (view === DASHBOARD_VIEWS.AREA_MANAGER) return [values.highWaste, values.inventory, values.supplier, values.attendance];
+  if (view === DASHBOARD_VIEWS.HEAD_OFFICE) return [values.procurement, values.production, values.waste, values.supplier, values.attendance];
   if (view === DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER) return [values.procurement, values.production, values.waste, values.supplier, values.attendance];
   return [values.procurement, values.production, values.waste, values.supplier];
 }

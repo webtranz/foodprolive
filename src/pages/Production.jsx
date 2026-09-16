@@ -2295,6 +2295,10 @@ export default function Production() {
           ingredient_name: selectedIngredient.name || line.ingredient_name,
           unit: selectedIngredient.unit || line.unit,
           inventory_unit: selectedIngredient.unit || line.inventory_unit,
+          unit_cost: undefined,
+          estimated_cost: undefined,
+          cost_quantity: undefined,
+          cost_unit: selectedIngredient.unit || line.cost_unit,
           production_override_source: 'chef',
           production_override_reason: 'Chef selected replacement ingredient for this production.'
         }
@@ -2449,6 +2453,10 @@ export default function Production() {
           raw_quantity: finiteProductionNumber(suggestion.suggested_quantity, line.raw_quantity),
           unit: suggestion.unit || line.unit,
           inventory_unit: suggestion.unit || line.inventory_unit,
+          unit_cost: undefined,
+          estimated_cost: undefined,
+          cost_quantity: undefined,
+          cost_unit: suggestion.unit || line.cost_unit,
           production_override_source: suggestion.source === 'ai' ? 'ai_suggestion' : 'inventory_similarity',
           production_override_reason: suggestion.reason || 'Replacement selected for this production.',
           ai_suggestion_reason: suggestion.reason || ''
@@ -2501,6 +2509,10 @@ export default function Production() {
           ingredient_name: selectedIngredient.name || line.ingredient_name,
           unit: selectedIngredient.unit || line.unit,
           inventory_unit: selectedIngredient.unit || line.inventory_unit,
+          unit_cost: undefined,
+          estimated_cost: undefined,
+          cost_quantity: undefined,
+          cost_unit: selectedIngredient.unit || line.cost_unit,
           production_override_action: '',
           production_override_source: 'chef',
           production_override_reason: 'Chef selected replacement ingredient for this production.'
@@ -2592,6 +2604,10 @@ export default function Production() {
           raw_quantity: finiteProductionNumber(suggestion.suggested_quantity, line.raw_quantity),
           unit: suggestedIngredient.unit || suggestion.unit || line.unit,
           inventory_unit: suggestedIngredient.unit || suggestion.unit || line.inventory_unit,
+          unit_cost: undefined,
+          estimated_cost: undefined,
+          cost_quantity: undefined,
+          cost_unit: suggestedIngredient.unit || suggestion.unit || line.cost_unit,
           production_override_action: '',
           production_override_source: suggestion.source === 'ai' ? 'ai_suggestion' : 'inventory_similarity',
           production_override_reason: suggestion.reason || 'Replacement selected for this production.',

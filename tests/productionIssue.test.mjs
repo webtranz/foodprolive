@@ -71,7 +71,8 @@ const inventory = [
     ingredient_id: 'yellow-peas',
     ingredient_name: 'Yellow Peas',
     quantity: 20,
-    unit: 'kg'
+    unit: 'kg',
+    average_unit_cost: 5.5
   },
   {
     site_id: 'store-1',
@@ -469,6 +470,12 @@ assert.equal(recalculated.lines[0].production_override_action, 'replaced');
 assert.equal(recalculated.lines[0].original_ingredient_id, 'chickpeas');
 assert.equal(recalculated.lines[0].ingredient_id, 'yellow-peas');
 assert.equal(recalculated.lines[0].sufficient, true);
+assert.equal(recalculated.lines[0].unit_cost, 5.5);
+assert.equal(recalculated.lines[0].cost_ingredient_id, 'yellow-peas');
+assert.equal(
+  recalculated.lines[0].estimated_cost,
+  Number((recalculated.lines[0].raw_quantity * 5.5).toFixed(2))
+);
 
 const addedLine = buildProductionIngredientLine({
   sourceLine: {

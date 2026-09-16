@@ -55,8 +55,7 @@ assert.match(managementUi, /normalizedView === 'agm' \? locationRef : chartRef/)
 assert.match(managementUi, /awaitingProjectScope/);
 assert.match(managementUi, /isRefetchError/);
 assert.match(managementUi, /formatCurrency/);
-assert.match(managementUi, /GM View/);
-assert.match(managementUi, /AGM View/);
+assert.match(managementUi, /Head Office/);
 assert.match(managementUi, /Area Manager View/);
 assert.match(managementUi, /Project Manager View/);
 assert.doesNotMatch(managementUi, /SAR\s*[0-9]/);
@@ -115,22 +114,18 @@ assert.match(initSql, /purchase_requests_realtime_change/);
 assert.match(initSql, /purchase_orders_realtime_change/);
 assert.match(initSql, /goods_receipts_realtime_change/);
 
-assert.equal(normalizeManagementDashboardView('General Manager'), 'gm');
+assert.equal(normalizeManagementDashboardView('General Manager'), 'head_office');
 assert.equal(
   assertManagementDashboardViewAccess({ role: 'general_manager', role_access_level: 'manager' }, 'gm'),
-  'gm'
+  'head_office'
 );
-assert.throws(
-  () => assertManagementDashboardViewAccess({ role: 'general_manager', role_access_level: 'manager' }, 'agm'),
-  (error) => error.status === 403 && /not assigned/i.test(error.message)
-);
-assert.throws(
-  () => assertManagementDashboardViewAccess({
+assert.equal(
+  assertManagementDashboardViewAccess({
     role: 'general_manager',
     role_access_level: 'manager',
     dashboard_variant: 'agm'
   }, 'agm'),
-  (error) => error.status === 403 && /not assigned/i.test(error.message)
+  'head_office'
 );
 assert.throws(
   () => assertManagementDashboardViewAccess({ role: 'user', role_access_level: 'user' }, 'gm'),

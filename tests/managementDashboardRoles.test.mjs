@@ -251,15 +251,15 @@ const cases = [
     }
   },
   {
-    name: 'canonical management roles resolve to their dedicated dashboards',
+    name: 'canonical management roles resolve to the consolidated dashboards',
     run() {
       assert.equal(
         resolveManagementDashboardView({ role: 'general_manager' }),
-        DASHBOARD_VIEWS.GENERAL_MANAGER
+        DASHBOARD_VIEWS.HEAD_OFFICE
       );
       assert.equal(
         resolveManagementDashboardView({ role: 'assistant_general_manager' }),
-        DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER
+        DASHBOARD_VIEWS.HEAD_OFFICE
       );
       assert.equal(
         resolveManagementDashboardView({ role: 'area_manager' }),
@@ -274,8 +274,8 @@ const cases = [
   {
     name: 'common GM, AGM, area, and PM aliases resolve consistently',
     run() {
-      assert.equal(resolveManagementDashboardView({ role: 'GM' }), DASHBOARD_VIEWS.GENERAL_MANAGER);
-      assert.equal(resolveManagementDashboardView({ roleName: 'Assistant GM' }), DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER);
+      assert.equal(resolveManagementDashboardView({ role: 'GM' }), DASHBOARD_VIEWS.HEAD_OFFICE);
+      assert.equal(resolveManagementDashboardView({ roleName: 'Assistant GM' }), DASHBOARD_VIEWS.HEAD_OFFICE);
       assert.equal(resolveManagementDashboardView({ roleName: 'Regional Manager' }), DASHBOARD_VIEWS.AREA_MANAGER);
       assert.equal(resolveManagementDashboardView({ dashboardVariant: 'PM View' }), DASHBOARD_VIEWS.PROJECT_MANAGER);
       assert.equal(isManagementDashboardRole('AGM'), true);
@@ -288,8 +288,7 @@ const cases = [
       assert.equal(resolveManagementDashboardView({ role: 'admin', dashboardVariant: 'gm' }), null);
       assert.deepEqual(ADMIN_DASHBOARD_VIEW_ORDER, [
         DASHBOARD_VIEWS.DEFAULT,
-        DASHBOARD_VIEWS.GENERAL_MANAGER,
-        DASHBOARD_VIEWS.ASSISTANT_GENERAL_MANAGER,
+        DASHBOARD_VIEWS.HEAD_OFFICE,
         DASHBOARD_VIEWS.AREA_MANAGER,
         DASHBOARD_VIEWS.PROJECT_MANAGER
       ]);
@@ -327,7 +326,7 @@ const cases = [
       assert.equal(resolveManagementDashboardView({
         role: 'general_manager',
         dashboardVariant: 'agm'
-      }), DASHBOARD_VIEWS.GENERAL_MANAGER);
+      }), DASHBOARD_VIEWS.HEAD_OFFICE);
       assert.equal(resolveManagementDashboardView({
         role: 'PM',
         dashboardVariant: 'gm'
@@ -356,7 +355,7 @@ const cases = [
       assert.equal(isManagementScopeSiteType(DASHBOARD_VIEWS.PROJECT_MANAGER, 'project'), true);
       assert.equal(isManagementScopeSiteType(DASHBOARD_VIEWS.PROJECT_MANAGER, 'camp'), true);
       assert.equal(isManagementScopeSiteType(DASHBOARD_VIEWS.PROJECT_MANAGER, 'warehouse'), false);
-      assert.equal(isManagementScopeSiteType(DASHBOARD_VIEWS.GENERAL_MANAGER, 'company'), true);
+      assert.equal(isManagementScopeSiteType(DASHBOARD_VIEWS.HEAD_OFFICE, 'company'), true);
     }
   },
   {
