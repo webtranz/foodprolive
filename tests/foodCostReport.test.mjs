@@ -98,6 +98,57 @@ const consumptions = [
         estimated_cost: -10
       }
     ]
+  },
+  {
+    id: 'labor-lunch-original',
+    service_date: '2026-09-01',
+    site_id: 'store-384',
+    site_name: 'STORE 384',
+    meal_type: 'lunch',
+    menu_type: 'general',
+    menu_category: 'labor',
+    recipe_id: 'recipe-labor-lunch',
+    recipe_name: 'Lunch Menu Labor / General (5 Items)',
+    covers: 226,
+    portion_size_grams: 784,
+    consumed_servings: 226,
+    consumed_weight_grams: 177184,
+    total_cost: 2743.09,
+    movement_type: 'consumption',
+    allocations: [
+      {
+        produced_item_batch_id: 'batch-labor-lunch',
+        production_id: 'prod-labor-lunch',
+        weight_grams: 177184,
+        estimated_cost: 2743.09
+      }
+    ]
+  },
+  {
+    id: 'labor-lunch-reversal',
+    service_date: '2026-09-01',
+    site_id: 'store-384',
+    site_name: 'STORE 384',
+    meal_type: 'lunch',
+    menu_type: 'general',
+    menu_category: 'labor',
+    recipe_id: 'recipe-labor-lunch',
+    recipe_name: 'Lunch Menu Labor / General (5 Items)',
+    covers: 226,
+    portion_size_grams: 784,
+    consumed_servings: -226,
+    consumed_weight_grams: -177184,
+    total_cost: -2743.09,
+    reverses_consumption_id: 'labor-lunch-original',
+    movement_type: 'reversal',
+    allocations: [
+      {
+        produced_item_batch_id: 'batch-labor-lunch',
+        production_id: 'prod-labor-lunch',
+        weight_grams: -177184,
+        estimated_cost: -2743.09
+      }
+    ]
   }
 ];
 
@@ -113,6 +164,11 @@ assert.equal(confirmedRows[0].total_cost, 80);
 assert.equal(confirmedRows[0].cost_per_serving, 2);
 assert.equal(confirmedRows[1].servings, 0);
 assert.equal(confirmedRows[1].total_cost, -10);
+assert.equal(
+  confirmedRows.some((row) => row.recipe === 'Lunch Menu Labor / General (5 Items)'),
+  false,
+  'confirmed meal cost excludes both the reversed original row and its reversal row'
+);
 
 const groupedRows = groupFoodCostRows(confirmedRows, 'meal_type');
 assert.equal(groupedRows.length, 1);

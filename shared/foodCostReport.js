@@ -144,6 +144,38 @@ function getConsumptionAllocations(consumption = {}) {
   return Array.isArray(consumption.allocations) ? consumption.allocations : [];
 }
 
+function getMealServiceMovementType(consumption = {}) {
+  return String(consumption.movement_type || 'consumption').trim().toLowerCase();
+}
+
+function getReversalSourceConsumptionId(consumption = {}) {
+  return normalizeText(
+    consumption.reverses_consumption_id
+      || consumption.source_consumption_id
+      || consumption.original_consumption_id
+  );
+}
+
+function getReversedMealServiceConsumptionIds(consumptions = []) {
+  const reversedIds = new Set();
+  (Array.isArray(consumptions) ? consumptions : []).forEach((consumption) => {
+    if (getMealServiceMovementType(consumption) !== 'reversal') return;
+    const sourceId = getReversalSourceConsumptionId(consumption);
+    if (sourceId) reversedIds.add(sourceId);
+  });
+  return reversedIds;
+}
+
+function isActiveConfirmedMealServiceConsumption(consumption = {}, reversedConsumptionIds = new Set()) {
+  const movementType = getMealServiceMovementType(consumption);
+  if (movementType === 'reversal') return false;
+  const id = normalizeText(consumption.id);
+  if (id && reversedConsumptionIds.has(id)) return false;
+  const sourceId = getReversalSourceConsumptionId(consumption);
+  if (sourceId && reversedConsumptionIds.has(sourceId)) return false;
+  return true;
+}
+
 function getAllocationBatchId(allocation = {}) {
   return normalizeText(
     allocation.produced_item_batch_id
@@ -244,8 +276,10 @@ export function buildConfirmedFoodCostRows({
       .filter((recipe) => recipe?.id)
       .map((recipe) => [String(recipe.id), recipe])
   );
+  const reversedConsumptionIds = getReversedMealServiceConsumptionIds(consumptions);
 
   return (Array.isArray(consumptions) ? consumptions : [])
+    .filter((consumption) => isActiveConfirmedMealServiceConsumption(consumption, reversedConsumptionIds))
     .map((consumption) => {
       const servings = getCommittedMealServiceServings(consumption);
       const totalCost = calculateMealServiceConsumptionCost(consumption, indexes);
