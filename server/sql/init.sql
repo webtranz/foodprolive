@@ -721,6 +721,8 @@ CREATE TABLE IF NOT EXISTS meal_service_consumptions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS reverses_consumption_id TEXT REFERENCES meal_service_consumptions(meal_consumption_id) ON DELETE RESTRICT;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_service_consumptions_idempotency_unique
   ON meal_service_consumptions(idempotency_key);
 
@@ -753,7 +755,6 @@ ALTER TABLE production_consumption_lines ADD COLUMN IF NOT EXISTS payload JSONB 
 ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE meal_service_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS reverses_consumption_id TEXT REFERENCES meal_service_consumptions(meal_consumption_id) ON DELETE RESTRICT;
 ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 
