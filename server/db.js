@@ -715,7 +715,15 @@ function rowToProducedItemBatch(row = {}) {
     production_id: row.production_id,
     production_line_id: row.production_line_id,
     site_id: row.warehouse_id,
+    fulfillment_store_id: row.warehouse_id,
+    production_date: row.production_date || null,
+    meal_type: row.meal_period || null,
+    menu_type: row.menu_type || null,
+    cuisine_type: row.menu_type || null,
+    menu_category: row.menu_category || null,
+    completed_at: row.completed_at || null,
     recipe_id: row.recipe_version_id || row.ingredient_id || null,
+    item_name: row.item_name || null,
     batch_number: row.batch_number,
     initial_weight_grams: Number(row.initial_weight_grams || 0),
     remaining_weight_grams: Number(row.remaining_weight_grams || 0),
@@ -756,6 +764,7 @@ function rowToMealServiceConsumption(row = {}) {
     __entity: 'MealServiceConsumption',
     id: row.meal_consumption_id,
     meal_service_attendance_id: row.meal_service_id,
+    site_id: row.warehouse_id || null,
     produced_item_batch_id: row.output_batch_id || null,
     production_id: row.production_id || null,
     recipe_id: row.recipe_version_id || null,
@@ -765,6 +774,9 @@ function rowToMealServiceConsumption(row = {}) {
     movement_type: row.movement_type || 'consumption',
     service_date: row.service_date || null,
     meal_type: row.meal_period || null,
+    menu_type: row.menu_type || null,
+    cuisine_type: row.menu_type || null,
+    menu_category: row.menu_category || null,
     consumed_weight_grams: Number(row.consumed_weight_grams || 0),
     consumed_servings: Number(row.consumed_servings || 0),
     cost: Number(row.cost || 0),
@@ -987,9 +999,19 @@ function normalizedSelectForEntity(entity) {
   if (entity === 'MenuPlan') return 'SELECT * FROM menu_plans';
   if (entity === 'Production') return 'SELECT * FROM production_events';
   if (entity === 'ProductionConsumptionReport') return 'SELECT * FROM production_consumption_reports';
-  if (entity === 'ProducedItemBatch') return 'SELECT * FROM produced_output_batches';
+  if (entity === 'ProducedItemBatch') {
+    return `SELECT batch.*, event.production_date, event.meal_period, event.menu_type,
+                   event.menu_category, event.completed_at, line.item_name
+            FROM produced_output_batches batch
+            JOIN production_events event ON event.production_id = batch.production_id
+            JOIN production_manifest_lines line ON line.production_line_id = batch.production_line_id`;
+  }
   if (entity === 'MealServiceAttendance') return 'SELECT * FROM meal_service_headers';
-  if (entity === 'MealServiceConsumption') return 'SELECT * FROM meal_service_consumptions';
+  if (entity === 'MealServiceConsumption') {
+    return `SELECT consumption.*, header.warehouse_id, header.menu_type, header.menu_category
+            FROM meal_service_consumptions consumption
+            JOIN meal_service_headers header ON header.meal_service_id = consumption.meal_service_id`;
+  }
   if (entity === 'FoodWaste') return 'SELECT * FROM food_waste_records';
   return normalizedSimpleConfigs[entity]?.select || null;
 }
@@ -1026,7 +1048,437 @@ function normalizedOrder(records, sort) {
   return sortRecords(records, sort || '-updated_date');
 }
 
-async function listNormalizedDocuments(
+function normalizedSqlColumnForField(entity, field) {
+  const idColumn = normalizedIdColumn(entity);
+  const common = {
+    id: idColumn,
+    created_date: 'created_at',
+    updated_date: 'updated_at',
+    recorded_at: 'created_at',
+    source_name: 'source_name',
+    status: 'status'
+  };
+  const columns = {
+    Site: {
+      name: 'name',
+      type: 'type',
+      parent_site_id: 'parent_site_id',
+      project_code: 'project_code',
+      d365_warehouse_id: 'd365_warehouse_id',
+      is_active: 'status'
+    },
+    Ingredient: {
+      name: 'name',
+      item_code: 'item_code',
+      ingredient_code: 'ingredient_code',
+      sku: 'sku',
+      d365_item_id: 'd365_item_id',
+      unit: 'base_unit',
+      base_unit: 'base_unit',
+      category: 'category_id',
+      category_id: 'category_id',
+      is_active: 'status'
+    },
+    Inventory: {
+      inventory_id: 'inventory_id',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      ingredient_id: 'ingredient_id',
+      available_quantity: 'available_quantity',
+      reserved_quantity: 'reserved_quantity',
+      on_hand_quantity: 'on_hand_quantity',
+      quantity: 'on_hand_quantity',
+      average_unit_cost: 'average_unit_cost',
+      last_unit_cost: 'last_unit_cost',
+      unit: 'stock_unit',
+      stock_unit: 'stock_unit'
+    },
+    InventoryLot: {
+      lot_id: 'lot_id',
+      inventory_id: 'inventory_id',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      ingredient_id: 'ingredient_id',
+      batch_number: 'batch_number',
+      received_date: 'received_date',
+      stock_date: 'stock_date',
+      expiry_date: 'expiry_date',
+      original_quantity: 'original_quantity',
+      remaining_quantity: 'remaining_quantity',
+      unit: 'unit',
+      unit_cost: 'unit_cost'
+    },
+    InventoryTransaction: {
+      inventory_transaction_id: 'inventory_transaction_id',
+      inventory_id: 'inventory_id',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      ingredient_id: 'ingredient_id',
+      inventory_lot_id: 'lot_id',
+      lot_id: 'lot_id',
+      transaction_type: 'transaction_type',
+      transaction_date: 'transaction_date',
+      quantity: 'quantity',
+      unit: 'unit',
+      unit_cost: 'unit_cost',
+      total_cost: 'total_cost',
+      reference_type: 'reference_type',
+      reference_id: 'reference_id',
+      reason_code: 'reason_code',
+      idempotency_key: 'idempotency_key'
+    },
+    Recipe: {
+      recipe_master_id: 'recipe_id',
+      recipe_id: 'recipe_id',
+      name: 'display_name',
+      recipe_code: 'recipe_code',
+      cuisine_type: 'cuisine_type',
+      category: 'menu_category',
+      menu_category: 'menu_category',
+      portion_size_grams: 'serving_size_grams',
+      serving_size_grams: 'serving_size_grams',
+      batch_yield: 'batch_yield',
+      total_recipe_weight_grams: 'total_recipe_weight_grams',
+      total_cost: 'total_cost',
+      cost_per_serving: 'cost_per_serving',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      project_id: 'project_id',
+      area_id: 'area_id',
+      is_active: 'status'
+    },
+    MenuPlan: {
+      menu_plan_id: 'menu_plan_id',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      plan_date: 'plan_date',
+      cuisine_type: 'menu_type',
+      menu_type: 'menu_type',
+      menu_category: 'menu_category',
+      meal_type: 'meal_period',
+      meal_period: 'meal_period',
+      created_by: 'created_by'
+    },
+    Production: {
+      production_id: 'production_id',
+      menu_plan_id: 'menu_plan_id',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      fulfillment_store_id: 'warehouse_id',
+      production_date: 'production_date',
+      meal_type: 'meal_period',
+      meal_period: 'meal_period',
+      menu_type: 'menu_type',
+      cuisine_type: 'menu_type',
+      menu_category: 'menu_category',
+      issue_group_key: 'issue_group_key',
+      completed_by: 'completed_by',
+      completed_at: 'completed_at',
+      completed_date: 'completed_at',
+      reversed_by: 'reversed_by',
+      reversed_at: 'reversed_at'
+    },
+    ProductionConsumptionReport: {
+      report_id: 'report_id',
+      report_number: 'report_number',
+      production_id: 'production_id',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      production_date: 'production_date',
+      total_consumption_cost: 'total_consumption_cost',
+      total_shortage_cost: 'total_shortage_cost'
+    },
+    ProducedItemBatch: {
+      output_batch_id: 'output_batch_id',
+      produced_item_batch_id: 'output_batch_id',
+      production_id: 'production_id',
+      production_line_id: 'production_line_id',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      fulfillment_store_id: 'warehouse_id',
+      recipe_id: 'recipe_version_id',
+      recipe_version_id: 'recipe_version_id',
+      ingredient_id: 'ingredient_id',
+      batch_number: 'batch_number',
+      production_date: 'production_date',
+      meal_type: 'meal_period',
+      meal_period: 'meal_period',
+      menu_type: 'menu_type',
+      cuisine_type: 'menu_type',
+      menu_category: 'menu_category',
+      completed_at: 'completed_at',
+      completed_date: 'completed_at',
+      initial_weight_grams: 'initial_weight_grams',
+      remaining_weight_grams: 'remaining_weight_grams',
+      produced_weight_grams: 'initial_weight_grams',
+      available_weight_grams: 'remaining_weight_grams',
+      initial_servings: 'initial_servings',
+      remaining_servings: 'remaining_servings',
+      unit_cost: 'unit_cost',
+      total_cost: 'total_cost'
+    },
+    MealServiceAttendance: {
+      meal_service_id: 'meal_service_id',
+      service_reference: 'service_reference',
+      idempotency_key: 'idempotency_key',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      service_date: 'service_date',
+      meal_type: 'meal_period',
+      meal_period: 'meal_period',
+      menu_type: 'menu_type',
+      cuisine_type: 'menu_type',
+      menu_category: 'menu_category',
+      serving_size_grams: 'serving_size_grams',
+      covers: 'covers',
+      posted_by: 'posted_by',
+      reversed_by: 'reversed_by',
+      reversed_at: 'reversed_at',
+      scope_key: "payload->>'scope_key'",
+      reversal_idempotency_key: "payload->>'reversal_idempotency_key'"
+    },
+    MealServiceConsumption: {
+      meal_consumption_id: 'meal_consumption_id',
+      meal_service_attendance_id: 'meal_service_id',
+      meal_service_id: 'meal_service_id',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      produced_item_batch_id: 'output_batch_id',
+      output_batch_id: 'output_batch_id',
+      production_id: 'production_id',
+      recipe_id: 'recipe_version_id',
+      recipe_version_id: 'recipe_version_id',
+      reverses_consumption_id: 'reverses_consumption_id',
+      idempotency_key: 'idempotency_key',
+      service_reference: 'service_reference',
+      movement_type: 'movement_type',
+      service_date: 'service_date',
+      meal_type: 'meal_period',
+      meal_period: 'meal_period',
+      menu_type: 'menu_type',
+      cuisine_type: 'menu_type',
+      menu_category: 'menu_category',
+      consumed_weight_grams: 'consumed_weight_grams',
+      consumed_servings: 'consumed_servings',
+      cost: 'cost'
+    },
+    FoodWaste: {
+      food_waste_id: 'food_waste_id',
+      waste_reference: 'waste_reference',
+      idempotency_key: 'idempotency_key',
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      waste_date: 'waste_date',
+      meal_type: 'meal_period',
+      meal_period: 'meal_period',
+      menu_type: 'menu_type',
+      cuisine_type: 'menu_type',
+      menu_category: 'menu_category',
+      waste_category: 'waste_category',
+      reason_code: 'reason_code',
+      approval_status: 'approval_status',
+      recorded_by: 'recorded_by',
+      reversed_by: 'reversed_by',
+      reversed_at: 'reversed_at',
+      waste_scope: "payload->>'waste_scope'",
+      meal_service_attendance_id: "payload->>'meal_service_attendance_id'",
+      auto_generated: "payload->>'auto_generated'"
+    }
+  };
+  const column = {
+    ...common,
+    ...(columns[entity] || {})
+  }[field];
+  if (!column) return null;
+  return column.includes('->') || column.includes('(')
+    ? `normalized_record.${column}`
+    : `normalized_record.${column}`;
+}
+
+function normalizedSqlIdColumn(entity) {
+  const idColumn = normalizedIdColumn(entity);
+  return idColumn ? `normalized_record.${idColumn}` : 'normalized_record.id';
+}
+
+function addSqlParameter(parameters, value) {
+  parameters.push(value);
+  return `$${parameters.length}`;
+}
+
+function normalizeLocationIds(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean).map(String);
+  if (typeof value !== 'string' && typeof value[Symbol.iterator] === 'function') {
+    return [...value].filter(Boolean).map(String);
+  }
+  return [String(value)];
+}
+
+function buildNormalizedFilterClause(entity, field, expected, parameters) {
+  if (field === 'is_active') {
+    const statusColumn = normalizedSqlColumnForField(entity, 'status');
+    if (!statusColumn) return null;
+    if (expected === null || typeof expected === 'undefined' || expected === '') {
+      return `COALESCE(${statusColumn}::text, '') = ''`;
+    }
+    const expectsActive = expected === true || String(expected).toLowerCase() === 'true';
+    return expectsActive
+      ? `LOWER(COALESCE(${statusColumn}::text, '')) <> 'inactive'`
+      : `LOWER(COALESCE(${statusColumn}::text, '')) = 'inactive'`;
+  }
+
+  const column = normalizedSqlColumnForField(entity, field);
+  if (!column) return null;
+
+  if (expected === null || typeof expected === 'undefined' || expected === '') {
+    return `COALESCE(${column}::text, '') = ''`;
+  }
+
+  if (Array.isArray(expected)) {
+    const values = expected
+      .filter((value) => value !== null && typeof value !== 'undefined' && value !== '')
+      .map((value) => String(value).toLowerCase());
+    if (!values.length) return `COALESCE(${column}::text, '') = ''`;
+    const parameter = addSqlParameter(parameters, values);
+    return `LOWER(COALESCE(${column}::text, '')) = ANY(${parameter}::text[])`;
+  }
+
+  const parameter = addSqlParameter(parameters, String(expected));
+  return `LOWER(COALESCE(${column}::text, '')) = LOWER(${parameter}::text)`;
+}
+
+function buildNormalizedRangeClauses(entity, rangeFilters = {}, parameters) {
+  const clauses = [];
+  const unsupported = [];
+  for (const [field, bounds] of Object.entries(rangeFilters || {})) {
+    const column = normalizedSqlColumnForField(entity, field);
+    if (!column) {
+      unsupported.push(field);
+      continue;
+    }
+    if (bounds?.gte !== null && typeof bounds?.gte !== 'undefined' && bounds.gte !== '') {
+      clauses.push(`${column} >= ${addSqlParameter(parameters, bounds.gte)}`);
+    }
+    if (bounds?.lte !== null && typeof bounds?.lte !== 'undefined' && bounds.lte !== '') {
+      clauses.push(`${column} <= ${addSqlParameter(parameters, bounds.lte)}`);
+    }
+  }
+  return { clauses, unsupported };
+}
+
+function buildNormalizedLocationClause(entity, location, parameters) {
+  if (!location || location.unrestricted) return null;
+  const allowedIds = [...new Set(normalizeLocationIds(location.accessibleSiteIds))];
+  const parameter = addSqlParameter(parameters, allowedIds);
+  if (entity === 'Site') {
+    return allowedIds.length ? `normalized_record.id = ANY(${parameter}::text[])` : 'FALSE';
+  }
+  if (entity === 'Recipe') {
+    const globalRecipe = `(
+      COALESCE(normalized_record.warehouse_id::text, '') = ''
+      AND COALESCE(normalized_record.project_id::text, '') = ''
+      AND COALESCE(normalized_record.area_id::text, '') = ''
+    )`;
+    if (!allowedIds.length) return globalRecipe;
+    return `(
+      ${globalRecipe}
+      OR normalized_record.warehouse_id = ANY(${parameter}::text[])
+      OR normalized_record.project_id = ANY(${parameter}::text[])
+      OR normalized_record.area_id = ANY(${parameter}::text[])
+    )`;
+  }
+  const locationColumn = normalizedSqlColumnForField(entity, 'site_id')
+    || normalizedSqlColumnForField(entity, 'warehouse_id')
+    || normalizedSqlColumnForField(entity, 'fulfillment_store_id');
+  if (!locationColumn) return null;
+  if (!allowedIds.length) return `COALESCE(${locationColumn}::text, '') = ''`;
+  return `(COALESCE(${locationColumn}::text, '') = '' OR ${locationColumn} = ANY(${parameter}::text[]))`;
+}
+
+function buildNormalizedOrderClause(entity, sort) {
+  const normalizedSort = String(sort || '-updated_date').trim();
+  const descending = normalizedSort.startsWith('-');
+  const field = descending ? normalizedSort.slice(1) : normalizedSort;
+  const column = normalizedSqlColumnForField(entity, field);
+  if (!column) return null;
+  const direction = descending ? 'DESC' : 'ASC';
+  return `${column} ${direction} NULLS LAST, ${normalizedSqlIdColumn(entity)} ASC`;
+}
+
+function normalizedLimit(value) {
+  if (value === null || typeof value === 'undefined' || value === '') return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.min(10000, Math.max(1, Math.trunc(numeric)));
+}
+
+function normalizedOffset(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.trunc(numeric)) : 0;
+}
+
+function buildNormalizedListQuery({
+  entity,
+  filters = {},
+  rangeFilters = {},
+  sort,
+  limit,
+  offset = 0,
+  lock = false,
+  location = null,
+  includeTotal = false
+} = {}) {
+  const select = normalizedSelectForEntity(entity);
+  if (!select) return null;
+  const parameters = [];
+  const clauses = [];
+  const unsupportedFilters = [];
+
+  for (const [field, expected] of Object.entries(filters || {})) {
+    const clause = buildNormalizedFilterClause(entity, field, expected, parameters);
+    if (clause) clauses.push(clause);
+    else unsupportedFilters.push(field);
+  }
+
+  const range = buildNormalizedRangeClauses(entity, rangeFilters, parameters);
+  clauses.push(...range.clauses);
+  unsupportedFilters.push(...range.unsupported);
+
+  const locationClause = buildNormalizedLocationClause(entity, location, parameters);
+  if (locationClause) clauses.push(locationClause);
+
+  if (unsupportedFilters.length) {
+    return { fallback: true, unsupportedFilters };
+  }
+
+  const whereClause = clauses.length ? `WHERE ${clauses.join('\n        AND ')}` : '';
+  const orderClause = buildNormalizedOrderClause(entity, sort);
+  if (!orderClause) {
+    return { fallback: true, unsupportedFilters: [`sort:${sort}`] };
+  }
+  const pageSize = normalizedLimit(limit);
+  const pageOffset = normalizedOffset(offset);
+  const limitClause = pageSize === null ? '' : `LIMIT ${addSqlParameter(parameters, pageSize)}::integer`;
+  const offsetClause = pageOffset > 0 ? `OFFSET ${addSqlParameter(parameters, pageOffset)}::integer` : '';
+  const lockClause = lock && entity !== 'Site' ? 'FOR UPDATE' : '';
+  const totalColumn = includeTotal ? ', COUNT(*) OVER() AS total_count' : '';
+
+  return {
+    text: `SELECT normalized_record.*${totalColumn}
+      FROM (${select}) normalized_record
+      ${whereClause}
+      ORDER BY ${orderClause}
+      ${limitClause}
+      ${offsetClause}
+      ${lockClause}`,
+    parameters,
+    limit: pageSize,
+    offset: pageOffset,
+    fallback: false
+  };
+}
+
+async function listNormalizedDocumentsInMemory(
   entity,
   { filters = {}, rangeFilters = {}, sort, limit, offset = 0, lock = false, location = null } = {},
   executor = pool
@@ -1060,6 +1512,97 @@ async function listNormalizedDocuments(
   const ordered = normalizedOrder(records, sort);
   const start = Math.max(0, Number(offset) || 0);
   return typeof limit === 'number' ? ordered.slice(start, start + limit) : ordered.slice(start);
+}
+
+async function listNormalizedDocuments(
+  entity,
+  { filters = {}, rangeFilters = {}, sort, limit, offset = 0, lock = false, location = null } = {},
+  executor = pool
+) {
+  const mapper = normalizedMapper(entity);
+  if (!mapper) return null;
+  const built = buildNormalizedListQuery({
+    entity,
+    filters,
+    rangeFilters,
+    sort,
+    limit,
+    offset,
+    lock,
+    location
+  });
+  if (!built || built.fallback) {
+    return listNormalizedDocumentsInMemory(entity, {
+      filters,
+      rangeFilters,
+      sort,
+      limit,
+      offset,
+      lock,
+      location
+    }, executor);
+  }
+  const result = await query(built.text, built.parameters, executor);
+  return result.rows.map(mapper);
+}
+
+async function listNormalizedDocumentsPage(
+  entity,
+  { filters = {}, rangeFilters = {}, sort, limit = 50, offset = 0, location = null } = {},
+  executor = pool
+) {
+  const mapper = normalizedMapper(entity);
+  if (!mapper) return null;
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const built = buildNormalizedListQuery({
+    entity,
+    filters,
+    rangeFilters,
+    sort,
+    limit: safeLimit,
+    offset: safeOffset,
+    location,
+    includeTotal: true
+  });
+  if (!built || built.fallback) {
+    const items = await listNormalizedDocumentsInMemory(entity, {
+      filters,
+      rangeFilters,
+      sort,
+      location
+    }, executor);
+    return {
+      items: items.slice(safeOffset, safeOffset + safeLimit),
+      total_count: items.length,
+      limit: safeLimit,
+      offset: safeOffset
+    };
+  }
+  const result = await query(built.text, built.parameters, executor);
+  let totalCount = result.rowCount ? Number(result.rows[0].total_count) : 0;
+  if (!result.rowCount && safeOffset > 0) {
+    const countProbe = buildNormalizedListQuery({
+      entity,
+      filters,
+      rangeFilters,
+      sort,
+      limit: 1,
+      offset: 0,
+      location,
+      includeTotal: true
+    });
+    if (countProbe && !countProbe.fallback) {
+      const countResult = await query(countProbe.text, countProbe.parameters, executor);
+      totalCount = countResult.rowCount ? Number(countResult.rows[0].total_count) : 0;
+    }
+  }
+  return {
+    items: result.rows.map(mapper),
+    total_count: totalCount,
+    limit: safeLimit,
+    offset: safeOffset
+  };
 }
 
 async function findNormalizedDocument(entity, id, executor = pool, lock = false) {
@@ -2724,18 +3267,14 @@ async function listDocumentsPage(
   }
 
   if (usesNormalizedCore(entity)) {
-    const allItems = await listNormalizedDocuments(entity, {
+    return listNormalizedDocumentsPage(entity, {
       filters,
       rangeFilters,
       sort,
+      limit: safeLimit,
+      offset: safeOffset,
       location
     }, executor);
-    return {
-      items: allItems.slice(safeOffset, safeOffset + safeLimit),
-      total_count: allItems.length,
-      limit: safeLimit,
-      offset: safeOffset
-    };
   }
 
   const built = buildEntityListQuery({
