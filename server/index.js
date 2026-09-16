@@ -179,6 +179,12 @@ import {
   validateFoodWasteContextInput
 } from './menuPlanningApi.js';
 import {
+  buildConfirmedFoodCostRows,
+  buildPendingProductionRows,
+  groupFoodCostRows,
+  safeFoodCostNumber
+} from '../shared/foodCostReport.js';
+import {
   allocateBatchOverproductionWaste,
   buildBatchOverproductionDishSummary,
   buildFoodWasteMenuPlanSummary,
@@ -259,6 +265,11 @@ let costingCatalogPromise = null;
 let costingCatalogGeneration = 0;
 const recipeDecorationCache = new Map();
 const maximumRecipeDecorationCacheEntries = 10000;
+const readCacheTtlMs = Math.max(0, Number(process.env.FOODPRO_READ_CACHE_TTL_MS || 15000));
+const reportCacheTtlMs = Math.max(0, Number(process.env.FOODPRO_REPORT_CACHE_TTL_MS || 10000));
+const maximumReadCacheEntries = Math.max(1, Number(process.env.FOODPRO_READ_CACHE_MAX_ENTRIES || 2000));
+const entityReadCache = new Map();
+const entityReadCacheGenerations = new Map();
 const activeEventResponses = new Set();
 
 app.set('trust proxy', true);
@@ -468,6 +479,117 @@ function recordChanged(entity) {
   invalidateEntityDataCaches(entity);
 }
 
+const CACHEABLE_ENTITY_READS = new Set([
+  'FoodCategory',
+  'Ingredient',
+  'MenuPlan',
+  'Recipe',
+  'Site'
+]);
+
+function stableCacheStringify(value) {
+  if (typeof value === 'undefined') {
+    return '"__undefined__"';
+  }
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableCacheStringify(item)).join(',')}]`;
+  }
+  return `{${Object.keys(value).sort().map((key) => (
+    `${JSON.stringify(key)}:${stableCacheStringify(value[key])}`
+  )).join(',')}}`;
+}
+
+function normalizeCacheEntities(entities = []) {
+  return [...new Set((entities || [])
+    .map((entity) => String(entity || '').trim())
+    .filter(Boolean))].sort();
+}
+
+function getEntityReadCacheGeneration(entity) {
+  return entityReadCacheGenerations.get(entity) || 0;
+}
+
+function bumpEntityReadCacheGeneration(entity) {
+  const normalized = String(entity || '').trim();
+  if (!normalized) return;
+  entityReadCacheGenerations.set(normalized, getEntityReadCacheGeneration(normalized) + 1);
+}
+
+function cacheDependenciesForEntityRead(entity) {
+  if (entity === 'MenuPlan') return ['MenuPlan', 'Recipe', 'Site'];
+  if (entity === 'Recipe') return ['Recipe', 'Ingredient'];
+  return [entity];
+}
+
+function userReadCacheScopeKey(user, scope = null) {
+  const permissions = Array.isArray(user?.permissions)
+    ? user.permissions.map(String).sort()
+    : [];
+  const accessibleSiteIds = scope?.unrestricted
+    ? ['*']
+    : [...(scope?.accessibleSiteIds || [])].map(String).sort();
+  return stableCacheStringify({
+    role: getUserEffectiveRole(user),
+    dashboard_variant: user?.dashboard_variant || null,
+    permissions,
+    sites: accessibleSiteIds
+  });
+}
+
+function buildReadCacheKey({ bucket, entities = [], keyParts = [] }) {
+  const normalizedEntities = normalizeCacheEntities(entities);
+  return stableCacheStringify({
+    bucket,
+    entities: normalizedEntities.map((entity) => [entity, getEntityReadCacheGeneration(entity)]),
+    keyParts
+  });
+}
+
+function setReadCacheValue(cacheKey, value, ttlMs) {
+  if (ttlMs <= 0) return value;
+  entityReadCache.set(cacheKey, {
+    expiresAt: Date.now() + ttlMs,
+    value
+  });
+  while (entityReadCache.size > maximumReadCacheEntries) {
+    entityReadCache.delete(entityReadCache.keys().next().value);
+  }
+  return value;
+}
+
+async function withReadCache({ bucket, entities, keyParts = [], ttlMs = readCacheTtlMs, loader }) {
+  if (ttlMs <= 0) return loader();
+  const cacheKey = buildReadCacheKey({ bucket, entities, keyParts });
+  const cached = entityReadCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.promise || cached.value;
+  }
+  const loadingPromise = Promise.resolve()
+    .then(loader)
+    .then((value) => setReadCacheValue(cacheKey, value, ttlMs))
+    .catch((error) => {
+      entityReadCache.delete(cacheKey);
+      throw error;
+    });
+  entityReadCache.set(cacheKey, {
+    expiresAt: Date.now() + Math.min(ttlMs, 1000),
+    promise: loadingPromise
+  });
+  return loadingPromise;
+}
+
+function setPrivateCacheHeaders(response, ttlMs) {
+  if (ttlMs <= 0) {
+    response.set('Cache-Control', 'private, no-store');
+    return;
+  }
+  const seconds = Math.max(1, Math.ceil(ttlMs / 1000));
+  response.set('Cache-Control', `private, max-age=${seconds}, stale-while-revalidate=${seconds}`);
+}
+
 async function decorateRecipesWithServingWeights(records = []) {
   if (!Array.isArray(records) || records.length === 0) return records;
   const { recipeCatalog, ingredients } = await getCostingCatalogs();
@@ -550,6 +672,22 @@ async function getCostingCatalogs() {
 }
 
 function invalidateEntityDataCaches(entity) {
+  bumpEntityReadCacheGeneration(entity);
+  if (entity === 'Recipe' || entity === 'Ingredient') {
+    bumpEntityReadCacheGeneration('MenuPlan');
+  }
+  if (entity === 'Site') {
+    bumpEntityReadCacheGeneration('MenuPlan');
+    bumpEntityReadCacheGeneration('Inventory');
+    bumpEntityReadCacheGeneration('InventoryLot');
+  }
+  if (entity === 'InventoryTransaction') {
+    bumpEntityReadCacheGeneration('Inventory');
+    bumpEntityReadCacheGeneration('InventoryLot');
+  }
+  if (['Production', 'ProducedItemBatch', 'MealServiceConsumption', 'FoodWaste'].includes(entity)) {
+    bumpEntityReadCacheGeneration('ProductionSummary');
+  }
   if (entity === 'Recipe' || entity === 'Ingredient') {
     costingCatalogGeneration += 1;
     costingCatalogCache = null;
@@ -574,6 +712,184 @@ async function decorateEntityRecords(entity, records = [], user = null) {
     return records.map((record) => sanitizeErpIntegrationConfig(record, user));
   }
   return records;
+}
+
+function offsetDateOnly(days = 0) {
+  const value = new Date();
+  value.setDate(value.getDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function normalizedFoodCostDate(value, fallback) {
+  const candidate = String(value || fallback || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(candidate) ? candidate : fallback;
+}
+
+function collectFoodCostRelatedLocationIds(sites = [], locationId = 'all') {
+  if (!locationId || locationId === 'all') return null;
+  const siteMap = new Map(sites.map((site) => [String(site.id), site]));
+  const related = new Set([String(locationId)]);
+
+  let selectedCursor = siteMap.get(String(locationId));
+  while (selectedCursor?.parent_site_id) {
+    related.add(String(selectedCursor.parent_site_id));
+    selectedCursor = siteMap.get(String(selectedCursor.parent_site_id));
+  }
+
+  sites.forEach((site) => {
+    let cursor = site;
+    while (cursor?.parent_site_id) {
+      if (String(cursor.parent_site_id) === String(locationId)) {
+        related.add(String(site.id));
+        break;
+      }
+      cursor = siteMap.get(String(cursor.parent_site_id));
+    }
+  });
+
+  return related;
+}
+
+function buildFoodCostScopedQuery(filters, dateField) {
+  const entityFilters = {};
+  if (filters.mealType !== 'all') entityFilters.meal_type = filters.mealType;
+  return {
+    filters: entityFilters,
+    rangeFilters: {
+      [dateField]: {
+        gte: filters.startDate,
+        lte: filters.endDate
+      }
+    }
+  };
+}
+
+async function loadFoodCostReportForUser(user, rawFilters = {}) {
+  const endDate = normalizedFoodCostDate(rawFilters.end_date ?? rawFilters.endDate, offsetDateOnly(0));
+  const startDate = normalizedFoodCostDate(rawFilters.start_date ?? rawFilters.startDate, offsetDateOnly(-30));
+  const filters = {
+    startDate: startDate <= endDate ? startDate : endDate,
+    endDate: startDate <= endDate ? endDate : startDate,
+    locationId: String(rawFilters.location_id ?? rawFilters.locationId ?? 'all').trim() || 'all',
+    category: String(rawFilters.category || 'all').trim() || 'all',
+    mealType: String(rawFilters.meal_type ?? rawFilters.mealType ?? 'all').trim().toLowerCase() || 'all',
+    menuType: String(rawFilters.menu_type ?? rawFilters.menuType ?? 'all').trim().toLowerCase() || 'all',
+    view: String(rawFilters.view || 'detail').trim().toLowerCase() || 'detail'
+  };
+  const productionReportQuery = buildFoodCostScopedQuery(filters, 'production_date');
+  const mealServiceReportQuery = buildFoodCostScopedQuery(filters, 'service_date');
+  const [siteContext, productionContext, mealServiceContext, batchContext, recipeContext, ingredientContext] = await Promise.all([
+    getEntityLocationContext(user, 'Site'),
+    getEntityLocationContext(user, 'Production'),
+    getEntityLocationContext(user, 'MealServiceConsumption'),
+    getEntityLocationContext(user, 'ProducedItemBatch'),
+    getEntityLocationContext(user, 'Recipe'),
+    getEntityLocationContext(user, 'Ingredient')
+  ]);
+  const [
+    sites,
+    productions,
+    mealServiceConsumptions,
+    producedItemBatches,
+    recipes,
+    ingredients
+  ] = await Promise.all([
+    listDocuments('Site', { location: siteContext.location })
+      .then((records) => scopeEntityRecords(user, 'Site', records, siteContext.scope)),
+    listDocuments('Production', {
+      filters: productionReportQuery.filters,
+      rangeFilters: productionReportQuery.rangeFilters,
+      sort: '-production_date',
+      location: productionContext.location
+    }).then((records) => scopeEntityRecords(user, 'Production', records, productionContext.scope)),
+    listDocuments('MealServiceConsumption', {
+      filters: mealServiceReportQuery.filters,
+      rangeFilters: mealServiceReportQuery.rangeFilters,
+      sort: '-service_date',
+      location: mealServiceContext.location
+    }).then((records) => scopeEntityRecords(user, 'MealServiceConsumption', records, mealServiceContext.scope)),
+    listDocuments('ProducedItemBatch', {
+      filters: productionReportQuery.filters,
+      rangeFilters: productionReportQuery.rangeFilters,
+      sort: '-production_date',
+      location: batchContext.location
+    }).then((records) => scopeEntityRecords(user, 'ProducedItemBatch', records, batchContext.scope)),
+    listDocuments('Recipe', { limit: 5000, location: recipeContext.location })
+      .then((records) => scopeEntityRecords(user, 'Recipe', records, recipeContext.scope))
+      .then((records) => decorateEntityRecords('Recipe', records, user)),
+    listDocuments('Ingredient', { limit: 5000, location: ingredientContext.location })
+      .then((records) => scopeEntityRecords(user, 'Ingredient', records, ingredientContext.scope))
+  ]);
+  const recipeMap = new Map(recipes.map((recipe) => [String(recipe.id), recipe]));
+  const relatedLocationIds = collectFoodCostRelatedLocationIds(sites, filters.locationId);
+  const matchesDate = (value) => value && value >= filters.startDate && value <= filters.endDate;
+  const matchesLocation = (siteId) => filters.locationId === 'all' || relatedLocationIds?.has(String(siteId || ''));
+  const matchesCategory = (category) => filters.category === 'all' || category === filters.category;
+  const matchesMealType = (mealType) => filters.mealType === 'all' || (mealType || 'unspecified') === filters.mealType;
+  const matchesMenuType = (menuType) => filters.menuType === 'all' || (menuType || 'general') === filters.menuType;
+
+  const filteredProductions = productions.filter((production) => {
+    const recipe = recipeMap.get(String(production.recipe_id || ''));
+    const category = production.menu_category || recipe?.category || '';
+    const menuType = production.menu_type || production.cuisine_type || recipe?.menu_type || recipe?.cuisine_type || 'general';
+    return matchesDate(production.production_date)
+      && matchesLocation(production.site_id)
+      && matchesCategory(category)
+      && matchesMealType(production.meal_type)
+      && matchesMenuType(menuType);
+  });
+  const filteredConsumptions = mealServiceConsumptions.filter((consumption) => {
+    const recipe = recipeMap.get(String(consumption.recipe_id || ''));
+    const category = consumption.menu_category || recipe?.category || '';
+    const menuType = consumption.menu_type || recipe?.menu_type || recipe?.cuisine_type || 'general';
+    return matchesDate(consumption.service_date)
+      && matchesLocation(consumption.site_id)
+      && matchesCategory(category)
+      && matchesMealType(consumption.meal_type)
+      && matchesMenuType(menuType);
+  });
+  const rows = groupFoodCostRows(buildConfirmedFoodCostRows({
+    consumptions: filteredConsumptions,
+    productions,
+    producedItemBatches,
+    recipes,
+    ingredients
+  }), filters.view);
+  const pendingProductionRows = buildPendingProductionRows({
+    consumptions: mealServiceConsumptions,
+    productions: filteredProductions,
+    producedItemBatches,
+    recipes,
+    ingredients
+  });
+  const summary = rows.reduce((totals, row) => ({
+    total_cost: totals.total_cost + safeFoodCostNumber(row.total_cost),
+    servings: totals.servings + safeFoodCostNumber(row.servings ?? row.total_servings)
+  }), { total_cost: 0, servings: 0 });
+  const categories = [...new Set([
+    ...recipes.map((recipe) => recipe.category).filter(Boolean),
+    ...productions.map((production) => production.menu_category).filter(Boolean),
+    ...mealServiceConsumptions.map((consumption) => consumption.menu_category).filter(Boolean)
+  ])].sort();
+  const menuTypes = [...new Set([
+    ...recipes.map((recipe) => recipe.menu_type || recipe.cuisine_type).filter(Boolean),
+    ...productions.map((production) => production.menu_type || production.cuisine_type).filter(Boolean),
+    ...mealServiceConsumptions.map((consumption) => consumption.menu_type).filter(Boolean)
+  ])].sort();
+
+  return {
+    filters,
+    rows,
+    pending_production_rows: pendingProductionRows,
+    summary: {
+      total_cost: summary.total_cost,
+      servings: summary.servings,
+      average_cost_per_serving: summary.servings > 0 ? summary.total_cost / summary.servings : 0
+    },
+    categories,
+    menu_types: menuTypes,
+    generated_at: new Date().toISOString()
+  };
 }
 
 app.get('/api/events', requireAuth, async (request, response, next) => {
@@ -3353,7 +3669,7 @@ app.get('/api/budgets/planning-context', requireAuth, requireAnyPermission(['vie
 
 app.get('/api/dashboard/management', requireAuth, requirePermission('view_dashboard'), async (request, response, next) => {
   try {
-    response.set('Cache-Control', 'private, no-store');
+    setPrivateCacheHeaders(response, Math.min(reportCacheTtlMs, 5000));
     response.json(await getManagementDashboardSnapshot(request.user, {
       view: request.query.view,
       date: request.query.date,
@@ -3361,6 +3677,32 @@ app.get('/api/dashboard/management', requireAuth, requirePermission('view_dashbo
       end_date: request.query.end_date,
       site_id: request.query.site_id
     }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/reports/food-cost', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const body = await withReadCache({
+      bucket: 'food-cost-report',
+      entities: ['Production', 'MealServiceConsumption', 'ProducedItemBatch', 'Recipe', 'Ingredient', 'Site'],
+      ttlMs: reportCacheTtlMs,
+      keyParts: [
+        request.query.start_date || request.query.startDate || '',
+        request.query.end_date || request.query.endDate || '',
+        request.query.location_id || request.query.locationId || 'all',
+        request.query.category || 'all',
+        request.query.meal_type || request.query.mealType || 'all',
+        request.query.menu_type || request.query.menuType || 'all',
+        request.query.view || 'detail',
+        userReadCacheScopeKey(request.user, scope)
+      ],
+      loader: () => loadFoodCostReportForUser(request.user, request.query)
+    });
+    setPrivateCacheHeaders(response, reportCacheTtlMs);
+    response.json(body);
   } catch (error) {
     next(error);
   }
@@ -5126,17 +5468,32 @@ app.get('/api/entities/:entity', requireAuth, async (request, response, next) =>
     authorizeEntityAction(request.user, entity, 'list');
     const limit = request.query.limit ? Number(request.query.limit) : undefined;
     const { scope, location } = await getEntityLocationContext(request.user, entity);
-    const shouldScopeUsersBeforeLimit = entity === 'User' && Boolean(scope && !scope.unrestricted);
-    const records = await listDocuments(entity, {
-      sort: request.query.sort,
-      limit: shouldScopeUsersBeforeLimit ? undefined : limit,
-      location
+    const body = await withReadCache({
+      bucket: 'entity-list',
+      entities: cacheDependenciesForEntityRead(entity),
+      ttlMs: CACHEABLE_ENTITY_READS.has(entity) ? readCacheTtlMs : 0,
+      keyParts: [
+        entity,
+        request.query.sort || '',
+        Number.isFinite(limit) ? limit : null,
+        userReadCacheScopeKey(request.user, scope)
+      ],
+      loader: async () => {
+        const shouldScopeUsersBeforeLimit = entity === 'User' && Boolean(scope && !scope.unrestricted);
+        const records = await listDocuments(entity, {
+          sort: request.query.sort,
+          limit: shouldScopeUsersBeforeLimit ? undefined : limit,
+          location
+        });
+        const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
+        const limitedRecords = shouldScopeUsersBeforeLimit && Number.isFinite(limit)
+          ? scopedRecords.slice(0, Math.max(0, limit))
+          : scopedRecords;
+        return decorateEntityRecords(entity, limitedRecords, request.user);
+      }
     });
-    const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
-    const limitedRecords = shouldScopeUsersBeforeLimit && Number.isFinite(limit)
-      ? scopedRecords.slice(0, Math.max(0, limit))
-      : scopedRecords;
-    response.json(await decorateEntityRecords(entity, limitedRecords, request.user));
+    setPrivateCacheHeaders(response, CACHEABLE_ENTITY_READS.has(entity) ? readCacheTtlMs : 0);
+    response.json(body);
   } catch (error) {
     next(error);
   }
@@ -5148,20 +5505,37 @@ app.post('/api/entities/:entity/filter', requireAuth, async (request, response, 
     ensureKnownEntity(entity);
     authorizeEntityAction(request.user, entity, 'filter');
     const { scope, location } = await getEntityLocationContext(request.user, entity);
-    const requestedLimit = Number(request.body?.limit);
-    const shouldScopeUsersBeforeLimit = entity === 'User' && Boolean(scope && !scope.unrestricted);
-    const records = await listDocuments(entity, {
-      filters: request.body?.filters || {},
-      rangeFilters: request.body?.rangeFilters || {},
-      sort: request.body?.sort,
-      limit: shouldScopeUsersBeforeLimit ? undefined : request.body?.limit,
-      location
+    const body = await withReadCache({
+      bucket: 'entity-filter',
+      entities: cacheDependenciesForEntityRead(entity),
+      ttlMs: CACHEABLE_ENTITY_READS.has(entity) ? readCacheTtlMs : 0,
+      keyParts: [
+        entity,
+        request.body?.filters || {},
+        request.body?.rangeFilters || {},
+        request.body?.sort || '',
+        request.body?.limit || null,
+        userReadCacheScopeKey(request.user, scope)
+      ],
+      loader: async () => {
+        const requestedLimit = Number(request.body?.limit);
+        const shouldScopeUsersBeforeLimit = entity === 'User' && Boolean(scope && !scope.unrestricted);
+        const records = await listDocuments(entity, {
+          filters: request.body?.filters || {},
+          rangeFilters: request.body?.rangeFilters || {},
+          sort: request.body?.sort,
+          limit: shouldScopeUsersBeforeLimit ? undefined : request.body?.limit,
+          location
+        });
+        const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
+        const limitedRecords = shouldScopeUsersBeforeLimit && Number.isFinite(requestedLimit)
+          ? scopedRecords.slice(0, Math.max(0, requestedLimit))
+          : scopedRecords;
+        return decorateEntityRecords(entity, limitedRecords, request.user);
+      }
     });
-    const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
-    const limitedRecords = shouldScopeUsersBeforeLimit && Number.isFinite(requestedLimit)
-      ? scopedRecords.slice(0, Math.max(0, requestedLimit))
-      : scopedRecords;
-    response.json(await decorateEntityRecords(entity, limitedRecords, request.user));
+    setPrivateCacheHeaders(response, CACHEABLE_ENTITY_READS.has(entity) ? readCacheTtlMs : 0);
+    response.json(body);
   } catch (error) {
     next(error);
   }
@@ -5181,31 +5555,49 @@ app.post('/api/entities/:entity/page', requireAuth, async (request, response, ne
     const sort = request.body?.sort;
     const { scope, location } = await getEntityLocationContext(request.user, entity);
 
-    let pageResult;
-    if (entity === 'User' && scope && !scope.unrestricted) {
-      const records = await listDocuments(entity, { filters, rangeFilters, sort });
-      const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
-      pageResult = {
-        items: scopedRecords.slice(offset, offset + limit),
-        total_count: scopedRecords.length,
+    const body = await withReadCache({
+      bucket: 'entity-page',
+      entities: cacheDependenciesForEntityRead(entity),
+      ttlMs: CACHEABLE_ENTITY_READS.has(entity) ? readCacheTtlMs : 0,
+      keyParts: [
+        entity,
+        filters,
+        rangeFilters,
+        sort || '',
+        page,
         limit,
-        offset
-      };
-    } else {
-      pageResult = await listDocumentsPage(entity, { filters, rangeFilters, sort, limit, offset, location });
-      pageResult.items = await scopeEntityRecords(request.user, entity, pageResult.items, scope);
-    }
+        userReadCacheScopeKey(request.user, scope)
+      ],
+      loader: async () => {
+        let pageResult;
+        if (entity === 'User' && scope && !scope.unrestricted) {
+          const records = await listDocuments(entity, { filters, rangeFilters, sort });
+          const scopedRecords = await scopeEntityRecords(request.user, entity, records, scope);
+          pageResult = {
+            items: scopedRecords.slice(offset, offset + limit),
+            total_count: scopedRecords.length,
+            limit,
+            offset
+          };
+        } else {
+          pageResult = await listDocumentsPage(entity, { filters, rangeFilters, sort, limit, offset, location });
+          pageResult.items = await scopeEntityRecords(request.user, entity, pageResult.items, scope);
+        }
 
-    const items = await decorateEntityRecords(entity, pageResult.items, request.user);
-    const totalPages = Math.ceil(pageResult.total_count / limit);
-    return response.json({
-      items,
-      total_count: pageResult.total_count,
-      page,
-      limit,
-      total_pages: totalPages,
-      has_more: page < totalPages
+        const items = await decorateEntityRecords(entity, pageResult.items, request.user);
+        const totalPages = Math.ceil(pageResult.total_count / limit);
+        return {
+          items,
+          total_count: pageResult.total_count,
+          page,
+          limit,
+          total_pages: totalPages,
+          has_more: page < totalPages
+        };
+      }
     });
+    setPrivateCacheHeaders(response, CACHEABLE_ENTITY_READS.has(entity) ? readCacheTtlMs : 0);
+    return response.json(body);
   } catch (error) {
     return next(error);
   }
@@ -9424,13 +9816,28 @@ app.post('/api/inventory/production/:id/reverse-completion', requireAuth, requir
 app.get('/api/inventory/lots', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
     const { scope, location } = await getEntityLocationContext(request.user, 'InventoryLot');
-    const lots = await listInventoryLots({
-      siteId: request.query.site_id,
-      ingredientId: request.query.ingredient_id,
-      includeEmpty: request.query.include_empty === 'true',
-      location
+    const body = await withReadCache({
+      bucket: 'inventory-lots',
+      entities: ['InventoryLot', 'Inventory', 'InventoryTransaction'],
+      ttlMs: reportCacheTtlMs,
+      keyParts: [
+        request.query.site_id || '',
+        request.query.ingredient_id || '',
+        request.query.include_empty === 'true',
+        userReadCacheScopeKey(request.user, scope)
+      ],
+      loader: async () => {
+        const lots = await listInventoryLots({
+          siteId: request.query.site_id,
+          ingredientId: request.query.ingredient_id,
+          includeEmpty: request.query.include_empty === 'true',
+          location
+        });
+        return scope ? filterRowsByAccessibleSites(lots, scope) : lots;
+      }
     });
-    response.json(scope ? filterRowsByAccessibleSites(lots, scope) : lots);
+    setPrivateCacheHeaders(response, reportCacheTtlMs);
+    response.json(body);
   } catch (error) {
     next(error);
   }
@@ -9439,8 +9846,18 @@ app.get('/api/inventory/lots', requireAuth, requireAnyPermission(['view_inventor
 app.get('/api/inventory/reports/stock-on-hand', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
     const { scope, location } = await getEntityLocationContext(request.user, 'Inventory');
-    const report = await getStockOnHandReport({ location });
-    response.json(scope ? filterRowsByAccessibleSites(report, scope) : report);
+    const body = await withReadCache({
+      bucket: 'stock-on-hand',
+      entities: ['Inventory', 'InventoryLot', 'InventoryTransaction'],
+      ttlMs: reportCacheTtlMs,
+      keyParts: [userReadCacheScopeKey(request.user, scope)],
+      loader: async () => {
+        const report = await getStockOnHandReport({ location });
+        return scope ? filterRowsByAccessibleSites(report, scope) : report;
+      }
+    });
+    setPrivateCacheHeaders(response, reportCacheTtlMs);
+    response.json(body);
   } catch (error) {
     next(error);
   }
@@ -9449,14 +9866,30 @@ app.get('/api/inventory/reports/stock-on-hand', requireAuth, requireAnyPermissio
 app.get('/api/inventory/reports/movements', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
     const { scope, location } = await getEntityLocationContext(request.user, 'InventoryTransaction');
-    const report = await getStockMovementReport({
-      siteId: request.query.site_id,
-      ingredientId: request.query.ingredient_id,
-      dateFrom: request.query.date_from,
-      dateTo: request.query.date_to,
-      location
+    const body = await withReadCache({
+      bucket: 'inventory-movements',
+      entities: ['InventoryTransaction', 'Inventory', 'InventoryLot'],
+      ttlMs: reportCacheTtlMs,
+      keyParts: [
+        request.query.site_id || '',
+        request.query.ingredient_id || '',
+        request.query.date_from || '',
+        request.query.date_to || '',
+        userReadCacheScopeKey(request.user, scope)
+      ],
+      loader: async () => {
+        const report = await getStockMovementReport({
+          siteId: request.query.site_id,
+          ingredientId: request.query.ingredient_id,
+          dateFrom: request.query.date_from,
+          dateTo: request.query.date_to,
+          location
+        });
+        return scope ? filterRowsByAccessibleSites(report, scope) : report;
+      }
     });
-    response.json(scope ? filterRowsByAccessibleSites(report, scope) : report);
+    setPrivateCacheHeaders(response, reportCacheTtlMs);
+    response.json(body);
   } catch (error) {
     next(error);
   }
@@ -9465,11 +9898,22 @@ app.get('/api/inventory/reports/movements', requireAuth, requireAnyPermission(['
 app.get('/api/inventory/reports/expiry', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
     const { scope, location } = await getEntityLocationContext(request.user, 'InventoryLot');
-    const report = await getExpiryReport({
-      thresholdDays: request.query.threshold_days ? Number(request.query.threshold_days) : 30,
-      location
+    const thresholdDays = request.query.threshold_days ? Number(request.query.threshold_days) : 30;
+    const body = await withReadCache({
+      bucket: 'inventory-expiry',
+      entities: ['InventoryLot', 'Inventory'],
+      ttlMs: reportCacheTtlMs,
+      keyParts: [thresholdDays, userReadCacheScopeKey(request.user, scope)],
+      loader: async () => {
+        const report = await getExpiryReport({
+          thresholdDays,
+          location
+        });
+        return scope ? filterRowsByAccessibleSites(report, scope) : report;
+      }
     });
-    response.json(scope ? filterRowsByAccessibleSites(report, scope) : report);
+    setPrivateCacheHeaders(response, reportCacheTtlMs);
+    response.json(body);
   } catch (error) {
     next(error);
   }
@@ -9478,18 +9922,29 @@ app.get('/api/inventory/reports/expiry', requireAuth, requireAnyPermission(['vie
 app.get('/api/inventory/reports/velocity', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
     const { scope, location } = await getEntityLocationContext(request.user, 'InventoryTransaction');
-    const report = await getVelocityReports({
-      days: request.query.days ? Number(request.query.days) : 30,
-      location
+    const days = request.query.days ? Number(request.query.days) : 30;
+    const body = await withReadCache({
+      bucket: 'inventory-velocity',
+      entities: ['InventoryTransaction', 'Inventory', 'InventoryLot'],
+      ttlMs: reportCacheTtlMs,
+      keyParts: [days, userReadCacheScopeKey(request.user, scope)],
+      loader: async () => {
+        const report = await getVelocityReports({
+          days,
+          location
+        });
+        return {
+          fast_moving: scope
+            ? filterRowsByAccessibleSites(report.fast_moving || [], scope)
+            : report.fast_moving || [],
+          slow_moving: scope
+            ? filterRowsByAccessibleSites(report.slow_moving || [], scope)
+            : report.slow_moving || []
+        };
+      }
     });
-    response.json({
-      fast_moving: scope
-        ? filterRowsByAccessibleSites(report.fast_moving || [], scope)
-        : report.fast_moving || [],
-      slow_moving: scope
-        ? filterRowsByAccessibleSites(report.slow_moving || [], scope)
-        : report.slow_moving || []
-    });
+    setPrivateCacheHeaders(response, reportCacheTtlMs);
+    response.json(body);
   } catch (error) {
     next(error);
   }
@@ -9498,12 +9953,26 @@ app.get('/api/inventory/reports/velocity', requireAuth, requireAnyPermission(['v
 app.get('/api/inventory/reports/valuation', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
     const { scope, location } = await getEntityLocationContext(request.user, 'Inventory');
-    const report = await getInventoryValuationReport({
-      siteId: request.query.site_id,
-      ingredientId: request.query.ingredient_id,
-      location
+    const body = await withReadCache({
+      bucket: 'inventory-valuation',
+      entities: ['Inventory', 'InventoryLot', 'InventoryTransaction'],
+      ttlMs: reportCacheTtlMs,
+      keyParts: [
+        request.query.site_id || '',
+        request.query.ingredient_id || '',
+        userReadCacheScopeKey(request.user, scope)
+      ],
+      loader: async () => {
+        const report = await getInventoryValuationReport({
+          siteId: request.query.site_id,
+          ingredientId: request.query.ingredient_id,
+          location
+        });
+        return scope ? filterRowsByAccessibleSites(report, scope) : report;
+      }
     });
-    response.json(scope ? filterRowsByAccessibleSites(report, scope) : report);
+    setPrivateCacheHeaders(response, reportCacheTtlMs);
+    response.json(body);
   } catch (error) {
     next(error);
   }
@@ -9512,45 +9981,61 @@ app.get('/api/inventory/reports/valuation', requireAuth, requireAnyPermission(['
 app.get('/api/inventory/reports/value-history', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
     const { scope, location } = await getEntityLocationContext(request.user, 'Inventory');
-    const reportRows = await getInventoryValueHistoryReport({
-      siteId: request.query.site_id,
-      ingredientId: request.query.ingredient_id,
-      dateFrom: request.query.date_from,
-      dateTo: request.query.date_to,
-      location
+    const body = await withReadCache({
+      bucket: 'inventory-value-history',
+      entities: ['InventoryTransaction', 'Inventory', 'InventoryLot'],
+      ttlMs: reportCacheTtlMs,
+      keyParts: [
+        request.query.site_id || '',
+        request.query.ingredient_id || '',
+        request.query.date_from || '',
+        request.query.date_to || '',
+        userReadCacheScopeKey(request.user, scope)
+      ],
+      loader: async () => {
+        const reportRows = await getInventoryValueHistoryReport({
+          siteId: request.query.site_id,
+          ingredientId: request.query.ingredient_id,
+          dateFrom: request.query.date_from,
+          dateTo: request.query.date_to,
+          location
+        });
+        const rows = scope ? filterRowsByAccessibleSites(reportRows, scope) : reportRows;
+        return {
+          rows,
+          date_from: request.query.date_from || null,
+          date_to: request.query.date_to || null,
+          summary: rows.reduce((summary, row) => ({
+            opening_value: summary.opening_value + Number(row.opening_value || 0),
+            closing_value: summary.closing_value + Number(row.closing_value || 0),
+            addition_quantity: summary.addition_quantity + Number(row.addition_quantity || 0),
+            addition_value: summary.addition_value + Number(row.addition_value || 0),
+            consumption_quantity: summary.consumption_quantity + Number(row.consumption_quantity || 0),
+            consumption_value: summary.consumption_value + Number(row.consumption_value || 0),
+            return_quantity: summary.return_quantity + Number(row.return_quantity || 0),
+            return_value: summary.return_value + Number(row.return_value || 0),
+            correction_quantity: summary.correction_quantity + Number(row.correction_quantity || 0),
+            correction_value: summary.correction_value + Number(row.correction_value || 0),
+            valuation_reallocation_value: summary.valuation_reallocation_value
+              + Number(row.valuation_reallocation_value || 0)
+          }), {
+            opening_value: 0,
+            closing_value: 0,
+            addition_quantity: 0,
+            addition_value: 0,
+            consumption_quantity: 0,
+            consumption_value: 0,
+            return_quantity: 0,
+            return_value: 0,
+            correction_quantity: 0,
+            correction_value: 0,
+            valuation_reallocation_value: 0
+          })
+        };
+      }
     });
-    const rows = scope ? filterRowsByAccessibleSites(reportRows, scope) : reportRows;
-    response.json({
-      rows,
-      date_from: request.query.date_from || null,
-      date_to: request.query.date_to || null,
-      summary: rows.reduce((summary, row) => ({
-        opening_value: summary.opening_value + Number(row.opening_value || 0),
-        closing_value: summary.closing_value + Number(row.closing_value || 0),
-        addition_quantity: summary.addition_quantity + Number(row.addition_quantity || 0),
-        addition_value: summary.addition_value + Number(row.addition_value || 0),
-        consumption_quantity: summary.consumption_quantity + Number(row.consumption_quantity || 0),
-        consumption_value: summary.consumption_value + Number(row.consumption_value || 0),
-        return_quantity: summary.return_quantity + Number(row.return_quantity || 0),
-        return_value: summary.return_value + Number(row.return_value || 0),
-        correction_quantity: summary.correction_quantity + Number(row.correction_quantity || 0),
-        correction_value: summary.correction_value + Number(row.correction_value || 0),
-        valuation_reallocation_value: summary.valuation_reallocation_value
-          + Number(row.valuation_reallocation_value || 0)
-      }), {
-        opening_value: 0,
-        closing_value: 0,
-        addition_quantity: 0,
-        addition_value: 0,
-        consumption_quantity: 0,
-        consumption_value: 0,
-        return_quantity: 0,
-        return_value: 0,
-        correction_quantity: 0,
-        correction_value: 0,
-        valuation_reallocation_value: 0
-      })
-    });
+    setPrivateCacheHeaders(response, reportCacheTtlMs);
+    response.json(body);
   } catch (error) {
     next(error);
   }

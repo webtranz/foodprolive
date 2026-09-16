@@ -282,6 +282,19 @@ export const base44 = {
       })}`);
     }
   },
+  reports: {
+    getFoodCost(filters = {}) {
+      return apiRequest(`/api/reports/food-cost${buildQueryString({
+        start_date: filters.start_date ?? filters.startDate,
+        end_date: filters.end_date ?? filters.endDate,
+        location_id: filters.location_id ?? filters.locationId,
+        category: filters.category,
+        meal_type: filters.meal_type ?? filters.mealType,
+        menu_type: filters.menu_type ?? filters.menuType,
+        view: filters.view
+      })}`);
+    }
+  },
   budgets: {
     getPlanningContext(filters = {}) {
       return apiRequest(`/api/budgets/planning-context${buildQueryString({

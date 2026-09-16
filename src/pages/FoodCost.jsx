@@ -14,9 +14,6 @@ import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/expo
 import { CircleDollarSign, Download, TrendingUp, UtensilsCrossed } from 'lucide-react';
 import { formatCurrency, SAR_NAME } from '@/lib/currency';
 import {
-  buildConfirmedFoodCostRows,
-  buildPendingProductionRows,
-  groupFoodCostRows,
   safeFoodCostNumber,
   titleCaseFoodCost
 } from '../../shared/foodCostReport.js';
@@ -31,20 +28,6 @@ const REPORT_DATA_QUERY_OPTIONS = {
   gcTime: 10 * 60 * 1000
 };
 
-function buildScopedReportQuery(filters, dateField) {
-  const entityFilters = {};
-  if (filters.mealType !== 'all') entityFilters.meal_type = filters.mealType;
-  return {
-    filters: entityFilters,
-    rangeFilters: {
-      [dateField]: {
-        gte: filters.startDate,
-        lte: filters.endDate
-      }
-    }
-  };
-}
-
 export default function FoodCost() {
   const [filters, setFilters] = useState({
     startDate: format(subDays(new Date(), 30), 'yyyy-MM-dd'),
@@ -56,177 +39,46 @@ export default function FoodCost() {
     view: 'detail'
   });
 
-  const productionReportQuery = useMemo(
-    () => buildScopedReportQuery(filters, 'production_date'),
-    [filters.startDate, filters.endDate, filters.mealType]
-  );
-  const mealServiceReportQuery = useMemo(
-    () => buildScopedReportQuery(filters, 'service_date'),
-    [filters.startDate, filters.endDate, filters.mealType]
-  );
-
   const { data: sites = [] } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list(),
     ...MASTER_DATA_QUERY_OPTIONS
   });
-  const { data: recipes = [] } = useQuery({
-    queryKey: ['recipes'],
-    queryFn: () => base44.entities.Recipe.list(),
-    ...MASTER_DATA_QUERY_OPTIONS
-  });
-  const { data: ingredients = [] } = useQuery({
-    queryKey: ['ingredients'],
-    queryFn: () => base44.entities.Ingredient.list(),
-    ...MASTER_DATA_QUERY_OPTIONS
-  });
-  const { data: productions = [] } = useQuery({
-    queryKey: ['foodCostProductionsPage', productionReportQuery],
-    queryFn: () => base44.entities.Production.filter(
-      productionReportQuery.filters,
-      '-production_date',
-      5000,
-      { rangeFilters: productionReportQuery.rangeFilters }
-    ),
-    ...REPORT_DATA_QUERY_OPTIONS
-  });
-  const { data: mealServiceConsumptions = [] } = useQuery({
-    queryKey: ['foodCostMealServiceConsumptionsPage', mealServiceReportQuery],
-    queryFn: () => base44.entities.MealServiceConsumption.filter(
-      mealServiceReportQuery.filters,
-      '-service_date',
-      5000,
-      { rangeFilters: mealServiceReportQuery.rangeFilters }
-    ),
-    ...REPORT_DATA_QUERY_OPTIONS
-  });
-  const { data: producedItemBatches = [] } = useQuery({
-    queryKey: ['foodCostProducedItemBatchesPage', productionReportQuery],
-    queryFn: () => base44.entities.ProducedItemBatch.filter(
-      productionReportQuery.filters,
-      '-production_date',
-      5000,
-      { rangeFilters: productionReportQuery.rangeFilters }
-    ),
+
+  const foodCostReportFilters = useMemo(() => ({
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+    locationId: filters.locationId,
+    category: filters.category,
+    mealType: filters.mealType,
+    menuType: filters.menuType,
+    view: filters.view
+  }), [filters]);
+
+  const { data: foodCostReport = {} } = useQuery({
+    queryKey: ['foodCostReport', foodCostReportFilters],
+    queryFn: () => base44.reports.getFoodCost(foodCostReportFilters),
     ...REPORT_DATA_QUERY_OPTIONS
   });
 
-  const recipeMap = useMemo(
-    () => new Map(recipes.map((recipe) => [String(recipe.id), recipe])),
-    [recipes]
-  );
-  const relatedLocationIds = useMemo(() => {
-    if (filters.locationId === 'all') return null;
-    const siteMap = new Map(sites.map((site) => [String(site.id), site]));
-    const related = new Set([String(filters.locationId)]);
-
-    let selectedCursor = siteMap.get(String(filters.locationId));
-    while (selectedCursor?.parent_site_id) {
-      related.add(String(selectedCursor.parent_site_id));
-      selectedCursor = siteMap.get(String(selectedCursor.parent_site_id));
-    }
-
-    sites.forEach((site) => {
-      let cursor = site;
-      while (cursor?.parent_site_id) {
-        if (String(cursor.parent_site_id) === String(filters.locationId)) {
-          related.add(String(site.id));
-          break;
-        }
-        cursor = siteMap.get(String(cursor.parent_site_id));
-      }
-    });
-
-    return related;
-  }, [filters.locationId, sites]);
-
-  const categories = useMemo(() => {
-    const values = new Set();
-    recipes.forEach((recipe) => { if (recipe.category) values.add(recipe.category); });
-    productions.forEach((production) => { if (production.menu_category) values.add(production.menu_category); });
-    mealServiceConsumptions.forEach((consumption) => { if (consumption.menu_category) values.add(consumption.menu_category); });
-    return [...values].sort();
-  }, [mealServiceConsumptions, productions, recipes]);
-
-  const menuTypes = useMemo(() => {
-    const values = new Set();
-    recipes.forEach((recipe) => {
-      const value = recipe.menu_type || recipe.cuisine_type;
-      if (value) values.add(value);
-    });
-    productions.forEach((production) => {
-      const value = production.menu_type || production.cuisine_type;
-      if (value) values.add(value);
-    });
-    mealServiceConsumptions.forEach((consumption) => {
-      if (consumption.menu_type) values.add(consumption.menu_type);
-    });
-    return [...values].sort();
-  }, [mealServiceConsumptions, productions, recipes]);
-
-  const filteredSourceData = useMemo(() => {
-    const matchesDate = (value) => value && value >= filters.startDate && value <= filters.endDate;
-    const matchesLocation = (siteId) => filters.locationId === 'all' || relatedLocationIds?.has(String(siteId || ''));
-    const matchesCategory = (category) => filters.category === 'all' || category === filters.category;
-    const matchesMealType = (mealType) => filters.mealType === 'all' || (mealType || 'unspecified') === filters.mealType;
-    const matchesMenuType = (menuType) => filters.menuType === 'all' || (menuType || 'general') === filters.menuType;
-
-    const filteredProductions = productions.filter((production) => {
-      const recipe = recipeMap.get(String(production.recipe_id || ''));
-      const category = production.menu_category || recipe?.category || '';
-      const menuType = production.menu_type || production.cuisine_type || recipe?.menu_type || recipe?.cuisine_type || 'general';
-      return matchesDate(production.production_date)
-        && matchesLocation(production.site_id)
-        && matchesCategory(category)
-        && matchesMealType(production.meal_type)
-        && matchesMenuType(menuType);
-    });
-
-    const filteredConsumptions = mealServiceConsumptions.filter((consumption) => {
-      const recipe = recipeMap.get(String(consumption.recipe_id || ''));
-      const category = consumption.menu_category || recipe?.category || '';
-      const menuType = consumption.menu_type || recipe?.menu_type || recipe?.cuisine_type || 'general';
-      return matchesDate(consumption.service_date)
-        && matchesLocation(consumption.site_id)
-        && matchesCategory(category)
-        && matchesMealType(consumption.meal_type)
-        && matchesMenuType(menuType);
-    });
-
-    return {
-      consumptions: filteredConsumptions,
-      productions: filteredProductions
-    };
-  }, [filters, mealServiceConsumptions, productions, recipeMap, relatedLocationIds]);
-
-  const filteredRows = useMemo(() => {
-    const detailRows = buildConfirmedFoodCostRows({
-      consumptions: filteredSourceData.consumptions,
-      productions,
-      producedItemBatches,
-      recipes,
-      ingredients
-    });
-    return groupFoodCostRows(detailRows, filters.view);
-  }, [filteredSourceData.consumptions, filters.view, ingredients, producedItemBatches, productions, recipes]);
-
-  const pendingProductionRows = useMemo(() => buildPendingProductionRows({
-    consumptions: mealServiceConsumptions,
-    productions: filteredSourceData.productions,
-    producedItemBatches,
-    recipes,
-    ingredients
-  }), [filteredSourceData.productions, ingredients, mealServiceConsumptions, producedItemBatches, recipes]);
+  const categories = foodCostReport.categories || [];
+  const menuTypes = foodCostReport.menu_types || [];
+  const filteredRows = foodCostReport.rows || [];
+  const pendingProductionRows = foodCostReport.pending_production_rows || [];
 
   const summary = useMemo(() => {
-    const totalCost = filteredRows.reduce((sum, row) => sum + safeFoodCostNumber(row.total_cost), 0);
-    const servings = filteredRows.reduce((sum, row) => sum + safeFoodCostNumber(row.servings ?? row.total_servings), 0);
+    const serverSummary = foodCostReport.summary || {};
+    const totalCost = safeFoodCostNumber(serverSummary.total_cost);
+    const servings = safeFoodCostNumber(serverSummary.servings);
     return {
       totalCost,
       servings,
-      averageCostPerServing: servings > 0 ? totalCost / servings : 0
+      averageCostPerServing: safeFoodCostNumber(
+        serverSummary.average_cost_per_serving,
+        servings > 0 ? totalCost / servings : 0
+      )
     };
-  }, [filteredRows]);
+  }, [foodCostReport.summary]);
 
   const exportRows = filteredRows.map((row) => ({
     ...row,
@@ -246,7 +98,7 @@ export default function FoodCost() {
     }
     downloadPDF({
       title: 'Food Cost Report',
-      subtitle: `Date: ${filters.startDate} to ${filters.endDate} | Meal type: ${filters.mealType === 'all' ? 'All' : titleCase(filters.mealType)} | View: ${titleCase(filters.view)}`,
+      subtitle: `Date: ${filters.startDate} to ${filters.endDate} | Meal type: ${filters.mealType === 'all' ? 'All' : titleCaseFoodCost(filters.mealType)} | View: ${titleCaseFoodCost(filters.view)}`,
       sections: [
         {
           heading: 'Summary',
