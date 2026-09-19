@@ -171,120 +171,65 @@ async function listDatedDocuments({
 }) {
   const fields = normalizeDateFields(dateFields);
   if (!fields.length || !siteIds.size) return [];
-
-  const baseParameters = [entity, startDate, endDate, [...siteIds]];
-  const dateClauses = fields.map((field) => {
-    baseParameters.push(field);
-    return `LEFT(COALESCE(record.data->>$${baseParameters.length}, ''), 10) BETWEEN $2 AND $3`;
-  });
   const normalizedOpenFields = normalizeDateFields(openStatusFields);
   const normalizedOpenStatuses = [...new Set((openStatuses || [])
     .map(normalizeOpenStatus)
     .filter(Boolean))];
-  let openClause = '';
-  if (normalizedOpenFields.length > 0 && normalizedOpenStatuses.length > 0) {
-    const statusExpressions = normalizedOpenFields.map((field) => {
-      baseParameters.push(field);
-      return `REGEXP_REPLACE(LOWER(BTRIM(COALESCE(record.data->>$${baseParameters.length}, ''))), '[[:space:]-]+', '_', 'g')`;
-    });
-    baseParameters.push(normalizedOpenStatuses);
-    const statusesParameter = `$${baseParameters.length}`;
-    openClause = ` OR (${statusExpressions.map((expression) => `${expression} = ANY(${statusesParameter}::text[])`).join(' OR ')})`;
-  }
   const requestedMaximum = Math.min(MAX_SOURCE_ROWS, Math.max(SOURCE_PAGE_SIZE, Number(limit) || MAX_SOURCE_ROWS));
-  const records = [];
-  let cursor = null;
-
-  while (records.length <= requestedMaximum) {
-    const parameters = [...baseParameters];
-    let cursorClause = '';
-    if (cursor) {
-      parameters.push(cursor.updatedAt, cursor.id);
-      const updatedParameter = `$${parameters.length - 1}`;
-      const idParameter = `$${parameters.length}`;
-      cursorClause = `AND (
-        record.updated_at < ${updatedParameter}::timestamptz
-        OR (record.updated_at = ${updatedParameter}::timestamptz AND record.id > ${idParameter}::text)
-      )`;
+  const recordsById = new Map();
+  const location = { unrestricted: false, accessibleSiteIds: [...siteIds] };
+  const addRecords = (records = []) => {
+    for (const record of records) {
+      if (!record?.id || recordsById.has(record.id)) continue;
+      recordsById.set(record.id, record);
+      if (recordsById.size > requestedMaximum) {
+        const error = httpError(503, `${entity} volume exceeds the safe dashboard query limit; use an aggregated reporting source`);
+        error.code = 'MANAGEMENT_DASHBOARD_SOURCE_LIMIT';
+        throw error;
+      }
     }
-    const pageLimit = Math.min(SOURCE_PAGE_SIZE, requestedMaximum + 1 - records.length);
-    parameters.push(pageLimit);
-    const limitParameter = `$${parameters.length}`;
+  };
 
-    const result = await pool.query(
-      `SELECT record.data, record.updated_at, record.id
-         FROM entity_records record
-        WHERE record.entity_name = $1
-          AND (${dateClauses.join(' OR ')}${openClause})
-          AND (
-            (
-              COALESCE(record.data->>'site_id', '') = ''
-              AND COALESCE(record.data->>'from_site_id', '') = ''
-              AND COALESCE(record.data->>'to_site_id', '') = ''
-              AND CASE
-                WHEN jsonb_typeof(record.data->'site_ids') = 'array'
-                  AND jsonb_array_length(record.data->'site_ids') > 0
-                THEN EXISTS (
-                  SELECT 1
-                    FROM jsonb_array_elements_text(record.data->'site_ids') scoped_site(value)
-                   WHERE scoped_site.value = ANY($4::text[])
-                )
-                ELSE FALSE
-              END
-            )
-            OR (
-              (COALESCE(record.data->>'site_id', '') = '' OR record.data->>'site_id' = ANY($4::text[]))
-              AND (COALESCE(record.data->>'from_site_id', '') = '' OR record.data->>'from_site_id' = ANY($4::text[]))
-              AND (COALESCE(record.data->>'to_site_id', '') = '' OR record.data->>'to_site_id' = ANY($4::text[]))
-              AND (
-                COALESCE(record.data->>'site_id', '') <> ''
-                OR COALESCE(record.data->>'from_site_id', '') <> ''
-                OR COALESCE(record.data->>'to_site_id', '') <> ''
-              )
-            )
-          )
-          ${cursorClause}
-        ORDER BY record.updated_at DESC, record.id ASC
-        LIMIT ${limitParameter}::integer`,
-      parameters
-    );
-
-    records.push(...result.rows.map((row) => row.data));
-    if (records.length > requestedMaximum) {
-      const error = httpError(503, `${entity} volume exceeds the safe dashboard query limit; use an aggregated reporting source`);
-      error.code = 'MANAGEMENT_DASHBOARD_SOURCE_LIMIT';
-      throw error;
-    }
-    if (result.rows.length < pageLimit) break;
-    const last = result.rows[result.rows.length - 1];
-    cursor = { updatedAt: last.updated_at, id: String(last.id) };
+  for (const field of fields) {
+    const page = await listDocuments(entity, {
+      rangeFilters: { [field]: { gte: startDate, lte: endDate } },
+      sort: `-${field}`,
+      limit: requestedMaximum,
+      location
+    });
+    addRecords(page.filter((record) => {
+      const dateValue = String(record?.[field] || '').slice(0, 10);
+      return dateValue >= startDate && dateValue <= endDate;
+    }));
   }
 
-  return records;
+  if (normalizedOpenFields.length > 0 && normalizedOpenStatuses.length > 0) {
+    const openRows = await listCurrentDocuments(entity, siteIds, { limit: requestedMaximum });
+    addRecords(openRows.filter((record) => normalizedOpenFields.some((field) =>
+      normalizedOpenStatuses.includes(normalizeOpenStatus(record?.[field]))
+    )));
+  }
+
+  return [...recordsById.values()];
 }
 
 async function listInventoryRiskCounts(siteIds) {
   if (!siteIds.size) return [];
-  const quantityExpression = `CASE
-    WHEN BTRIM(COALESCE(record.data->>'quantity', record.data->>'available_quantity', '')) ~ '^-?[0-9]+([.][0-9]+)?$'
-    THEN BTRIM(COALESCE(record.data->>'quantity', record.data->>'available_quantity'))::numeric
-    ELSE 0::numeric
-  END`;
+  const quantityExpression = `COALESCE(inventory.on_hand_quantity, inventory.available_quantity, 0)`;
   const minimumExpression = `GREATEST(0::numeric, CASE
-    WHEN BTRIM(COALESCE(record.data->>'min_stock_level', record.data->>'reorder_level', '')) ~ '^-?[0-9]+([.][0-9]+)?$'
-    THEN BTRIM(COALESCE(record.data->>'min_stock_level', record.data->>'reorder_level'))::numeric
+    WHEN BTRIM(COALESCE(inventory.payload->>'min_stock_level', inventory.payload->>'reorder_level', '')) ~ '^-?[0-9]+([.][0-9]+)?$'
+    THEN BTRIM(COALESCE(inventory.payload->>'min_stock_level', inventory.payload->>'reorder_level'))::numeric
     ELSE 0::numeric
   END)`;
   const result = await pool.query(
-    `SELECT record.data->>'site_id' AS site_id, COUNT(*)::integer AS risk_count
-       FROM entity_records record
-      WHERE record.entity_name = 'Inventory'
-        AND record.data->>'site_id' = ANY($1::text[])
+    `SELECT inventory.warehouse_id AS site_id, COUNT(*)::integer AS risk_count
+       FROM warehouse_inventory inventory
+      WHERE inventory.warehouse_id = ANY($1::text[])
         AND (
           (${quantityExpression}) <= 0
           OR ((${minimumExpression}) > 0 AND (${quantityExpression}) <= (${minimumExpression}))
         )
-      GROUP BY record.data->>'site_id'`,
+      GROUP BY inventory.warehouse_id`,
     [[...siteIds]]
   );
   return result.rows.map((row) => ({

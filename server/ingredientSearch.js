@@ -23,56 +23,67 @@ export async function searchIngredients(options = {}) {
   const result = await pool.query(
     `WITH ingredient_catalog AS (
        SELECT
-         record.id,
-         record.data,
-         LOWER(BTRIM(COALESCE(record.data->>'name', ''))) AS sort_name,
+         ingredient.ingredient_id AS id,
+         ingredient.payload || jsonb_build_object(
+           'id', ingredient.ingredient_id,
+           'name', ingredient.name,
+           'item_code', ingredient.item_code,
+           'ingredient_code', ingredient.ingredient_code,
+           'sku', ingredient.sku,
+           'd365_item_id', ingredient.d365_item_id,
+           'category', ingredient.category_id,
+           'unit', ingredient.base_unit,
+           'source_name', ingredient.source_name,
+           'is_active', LOWER(COALESCE(ingredient.status, 'active')) <> 'inactive'
+         ) AS data,
+         LOWER(BTRIM(COALESCE(ingredient.name, ''))) AS sort_name,
          ARRAY_REMOVE(ARRAY[
-           LOWER(BTRIM(COALESCE(record.data->>'name', ''))),
-           LOWER(BTRIM(COALESCE(record.data->>'sku', ''))),
-           LOWER(BTRIM(COALESCE(record.data->>'ingredient_code', ''))),
-           LOWER(BTRIM(COALESCE(record.data->>'item_code', ''))),
-           LOWER(BTRIM(COALESCE(record.data->>'category', ''))),
-           LOWER(BTRIM(COALESCE(record.data->>'alias', ''))),
-           LOWER(BTRIM(COALESCE(record.data->>'alternative_name', ''))),
-           LOWER(BTRIM(COALESCE(record.data->>'supplier_item_name', '')))
+           LOWER(BTRIM(COALESCE(ingredient.name, ''))),
+           LOWER(BTRIM(COALESCE(ingredient.sku, ''))),
+           LOWER(BTRIM(COALESCE(ingredient.ingredient_code, ''))),
+           LOWER(BTRIM(COALESCE(ingredient.item_code, ''))),
+           LOWER(BTRIM(COALESCE(ingredient.d365_item_id, ''))),
+           LOWER(BTRIM(COALESCE(ingredient.category_id, ''))),
+           LOWER(BTRIM(COALESCE(ingredient.payload->>'alias', ''))),
+           LOWER(BTRIM(COALESCE(ingredient.payload->>'alternative_name', ''))),
+           LOWER(BTRIM(COALESCE(ingredient.payload->>'supplier_item_name', '')))
          ], '')
-         || CASE WHEN jsonb_typeof(record.data->'aliases') = 'array'
-              THEN ARRAY(SELECT LOWER(BTRIM(value)) FROM jsonb_array_elements_text(record.data->'aliases'))
-              ELSE ARRAY_REMOVE(ARRAY[LOWER(BTRIM(COALESCE(record.data->>'aliases', '')))], '')
+         || CASE WHEN jsonb_typeof(ingredient.payload->'aliases') = 'array'
+              THEN ARRAY(SELECT LOWER(BTRIM(value)) FROM jsonb_array_elements_text(ingredient.payload->'aliases'))
+              ELSE ARRAY_REMOVE(ARRAY[LOWER(BTRIM(COALESCE(ingredient.payload->>'aliases', '')))], '')
             END
-         || CASE WHEN jsonb_typeof(record.data->'alternative_names') = 'array'
-              THEN ARRAY(SELECT LOWER(BTRIM(value)) FROM jsonb_array_elements_text(record.data->'alternative_names'))
-              ELSE ARRAY_REMOVE(ARRAY[LOWER(BTRIM(COALESCE(record.data->>'alternative_names', '')))], '')
+         || CASE WHEN jsonb_typeof(ingredient.payload->'alternative_names') = 'array'
+              THEN ARRAY(SELECT LOWER(BTRIM(value)) FROM jsonb_array_elements_text(ingredient.payload->'alternative_names'))
+              ELSE ARRAY_REMOVE(ARRAY[LOWER(BTRIM(COALESCE(ingredient.payload->>'alternative_names', '')))], '')
             END
-         || CASE WHEN jsonb_typeof(record.data->'supplier_item_names') = 'array'
-              THEN ARRAY(SELECT LOWER(BTRIM(value)) FROM jsonb_array_elements_text(record.data->'supplier_item_names'))
-              ELSE ARRAY_REMOVE(ARRAY[LOWER(BTRIM(COALESCE(record.data->>'supplier_item_names', '')))], '')
+         || CASE WHEN jsonb_typeof(ingredient.payload->'supplier_item_names') = 'array'
+              THEN ARRAY(SELECT LOWER(BTRIM(value)) FROM jsonb_array_elements_text(ingredient.payload->'supplier_item_names'))
+              ELSE ARRAY_REMOVE(ARRAY[LOWER(BTRIM(COALESCE(ingredient.payload->>'supplier_item_names', '')))], '')
             END AS search_fields,
          LOWER(
-           COALESCE(record.data->>'name', '') || ' ' ||
-           COALESCE(record.data->>'sku', '') || ' ' ||
-           COALESCE(record.data->>'ingredient_code', '') || ' ' ||
-           COALESCE(record.data->>'item_code', '') || ' ' ||
-           COALESCE(record.data->>'category', '') || ' ' ||
-           COALESCE(record.data->>'alias', '') || ' ' ||
-           COALESCE(record.data->>'aliases', '') || ' ' ||
-           COALESCE(record.data->>'alternative_name', '') || ' ' ||
-           COALESCE(record.data->>'alternative_names', '') || ' ' ||
-           COALESCE(record.data->>'supplier_item_name', '') || ' ' ||
-           COALESCE(record.data->>'supplier_item_names', '')
+           COALESCE(ingredient.name, '') || ' ' ||
+           COALESCE(ingredient.sku, '') || ' ' ||
+           COALESCE(ingredient.ingredient_code, '') || ' ' ||
+           COALESCE(ingredient.item_code, '') || ' ' ||
+           COALESCE(ingredient.d365_item_id, '') || ' ' ||
+           COALESCE(ingredient.category_id, '') || ' ' ||
+           COALESCE(ingredient.payload->>'alias', '') || ' ' ||
+           COALESCE(ingredient.payload->>'aliases', '') || ' ' ||
+           COALESCE(ingredient.payload->>'alternative_name', '') || ' ' ||
+           COALESCE(ingredient.payload->>'alternative_names', '') || ' ' ||
+           COALESCE(ingredient.payload->>'supplier_item_name', '') || ' ' ||
+           COALESCE(ingredient.payload->>'supplier_item_names', '')
          ) AS search_document
-       FROM entity_records record
-       WHERE record.entity_name = 'Ingredient'
-         AND COALESCE(LOWER(NULLIF(BTRIM(record.data->>'is_active'), '')), 'true') NOT IN ('false', '0', 'no', 'inactive')
+       FROM ingredients ingredient
+       WHERE LOWER(COALESCE(ingredient.status, 'active')) <> 'inactive'
      ),
      stock_totals AS (
        SELECT
-         inventory.data->>'ingredient_id' AS ingredient_id,
-         SUM(COALESCE(NULLIF(inventory.data->>'quantity', '')::numeric, 0)) AS current_stock
-       FROM entity_records inventory
-       WHERE inventory.entity_name = 'Inventory'
-         AND ($5::text[] IS NULL OR inventory.data->>'site_id' = ANY($5::text[]))
-       GROUP BY inventory.data->>'ingredient_id'
+         inventory.ingredient_id,
+         SUM(COALESCE(inventory.available_quantity, inventory.on_hand_quantity, 0)) AS current_stock
+       FROM warehouse_inventory inventory
+       WHERE ($5::text[] IS NULL OR inventory.warehouse_id = ANY($5::text[]))
+       GROUP BY inventory.ingredient_id
      ),
      matching AS (
        SELECT
@@ -157,32 +168,16 @@ export async function getIngredientCostSnapshots(options = {}) {
      ),
      inventory_costs AS (
        SELECT
-         inventory.data->>'ingredient_id' AS ingredient_id,
+         inventory.ingredient_id,
+         SUM(COALESCE(inventory.on_hand_quantity, inventory.available_quantity, 0)) AS total_quantity,
          SUM(
-           CASE WHEN COALESCE(inventory.data->>'quantity', '') ~ '^[0-9]+([.][0-9]+)?$'
-             THEN (inventory.data->>'quantity')::numeric ELSE 0 END
-         ) AS total_quantity,
-         SUM(
-           (CASE WHEN COALESCE(inventory.data->>'quantity', '') ~ '^[0-9]+([.][0-9]+)?$'
-             THEN (inventory.data->>'quantity')::numeric ELSE 0 END)
-           *
-           (CASE WHEN COALESCE(
-             inventory.data->>'average_unit_cost',
-             inventory.data->>'unit_cost',
-             inventory.data->>'cost_per_unit',
-             ''
-           ) ~ '^[0-9]+([.][0-9]+)?$'
-             THEN COALESCE(
-               inventory.data->>'average_unit_cost',
-               inventory.data->>'unit_cost',
-               inventory.data->>'cost_per_unit'
-             )::numeric ELSE 0 END)
+           COALESCE(inventory.on_hand_quantity, inventory.available_quantity, 0)
+           * COALESCE(inventory.average_unit_cost, inventory.last_unit_cost, 0)
          ) AS total_value
-       FROM entity_records inventory
-       JOIN requested ON requested.ingredient_id = inventory.data->>'ingredient_id'
-       WHERE inventory.entity_name = 'Inventory'
-         AND ($2::text[] IS NULL OR inventory.data->>'site_id' = ANY($2::text[]))
-       GROUP BY inventory.data->>'ingredient_id'
+       FROM warehouse_inventory inventory
+       JOIN requested ON requested.ingredient_id = inventory.ingredient_id
+       WHERE ($2::text[] IS NULL OR inventory.warehouse_id = ANY($2::text[]))
+       GROUP BY inventory.ingredient_id
      )
      SELECT
        requested.ingredient_id,

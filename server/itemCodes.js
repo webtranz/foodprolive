@@ -20,10 +20,9 @@ export async function enrichIngredientItemCodes(items = [], executor = pool) {
   }
 
   const result = await executor.query(
-    `SELECT id, data
-     FROM entity_records
-     WHERE entity_name = 'Ingredient'
-       AND id = ANY($1::text[])`,
+    `SELECT ingredient_id AS id, payload AS data
+       FROM ingredients
+      WHERE ingredient_id = ANY($1::text[])`,
     [ingredientIds]
   );
   const ingredientsById = new Map(

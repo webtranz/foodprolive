@@ -236,15 +236,24 @@ async function findRoleProfileByKey(roleKey, executor = pool) {
     return cached.value;
   }
 
-  const result = await query(
-    `SELECT data
-     FROM entity_records
-     WHERE entity_name = 'RoleProfile'
-       AND LOWER(COALESCE(data->>'role_key', '')) = $1
-     LIMIT 1`,
-    [normalized],
-    executor
-  );
+  const result = usesNormalizedCore('RoleProfile')
+    ? await query(
+      `SELECT payload AS data
+       FROM role_profiles
+       WHERE LOWER(COALESCE(payload->>'role_key', '')) = $1
+       LIMIT 1`,
+      [normalized],
+      executor
+    )
+    : await query(
+      `SELECT data
+       FROM entity_records
+       WHERE entity_name = 'RoleProfile'
+         AND LOWER(COALESCE(data->>'role_key', '')) = $1
+       LIMIT 1`,
+      [normalized],
+      executor
+    );
 
   let value = result.rowCount ? normalizeManagementRoleProfile(result.rows[0].data) : null;
   if (!value) {
@@ -481,6 +490,40 @@ function sortRecords(records, sort) {
   });
 }
 
+const SAFE_RELATIONAL_PAYLOAD_FIELD_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+const relationalDocumentTables = Object.freeze({
+  AdvancedReportSchedule: 'advanced_report_schedules',
+  ERPIntegrationConfig: 'erp_integration_configs',
+  ERPIntegrationLog: 'erp_integration_logs',
+  ForecastScenario: 'forecast_scenarios',
+  ForecastSnapshot: 'forecast_snapshots',
+  AttendanceRecord: 'attendance_records',
+  AttendanceSession: 'attendance_sessions',
+  StaffShift: 'staff_shifts',
+  BranchOrder: 'branch_orders',
+  CategoryQRSession: 'category_qr_sessions',
+  D365Master: 'd365_masters',
+  DinerScan: 'diner_scans',
+  CustomerMealPlan: 'customer_meal_plans',
+  MaterialRequest: 'material_requests',
+  Budget: 'budgets',
+  FoodCategory: 'food_categories',
+  MenuPlanPRSchedule: 'menu_plan_pr_schedules',
+  MenuPlanPRRun: 'menu_plan_pr_runs',
+  ProductionBatch: 'production_batches',
+  ProductionTransfer: 'production_transfers',
+  PurchaseOrder: 'purchase_order_documents',
+  QRCode: 'qr_codes',
+  RoleProfile: 'role_profiles',
+  QRDelivery: 'qr_deliveries',
+  QualityControl: 'quality_controls',
+  RFQ: 'rfqs',
+  UserGroup: 'user_groups',
+  WasteTarget: 'waste_targets',
+  WasteDetectionLog: 'waste_detection_logs'
+});
+
 const normalizedCoreEnabled = process.env.FOODPRO_NORMALIZED_CORE !== 'false';
 const normalizedCoreEntities = new Set([
   'Site',
@@ -495,7 +538,9 @@ const normalizedCoreEntities = new Set([
   'ProducedItemBatch',
   'MealServiceAttendance',
   'MealServiceConsumption',
-  'FoodWaste'
+  'FoodWaste',
+  'Supplier',
+  ...Object.keys(relationalDocumentTables)
 ]);
 
 function usesNormalizedCore(entity) {
@@ -536,6 +581,66 @@ function withPayload(row = {}, explicit = {}) {
     created_date: payload.created_date || rowTimestamp(row.created_at),
     updated_date: payload.updated_date || rowTimestamp(row.updated_at)
   });
+}
+
+function usesRelationalDocumentTable(entity) {
+  return Object.prototype.hasOwnProperty.call(relationalDocumentTables, entity);
+}
+
+function rowToRelationalDocument(entity, row = {}) {
+  return withPayload(row, {
+    __entity: entity,
+    id: row.id,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    from_site_id: row.from_site_id || null,
+    to_site_id: row.to_site_id || null,
+    site_ids: Array.isArray(row.site_ids) ? row.site_ids : [],
+    status: row.status || null,
+    source_name: row.source_name || null,
+    record_date: row.record_date ? String(row.record_date).slice(0, 10) : null
+  });
+}
+
+function relationalDocumentSiteId(record = {}) {
+  return record.site_id
+    || record.warehouse_id
+    || record.fulfillment_store_id
+    || record.requesting_site_id
+    || record.source_site_id
+    || null;
+}
+
+function relationalDocumentRecordDate(record = {}) {
+  return toDateOnlyOrNull(
+    record.record_date
+    || record.date
+    || record.service_date
+    || record.waste_date
+    || record.plan_date
+    || record.production_date
+    || record.request_date
+    || record.order_date
+    || record.event_date
+    || record.shift_date
+    || record.scan_date
+    || record.created_date
+  );
+}
+
+async function listRelationalDocumentReferenceRows(executor = pool) {
+  const rows = [];
+  for (const [entity, table] of Object.entries(relationalDocumentTables)) {
+    const result = await query(
+      `SELECT id, $1::text AS entity_name, payload AS data
+         FROM ${quoteIdentifier(table)}
+        FOR SHARE`,
+      [entity],
+      executor
+    );
+    rows.push(...result.rows);
+  }
+  return rows;
 }
 
 function rowToSite(row = {}) {
@@ -807,7 +912,71 @@ function rowToFoodWaste(row = {}) {
   });
 }
 
+function rowToSupplier(row = {}) {
+  return withPayload(row, {
+    __entity: 'Supplier',
+    id: row.id,
+    name: row.name,
+    contact_person: row.contact_person || null,
+    email: row.email || null,
+    phone: row.phone || null,
+    address: row.address || null,
+    city: row.city || null,
+    country: row.country || null,
+    payment_terms: row.payment_terms || null,
+    lead_time_days: Number(row.lead_time_days || 0),
+    status: row.status || 'active',
+    rating: Number(row.rating || 0),
+    categories: Array.isArray(row.categories) ? row.categories : [],
+    notes: row.notes || null,
+    source_name: row.source_name || null
+  });
+}
+
 const normalizedSimpleConfigs = {
+  Supplier: {
+    table: 'suppliers',
+    idColumn: 'id',
+    mapper: rowToSupplier,
+    select: 'SELECT * FROM suppliers',
+    insertSql: `INSERT INTO suppliers (
+      id, name, contact_person, email, phone, address, city, country,
+      payment_terms, lead_time_days, status, rating, categories, notes,
+      source_name, payload, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17,$18)`,
+    values(record) {
+      return [
+        record.id,
+        record.name || record.supplier_name || 'Supplier',
+        record.contact_person || null,
+        record.email || null,
+        record.phone || null,
+        record.address || null,
+        record.city || null,
+        record.country || null,
+        record.payment_terms || null,
+        Math.max(0, Math.trunc(toNumberOrZero(record.lead_time_days))),
+        record.status || (record.is_active === false ? 'inactive' : 'active'),
+        toNumberOrZero(record.rating),
+        JSON.stringify(Array.isArray(record.categories) ? record.categories : []),
+        record.notes || null,
+        record.source_name || null,
+        jsonPayload(record),
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE suppliers SET
+      name = $2, contact_person = $3, email = $4, phone = $5, address = $6,
+      city = $7, country = $8, payment_terms = $9, lead_time_days = $10,
+      status = $11, rating = $12, categories = $13::jsonb, notes = $14,
+      source_name = $15, payload = $16::jsonb, updated_at = $17
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 16), record.updated_date || nowIso()];
+    }
+  },
   Ingredient: {
     table: 'ingredients',
     idColumn: 'ingredient_id',
@@ -1013,10 +1182,17 @@ function normalizedSelectForEntity(entity) {
             JOIN meal_service_headers header ON header.meal_service_id = consumption.meal_service_id`;
   }
   if (entity === 'FoodWaste') return 'SELECT * FROM food_waste_records';
+  if (usesRelationalDocumentTable(entity)) {
+    return `SELECT id, $q$${entity}$q$::text AS entity_name, site_id, site_name,
+                   from_site_id, to_site_id, site_ids, status, record_date,
+                   source_name, payload, created_at, updated_at
+            FROM ${quoteIdentifier(relationalDocumentTables[entity])}`;
+  }
   return normalizedSimpleConfigs[entity]?.select || null;
 }
 
 function normalizedIdColumn(entity) {
+  if (usesRelationalDocumentTable(entity)) return 'id';
   return ({
     Site: 'id',
     Recipe: 'recipe_version_id',
@@ -1031,6 +1207,9 @@ function normalizedIdColumn(entity) {
 }
 
 function normalizedMapper(entity) {
+  if (usesRelationalDocumentTable(entity)) {
+    return (row) => rowToRelationalDocument(entity, row);
+  }
   return ({
     Site: rowToSite,
     Recipe: rowToRecipe,
@@ -1283,13 +1462,48 @@ function normalizedSqlColumnForField(entity, field) {
       waste_scope: "payload->>'waste_scope'",
       meal_service_attendance_id: "payload->>'meal_service_attendance_id'",
       auto_generated: "payload->>'auto_generated'"
+    },
+    Supplier: {
+      name: 'name',
+      supplier_name: 'name',
+      contact_person: 'contact_person',
+      email: 'email',
+      phone: 'phone',
+      city: 'city',
+      country: 'country',
+      payment_terms: 'payment_terms',
+      lead_time_days: 'lead_time_days',
+      rating: 'rating',
+      is_active: 'status',
+      source_name: 'source_name'
     }
   };
   const column = {
     ...common,
     ...(columns[entity] || {})
   }[field];
-  if (!column) return null;
+  if (!column) {
+    if (
+      SAFE_RELATIONAL_PAYLOAD_FIELD_PATTERN.test(String(field || ''))
+      && (
+        usesRelationalDocumentTable(entity)
+        || normalizedSimpleConfigs[entity]?.select?.includes('payload')
+        || [
+          'Recipe',
+          'MenuPlan',
+          'Production',
+          'ProductionConsumptionReport',
+          'ProducedItemBatch',
+          'MealServiceAttendance',
+          'MealServiceConsumption',
+          'FoodWaste'
+        ].includes(entity)
+      )
+    ) {
+      return `normalized_record.payload->>'${field}'`;
+    }
+    return null;
+  }
   return column.includes('->') || column.includes('(')
     ? `normalized_record.${column}`
     : `normalized_record.${column}`;
@@ -1843,6 +2057,41 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
   if (entity === 'Site') return insertOrUpdateNormalizedSite(record, existing, executor);
   if (entity === 'Recipe') return insertOrUpdateNormalizedRecipe(record, existing, executor);
 
+  if (usesRelationalDocumentTable(entity)) {
+    const table = quoteIdentifier(relationalDocumentTables[entity]);
+    const createdAt = record.created_date || existing?.created_date || nowIso();
+    const updatedAt = record.updated_date || nowIso();
+    await query(
+      `INSERT INTO ${table} (
+        id, entity_name, site_id, site_name, from_site_id, to_site_id,
+        site_ids, status, record_date, source_name, payload, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11::jsonb,$12,$13)
+      ON CONFLICT (id) DO UPDATE SET
+        site_id = EXCLUDED.site_id, site_name = EXCLUDED.site_name,
+        from_site_id = EXCLUDED.from_site_id, to_site_id = EXCLUDED.to_site_id,
+        site_ids = EXCLUDED.site_ids, status = EXCLUDED.status,
+        record_date = EXCLUDED.record_date, source_name = EXCLUDED.source_name,
+        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        entity,
+        relationalDocumentSiteId(record),
+        record.site_name || record.warehouse_name || null,
+        record.from_site_id || null,
+        record.to_site_id || null,
+        Array.isArray(record.site_ids) ? record.site_ids.map(String) : [],
+        record.status || entityRegistry[entity]?.defaults?.status || 'active',
+        relationalDocumentRecordDate(record),
+        record.source_name || null,
+        jsonPayload(record),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+    return findNormalizedDocument(entity, record.id, executor);
+  }
+
   const config = normalizedSimpleConfigs[entity];
   if (config) {
     const sql = existing ? config.updateSql : config.insertSql;
@@ -2161,6 +2410,14 @@ async function deleteNormalizedDocument(entity, id, executor = pool) {
   }
   if (entity === 'Recipe') {
     const result = await query('DELETE FROM recipe_versions WHERE recipe_version_id = $1', [id], executor);
+    return result.rowCount > 0;
+  }
+  if (usesRelationalDocumentTable(entity)) {
+    const result = await query(
+      `DELETE FROM ${quoteIdentifier(relationalDocumentTables[entity])} WHERE id = $1`,
+      [id],
+      executor
+    );
     return result.rowCount > 0;
   }
   const config = normalizedSimpleConfigs[entity];
@@ -2602,7 +2859,7 @@ async function getExternalSiteSubtreeDependencies(siteIds, executor) {
   const subtreeIds = [...new Set((siteIds || []).map(String))].sort();
   const subtreeIdSet = new Set(subtreeIds);
   const groupedDocumentDependencies = new Map();
-  const documentRows = await query(
+  const legacyDocumentRows = await query(
     `SELECT id, entity_name, data
        FROM entity_records
       WHERE NOT (entity_name = 'Site' AND id = ANY($1::text[]))
@@ -2610,8 +2867,13 @@ async function getExternalSiteSubtreeDependencies(siteIds, executor) {
     [subtreeIds],
     executor
   );
+  const relationalDocumentRows = await listRelationalDocumentReferenceRows(executor);
+  const documentRows = [
+    ...legacyDocumentRows.rows,
+    ...relationalDocumentRows
+  ];
 
-  for (const row of documentRows.rows) {
+  for (const row of documentRows) {
     if (row.entity_name === 'Site' && subtreeIdSet.has(String(row.id))) continue;
     const matchingReferences = collectDocumentReferences(row.data).filter((reference) => (
       reference.targetEntity === 'Site' && subtreeIdSet.has(String(reference.id))
@@ -2844,7 +3106,7 @@ async function ensureDocumentNotReferenced(entity, id, executor = pool) {
     executor
   );
 
-  const documentRows = await query(
+  const legacyDocumentRows = await query(
     `SELECT id, entity_name, data
      FROM entity_records
      WHERE NOT (entity_name = $1 AND id = $2)
@@ -2852,8 +3114,13 @@ async function ensureDocumentNotReferenced(entity, id, executor = pool) {
     [entity, id],
     executor
   );
+  const relationalDocumentRows = await listRelationalDocumentReferenceRows(executor);
+  const documentRows = [
+    ...legacyDocumentRows.rows,
+    ...relationalDocumentRows.filter((row) => !(row.entity_name === entity && row.id === id))
+  ];
 
-  const documentReference = documentRows.rows.find((row) =>
+  const documentReference = documentRows.find((row) =>
     collectDocumentReferences(row.data).some((reference) =>
       reference.targetEntity === entity && reference.id === String(id)
     )
@@ -2899,25 +3166,43 @@ async function initDatabase() {
 }
 
 async function normalizeStoredManagementRoleProfiles(executor = pool) {
-  const result = await query(
-    `SELECT id, data
-       FROM entity_records
-      WHERE entity_name = 'RoleProfile'`,
-    [],
-    executor
-  );
+  const result = usesNormalizedCore('RoleProfile')
+    ? await query(
+      `SELECT id, payload AS data
+         FROM role_profiles`,
+      [],
+      executor
+    )
+    : await query(
+      `SELECT id, data
+         FROM entity_records
+        WHERE entity_name = 'RoleProfile'`,
+      [],
+      executor
+    );
   for (const row of result.rows) {
     const normalized = normalizeManagementRoleProfile(row.data);
     if (normalized === row.data || JSON.stringify(normalized) === JSON.stringify(row.data)) continue;
     const next = { ...normalized, updated_date: nowIso() };
-    await query(
-      `UPDATE entity_records
-          SET data = $2::jsonb,
-              updated_at = $3
-        WHERE id = $1 AND entity_name = 'RoleProfile'`,
-      [row.id, JSON.stringify(next), next.updated_date],
-      executor
-    );
+    if (usesNormalizedCore('RoleProfile')) {
+      await query(
+        `UPDATE role_profiles
+            SET payload = $2::jsonb,
+                updated_at = $3
+          WHERE id = $1`,
+        [row.id, JSON.stringify(next), next.updated_date],
+        executor
+      );
+    } else {
+      await query(
+        `UPDATE entity_records
+            SET data = $2::jsonb,
+                updated_at = $3
+          WHERE id = $1 AND entity_name = 'RoleProfile'`,
+        [row.id, JSON.stringify(next), next.updated_date],
+        executor
+      );
+    }
   }
 }
 
@@ -3856,6 +4141,38 @@ async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
          OR COALESCE(data->>'meal_service_attendance_id', '') <> ''
        )`
     : '';
+  if (usesNormalizedCore(entity)) {
+    const siteFilter = Array.isArray(siteIds)
+      ? new Set(siteIds.map(String))
+      : null;
+    const records = await listNormalizedDocuments(entity, { limit: 10000, lock: true }, executor);
+    const scopedRecords = (records || []).filter((record) => {
+      if (entity === 'FoodWaste' && (
+        record.auto_generated === true
+        || ['meal_service_leftover', 'batch_overproduction'].includes(String(record.source_type || '').toLowerCase())
+        || String(record.meal_service_attendance_id || '').trim()
+      )) {
+        return false;
+      }
+      if (!siteFilter) return true;
+      const recordSiteIds = [
+        record.site_id,
+        record.warehouse_id,
+        record.fulfillment_store_id,
+        record.from_site_id,
+        record.to_site_id,
+        ...(Array.isArray(record.site_ids) ? record.site_ids : [])
+      ].filter(Boolean).map(String);
+      return recordSiteIds.some((siteId) => siteFilter.has(siteId));
+    });
+    let deletedCount = 0;
+    for (const record of scopedRecords) {
+      if (await deleteNormalizedDocument(entity, record.id, executor)) {
+        deletedCount += 1;
+      }
+    }
+    return deletedCount;
+  }
   if (Array.isArray(siteIds)) {
     if (!siteIds.length) return 0;
     const result = await query(

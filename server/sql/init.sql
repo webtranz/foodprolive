@@ -126,6 +126,180 @@ END;
 $trigger$;
 
 -- ---------------------------------------------------------------------------
+-- Relational document tables for modules that previously shared entity_records
+-- ---------------------------------------------------------------------------
+-- These tables keep typed, indexed operational fields out of one large JSONB
+-- bucket while preserving the full payload for screen compatibility during the
+-- cutover. The API routes each module to its own physical table.
+CREATE OR REPLACE FUNCTION notify_foodpro_document_table_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  record_data JSONB;
+  entity_value TEXT;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    record_data := OLD.payload;
+  ELSE
+    record_data := NEW.payload;
+  END IF;
+  entity_value := TG_ARGV[0];
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', entity_value,
+      'action', LOWER(TG_OP),
+      'id', NULL,
+      'site_id', COALESCE(record_data->>'site_id', record_data->>'warehouse_id'),
+      'site_ids', COALESCE(record_data->'site_ids', '[]'::jsonb),
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $document_tables$
+DECLARE
+  document_table TEXT;
+  entity_value TEXT;
+BEGIN
+  FOR document_table, entity_value IN
+    SELECT *
+    FROM (VALUES
+      ('advanced_report_schedules', 'AdvancedReportSchedule'),
+      ('erp_integration_configs', 'ERPIntegrationConfig'),
+      ('erp_integration_logs', 'ERPIntegrationLog'),
+      ('forecast_scenarios', 'ForecastScenario'),
+      ('forecast_snapshots', 'ForecastSnapshot'),
+      ('attendance_records', 'AttendanceRecord'),
+      ('attendance_sessions', 'AttendanceSession'),
+      ('staff_shifts', 'StaffShift'),
+      ('branch_orders', 'BranchOrder'),
+      ('category_qr_sessions', 'CategoryQRSession'),
+      ('d365_masters', 'D365Master'),
+      ('diner_scans', 'DinerScan'),
+      ('customer_meal_plans', 'CustomerMealPlan'),
+      ('material_requests', 'MaterialRequest'),
+      ('budgets', 'Budget'),
+      ('food_categories', 'FoodCategory'),
+      ('menu_plan_pr_schedules', 'MenuPlanPRSchedule'),
+      ('menu_plan_pr_runs', 'MenuPlanPRRun'),
+      ('production_batches', 'ProductionBatch'),
+      ('production_transfers', 'ProductionTransfer'),
+      ('purchase_order_documents', 'PurchaseOrder'),
+      ('qr_codes', 'QRCode'),
+      ('role_profiles', 'RoleProfile'),
+      ('qr_deliveries', 'QRDelivery'),
+      ('quality_controls', 'QualityControl'),
+      ('rfqs', 'RFQ'),
+      ('user_groups', 'UserGroup'),
+      ('waste_targets', 'WasteTarget'),
+      ('waste_detection_logs', 'WasteDetectionLog')
+    ) AS mapped(document_table, entity_value)
+  LOOP
+    EXECUTE format($sql$
+      CREATE TABLE IF NOT EXISTS %I (
+        id TEXT PRIMARY KEY,
+        entity_name TEXT NOT NULL DEFAULT %L,
+        site_id TEXT,
+        site_name TEXT,
+        from_site_id TEXT,
+        to_site_id TEXT,
+        site_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+        status TEXT NOT NULL DEFAULT 'active',
+        record_date DATE,
+        source_name TEXT,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    $sql$, document_table, entity_value);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (site_id, status, updated_at DESC)', 'idx_' || document_table || '_site_status', document_table);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (record_date, status, updated_at DESC)', 'idx_' || document_table || '_record_date', document_table);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (site_ids)', 'idx_' || document_table || '_site_ids', document_table);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (payload)', 'idx_' || document_table || '_payload', document_table);
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_trigger
+      WHERE tgname = document_table || '_realtime_change'
+        AND tgrelid = to_regclass(document_table)
+    ) THEN
+      EXECUTE format(
+        'CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION notify_foodpro_document_table_change(%L)',
+        document_table || '_realtime_change',
+        document_table,
+        entity_value
+      );
+    END IF;
+    EXECUTE format($sql$
+      INSERT INTO %I (
+        id, entity_name, site_id, site_name, from_site_id, to_site_id,
+        site_ids, status, record_date, source_name, payload, created_at, updated_at
+      )
+      SELECT
+        record.id,
+        %L,
+        COALESCE(
+          NULLIF(record.data->>'site_id', ''),
+          NULLIF(record.data->>'warehouse_id', ''),
+          NULLIF(record.data->>'fulfillment_store_id', ''),
+          NULLIF(record.data->>'requesting_site_id', '')
+        ),
+        NULLIF(record.data->>'site_name', ''),
+        NULLIF(record.data->>'from_site_id', ''),
+        NULLIF(record.data->>'to_site_id', ''),
+        CASE
+          WHEN jsonb_typeof(record.data->'site_ids') = 'array'
+            THEN ARRAY(SELECT jsonb_array_elements_text(record.data->'site_ids'))
+          ELSE ARRAY[]::text[]
+        END,
+        COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+        CASE
+          WHEN COALESCE(
+            record.data->>'record_date',
+            record.data->>'date',
+            record.data->>'service_date',
+            record.data->>'waste_date',
+            record.data->>'plan_date',
+            record.data->>'production_date',
+            record.data->>'request_date',
+            record.data->>'order_date',
+            record.data->>'event_date',
+            record.data->>'shift_date',
+            record.data->>'scan_date',
+            record.data->>'created_date'
+          ) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+            THEN LEFT(COALESCE(
+              record.data->>'record_date',
+              record.data->>'date',
+              record.data->>'service_date',
+              record.data->>'waste_date',
+              record.data->>'plan_date',
+              record.data->>'production_date',
+              record.data->>'request_date',
+              record.data->>'order_date',
+              record.data->>'event_date',
+              record.data->>'shift_date',
+              record.data->>'scan_date',
+              record.data->>'created_date'
+            ), 10)::date
+          ELSE NULL
+        END,
+        NULLIF(record.data->>'source_name', ''),
+        record.data || jsonb_build_object('id', record.id),
+        record.created_at,
+        record.updated_at
+      FROM entity_records record
+      WHERE record.entity_name = %L
+      ON CONFLICT (id) DO NOTHING
+    $sql$, document_table, entity_value, entity_value);
+  END LOOP;
+END;
+$document_tables$;
+
+-- ---------------------------------------------------------------------------
 -- Phase 1 normalized operational schema
 -- ---------------------------------------------------------------------------
 -- The legacy application stores most operational records in entity_records as
@@ -738,6 +912,186 @@ CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_reversal
 
 CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_food_cost
   ON meal_service_consumptions(service_date, meal_period, movement_type, status, meal_service_id, output_batch_id, production_id);
+
+-- ---------------------------------------------------------------------------
+-- CPU / central production schema
+-- ---------------------------------------------------------------------------
+-- CPU runs are modeled separately from store production because central
+-- production creates finished output that can be dispatched, received, and cost
+-- allocated across multiple destination warehouses.
+CREATE TABLE IF NOT EXISTS cpu_production_orders (
+  cpu_order_id TEXT PRIMARY KEY,
+  cpu_warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  area_id TEXT REFERENCES areas(area_id) ON DELETE RESTRICT,
+  project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
+  production_date DATE NOT NULL,
+  meal_period TEXT,
+  menu_type TEXT,
+  menu_category TEXT,
+  status TEXT NOT NULL DEFAULT 'planned',
+  requested_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  approved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  completed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  completed_at TIMESTAMPTZ,
+  reversed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reversed_at TIMESTAMPTZ,
+  reversal_reason TEXT,
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS cpu_production_order_lines (
+  cpu_order_line_id TEXT PRIMARY KEY,
+  cpu_order_id TEXT NOT NULL REFERENCES cpu_production_orders(cpu_order_id) ON DELETE CASCADE,
+  destination_warehouse_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE SET NULL,
+  menu_plan_line_id TEXT REFERENCES menu_plan_lines(menu_plan_line_id) ON DELETE SET NULL,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE RESTRICT,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  item_name TEXT NOT NULL,
+  requested_servings NUMERIC(14, 3),
+  requested_weight_grams NUMERIC(14, 3),
+  produced_weight_grams NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  produced_servings NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'planned',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS cpu_manifest_lines (
+  cpu_manifest_line_id TEXT PRIMARY KEY,
+  cpu_order_id TEXT NOT NULL REFERENCES cpu_production_orders(cpu_order_id) ON DELETE CASCADE,
+  cpu_order_line_id TEXT REFERENCES cpu_production_order_lines(cpu_order_line_id) ON DELETE CASCADE,
+  recipe_line_id TEXT REFERENCES recipe_ingredient_lines(recipe_line_id) ON DELETE SET NULL,
+  ingredient_id TEXT NOT NULL REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  item_name TEXT NOT NULL,
+  required_quantity NUMERIC(14, 6) NOT NULL DEFAULT 0,
+  unit TEXT,
+  estimated_unit_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  estimated_line_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS cpu_consumption_lines (
+  cpu_consumption_line_id TEXT PRIMARY KEY,
+  cpu_order_id TEXT NOT NULL REFERENCES cpu_production_orders(cpu_order_id) ON DELETE CASCADE,
+  cpu_manifest_line_id TEXT REFERENCES cpu_manifest_lines(cpu_manifest_line_id) ON DELETE SET NULL,
+  inventory_id TEXT REFERENCES warehouse_inventory(inventory_id) ON DELETE RESTRICT,
+  lot_id TEXT REFERENCES inventory_lots(lot_id) ON DELETE RESTRICT,
+  ingredient_id TEXT NOT NULL REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  issued_quantity NUMERIC(14, 6) NOT NULL DEFAULT 0,
+  unit TEXT,
+  unit_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'posted',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS cpu_output_batches (
+  cpu_output_batch_id TEXT PRIMARY KEY,
+  cpu_order_id TEXT NOT NULL REFERENCES cpu_production_orders(cpu_order_id) ON DELETE RESTRICT,
+  cpu_order_line_id TEXT NOT NULL REFERENCES cpu_production_order_lines(cpu_order_line_id) ON DELETE RESTRICT,
+  cpu_warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE RESTRICT,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  batch_number TEXT NOT NULL,
+  initial_weight_grams NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  remaining_weight_grams NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  initial_servings NUMERIC(14, 3),
+  remaining_servings NUMERIC(14, 3),
+  unit_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'available',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS cpu_dispatches (
+  cpu_dispatch_id TEXT PRIMARY KEY,
+  cpu_order_id TEXT REFERENCES cpu_production_orders(cpu_order_id) ON DELETE SET NULL,
+  from_warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  to_warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  dispatch_date DATE NOT NULL,
+  dispatched_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  received_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  received_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'draft',
+  source_name TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS cpu_dispatch_lines (
+  cpu_dispatch_line_id TEXT PRIMARY KEY,
+  cpu_dispatch_id TEXT NOT NULL REFERENCES cpu_dispatches(cpu_dispatch_id) ON DELETE CASCADE,
+  cpu_output_batch_id TEXT NOT NULL REFERENCES cpu_output_batches(cpu_output_batch_id) ON DELETE RESTRICT,
+  dispatched_weight_grams NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  dispatched_servings NUMERIC(14, 3),
+  received_weight_grams NUMERIC(14, 3),
+  received_servings NUMERIC(14, 3),
+  status TEXT NOT NULL DEFAULT 'draft',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS cpu_receipts (
+  cpu_receipt_id TEXT PRIMARY KEY,
+  cpu_dispatch_id TEXT NOT NULL REFERENCES cpu_dispatches(cpu_dispatch_id) ON DELETE RESTRICT,
+  to_warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  received_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL DEFAULT 'posted',
+  notes TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS cpu_cost_allocations (
+  cpu_cost_allocation_id TEXT PRIMARY KEY,
+  cpu_order_id TEXT REFERENCES cpu_production_orders(cpu_order_id) ON DELETE SET NULL,
+  cpu_output_batch_id TEXT REFERENCES cpu_output_batches(cpu_output_batch_id) ON DELETE SET NULL,
+  destination_warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  allocation_basis TEXT NOT NULL DEFAULT 'weight',
+  allocated_weight_grams NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  allocated_servings NUMERIC(14, 3),
+  allocated_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'posted',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cpu_production_orders_scope
+  ON cpu_production_orders(cpu_warehouse_id, production_date, meal_period, status);
+CREATE INDEX IF NOT EXISTS idx_cpu_order_lines_destination
+  ON cpu_production_order_lines(destination_warehouse_id, status);
+CREATE INDEX IF NOT EXISTS idx_cpu_manifest_lines_order
+  ON cpu_manifest_lines(cpu_order_id, ingredient_id);
+CREATE INDEX IF NOT EXISTS idx_cpu_consumption_lines_order
+  ON cpu_consumption_lines(cpu_order_id, ingredient_id, lot_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cpu_output_batches_batch_number
+  ON cpu_output_batches(batch_number);
+CREATE INDEX IF NOT EXISTS idx_cpu_output_batches_fifo
+  ON cpu_output_batches(cpu_warehouse_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_cpu_dispatches_route
+  ON cpu_dispatches(from_warehouse_id, to_warehouse_id, dispatch_date, status);
+CREATE INDEX IF NOT EXISTS idx_cpu_dispatch_lines_batch
+  ON cpu_dispatch_lines(cpu_output_batch_id, status);
+CREATE INDEX IF NOT EXISTS idx_cpu_receipts_dispatch
+  ON cpu_receipts(cpu_dispatch_id, status);
+CREATE INDEX IF NOT EXISTS idx_cpu_cost_allocations_destination
+  ON cpu_cost_allocations(destination_warehouse_id, status, created_at DESC);
 
 ALTER TABLE areas ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
@@ -1516,9 +1870,45 @@ CREATE TABLE IF NOT EXISTS suppliers (
   rating NUMERIC(6, 2) NOT NULL DEFAULT 0,
   categories JSONB NOT NULL DEFAULT '[]'::jsonb,
   notes TEXT,
+  source_name TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS source_name TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_suppliers_source_status
+  ON suppliers (source_name, status, updated_at DESC);
+
+INSERT INTO suppliers (
+  id, name, contact_person, email, phone, address, city, country, payment_terms,
+  lead_time_days, status, rating, categories, notes, source_name, payload, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'name', ''), NULLIF(record.data->>'supplier_name', ''), record.id),
+  NULLIF(record.data->>'contact_person', ''),
+  NULLIF(record.data->>'email', ''),
+  NULLIF(record.data->>'phone', ''),
+  NULLIF(record.data->>'address', ''),
+  NULLIF(record.data->>'city', ''),
+  NULLIF(record.data->>'country', ''),
+  NULLIF(record.data->>'payment_terms', ''),
+  CASE WHEN COALESCE(record.data->>'lead_time_days', '') ~ '^[0-9]+$'
+    THEN (record.data->>'lead_time_days')::integer ELSE 0 END,
+  COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
+  CASE WHEN COALESCE(record.data->>'rating', '') ~ '^-?[0-9]+([.][0-9]+)?$'
+    THEN (record.data->>'rating')::numeric ELSE 0 END,
+  CASE WHEN jsonb_typeof(record.data->'categories') = 'array' THEN record.data->'categories' ELSE '[]'::jsonb END,
+  NULLIF(record.data->>'notes', ''),
+  NULLIF(record.data->>'source_name', ''),
+  record.data || jsonb_build_object('id', record.id),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'Supplier'
+ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS purchase_requests (
   id TEXT PRIMARY KEY,

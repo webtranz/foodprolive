@@ -9,6 +9,7 @@ import {
   createDocument,
   updateDocument,
   listDocuments,
+  deleteDocumentRecordOnly,
   getBulkUploadJob,
   updateBulkUploadJob,
   clearDocumentsForBulk
@@ -161,18 +162,11 @@ async function findBulkRecipeMatchInDatabase(client, payload = {}) {
   const codeCandidate = normalizeLookup(payload.recipe_code);
   const nameCandidate = normalizeLookup(payload.name);
   if (!codeCandidate && !nameCandidate) return null;
-  const result = await client.query(
-    `SELECT data
-     FROM entity_records
-     WHERE entity_name = 'Recipe'
-       AND (
-         ($1 <> '' AND LOWER(COALESCE(data->>'recipe_code', '')) = $1)
-         OR ($2 <> '' AND LOWER(COALESCE(data->>'name', '')) = $2)
-       )
-     LIMIT 2`,
-    [codeCandidate, nameCandidate]
-  );
-  const matches = result.rows.map((row) => row.data);
+  const recipes = await listDocuments('Recipe', { limit: 10000 }, client);
+  const matches = recipes.filter((recipe) => (
+    (codeCandidate && normalizeLookup(recipe.recipe_code) === codeCandidate)
+    || (nameCandidate && normalizeLookup(recipe.name) === nameCandidate)
+  )).slice(0, 2);
   const uniqueMatches = [...new Map(matches.map((recipe) => [recipe.id, recipe])).values()];
   if (uniqueMatches.length > 1) {
     const error = new Error(`Recipe "${payload.recipe_code || payload.name}" matches multiple existing recipes.`);
@@ -471,28 +465,12 @@ async function getOrCreateBulkInventoryIngredient({ staged, user, context, clien
 }
 
 async function clearInventoryForBulkUpload(job, context, client) {
-  const filters = job.site_id ? { site_id: job.site_id } : {};
-  const inventoryRows = await listDocuments('Inventory', { filters, limit: 10000, lock: true }, client);
-  const scopedRows = context.scope.unrestricted
-    ? inventoryRows
-    : inventoryRows.filter((row) => context.scope.accessibleSiteIds.has(String(row.site_id || '')));
-  let deletedRows = 0;
-  for (const inventory of scopedRows) {
-    await client.query(
-      `DELETE FROM entity_records
-       WHERE entity_name = $1
-         AND data->>'site_id' = $2
-         AND data->>'ingredient_id' = $3`,
-      ['InventoryLot', String(inventory.site_id || ''), String(inventory.ingredient_id || '')]
-    );
-    const result = await client.query(
-      `DELETE FROM entity_records
-       WHERE entity_name = $1 AND id = $2`,
-      ['Inventory', inventory.id]
-    );
-    deletedRows += result.rowCount || 0;
-  }
-  return deletedRows;
+  const siteIds = job.site_id
+    ? [job.site_id]
+    : context.scope.unrestricted
+      ? null
+      : [...context.scope.accessibleSiteIds];
+  return clearDocumentsForBulk('Inventory', siteIds, client);
 }
 
 async function clearRecipeMatchesForBulkUpload(stagedPath, client) {
@@ -511,16 +489,16 @@ async function clearRecipeMatchesForBulkUpload(stagedPath, client) {
   }
 
   if (recipeCodes.size === 0 && recipeNames.size === 0) return 0;
-  const result = await client.query(
-    `DELETE FROM entity_records
-     WHERE entity_name = 'Recipe'
-       AND (
-         LOWER(COALESCE(data->>'recipe_code', '')) = ANY($1::text[])
-         OR LOWER(COALESCE(data->>'name', '')) = ANY($2::text[])
-       )`,
-    [[...recipeCodes], [...recipeNames]]
-  );
-  return result.rowCount || 0;
+  const recipes = await listDocuments('Recipe', { limit: 10000, lock: true }, client);
+  const matches = recipes.filter((recipe) => (
+    (recipeCodes.size > 0 && recipeCodes.has(normalizeLookup(recipe.recipe_code)))
+    || (recipeNames.size > 0 && recipeNames.has(normalizeLookup(recipe.name)))
+  ));
+  let deletedRows = 0;
+  for (const recipe of matches) {
+    if (await deleteDocumentRecordOnly('Recipe', recipe.id, client)) deletedRows += 1;
+  }
+  return deletedRows;
 }
 
 async function clearRecipesForBulkDelete(job, siteIds = null, client) {
@@ -533,31 +511,31 @@ async function clearRecipesForBulkDelete(job, siteIds = null, client) {
   const recipeTypeLookup = normalizeLookup(recipeType);
   if (Array.isArray(siteIds)) {
     if (!siteIds.length) return 0;
-    const result = await client.query(
-      `DELETE FROM entity_records
-       WHERE entity_name = 'Recipe'
-         AND (
-           LOWER(COALESCE(data->>'cuisine_type', '')) = $1
-           OR LOWER(COALESCE(data->>'recipe_type', '')) = $1
-         )
-         AND (
-           data->>'site_id' = ANY($2::text[])
-           OR COALESCE(data->'site_ids', '[]'::jsonb) ?| $2::text[]
-         )`,
-      [recipeTypeLookup, siteIds]
-    );
-    return result.rowCount || 0;
+    const scopedSiteIds = new Set(siteIds.map(String));
+    const recipes = await listDocuments('Recipe', { limit: 10000, lock: true }, client);
+    const matches = recipes.filter((recipe) => (
+      [recipe.cuisine_type, recipe.recipe_type].some((value) => normalizeLookup(value) === recipeTypeLookup)
+      && [
+        recipe.site_id,
+        recipe.warehouse_id,
+        ...(Array.isArray(recipe.site_ids) ? recipe.site_ids : [])
+      ].filter(Boolean).map(String).some((siteId) => scopedSiteIds.has(siteId))
+    ));
+    let deletedRows = 0;
+    for (const recipe of matches) {
+      if (await deleteDocumentRecordOnly('Recipe', recipe.id, client)) deletedRows += 1;
+    }
+    return deletedRows;
   }
-  const result = await client.query(
-    `DELETE FROM entity_records
-     WHERE entity_name = 'Recipe'
-       AND (
-         LOWER(COALESCE(data->>'cuisine_type', '')) = $1
-         OR LOWER(COALESCE(data->>'recipe_type', '')) = $1
-       )`,
-    [recipeTypeLookup]
-  );
-  return result.rowCount || 0;
+  const recipes = await listDocuments('Recipe', { limit: 10000, lock: true }, client);
+  const matches = recipes.filter((recipe) => (
+    [recipe.cuisine_type, recipe.recipe_type].some((value) => normalizeLookup(value) === recipeTypeLookup)
+  ));
+  let deletedRows = 0;
+  for (const recipe of matches) {
+    if (await deleteDocumentRecordOnly('Recipe', recipe.id, client)) deletedRows += 1;
+  }
+  return deletedRows;
 }
 
 async function readCsv(filePath, onHeaders, onRow) {
