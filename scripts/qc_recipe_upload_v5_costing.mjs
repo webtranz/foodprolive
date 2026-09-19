@@ -40,16 +40,33 @@ const ingredients = inventoryRows.map((row) => ({
 const byCode = new Map(ingredients.map((ingredient) => [String(ingredient.item_code).toLowerCase(), ingredient]));
 
 const recipeRows = readCsv(inputPath);
-const outputRows = recipeRows.map((row) => {
-  const recipe = {
-    name: row.name,
-    recipe_code: row.recipe_code,
-    servings: Number(row.servings || 1),
-    ingredients: JSON.parse(row.ingredients || '[]').map((line) => ({
-      ...line,
-      ingredient_id: line.ingredient_id || line.item_code || ''
-    }))
-  };
+const recipesByCode = new Map();
+recipeRows.forEach((row) => {
+  const key = row.recipe_code || row.name;
+  if (!recipesByCode.has(key)) {
+    recipesByCode.set(key, {
+      name: row.name,
+      recipe_code: row.recipe_code,
+      servings: Number(row.servings || 1),
+      ingredients: []
+    });
+  }
+  if (row.item_code || row.ingredient_id || row.ingredient_name || row.line_quantity) {
+    recipesByCode.get(key).ingredients.push({
+      line_number: Number(row.line_number || recipesByCode.get(key).ingredients.length + 1),
+      ingredient_id: row.ingredient_id || row.item_code || '',
+      item_code: row.item_code || row.ingredient_code || row.sku || '',
+      ingredient_name: row.ingredient_name,
+      quantity: row.line_quantity,
+      unit: row.line_unit,
+      yield_percent: row.line_yield_percent || 100,
+      raw_weight_grams: row.line_raw_weight_grams,
+      yielded_weight_grams: row.line_yielded_weight_grams,
+      cost: row.line_cost
+    });
+  }
+});
+const outputRows = [...recipesByCode.values()].map((recipe) => {
   const lineIngredients = recipe.ingredients
     .map((line) => byCode.get(String(line.item_code || '').toLowerCase()))
     .filter(Boolean)

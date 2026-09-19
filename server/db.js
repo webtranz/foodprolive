@@ -2077,6 +2077,147 @@ async function ensureProductionManifestLine(record, executor = pool) {
   return lineId;
 }
 
+function safeLineNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.trunc(number) : fallback;
+}
+
+function normalizedMenuPlanLineType(value) {
+  const type = String(value || 'recipe').trim().toLowerCase();
+  return ['recipe', 'ingredient', 'manual'].includes(type) ? type : 'recipe';
+}
+
+function lineNumberedId(prefix, parentId, lineNumber) {
+  return `${parentId}:${prefix}:${lineNumber}`;
+}
+
+async function replaceMenuPlanLines(record, executor = pool) {
+  const sourceLines = Array.isArray(record.menu_plan_lines)
+    ? record.menu_plan_lines
+    : Array.isArray(record.meals)
+      ? record.meals
+      : null;
+  if (!Array.isArray(sourceLines)) return;
+
+  await query('DELETE FROM menu_plan_lines WHERE menu_plan_id = $1', [record.id], executor);
+  const createdAt = record.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  for (const [index, sourceLine] of sourceLines.entries()) {
+    const lineNumber = safeLineNumber(sourceLine?.line_number, index + 1);
+    const lineType = normalizedMenuPlanLineType(sourceLine?.line_type);
+    const itemName = String(
+      sourceLine?.item_name
+      || sourceLine?.recipe_name
+      || sourceLine?.ingredient_name
+      || sourceLine?.name
+      || `Menu plan line ${lineNumber}`
+    ).trim();
+    await query(
+      `INSERT INTO menu_plan_lines (
+        menu_plan_line_id, menu_plan_id, line_number, line_type, recipe_version_id,
+        ingredient_id, item_name, planned_servings, planned_weight_grams, planned_unit,
+        estimated_cost, status, source_name, payload, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16)
+      ON CONFLICT (menu_plan_line_id) DO UPDATE SET
+        line_number = EXCLUDED.line_number, line_type = EXCLUDED.line_type,
+        recipe_version_id = EXCLUDED.recipe_version_id, ingredient_id = EXCLUDED.ingredient_id,
+        item_name = EXCLUDED.item_name, planned_servings = EXCLUDED.planned_servings,
+        planned_weight_grams = EXCLUDED.planned_weight_grams, planned_unit = EXCLUDED.planned_unit,
+        estimated_cost = EXCLUDED.estimated_cost, status = EXCLUDED.status,
+        source_name = EXCLUDED.source_name, payload = EXCLUDED.payload,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        sourceLine?.menu_plan_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber),
+        record.id,
+        lineNumber,
+        lineType,
+        sourceLine?.recipe_id || sourceLine?.recipe_version_id || null,
+        sourceLine?.ingredient_id || null,
+        itemName,
+        toNumberOrNull(sourceLine?.planned_servings ?? sourceLine?.expected_servings),
+        toNumberOrNull(sourceLine?.planned_weight_grams),
+        sourceLine?.planned_unit || sourceLine?.unit || null,
+        toNumberOrZero(sourceLine?.estimated_cost ?? sourceLine?.total_cost),
+        sourceLine?.status || record.status || 'planned',
+        sourceLine?.source_name || record.source_name || null,
+        jsonPayload(sourceLine),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceProductionManifestLines(record, executor = pool) {
+  const sourceLines = Array.isArray(record.manifest_lines) ? record.manifest_lines : null;
+  if (!Array.isArray(sourceLines)) {
+    await ensureProductionManifestLine(record, executor);
+    return;
+  }
+
+  await query('DELETE FROM production_manifest_lines WHERE production_id = $1', [record.id], executor);
+  const createdAt = record.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  for (const [index, sourceLine] of sourceLines.entries()) {
+    const lineNumber = safeLineNumber(sourceLine?.line_number, index + 1);
+    const requestedServings = toNumberOrNull(sourceLine?.requested_servings);
+    const requestedWeightGrams = toNumberOrNull(sourceLine?.requested_weight_grams);
+    const producedServings = toNumberOrNull(sourceLine?.produced_servings);
+    const producedWeightGrams = toNumberOrNull(sourceLine?.produced_weight_grams);
+    const hasQuantity = [
+      requestedServings,
+      requestedWeightGrams,
+      producedServings,
+      producedWeightGrams
+    ].some((value) => Number(value || 0) > 0);
+    if (!hasQuantity) {
+      const error = new Error(`Production manifest line ${lineNumber} requires servings or weight.`);
+      error.status = 400;
+      throw error;
+    }
+    await query(
+      `INSERT INTO production_manifest_lines (
+        production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
+        ingredient_id, item_name, requested_servings, requested_weight_grams, produced_servings,
+        produced_weight_grams, estimated_cost, actual_cost, status, source_name, payload,
+        created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
+      ON CONFLICT (production_line_id) DO UPDATE SET
+        menu_plan_line_id = EXCLUDED.menu_plan_line_id, line_number = EXCLUDED.line_number,
+        recipe_version_id = EXCLUDED.recipe_version_id, ingredient_id = EXCLUDED.ingredient_id,
+        item_name = EXCLUDED.item_name, requested_servings = EXCLUDED.requested_servings,
+        requested_weight_grams = EXCLUDED.requested_weight_grams,
+        produced_servings = EXCLUDED.produced_servings,
+        produced_weight_grams = EXCLUDED.produced_weight_grams,
+        estimated_cost = EXCLUDED.estimated_cost, actual_cost = EXCLUDED.actual_cost,
+        status = EXCLUDED.status, source_name = EXCLUDED.source_name,
+        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [
+        sourceLine?.production_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber),
+        record.id,
+        sourceLine?.menu_plan_line_id || null,
+        lineNumber,
+        sourceLine?.recipe_id || sourceLine?.recipe_version_id || null,
+        sourceLine?.ingredient_id || null,
+        sourceLine?.item_name || sourceLine?.recipe_name || sourceLine?.ingredient_name || `Production line ${lineNumber}`,
+        requestedServings,
+        requestedWeightGrams,
+        producedServings,
+        producedWeightGrams,
+        toNumberOrZero(sourceLine?.estimated_cost),
+        toNumberOrZero(sourceLine?.actual_cost),
+        sourceLine?.status || 'active',
+        sourceLine?.source_name || record.source_name || null,
+        jsonPayload(sourceLine),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+}
+
 async function insertOrUpdateNormalizedDocument(entity, record, existing = null, executor = pool) {
   if (entity === 'Site') return insertOrUpdateNormalizedSite(record, existing, executor);
   if (entity === 'Recipe') return insertOrUpdateNormalizedRecipe(record, existing, executor);
@@ -2113,6 +2254,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
       ],
       executor
     );
+    await replaceMenuPlanLines(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
 
@@ -2197,7 +2339,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
       ],
       executor
     );
-    await ensureProductionManifestLine(record, executor);
+    await replaceProductionManifestLines(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'ProductionConsumptionReport') {

@@ -20,6 +20,7 @@ import {
   getUtilityModule,
   buildIngredientPayloadFromInventoryUpload,
   mapCsvRow,
+  groupBulkUploadRows,
   resolveBulkUploadSourceName,
   parseCsvLine,
   resolveBulkInventoryIngredient,
@@ -156,6 +157,28 @@ function findBulkMenuPlanMatch(menuPlans = [], payload = {}) {
     throw error;
   }
   return uniqueMatches[0] || null;
+}
+
+function resolveProductionManifestRecipeLinks(payload = {}, recipes = []) {
+  if (!Array.isArray(payload.manifest_lines) || !payload.manifest_lines.length) return payload;
+  return {
+    ...payload,
+    manifest_lines: payload.manifest_lines.map((line) => {
+      if (line?.recipe_id || (!line?.recipe_code && !line?.recipe_name)) return line;
+      const recipe = findBulkRecipeMatch(recipes, {
+        recipe_code: line.recipe_code,
+        name: line.recipe_name
+      });
+      return recipe
+        ? {
+            ...line,
+            recipe_id: recipe.id,
+            recipe_name: line.recipe_name || recipe.name,
+            recipe_code: line.recipe_code || recipe.recipe_code
+          }
+        : line;
+    })
+  };
 }
 
 async function findBulkRecipeMatchInDatabase(client, payload = {}) {
@@ -614,6 +637,7 @@ async function validateToJsonLines(job, definition, stagedPath) {
 async function processBatch({ job, batch, user, context, counters, errors, executor = null, failFast = false }) {
   const applyBatch = async (client) => {
     for (const staged of batch) {
+      const sourceRowCount = Math.max(1, Number(staged.sourceRowCount || 1));
       await client.query('SAVEPOINT bulk_upload_row');
       let recipePayloadForDuplicateRecovery = null;
       try {
@@ -638,9 +662,9 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
             context,
             client
           });
-          counters.applied += 1;
+          counters.applied += sourceRowCount;
           await client.query('RELEASE SAVEPOINT bulk_upload_row');
-          counters.processed += 1;
+          counters.processed += sourceRowCount;
           continue;
         }
         authorizeEntityAction(user, job.entity_name, 'create', staged.payload);
@@ -672,10 +696,13 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
                   menu_category: getJobMenuCategory(job)
                 }
               : staged.payload));
+        const normalizedStagedPayload = job.entity_name === 'Production'
+          ? resolveProductionManifestRecipeLinks(stagedPayload, context.recipeCatalog || [])
+          : stagedPayload;
         let preparedPayload = await prepareEntityPayload(
           user,
           job.entity_name,
-          stagedPayload,
+          normalizedStagedPayload,
           null,
           context
         );
@@ -713,9 +740,9 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
             const updated = await updateDocument(job.entity_name, existingMenuPlan.id, preparedPayload, client);
             const existingIndex = context.menuPlanCatalog.findIndex((item) => item.id === existingMenuPlan.id);
             if (existingIndex >= 0) context.menuPlanCatalog[existingIndex] = updated;
-            counters.applied += 1;
+            counters.applied += sourceRowCount;
             await client.query('RELEASE SAVEPOINT bulk_upload_row');
-            counters.processed += 1;
+            counters.processed += sourceRowCount;
             continue;
           }
         }
@@ -726,9 +753,9 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
             const updated = await updateDocument(job.entity_name, existingIngredient.id, preparedPayload, client);
             const existingIndex = context.ingredientCatalog.findIndex((item) => item.id === existingIngredient.id);
             if (existingIndex >= 0) context.ingredientCatalog[existingIndex] = updated;
-            counters.applied += 1;
+            counters.applied += sourceRowCount;
             await client.query('RELEASE SAVEPOINT bulk_upload_row');
-            counters.processed += 1;
+            counters.processed += sourceRowCount;
             continue;
           }
         }
@@ -739,9 +766,9 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
             const updated = await updateDocument(job.entity_name, existingRecipe.id, preparedPayload, client);
             const existingIndex = context.recipeCatalog.findIndex((item) => item.id === existingRecipe.id);
             if (existingIndex >= 0) context.recipeCatalog[existingIndex] = updated;
-            counters.applied += 1;
+            counters.applied += sourceRowCount;
             await client.query('RELEASE SAVEPOINT bulk_upload_row');
-            counters.processed += 1;
+            counters.processed += sourceRowCount;
             continue;
           }
         }
@@ -756,7 +783,7 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
           context.scope.sites = [...(context.scope.sites || []), created];
           context.scope.graph = createSiteGraph(context.scope.sites);
         }
-        counters.applied += 1;
+        counters.applied += sourceRowCount;
         await client.query('RELEASE SAVEPOINT bulk_upload_row');
       } catch (error) {
         await client.query('ROLLBACK TO SAVEPOINT bulk_upload_row');
@@ -799,44 +826,45 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
               const existingIndex = context.recipeCatalog.findIndex((item) => item.id === existingRecipe.id);
               if (existingIndex >= 0) context.recipeCatalog[existingIndex] = updated;
             }
-            counters.applied += 1;
+            counters.applied += sourceRowCount;
             await client.query('RELEASE SAVEPOINT bulk_upload_row_recover');
-            counters.processed += 1;
+            counters.processed += sourceRowCount;
             continue;
           } catch (recoveryError) {
             await client.query('ROLLBACK TO SAVEPOINT bulk_upload_row_recover');
             await client.query('RELEASE SAVEPOINT bulk_upload_row_recover');
-            counters.failed += 1;
+            counters.failed += sourceRowCount;
             if (errors.length < MAX_RECORDED_ERRORS) {
               errors.push({
-                row: staged.rowNumber,
+                row: Array.isArray(staged.rowNumbers) ? staged.rowNumbers.join(',') : staged.rowNumber,
                 message: recoveryError.message || error.message || 'Import failed'
               });
             }
             if (failFast) throw recoveryError;
-            counters.processed += 1;
+            counters.processed += sourceRowCount;
             continue;
           }
         }
         if (isDuplicateError(error) && job.import_mode === 'keep_existing') {
-          counters.skipped += 1;
+          counters.skipped += sourceRowCount;
         } else {
-          counters.failed += 1;
+          counters.failed += sourceRowCount;
           if (errors.length < MAX_RECORDED_ERRORS) {
-            errors.push({ row: staged.rowNumber, message: error.message || 'Import failed' });
+            errors.push({
+              row: Array.isArray(staged.rowNumbers) ? staged.rowNumbers.join(',') : staged.rowNumber,
+              message: error.message || 'Import failed'
+            });
           }
           if (failFast) throw error;
         }
       }
-      counters.processed += 1;
+      counters.processed += sourceRowCount;
     }
   };
   return executor ? applyBatch(executor) : withTransaction(applyBatch);
 }
 
 async function applyStagedRows(job, stagedPath, user, context, validationErrors, invalidRows, options = {}) {
-  const input = fs.createReadStream(stagedPath, { encoding: 'utf8' });
-  const lines = readline.createInterface({ input, crlfDelay: Infinity });
   const counters = { processed: 0, applied: 0, skipped: 0, failed: invalidRows };
   const errors = [...validationErrors];
   let batch = [];
@@ -865,9 +893,16 @@ async function applyStagedRows(job, stagedPath, user, context, validationErrors,
     await new Promise((resolve) => setImmediate(resolve));
   };
 
+  const stagedRows = [];
+  const input = fs.createReadStream(stagedPath, { encoding: 'utf8' });
+  const lines = readline.createInterface({ input, crlfDelay: Infinity });
   for await (const line of lines) {
-    if (!line.trim()) continue;
-    batch.push(JSON.parse(line));
+    if (line.trim()) stagedRows.push(JSON.parse(line));
+  }
+  const rowsToApply = groupBulkUploadRows(job.module_key, stagedRows);
+
+  for (const staged of rowsToApply) {
+    batch.push(staged);
     const effectiveBatchSize = job.entity_name === 'Site' ? 1 : job.batch_size;
     if (batch.length >= effectiveBatchSize) await flush();
   }
@@ -889,7 +924,7 @@ async function run() {
     ingredientCatalog: ['Inventory', 'Ingredient', 'Recipe'].includes(job.entity_name)
       ? await listDocuments('Ingredient', { limit: 10000 })
       : null,
-    recipeCatalog: ['Recipe', 'MenuPlan'].includes(job.entity_name)
+    recipeCatalog: ['Recipe', 'MenuPlan', 'Production'].includes(job.entity_name)
       ? await listDocuments('Recipe', { limit: 5000 })
       : null,
     menuPlanCatalog: job.entity_name === 'MenuPlan'

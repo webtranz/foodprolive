@@ -255,6 +255,32 @@ async function resolveMenuPlanRecipeReferences(menuPlan = {}, context = {}) {
     error.status = 400;
     throw error;
   }
+  if (Array.isArray(menuPlan.menu_plan_lines)) {
+    const resolvedMealsByLine = new Map();
+    const resolvedMealsByCode = new Map();
+    const resolvedMealsByName = new Map();
+    resolved.meals.forEach((meal, index) => {
+      if (meal.line_number) resolvedMealsByLine.set(String(meal.line_number), meal);
+      if (meal.recipe_code) resolvedMealsByCode.set(normalizeMenuRecipeLookupValue(meal.recipe_code), meal);
+      if (meal.recipe_name) resolvedMealsByName.set(normalizeMenuRecipeLookupValue(meal.recipe_name), meal);
+      resolvedMealsByLine.set(String(index + 1), meal);
+    });
+    resolved.menu_plan_lines = menuPlan.menu_plan_lines.map((line = {}, index) => {
+      if (String(line.line_type || 'recipe').toLowerCase() !== 'recipe') return line;
+      const matched = resolvedMealsByLine.get(String(line.line_number || index + 1))
+        || resolvedMealsByCode.get(normalizeMenuRecipeLookupValue(line.recipe_code))
+        || resolvedMealsByName.get(normalizeMenuRecipeLookupValue(line.recipe_name));
+      return matched
+        ? {
+            ...line,
+            recipe_id: line.recipe_id || matched.recipe_id,
+            recipe_name: line.recipe_name || matched.recipe_name,
+            recipe_code: line.recipe_code || matched.recipe_code,
+            recipe_link_status: matched.recipe_link_status
+          }
+        : line;
+    });
+  }
   return resolved;
 }
 

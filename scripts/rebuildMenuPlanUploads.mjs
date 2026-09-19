@@ -40,6 +40,34 @@ recipes.forEach((recipe) => {
   });
 });
 
+const uploadHeaders = [
+  'site_id',
+  'site_name',
+  'plan_date',
+  'meal_type',
+  'menu_type',
+  'menu_category',
+  'status',
+  'line_number',
+  'line_type',
+  'recipe_id',
+  'recipe_code',
+  'recipe_name',
+  'ingredient_id',
+  'ingredient_name',
+  'item_name',
+  'expected_servings',
+  'planned_weight_kg',
+  'planned_weight_grams',
+  'planned_unit',
+  'estimated_cost',
+  'event_name',
+  'event_date',
+  'expected_participants',
+  'budget_amount',
+  'notes'
+];
+
 const menuFiles = fs.readdirSync(directory)
   .filter((fileName) => /^MENU-PLAN-KBR-384-.*\.csv$/i.test(fileName));
 const summary = [];
@@ -49,12 +77,35 @@ for (const fileName of menuFiles) {
   const lines = source.split(/\r?\n/).filter(Boolean);
   const headers = parseCsvLine(lines.shift());
   const mealsIndex = headers.indexOf('meals');
+  const headerIndex = (name) => headers.indexOf(name);
   const unresolved = [];
   let resolved = 0;
-  const outputRows = lines.map((line, index) => {
+  const outputRows = [];
+  lines.forEach((line, index) => {
     const values = parseCsvLine(line);
+    const read = (name) => {
+      const position = headerIndex(name);
+      return position >= 0 ? values[position] || '' : '';
+    };
+    const base = {
+      site_id: read('site_id'),
+      site_name: read('site_name'),
+      plan_date: read('plan_date'),
+      menu_type: read('menu_type') || read('cuisine_type') || 'general',
+      menu_category: read('menu_category') || 'senior',
+      status: read('status') || 'draft',
+      event_name: read('event_name'),
+      event_date: read('event_date'),
+      expected_participants: read('expected_participants'),
+      budget_amount: read('budget_amount'),
+      notes: read('notes')
+    };
+    if (mealsIndex < 0) {
+      outputRows.push(Object.fromEntries(uploadHeaders.map((header) => [header, read(header)])));
+      return;
+    }
     const meals = JSON.parse(values[mealsIndex]);
-    meals.forEach((meal) => {
+    meals.forEach((meal, mealIndex) => {
       const recipe = [meal.recipe_id, meal.recipe_code, meal.recipe_name]
         .map((reference) => recipeByReference.get(normalize(reference)))
         .find(Boolean);
@@ -66,9 +117,25 @@ for (const fileName of menuFiles) {
       meal.recipe_code = recipe.recipe_code;
       meal.recipe_name = recipe.name;
       resolved += 1;
+      outputRows.push({
+        ...base,
+        meal_type: meal.meal_type || read('meal_type'),
+        menu_category: meal.menu_category || base.menu_category,
+        line_number: meal.line_number || mealIndex + 1,
+        line_type: 'recipe',
+        recipe_id: recipe.recipe_code,
+        recipe_code: recipe.recipe_code,
+        recipe_name: recipe.name,
+        ingredient_id: '',
+        ingredient_name: '',
+        item_name: recipe.name,
+        expected_servings: meal.expected_servings || '',
+        planned_weight_kg: '',
+        planned_weight_grams: '',
+        planned_unit: '',
+        estimated_cost: meal.total_cost || ''
+      });
     });
-    values[mealsIndex] = JSON.stringify(meals);
-    return values.map(csvCell).join(',');
   });
 
   if (unresolved.length) {
@@ -76,7 +143,11 @@ for (const fileName of menuFiles) {
   }
 
   const outputName = fileName.replace(/^MENU-PLAN-/, 'DIRECT-UPLOAD-MENU-PLAN-');
-  fs.writeFileSync(path.join(directory, outputName), `${headers.map(csvCell).join(',')}\r\n${outputRows.join('\r\n')}\r\n`, 'utf8');
+  fs.writeFileSync(
+    path.join(directory, outputName),
+    `${uploadHeaders.map(csvCell).join(',')}\r\n${outputRows.map((row) => uploadHeaders.map((header) => csvCell(row[header])).join(',')).join('\r\n')}\r\n`,
+    'utf8'
+  );
   summary.push({ fileName: outputName, rows: outputRows.length, recipes: resolved });
 }
 

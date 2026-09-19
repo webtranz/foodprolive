@@ -9,16 +9,27 @@ const SITE_ID = 'KBR-384';
 const SITE_NAME = 'KBR';
 
 const headers = [
-  'name',
   'recipe_code',
+  'name',
   'description',
-  'recipe_type',
   'cuisine_type',
-  'category',
+  'menu_category',
   'servings',
   'portion_size_grams',
-  'ingredients',
-  'sub_recipes',
+  'batch_yield',
+  'costing_method',
+  'line_number',
+  'ingredient_id',
+  'item_code',
+  'ingredient_code',
+  'sku',
+  'ingredient_name',
+  'line_quantity',
+  'line_unit',
+  'line_yield_percent',
+  'line_raw_weight_grams',
+  'line_yielded_weight_grams',
+  'line_cost',
   'instructions',
   'prep_time_minutes',
   'cook_time_minutes',
@@ -632,17 +643,16 @@ for (const [recipeIndex, file] of files.entries()) {
     }
   }
 
-  recipeRows.push({
+  const recipeBase = {
     name: `${title} Filipino KBR-384 1 Serving`,
     recipe_code: recipeCode(title, recipeIndex),
     description: `${title} converted from 10-person Filipino source recipe to 1 serving.`,
-    recipe_type: 'Filipino',
-    cuisine_type: 'Filipino',
-    category: categoryForTitle(title),
+    cuisine_type: 'philippines',
+    menu_category: categoryForTitle(title),
     servings: 1,
     portion_size_grams: estimateServingSizeGrams(ingredients),
-    ingredients: JSON.stringify(ingredients),
-    sub_recipes: '[]',
+    batch_yield: 1,
+    costing_method: 'average_cost',
     instructions: candidateLines.map(removePorkText).join(' | '),
     prep_time_minutes: '',
     cook_time_minutes: '',
@@ -652,7 +662,42 @@ for (const [recipeIndex, file] of files.entries()) {
     site_names: JSON.stringify([SITE_NAME]),
     image_url: '',
     is_active: 'true'
-  });
+  };
+  if (ingredients.length === 0) {
+    recipeRows.push({
+      ...recipeBase,
+      line_number: '',
+      ingredient_id: '',
+      item_code: '',
+      ingredient_code: '',
+      sku: '',
+      ingredient_name: '',
+      line_quantity: '',
+      line_unit: '',
+      line_yield_percent: '',
+      line_raw_weight_grams: '',
+      line_yielded_weight_grams: '',
+      line_cost: ''
+    });
+  } else {
+    ingredients.forEach((ingredient, ingredientIndex) => {
+      recipeRows.push({
+        ...recipeBase,
+        line_number: ingredientIndex + 1,
+        ingredient_id: ingredient.ingredient_id || '',
+        item_code: ingredient.item_code || '',
+        ingredient_code: ingredient.item_code || '',
+        sku: ingredient.item_code || '',
+        ingredient_name: ingredient.ingredient_name || '',
+        line_quantity: ingredient.quantity || '',
+        line_unit: ingredient.unit || '',
+        line_yield_percent: 100,
+        line_raw_weight_grams: '',
+        line_yielded_weight_grams: '',
+        line_cost: ''
+      });
+    });
+  }
 }
 
 const missingIngredientRows = [...new Map(missingRows.map((row) => [row.item_code, row])).values()].map((row) => ({

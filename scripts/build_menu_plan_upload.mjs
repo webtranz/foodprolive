@@ -444,11 +444,12 @@ function buildPlanRows(entries) {
 
   return [...grouped.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([, meals]) => {
+    .flatMap(([, meals]) => {
       const planDate = meals[0]?.plan_date || '';
       const cuisineType = meals[0]?.cuisine_type || 'general';
       const menuCategory = meals[0]?.menu_category || 'senior';
       const sourceCategories = [...new Set(meals.map((meal) => meal.source_menu_category).filter(Boolean))];
+      const notes = `Generated ${cuisineType} ${menuCategory} menu for ${SITE_ID}${sourceCategories.length && !sourceCategories.includes(menuCategory) ? ` from ${sourceCategories.join('/')} source menu` : ''}. Expected servings defaulted to 1 per scheduled recipe because source workbook does not include headcounts.`;
       const deduped = new Map();
       meals.forEach((meal) => {
         const key = `${meal.meal_type}|${meal.recipe_code}|${meal.menu_category}`;
@@ -477,25 +478,38 @@ function buildPlanRows(entries) {
           || left.recipe_name.localeCompare(right.recipe_name)
         ));
 
-      return {
+      return menuMeals.map((meal, index) => ({
         site_id: SITE_ID,
         site_name: SITE_NAME,
         plan_date: planDate,
-        cuisine_type: cuisineType,
-        menu_category: menuCategory,
+        meal_type: meal.meal_type,
+        menu_type: cuisineType,
+        menu_category: meal.menu_category || menuCategory,
         status: 'draft',
+        line_number: index + 1,
+        line_type: 'recipe',
+        recipe_id: meal.recipe_id,
+        recipe_code: meal.recipe_code,
+        recipe_name: meal.recipe_name,
+        ingredient_id: '',
+        ingredient_name: '',
+        item_name: meal.recipe_name,
+        expected_servings: meal.expected_servings,
+        planned_weight_kg: '',
+        planned_weight_grams: '',
+        planned_unit: '',
+        estimated_cost: '',
         event_name: '',
         event_date: '',
         expected_participants: '',
         budget_amount: '',
-        meals: JSON.stringify(menuMeals),
-        notes: `Generated ${cuisineType} ${menuCategory} menu for ${SITE_ID}${sourceCategories.length && !sourceCategories.includes(menuCategory) ? ` from ${sourceCategories.join('/')} source menu` : ''}. Expected servings defaulted to 1 per scheduled recipe because source workbook does not include headcounts.`
-      };
+        notes
+      }));
     });
 }
 
 function rowsFor(rows, cuisineType, menuCategory) {
-  return rows.filter((row) => row.cuisine_type === cuisineType && row.menu_category === menuCategory);
+  return rows.filter((row) => row.menu_type === cuisineType && row.menu_category === menuCategory);
 }
 
 function outputName(cuisineType, menuCategory) {
@@ -511,7 +525,33 @@ function writeCsv(filePath, headers, rows) {
 }
 
 function validateOutput(rows) {
-  const headers = ['site_id', 'site_name', 'plan_date', 'cuisine_type', 'menu_category', 'status', 'event_name', 'event_date', 'expected_participants', 'budget_amount', 'meals', 'notes'];
+  const headers = [
+    'site_id',
+    'site_name',
+    'plan_date',
+    'meal_type',
+    'menu_type',
+    'menu_category',
+    'status',
+    'line_number',
+    'line_type',
+    'recipe_id',
+    'recipe_code',
+    'recipe_name',
+    'ingredient_id',
+    'ingredient_name',
+    'item_name',
+    'expected_servings',
+    'planned_weight_kg',
+    'planned_weight_grams',
+    'planned_unit',
+    'estimated_cost',
+    'event_name',
+    'event_date',
+    'expected_participants',
+    'budget_amount',
+    'notes'
+  ];
   const headerErrors = validateCsvHeaders('menu-plans', headers);
   const rowErrors = [];
   rows.forEach((row, index) => {
@@ -550,7 +590,33 @@ const philippines = extractMenuEntries({
 const entries = [...general.entries, ...philippines.entries];
 const qc = [...general.qc, ...philippines.qc];
 const rows = buildPlanRows(entries);
-const uploadHeaders = ['site_id', 'site_name', 'plan_date', 'cuisine_type', 'menu_category', 'status', 'event_name', 'event_date', 'expected_participants', 'budget_amount', 'meals', 'notes'];
+const uploadHeaders = [
+  'site_id',
+  'site_name',
+  'plan_date',
+  'meal_type',
+  'menu_type',
+  'menu_category',
+  'status',
+  'line_number',
+  'line_type',
+  'recipe_id',
+  'recipe_code',
+  'recipe_name',
+  'ingredient_id',
+  'ingredient_name',
+  'item_name',
+  'expected_servings',
+  'planned_weight_kg',
+  'planned_weight_grams',
+  'planned_unit',
+  'estimated_cost',
+  'event_name',
+  'event_date',
+  'expected_participants',
+  'budget_amount',
+  'notes'
+];
 writeCsv(OUTPUT_CSV, uploadHeaders, rows);
 writeCsv(QC_CSV, ['status', 'sheet', 'cuisine_type', 'menu_category', 'source_menu_category', 'row', 'day', 'plan_date', 'meal_type', 'menu_item', 'mapped_recipe_code', 'mapped_recipe_name', 'reason'], qc);
 

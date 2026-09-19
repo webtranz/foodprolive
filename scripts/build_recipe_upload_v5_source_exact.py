@@ -345,7 +345,7 @@ def main():
     with INPUT_CSV.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         rows = list(reader)
-        headers = list(reader.fieldnames or [])
+        headers = list(conv.RECIPE_HEADERS)
 
     output_rows = []
     source_audit_rows = []
@@ -457,17 +457,49 @@ def main():
                     "upload_unit": scaled_line.get("unit", ""),
                 })
 
-        clean = dict(row)
-        clean["servings"] = "1"
-        clean["ingredients"] = json.dumps(upload_ingredient_payloads(scaled), ensure_ascii=False)
-        clean["site_scope"] = "specific"
-        clean["site_ids"] = json.dumps(["KBR-384"])
-        clean["site_names"] = json.dumps(["KBR"])
+        upload_payloads = upload_ingredient_payloads(scaled)
+        clean = {header: "" for header in headers}
+        clean.update({
+            "recipe_code": row.get("recipe_code", ""),
+            "name": row.get("name", ""),
+            "description": row.get("description", ""),
+            "cuisine_type": row.get("cuisine_type", ""),
+            "menu_category": row.get("menu_category") or row.get("category", ""),
+            "servings": "1",
+            "portion_size_grams": row.get("portion_size_grams", ""),
+            "batch_yield": row.get("batch_yield") or "1",
+            "costing_method": row.get("costing_method") or "average_cost",
+            "allergens": row.get("allergens", "[]"),
+            "site_scope": "specific",
+            "site_ids": json.dumps(["KBR-384"]),
+            "site_names": json.dumps(["KBR"]),
+            "image_url": row.get("image_url", ""),
+            "is_active": row.get("is_active", "true"),
+        })
         if source["instructions"]:
             clean["instructions"] = source["instructions"]
         clean["prep_time_minutes"] = source["prep_time_minutes"]
         clean["cook_time_minutes"] = source["cook_time_minutes"]
-        output_rows.append(clean)
+        if not upload_payloads:
+            output_rows.append(clean)
+        else:
+            for line_number, line in enumerate(upload_payloads, start=1):
+                item_code = line.get("item_code", "")
+                output_rows.append({
+                    **clean,
+                    "line_number": line_number,
+                    "ingredient_id": line.get("ingredient_id", ""),
+                    "item_code": item_code,
+                    "ingredient_code": line.get("ingredient_code", item_code),
+                    "sku": line.get("sku", item_code),
+                    "ingredient_name": line.get("ingredient_name", ""),
+                    "line_quantity": line.get("quantity", ""),
+                    "line_unit": line.get("unit", ""),
+                    "line_yield_percent": line.get("yield_percent", 100),
+                    "line_raw_weight_grams": line.get("raw_weight_grams", ""),
+                    "line_yielded_weight_grams": line.get("yielded_weight_grams", ""),
+                    "line_cost": line.get("cost", ""),
+                })
 
         qc_rows.append({
             "recipe_name": row["name"],
@@ -532,7 +564,7 @@ def main():
         writer.writerows(qc_rows)
 
     print(json.dumps({
-        "recipes": len(output_rows),
+        "recipe_upload_lines": len(output_rows),
         "source_ingredient_lines": len(source_audit_rows),
         "missing_master_ingredients": len(missing_rows),
         "match_counts": dict(match_counts),

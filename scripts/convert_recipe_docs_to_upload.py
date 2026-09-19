@@ -23,14 +23,27 @@ INGREDIENT_SOURCES = [
 ]
 
 RECIPE_HEADERS = [
-    "name",
     "recipe_code",
+    "name",
     "description",
     "cuisine_type",
-    "category",
+    "menu_category",
     "servings",
-    "ingredients",
-    "sub_recipes",
+    "portion_size_grams",
+    "batch_yield",
+    "costing_method",
+    "line_number",
+    "ingredient_id",
+    "item_code",
+    "ingredient_code",
+    "sku",
+    "ingredient_name",
+    "line_quantity",
+    "line_unit",
+    "line_yield_percent",
+    "line_raw_weight_grams",
+    "line_yielded_weight_grams",
+    "line_cost",
     "instructions",
     "prep_time_minutes",
     "cook_time_minutes",
@@ -959,15 +972,17 @@ def write_outputs():
 
         description = paragraphs[0] if paragraphs else name
         description = re.sub(r"\s+", " ", description).strip()
-        rows.append({
+        recipe_code = build_recipe_code(index, path)
+        base_row = {
+            "recipe_code": recipe_code,
             "name": name,
-            "recipe_code": build_recipe_code(index, path),
             "description": description[:500],
             "cuisine_type": "",
-            "category": category,
+            "menu_category": category,
             "servings": servings,
-            "ingredients": json.dumps(matched, ensure_ascii=False),
-            "sub_recipes": "[]",
+            "portion_size_grams": "",
+            "batch_yield": 1,
+            "costing_method": "average_cost",
             "instructions": extract_instructions(paragraphs),
             "prep_time_minutes": extract_time(paragraphs, "prep"),
             "cook_time_minutes": extract_time(paragraphs, "cook"),
@@ -977,7 +992,41 @@ def write_outputs():
             "site_names": json.dumps(["KBR"]),
             "image_url": "",
             "is_active": "true",
-        })
+        }
+        if not matched:
+            rows.append({
+                **base_row,
+                "line_number": "",
+                "ingredient_id": "",
+                "item_code": "",
+                "ingredient_code": "",
+                "sku": "",
+                "ingredient_name": "",
+                "line_quantity": "",
+                "line_unit": "",
+                "line_yield_percent": "",
+                "line_raw_weight_grams": "",
+                "line_yielded_weight_grams": "",
+                "line_cost": "",
+            })
+        else:
+            for line_number, line in enumerate(matched, start=1):
+                item_code = line.get("item_code", "")
+                rows.append({
+                    **base_row,
+                    "line_number": line_number,
+                    "ingredient_id": line.get("ingredient_id", ""),
+                    "item_code": item_code,
+                    "ingredient_code": line.get("ingredient_code", item_code),
+                    "sku": line.get("sku", item_code),
+                    "ingredient_name": line.get("ingredient_name", ""),
+                    "line_quantity": line.get("quantity", ""),
+                    "line_unit": line.get("unit", ""),
+                    "line_yield_percent": line.get("yield_percent", 100),
+                    "line_raw_weight_grams": line.get("raw_weight_grams", ""),
+                    "line_yielded_weight_grams": line.get("yielded_weight_grams", ""),
+                    "line_cost": line.get("cost", ""),
+                })
 
     recipe_csv = OUT_DIR / "recipes-direct-upload.csv"
     with recipe_csv.open("w", encoding="utf-8-sig", newline="") as handle:

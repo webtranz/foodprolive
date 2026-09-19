@@ -32,7 +32,38 @@ export const utilityModules = Object.freeze({
     label: 'Recipes',
     entity: 'Recipe',
     required: ['name'],
-    headers: ['name', 'recipe_code', 'description', 'recipe_type', 'cuisine_type', 'category', 'servings', 'portion_size_grams', 'ingredients', 'sub_recipes', 'instructions', 'prep_time_minutes', 'cook_time_minutes', 'allergens', 'site_scope', 'site_ids', 'site_names', 'image_url', 'is_active']
+    headers: [
+      'recipe_code',
+      'name',
+      'description',
+      'cuisine_type',
+      'menu_category',
+      'servings',
+      'portion_size_grams',
+      'batch_yield',
+      'costing_method',
+      'line_number',
+      'ingredient_id',
+      'item_code',
+      'ingredient_code',
+      'sku',
+      'ingredient_name',
+      'line_quantity',
+      'line_unit',
+      'line_yield_percent',
+      'line_raw_weight_grams',
+      'line_yielded_weight_grams',
+      'line_cost',
+      'instructions',
+      'prep_time_minutes',
+      'cook_time_minutes',
+      'allergens',
+      'site_scope',
+      'site_ids',
+      'site_names',
+      'image_url',
+      'is_active'
+    ]
   },
   inventory: {
     label: 'Inventory',
@@ -60,13 +91,66 @@ export const utilityModules = Object.freeze({
     label: 'Menu Plans',
     entity: 'MenuPlan',
     required: ['plan_date'],
-    headers: [...commonSiteFields, 'plan_date', 'cuisine_type', 'menu_category', 'status', 'event_name', 'event_date', 'expected_participants', 'budget_amount', 'meals', 'notes']
+    headers: [
+      ...commonSiteFields,
+      'plan_date',
+      'meal_type',
+      'menu_type',
+      'menu_category',
+      'status',
+      'line_number',
+      'line_type',
+      'recipe_id',
+      'recipe_code',
+      'recipe_name',
+      'ingredient_id',
+      'ingredient_name',
+      'item_name',
+      'expected_servings',
+      'planned_weight_kg',
+      'planned_weight_grams',
+      'planned_unit',
+      'estimated_cost',
+      'event_name',
+      'event_date',
+      'expected_participants',
+      'budget_amount',
+      'notes'
+    ]
   },
   production: {
     label: 'Production',
     entity: 'Production',
     required: ['production_date', 'menu_type', 'menu_category'],
-    headers: [...commonSiteFields, 'fulfillment_store_id', 'fulfillment_store_name', 'production_date', 'recipe_id', 'recipe_name', 'meal_type', 'menu_type', 'menu_category', 'target_servings', 'actual_servings', 'status', 'estimated_cost', 'actual_cost', 'ingredients_used', 'notes']
+    headers: [
+      ...commonSiteFields,
+      'fulfillment_store_id',
+      'fulfillment_store_name',
+      'production_date',
+      'meal_type',
+      'menu_type',
+      'menu_category',
+      'status',
+      'issue_group_key',
+      'menu_plan_id',
+      'line_number',
+      'menu_plan_line_id',
+      'recipe_id',
+      'recipe_code',
+      'recipe_name',
+      'ingredient_id',
+      'ingredient_name',
+      'item_name',
+      'requested_servings',
+      'requested_weight_kg',
+      'requested_weight_grams',
+      'produced_servings',
+      'produced_weight_kg',
+      'produced_weight_grams',
+      'estimated_cost',
+      'actual_cost',
+      'notes'
+    ]
   },
   'material-requests': {
     label: 'Material Requests',
@@ -102,7 +186,7 @@ export const utilityModules = Object.freeze({
 
 const JSON_FIELDS = new Set([
   'allergens', 'ingredients', 'sub_recipes', 'site_ids', 'site_names', 'meals',
-  'ingredients_used', 'items', 'categories', 'approval_history'
+  'ingredients_used', 'items', 'categories', 'approval_history', 'menu_plan_lines', 'manifest_lines'
 ]);
 const BOOLEAN_FIELDS = new Set(['is_active', 'preventable', 'high_value']);
 const NUMBER_FIELDS = new Set([
@@ -110,17 +194,35 @@ const NUMBER_FIELDS = new Set([
   'package_inner_count', 'package_size_quantity', 'calories_per_100g', 'protein_per_100g',
   'carbs_per_100g', 'fat_per_100g', 'fiber_per_100g', 'sodium_per_100g', 'sugar_per_100g',
   'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit',
-  'cooked_weight_per_unit', 'servings', 'portion_size_grams', 'prep_time_minutes', 'cook_time_minutes',
+  'cooked_weight_per_unit', 'servings', 'portion_size_grams', 'batch_yield',
+  'prep_time_minutes', 'cook_time_minutes',
   'quantity', 'unit_cost', 'average_unit_cost', 'reorder_level',
   'min_stock_level', 'max_stock_level', 'expected_participants',
   'budget_amount', 'target_servings', 'actual_servings', 'estimated_cost',
-  'actual_cost', 'score', 'temperature', 'source_amount', 'source_quantity'
+  'actual_cost', 'score', 'temperature', 'source_amount', 'source_quantity',
+  'line_number', 'line_quantity', 'line_yield_percent', 'line_raw_weight_grams',
+  'line_yielded_weight_grams', 'line_cost', 'expected_servings',
+  'planned_servings', 'planned_weight_kg', 'planned_weight_grams',
+  'requested_servings', 'requested_weight_kg', 'requested_weight_grams',
+  'produced_servings', 'produced_weight_kg', 'produced_weight_grams'
 ]);
 
 const HEADER_ALIASES = Object.freeze({
   recipes: {
     type: 'recipe_type',
-    cuisine: 'cuisine_type'
+    recipe_type: 'cuisine_type',
+    cuisine: 'cuisine_type',
+    category: 'menu_category',
+    quantity: 'line_quantity',
+    ingredient_quantity: 'line_quantity',
+    recipe_line_quantity: 'line_quantity',
+    unit: 'line_unit',
+    ingredient_unit: 'line_unit',
+    recipe_line_unit: 'line_unit',
+    yield_percent: 'line_yield_percent',
+    raw_weight_grams: 'line_raw_weight_grams',
+    yielded_weight_grams: 'line_yielded_weight_grams',
+    cost: 'line_cost'
   },
   ingredients: {
     ingredient_name: 'name',
@@ -164,7 +266,24 @@ const HEADER_ALIASES = Object.freeze({
   production: {
     cuisine_type: 'menu_type',
     menu_cuisine: 'menu_type',
-    cuisine: 'menu_type'
+    cuisine: 'menu_type',
+    target_servings: 'requested_servings',
+    actual_servings: 'produced_servings',
+    recipe_name: 'recipe_name',
+    production_size_kg: 'requested_weight_kg',
+    production_size_g: 'requested_weight_grams',
+    finished_weight_kg: 'produced_weight_kg',
+    finished_weight_g: 'produced_weight_grams'
+  },
+  'menu-plans': {
+    cuisine_type: 'menu_type',
+    cuisine: 'menu_type',
+    meal_period: 'meal_type',
+    servings: 'expected_servings',
+    planned_servings: 'expected_servings',
+    recipe: 'recipe_name',
+    weight_kg: 'planned_weight_kg',
+    weight_g: 'planned_weight_grams'
   },
   inventory: {
     item: 'item_code',
@@ -304,12 +423,219 @@ function normalizeIngredientUploadUnit(value) {
   return standardUnits.has(normalized) || normalized !== trimmed.toLowerCase() ? normalized : trimmed;
 }
 
+function hasText(value) {
+  return String(value ?? '').trim() !== '';
+}
+
+function hasNumber(value) {
+  return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+}
+
+function firstValue(...values) {
+  return values.find((value) => value !== null && value !== undefined && value !== '');
+}
+
+function kgToGrams(value) {
+  return hasNumber(value) ? Number((Number(value) * 1000).toFixed(6)) : undefined;
+}
+
+function cleanUndefinedValues(record = {}) {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined)
+  );
+}
+
+const RECIPE_LINE_FIELDS = new Set([
+  'line_number',
+  'ingredient_id',
+  'item_code',
+  'ingredient_code',
+  'sku',
+  'ingredient_name',
+  'line_quantity',
+  'line_unit',
+  'line_yield_percent',
+  'line_raw_weight_grams',
+  'line_yielded_weight_grams',
+  'line_cost'
+]);
+
+const MENU_PLAN_LINE_FIELDS = new Set([
+  'line_number',
+  'line_type',
+  'recipe_id',
+  'recipe_code',
+  'recipe_name',
+  'ingredient_id',
+  'ingredient_name',
+  'item_name',
+  'expected_servings',
+  'planned_servings',
+  'planned_weight_kg',
+  'planned_weight_grams',
+  'planned_unit',
+  'estimated_cost'
+]);
+
+const PRODUCTION_LINE_FIELDS = new Set([
+  'line_number',
+  'menu_plan_line_id',
+  'recipe_id',
+  'recipe_code',
+  'recipe_name',
+  'ingredient_id',
+  'ingredient_name',
+  'item_name',
+  'requested_servings',
+  'requested_weight_kg',
+  'requested_weight_grams',
+  'produced_servings',
+  'produced_weight_kg',
+  'produced_weight_grams',
+  'estimated_cost',
+  'actual_cost'
+]);
+
+function stripFields(payload = {}, fields = new Set()) {
+  fields.forEach((field) => {
+    delete payload[field];
+  });
+}
+
+function normalizeLineNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.trunc(number) : fallback;
+}
+
+function recipeLineFromUploadPayload(payload = {}) {
+  const hasLine = [
+    payload.ingredient_id,
+    payload.item_code,
+    payload.ingredient_code,
+    payload.sku,
+    payload.ingredient_name,
+    payload.line_quantity,
+    payload.line_unit
+  ].some(hasText);
+  if (!hasLine) return null;
+  return cleanUndefinedValues({
+    line_number: normalizeLineNumber(payload.line_number, undefined),
+    ingredient_id: payload.ingredient_id,
+    item_code: payload.item_code,
+    ingredient_code: payload.ingredient_code,
+    sku: payload.sku,
+    ingredient_name: payload.ingredient_name,
+    name: payload.ingredient_name,
+    quantity: payload.line_quantity,
+    unit: payload.line_unit,
+    yield_percent: payload.line_yield_percent,
+    raw_weight_grams: payload.line_raw_weight_grams,
+    yielded_weight_grams: payload.line_yielded_weight_grams,
+    cost: payload.line_cost
+  });
+}
+
+function menuPlanLineFromUploadPayload(payload = {}) {
+  const hasLine = [
+    payload.recipe_id,
+    payload.recipe_code,
+    payload.recipe_name,
+    payload.ingredient_id,
+    payload.ingredient_name,
+    payload.item_name,
+    payload.expected_servings,
+    payload.planned_weight_kg,
+    payload.planned_weight_grams
+  ].some(hasText);
+  if (!hasLine) return null;
+  const plannedWeightGrams = firstValue(
+    payload.planned_weight_grams,
+    kgToGrams(payload.planned_weight_kg)
+  );
+  const lineType = String(payload.line_type || (payload.ingredient_id ? 'ingredient' : 'recipe')).trim().toLowerCase();
+  const itemName = firstValue(
+    payload.item_name,
+    payload.recipe_name,
+    payload.ingredient_name
+  );
+  return cleanUndefinedValues({
+    line_number: normalizeLineNumber(payload.line_number, undefined),
+    line_type: ['recipe', 'ingredient', 'manual'].includes(lineType) ? lineType : 'recipe',
+    recipe_id: payload.recipe_id,
+    recipe_code: payload.recipe_code,
+    recipe_name: payload.recipe_name,
+    ingredient_id: payload.ingredient_id,
+    ingredient_name: payload.ingredient_name,
+    item_name: itemName,
+    meal_type: payload.meal_type,
+    expected_servings: payload.expected_servings,
+    planned_servings: firstValue(payload.planned_servings, payload.expected_servings),
+    planned_weight_grams: plannedWeightGrams,
+    planned_unit: payload.planned_unit,
+    estimated_cost: payload.estimated_cost
+  });
+}
+
+function productionManifestLineFromUploadPayload(payload = {}) {
+  const hasLine = [
+    payload.menu_plan_line_id,
+    payload.recipe_id,
+    payload.recipe_code,
+    payload.recipe_name,
+    payload.ingredient_id,
+    payload.ingredient_name,
+    payload.item_name,
+    payload.requested_servings,
+    payload.requested_weight_kg,
+    payload.requested_weight_grams,
+    payload.produced_servings,
+    payload.produced_weight_kg,
+    payload.produced_weight_grams
+  ].some(hasText);
+  if (!hasLine) return null;
+  const requestedWeightGrams = firstValue(
+    payload.requested_weight_grams,
+    kgToGrams(payload.requested_weight_kg)
+  );
+  const producedWeightGrams = firstValue(
+    payload.produced_weight_grams,
+    kgToGrams(payload.produced_weight_kg)
+  );
+  return cleanUndefinedValues({
+    line_number: normalizeLineNumber(payload.line_number, undefined),
+    menu_plan_line_id: payload.menu_plan_line_id,
+    recipe_id: payload.recipe_id,
+    recipe_code: payload.recipe_code,
+    recipe_name: payload.recipe_name,
+    ingredient_id: payload.ingredient_id,
+    ingredient_name: payload.ingredient_name,
+    item_name: firstValue(payload.item_name, payload.recipe_name, payload.ingredient_name),
+    requested_servings: payload.requested_servings,
+    requested_weight_grams: requestedWeightGrams,
+    produced_servings: payload.produced_servings,
+    produced_weight_grams: producedWeightGrams,
+    estimated_cost: payload.estimated_cost,
+    actual_cost: payload.actual_cost
+  });
+}
+
 function normalizeMappedPayload(moduleKey, payload) {
   if (moduleKey === 'recipes' && payload.recipe_type && !payload.cuisine_type) {
     payload.cuisine_type = payload.recipe_type;
   }
   if (moduleKey === 'recipes' && payload.recipe_type) {
     delete payload.recipe_type;
+  }
+  if (moduleKey === 'recipes') {
+    const line = recipeLineFromUploadPayload(payload);
+    stripFields(payload, RECIPE_LINE_FIELDS);
+    if (line) {
+      payload.ingredients = [
+        ...(Array.isArray(payload.ingredients) ? payload.ingredients : []),
+        line
+      ];
+    }
+    if (payload.menu_category && !payload.category) payload.category = payload.menu_category;
   }
   if (moduleKey === 'ingredients' && !payload.item_code) {
     payload.item_code = payload.ingredient_code || payload.sku || undefined;
@@ -332,10 +658,172 @@ function normalizeMappedPayload(moduleKey, payload) {
   if (moduleKey === 'inventory' && !payload.unit_cost && payload.unit_price) {
     payload.unit_cost = payload.unit_price;
   }
+  if (moduleKey === 'menu-plans') {
+    const line = menuPlanLineFromUploadPayload(payload);
+    stripFields(payload, MENU_PLAN_LINE_FIELDS);
+    if (payload.menu_type && !payload.cuisine_type) payload.cuisine_type = payload.menu_type;
+    if (line) {
+      payload.menu_plan_lines = [
+        ...(Array.isArray(payload.menu_plan_lines) ? payload.menu_plan_lines : []),
+        line
+      ];
+      if (line.line_type === 'recipe') {
+        payload.meals = [
+          ...(Array.isArray(payload.meals) ? payload.meals : []),
+          cleanUndefinedValues({
+            meal_type: payload.meal_type || line.meal_type,
+            recipe_id: line.recipe_id,
+            recipe_code: line.recipe_code,
+            recipe_name: line.recipe_name,
+            expected_servings: line.expected_servings,
+            total_cost: line.estimated_cost
+          })
+        ];
+      }
+    }
+  }
   if (moduleKey === 'production') {
+    const line = productionManifestLineFromUploadPayload(payload);
+    stripFields(payload, PRODUCTION_LINE_FIELDS);
+    if (line) {
+      payload.manifest_lines = [
+        ...(Array.isArray(payload.manifest_lines) ? payload.manifest_lines : []),
+        line
+      ];
+      if (!payload.recipe_id && line.recipe_id) payload.recipe_id = line.recipe_id;
+      if (!payload.recipe_name && line.recipe_name) payload.recipe_name = line.recipe_name;
+      if (!payload.target_servings && line.requested_servings) payload.target_servings = line.requested_servings;
+    }
     return normalizeProductionMenuScope(payload, { required: true });
   }
   return payload;
+}
+
+function textKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function mergeUploadBase(target, source) {
+  Object.entries(source || {}).forEach(([key, value]) => {
+    if ([
+      'ingredients',
+      'sub_recipes',
+      'meals',
+      'menu_plan_lines',
+      'manifest_lines'
+    ].includes(key)) return;
+    if (target[key] === undefined || target[key] === null || target[key] === '') {
+      target[key] = value;
+    }
+  });
+}
+
+function lineSort(left = {}, right = {}) {
+  const leftLine = Number(left.line_number || 0);
+  const rightLine = Number(right.line_number || 0);
+  if (leftLine && rightLine && leftLine !== rightLine) return leftLine - rightLine;
+  if (leftLine && !rightLine) return -1;
+  if (!leftLine && rightLine) return 1;
+  return 0;
+}
+
+function groupKeyForUploadPayload(moduleKey, payload = {}) {
+  if (moduleKey === 'recipes') {
+    return [
+      textKey(payload.recipe_code),
+      textKey(payload.name),
+      textKey(payload.site_scope),
+      Array.isArray(payload.site_ids) ? payload.site_ids.map(textKey).join('|') : textKey(payload.site_ids),
+      textKey(payload.cuisine_type),
+      textKey(payload.category || payload.menu_category)
+    ].join('::');
+  }
+  if (moduleKey === 'menu-plans') {
+    return [
+      textKey(payload.site_id || payload.site_name),
+      textKey(payload.plan_date),
+      textKey(payload.meal_type || 'all'),
+      textKey(payload.menu_type || payload.cuisine_type || 'general'),
+      textKey(payload.menu_category || 'senior')
+    ].join('::');
+  }
+  if (moduleKey === 'production') {
+    return [
+      textKey(payload.issue_group_key),
+      textKey(payload.site_id || payload.fulfillment_store_id || payload.site_name),
+      textKey(payload.production_date),
+      textKey(payload.meal_type || 'breakfast'),
+      textKey(payload.menu_type || payload.cuisine_type || 'general'),
+      textKey(payload.menu_category || 'senior'),
+      textKey(payload.menu_plan_id)
+    ].join('::');
+  }
+  return '';
+}
+
+export function groupBulkUploadRows(moduleKey, stagedRows = []) {
+  if (!['recipes', 'menu-plans', 'production'].includes(moduleKey)) {
+    return stagedRows;
+  }
+  const groups = new Map();
+  for (const staged of stagedRows) {
+    const payload = staged?.payload || {};
+    const key = groupKeyForUploadPayload(moduleKey, payload) || `row:${staged.rowNumber}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        rowNumber: staged.rowNumber,
+        rowNumbers: [],
+        sourceRowCount: 0,
+        payload: { ...payload }
+      });
+      if (moduleKey === 'recipes') {
+        groups.get(key).payload.ingredients = [];
+        groups.get(key).payload.sub_recipes = Array.isArray(payload.sub_recipes) ? payload.sub_recipes : [];
+      }
+      if (moduleKey === 'menu-plans') {
+        groups.get(key).payload.meals = [];
+        groups.get(key).payload.menu_plan_lines = [];
+      }
+      if (moduleKey === 'production') {
+        groups.get(key).payload.manifest_lines = [];
+      }
+    }
+    const group = groups.get(key);
+    group.rowNumbers.push(staged.rowNumber);
+    group.sourceRowCount += 1;
+    mergeUploadBase(group.payload, payload);
+    if (moduleKey === 'recipes') {
+      group.payload.ingredients.push(...(Array.isArray(payload.ingredients) ? payload.ingredients : []));
+      group.payload.sub_recipes.push(...(Array.isArray(payload.sub_recipes) ? payload.sub_recipes : []));
+    } else if (moduleKey === 'menu-plans') {
+      group.payload.meals.push(...(Array.isArray(payload.meals) ? payload.meals : []));
+      group.payload.menu_plan_lines.push(...(Array.isArray(payload.menu_plan_lines) ? payload.menu_plan_lines : []));
+    } else if (moduleKey === 'production') {
+      group.payload.manifest_lines.push(...(Array.isArray(payload.manifest_lines) ? payload.manifest_lines : []));
+    }
+  }
+  return [...groups.values()].map((group) => {
+    if (moduleKey === 'recipes') {
+      group.payload.ingredients = group.payload.ingredients
+        .map((line, index) => ({ ...line, line_number: normalizeLineNumber(line.line_number, index + 1) }))
+        .sort(lineSort);
+      group.payload.sub_recipes = group.payload.sub_recipes
+        .map((line, index) => ({ ...line, line_number: normalizeLineNumber(line.line_number, index + 1) }))
+        .sort(lineSort);
+    } else if (moduleKey === 'menu-plans') {
+      group.payload.meals = group.payload.meals
+        .map((line, index) => ({ ...line, line_number: normalizeLineNumber(line.line_number, index + 1) }))
+        .sort(lineSort);
+      group.payload.menu_plan_lines = group.payload.menu_plan_lines
+        .map((line, index) => ({ ...line, line_number: normalizeLineNumber(line.line_number, index + 1) }))
+        .sort(lineSort);
+    } else if (moduleKey === 'production') {
+      group.payload.manifest_lines = group.payload.manifest_lines
+        .map((line, index) => ({ ...line, line_number: normalizeLineNumber(line.line_number, index + 1) }))
+        .sort(lineSort);
+    }
+    return group;
+  });
 }
 
 export function mapCsvRow(moduleKey, headers, values) {

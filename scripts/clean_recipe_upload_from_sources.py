@@ -252,7 +252,7 @@ def main():
     source_cache = {}
     with INPUT_CSV.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
-        headers = list(rows[0].keys())
+        headers = list(conv.RECIPE_HEADERS)
 
     output_rows = []
     removals = []
@@ -359,13 +359,47 @@ def main():
         for index, scaled_line in enumerate(scaled):
             if len(source_audit_rows) >= len(scaled) - index:
                 source_audit_rows[-len(scaled) + index]["upload_quantity_for_1_serving"] = scaled_line.get("quantity", "")
-        clean = dict(row)
-        clean["servings"] = "1"
-        clean["ingredients"] = json.dumps(scaled, ensure_ascii=False)
-        clean["site_scope"] = "specific"
-        clean["site_ids"] = json.dumps(["KBR-384"])
-        clean["site_names"] = json.dumps(["KBR"])
-        output_rows.append(clean)
+        clean = {header: "" for header in headers}
+        clean.update({
+            "recipe_code": row.get("recipe_code", ""),
+            "name": row.get("name", ""),
+            "description": row.get("description", ""),
+            "cuisine_type": row.get("cuisine_type", ""),
+            "menu_category": row.get("menu_category") or row.get("category", ""),
+            "servings": "1",
+            "portion_size_grams": row.get("portion_size_grams", ""),
+            "batch_yield": row.get("batch_yield") or "1",
+            "costing_method": row.get("costing_method") or "average_cost",
+            "instructions": row.get("instructions", ""),
+            "prep_time_minutes": row.get("prep_time_minutes", ""),
+            "cook_time_minutes": row.get("cook_time_minutes", ""),
+            "allergens": row.get("allergens", "[]"),
+            "site_scope": "specific",
+            "site_ids": json.dumps(["KBR-384"]),
+            "site_names": json.dumps(["KBR"]),
+            "image_url": row.get("image_url", ""),
+            "is_active": row.get("is_active", "true"),
+        })
+        if not scaled:
+            output_rows.append(clean)
+        else:
+            for line_number, line in enumerate(scaled, start=1):
+                item_code = line.get("item_code", "")
+                output_rows.append({
+                    **clean,
+                    "line_number": line_number,
+                    "ingredient_id": line.get("ingredient_id", ""),
+                    "item_code": item_code,
+                    "ingredient_code": line.get("ingredient_code", item_code),
+                    "sku": line.get("sku", item_code),
+                    "ingredient_name": line.get("ingredient_name", ""),
+                    "line_quantity": line.get("quantity", ""),
+                    "line_unit": line.get("unit", ""),
+                    "line_yield_percent": line.get("yield_percent", 100),
+                    "line_raw_weight_grams": line.get("raw_weight_grams", ""),
+                    "line_yielded_weight_grams": line.get("yielded_weight_grams", ""),
+                    "line_cost": line.get("cost", ""),
+                })
 
         qc_rows.append({
             "recipe_name": row["name"],

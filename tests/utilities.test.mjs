@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   buildIngredientPayloadFromInventoryUpload,
   createTemplateCsv,
+  groupBulkUploadRows,
   listUtilityModules,
   mapCsvRow,
   parseCsvLine,
@@ -12,7 +13,29 @@ import {
 } from '../server/utilities.js';
 
 assert.deepEqual(parseCsvLine('"Shrimp, frozen",43,"dairy|seafood"'), ['Shrimp, frozen', '43', 'dairy|seafood']);
-assert.match(createTemplateCsv('recipes'), /^name,/);
+const templateHeaders = (moduleKey) => createTemplateCsv(moduleKey).trim().split(',');
+
+const recipeTemplateHeaders = templateHeaders('recipes');
+assert.equal(recipeTemplateHeaders[0], 'recipe_code');
+assert.equal(recipeTemplateHeaders.includes('ingredients'), false, 'recipe templates use relational ingredient line columns');
+assert.equal(recipeTemplateHeaders.includes('sub_recipes'), false, 'recipe templates do not expose nested sub_recipe JSON');
+assert.equal(recipeTemplateHeaders.includes('line_number'), true);
+assert.equal(recipeTemplateHeaders.includes('ingredient_id'), true);
+assert.equal(recipeTemplateHeaders.includes('line_quantity'), true);
+
+const menuPlanTemplateHeaders = templateHeaders('menu-plans');
+assert.equal(menuPlanTemplateHeaders.includes('meals'), false, 'menu plan templates use relational menu_plan line columns');
+assert.equal(menuPlanTemplateHeaders.includes('line_number'), true);
+assert.equal(menuPlanTemplateHeaders.includes('recipe_id'), true);
+assert.equal(menuPlanTemplateHeaders.includes('expected_servings'), true);
+assert.equal(menuPlanTemplateHeaders.includes('planned_weight_kg'), true);
+
+const productionTemplateHeaders = templateHeaders('production');
+assert.equal(productionTemplateHeaders.includes('ingredients_used'), false, 'production templates use relational manifest line columns');
+assert.equal(productionTemplateHeaders.includes('line_number'), true);
+assert.equal(productionTemplateHeaders.includes('menu_plan_line_id'), true);
+assert.equal(productionTemplateHeaders.includes('requested_weight_kg'), true);
+assert.equal(productionTemplateHeaders.includes('produced_weight_kg'), true);
 assert.match(createTemplateCsv('ingredients'), /^item_code,name,/, 'ingredient templates put Item Code before Item Name');
 assert.match(
   createTemplateCsv('inventory'),
@@ -187,6 +210,102 @@ assert.equal(recipe.name, 'Secure Recipe');
 assert.equal(recipe.servings, 4);
 assert.equal(recipe.image_url, 'https://cdn.example.com/recipes/secure.jpg');
 assert.deepEqual(recipe.allergens, ['dairy']);
+
+const relationalRecipeLine = mapCsvRow(
+  'recipes',
+  ['recipe_code', 'name', 'menu_category', 'line_number', 'ingredient_id', 'ingredient_name', 'line_quantity', 'line_unit', 'line_yield_percent', 'line_raw_weight_grams', 'line_cost'],
+  ['RCP-001', 'Boiled Eggs', 'junior', '2', 'ing-egg', 'Fresh Eggs', '12', 'EA', '100', '720', '14.5']
+);
+assert.equal(relationalRecipeLine.recipe_code, 'RCP-001');
+assert.equal(relationalRecipeLine.category, 'junior');
+assert.deepEqual(relationalRecipeLine.ingredients, [
+  {
+    line_number: 2,
+    ingredient_id: 'ing-egg',
+    ingredient_name: 'Fresh Eggs',
+    name: 'Fresh Eggs',
+    quantity: 12,
+    unit: 'EA',
+    yield_percent: 100,
+    raw_weight_grams: 720,
+    cost: 14.5
+  }
+]);
+
+const relationalMenuPlanLine = mapCsvRow(
+  'menu-plans',
+  ['site_id', 'plan_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'line_type', 'recipe_code', 'recipe_name', 'expected_servings', 'planned_weight_kg', 'estimated_cost'],
+  ['store-1', '2026-09-01', 'Breakfast', 'General', 'Junior', '1', 'recipe', 'RCP-001', 'Boiled Eggs', '280', '39.159', '121.43']
+);
+assert.equal(relationalMenuPlanLine.cuisine_type, 'general');
+assert.equal(relationalMenuPlanLine.menu_category, 'junior');
+assert.deepEqual(relationalMenuPlanLine.menu_plan_lines, [
+  {
+    line_number: 1,
+    line_type: 'recipe',
+    recipe_code: 'RCP-001',
+    recipe_name: 'Boiled Eggs',
+    item_name: 'Boiled Eggs',
+    meal_type: 'Breakfast',
+    expected_servings: 280,
+    planned_servings: 280,
+    planned_weight_grams: 39159,
+    estimated_cost: 121.43
+  }
+]);
+assert.deepEqual(relationalMenuPlanLine.meals, [
+  {
+    meal_type: 'Breakfast',
+    recipe_code: 'RCP-001',
+    recipe_name: 'Boiled Eggs',
+    expected_servings: 280,
+    total_cost: 121.43
+  }
+]);
+
+const relationalProductionLine = mapCsvRow(
+  'production',
+  ['site_id', 'production_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'menu_plan_line_id', 'recipe_code', 'recipe_name', 'requested_servings', 'requested_weight_kg', 'produced_weight_kg', 'estimated_cost'],
+  ['store-1', '2026-09-01', 'Breakfast', 'General', 'Junior', '1', 'mpl-1', 'RCP-001', 'Boiled Eggs', '280', '40', '39.159', '121.43']
+);
+assert.equal(relationalProductionLine.menu_type, 'general');
+assert.equal(relationalProductionLine.menu_category, 'junior');
+assert.deepEqual(relationalProductionLine.manifest_lines, [
+  {
+    line_number: 1,
+    menu_plan_line_id: 'mpl-1',
+    recipe_code: 'RCP-001',
+    recipe_name: 'Boiled Eggs',
+    item_name: 'Boiled Eggs',
+    requested_servings: 280,
+    requested_weight_grams: 40000,
+    produced_weight_grams: 39159,
+    estimated_cost: 121.43
+  }
+]);
+
+const groupedRecipeRows = groupBulkUploadRows('recipes', [
+  {
+    rowNumber: 2,
+    payload: mapCsvRow(
+      'recipes',
+      ['recipe_code', 'name', 'line_number', 'ingredient_name', 'line_quantity', 'line_unit'],
+      ['RCP-GROUP', 'Grouped Recipe', '2', 'Salt', '1', 'g']
+    )
+  },
+  {
+    rowNumber: 3,
+    payload: mapCsvRow(
+      'recipes',
+      ['recipe_code', 'name', 'line_number', 'ingredient_name', 'line_quantity', 'line_unit'],
+      ['RCP-GROUP', 'Grouped Recipe', '1', 'Water', '2', 'l']
+    )
+  }
+]);
+assert.equal(groupedRecipeRows.length, 1);
+assert.deepEqual(groupedRecipeRows[0].rowNumbers, [2, 3]);
+assert.equal(groupedRecipeRows[0].sourceRowCount, 2);
+assert.deepEqual(groupedRecipeRows[0].payload.ingredients.map((line) => line.ingredient_name), ['Water', 'Salt']);
 
 const encodedAllergenRecipe = mapCsvRow(
   'recipes',
