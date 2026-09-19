@@ -75,6 +75,23 @@ CREATE TABLE IF NOT EXISTS entity_records (
 CREATE INDEX IF NOT EXISTS idx_entity_records_entity_name ON entity_records(entity_name);
 CREATE INDEX IF NOT EXISTS idx_entity_records_entity_updated_at ON entity_records(entity_name, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS uploaded_files (
+  id TEXT PRIMARY KEY,
+  storage_key TEXT NOT NULL UNIQUE,
+  original_name TEXT,
+  content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  content BYTEA NOT NULL,
+  byte_size INTEGER NOT NULL DEFAULT 0,
+  uploaded_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_storage_key
+  ON uploaded_files (storage_key);
+
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_created_at
+  ON uploaded_files (created_at DESC);
+
 CREATE OR REPLACE FUNCTION notify_foodpro_entity_change()
 RETURNS TRIGGER AS $$
 DECLARE

@@ -118,6 +118,15 @@ function isBatchOverproductionWasteRecord(item = {}) {
     || item.waste_category === BATCH_OVERPRODUCTION_CATEGORY;
 }
 
+function isValidWasteRecord(item = {}) {
+  const status = String(item.status || item.approval_status || '').trim().toLowerCase();
+  return !['reversed', 'voided', 'cancelled', 'canceled'].includes(status);
+}
+
+function getWasteEvidenceUrl(item = {}) {
+  return String(item.evidence_image_url || item.image_url || '').trim();
+}
+
 function getWasteSourceLabel(item = {}) {
   if (isMealServiceLeftover(item)) return 'Meal Service Leftover';
   return titleCase(item.source_type || 'manual_entry');
@@ -641,6 +650,7 @@ export default function FoodWaste() {
 
   const filteredWaste = useMemo(() => (
     foodWaste.filter((item) => {
+      if (!isValidWasteRecord(item)) return false;
       if (!matchesDate(item.waste_date, filters.startDate, filters.endDate)) return false;
       if (filters.locationId !== 'all' && item.site_id !== filters.locationId) return false;
       if (filters.wasteCategory !== 'all' && item.waste_category !== filters.wasteCategory) return false;
@@ -651,7 +661,7 @@ export default function FoodWaste() {
     })
   ), [foodWaste, filters]);
   const analyticsWaste = useMemo(
-    () => filteredWaste.filter((item) => String(item.status || '').toLowerCase() !== 'reversed'),
+    () => filteredWaste,
     [filteredWaste]
   );
 
@@ -1073,7 +1083,7 @@ export default function FoodWaste() {
       if (wasteImageFile) {
         setWasteImageUploading(true);
         const uploadResult = await base44.integrations.Core.UploadWasteImage({ file: wasteImageFile });
-        evidenceImageUrl = uploadResult.public_file_url || uploadResult.file_url || '';
+        evidenceImageUrl = uploadResult.file_url || uploadResult.public_file_url || '';
         setWasteImageUploading(false);
       }
 
@@ -1867,7 +1877,9 @@ export default function FoodWaste() {
                   <TableRow>
                     <TableCell colSpan={14} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
                   </TableRow>
-                ) : filteredWaste.slice(0, 30).map((item) => (
+                ) : filteredWaste.slice(0, 30).map((item) => {
+                  const evidenceUrl = getWasteEvidenceUrl(item);
+                  return (
                   <TableRow key={item.id}>
                     <TableCell className="font-mono text-xs text-slate-600">
                       {getItemCodeFromRecords([
@@ -1894,8 +1906,8 @@ export default function FoodWaste() {
                     <TableCell>{formatWasteQuantity(item)}</TableCell>
                     <TableCell>{formatCurrency(getWasteCost(item, productionMap))}</TableCell>
                     <TableCell>
-                      {item.evidence_image_url || item.image_url ? (
-                        <a className="text-sm font-medium text-emerald-700 hover:underline" href={item.evidence_image_url || item.image_url} target="_blank" rel="noreferrer">
+                      {evidenceUrl ? (
+                        <a className="text-sm font-medium text-emerald-700 hover:underline" href={evidenceUrl} target="_blank" rel="noreferrer">
                           View
                         </a>
                       ) : isMealServiceLeftover(item) ? (
@@ -1968,7 +1980,8 @@ export default function FoodWaste() {
                       ) : null}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>

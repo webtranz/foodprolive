@@ -35,6 +35,7 @@ import {
   isActiveAdministratorAccount,
   isUserAuthenticationAllowed
 } from './userDeactivation.js';
+import { normalizeProductionDisplayTitle } from '../shared/productionLabels.js';
 
 const rootDir = path.resolve(process.cwd());
 const uploadsDir = path.join(rootDir, 'uploads');
@@ -206,7 +207,30 @@ function normalizeRecord(entity, payload, existing = null) {
 function hydrateDerivedFields(entity, record) {
   if (!record) return null;
   const derivedRecord = entity === 'Inventory' ? deriveInventoryRecord(record) : record;
-  return entity === 'RoleProfile' ? normalizeManagementRoleProfile(derivedRecord) : derivedRecord;
+  const normalizedRecord = entity === 'RoleProfile' ? normalizeManagementRoleProfile(derivedRecord) : derivedRecord;
+  if (![
+    'Production',
+    'ProductionConsumptionReport',
+    'ProducedItemBatch',
+    'MealServiceAttendance',
+    'MealServiceConsumption',
+    'FoodWaste',
+    'MaterialRequest'
+  ].includes(entity)) {
+    return normalizedRecord;
+  }
+  const fields = ['production_name', 'recipe_name', 'name', 'report_name', 'source_production_name', 'original_recipe_name'];
+  let nextRecord = normalizedRecord;
+  for (const field of fields) {
+    const currentValue = nextRecord?.[field];
+    if (typeof currentValue !== 'string' || !currentValue.trim()) continue;
+    const displayValue = normalizeProductionDisplayTitle(currentValue);
+    if (displayValue && displayValue !== currentValue) {
+      if (nextRecord === normalizedRecord) nextRecord = { ...normalizedRecord };
+      nextRecord[field] = displayValue;
+    }
+  }
+  return nextRecord;
 }
 
 const roleProfileCache = new Map();

@@ -274,6 +274,24 @@ app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(uploadsDir));
+app.get('/files/db/:id', async (request, response, next) => {
+  try {
+    const fileId = String(request.params.id || '').trim();
+    if (!fileId) return response.status(404).json({ message: 'File not found' });
+    const result = await pool.query(
+      'SELECT content, content_type, byte_size FROM uploaded_files WHERE id = $1 LIMIT 1',
+      [fileId]
+    );
+    if (!result.rowCount) return response.status(404).json({ message: 'File not found' });
+    const file = result.rows[0];
+    response.setHeader('Content-Type', file.content_type || 'application/octet-stream');
+    response.setHeader('Cache-Control', 'private, max-age=86400');
+    if (file.byte_size) response.setHeader('Content-Length', String(file.byte_size));
+    return response.send(file.content);
+  } catch (error) {
+    return next(error);
+  }
+});
 app.get('/files/*', async (request, response, next) => {
   if (!objectStorageEnabled) return response.status(404).json({ message: 'File not found' });
   try {
@@ -313,14 +331,7 @@ const upload = multer({
   }
 });
 
-const localRecipeImageStorage = multer.diskStorage({
-  destination: (_request, _file, callback) => callback(null, uploadsDir),
-  filename: (_request, file, callback) => {
-    const extension = RECIPE_IMAGE_MIME_TYPES[file.mimetype] || '';
-    callback(null, `${Date.now()}-recipe-${Math.random().toString(36).slice(2, 10)}${extension}`);
-  }
-});
-const recipeImageStorage = objectStorageEnabled ? multer.memoryStorage() : localRecipeImageStorage;
+const recipeImageStorage = multer.memoryStorage();
 
 const recipeImageUpload = multer({
   storage: recipeImageStorage,
@@ -347,9 +358,45 @@ const bulkUpload = multer({
   }
 });
 
-async function persistUploadedFile(file, prefix = 'uploads') {
+function createDatabaseFilePath(fileId) {
+  return `/files/db/${encodeURIComponent(fileId)}`;
+}
+
+async function persistDatabaseUploadedFile(file, prefix = 'uploads', uploadedBy = '') {
+  const buffer = Buffer.isBuffer(file?.buffer) ? file.buffer : null;
+  if (!buffer) return null;
+  const extension = path.extname(file.originalname || '').toLowerCase().replace(/[^a-z0-9.]/g, '');
+  const safeBase = path.basename(file.originalname || 'upload', extension)
+    .replace(/[^a-zA-Z0-9-_]/g, '-')
+    .slice(0, 80) || 'upload';
+  const fileId = `file_${randomUUID()}`;
+  const storageKey = `${prefix}/${new Date().toISOString().slice(0, 10)}/${fileId}-${safeBase}${extension}`;
+  await pool.query(
+    `INSERT INTO uploaded_files (
+      id, storage_key, original_name, content_type, content, byte_size, uploaded_by
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [
+      fileId,
+      storageKey,
+      file.originalname || null,
+      file.mimetype || 'application/octet-stream',
+      buffer,
+      buffer.length,
+      uploadedBy || null
+    ]
+  );
+  return {
+    reference: `dbfile://${fileId}`,
+    fileUrl: createDatabaseFilePath(fileId),
+    publicFileUrl: createDatabaseFilePath(fileId)
+  };
+}
+
+async function persistUploadedFile(file, prefix = 'uploads', options = {}) {
   if (!file) return null;
   if (!objectStorageEnabled) {
+    const databaseStored = await persistDatabaseUploadedFile(file, prefix, options.uploadedBy);
+    if (databaseStored) return databaseStored;
     const fileUrl = `/uploads/${file.filename}`;
     return { reference: file.path, fileUrl };
   }
@@ -366,7 +413,9 @@ async function persistUploadedFile(file, prefix = 'uploads') {
 }
 
 function absoluteFileUrl(request, fileUrl) {
-  return /^https:\/\//i.test(fileUrl) ? fileUrl : `${resolvePublicBaseUrl(request)}${fileUrl}`;
+  const value = String(fileUrl || '').trim();
+  if (/^https?:\/\//i.test(value)) return value;
+  return `${resolvePublicBaseUrl(request)}${value.startsWith('/') ? value : `/${value}`}`;
 }
 
 const delay = (ms) => new Promise((resolve) => {
@@ -3184,7 +3233,11 @@ function filterFoodWasteRows(rows, filters = {}) {
   const startDate = normalizeDateOnly(filters.start_date);
   const endDate = normalizeDateOnly(filters.end_date);
   const mealType = normalizeMealType(filters.meal_type);
+  const includeReversed = filters.include_reversed === true || String(filters.include_reversed || '').toLowerCase() === 'true';
+  const invalidStatuses = new Set(['reversed', 'voided', 'cancelled', 'canceled']);
   return rows.filter((row) => {
+    const rowStatus = String(row.status || row.approval_status || '').trim().toLowerCase();
+    if (!includeReversed && invalidStatuses.has(rowStatus)) return false;
     if (filters.site_id && row.site_id !== filters.site_id) return false;
     if (filters.waste_category && row.waste_category !== filters.waste_category) return false;
     if (filters.reason_code && row.reason_code !== filters.reason_code) return false;
@@ -3197,7 +3250,9 @@ function filterFoodWasteRows(rows, filters = {}) {
 }
 
 function normalizeBaseUrl(value) {
-  return String(value || '').trim().replace(/\/+$/, '');
+  const trimmed = String(value || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
 function isPubliclyUsableBaseUrl(value) {
@@ -4696,7 +4751,8 @@ app.get('/api/food-waste', requireAuth, requirePermission('manage_waste'), async
       waste_category: wasteCategory,
       reason_code: reasonCode,
       scope: wasteScope,
-      meal_type: mealType
+      meal_type: mealType,
+      include_reversed: request.query.include_reversed
     });
 
     const isAdministrator = hasAdminAccess(request.user);
@@ -6651,7 +6707,7 @@ app.post('/api/utilities/bulk-upload', requireAuth, requireBulkUploadAdministrat
         1000
       );
       const persistedUpload = request.file
-        ? await persistUploadedFile(request.file, 'bulk-uploads')
+        ? await persistUploadedFile(request.file, 'bulk-uploads', { uploadedBy: request.user?.email || '' })
         : null;
       cleanupReference = persistedUpload?.reference || cleanupReference;
       const job = await createBulkUploadJob({
@@ -6834,7 +6890,7 @@ app.get('/api/utilities/reports/:module', requireAuth, requireAnyPermission([
 app.post('/api/integrations/upload', requireAuth, upload.single('file'), async (request, response, next) => {
   try {
     if (!request.file) return response.status(400).json({ message: 'Select a file to upload.' });
-    const stored = await persistUploadedFile(request.file, 'integration-uploads');
+    const stored = await persistUploadedFile(request.file, 'integration-uploads', { uploadedBy: request.user?.email || '' });
     return response.json({
       file_url: stored.fileUrl,
       public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl)
@@ -6857,7 +6913,7 @@ app.post('/api/integrations/recipe-image', requireAuth, (request, response, next
       return response.status(400).json({ message: 'Select an image to upload.' });
     }
     try {
-      const stored = await persistUploadedFile(request.file, 'recipe-images');
+      const stored = await persistUploadedFile(request.file, 'recipe-images', { uploadedBy: request.user?.email || '' });
       return response.json({
         file_url: stored.fileUrl,
         public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl)
@@ -6881,7 +6937,7 @@ app.post('/api/integrations/waste-image', requireAuth, (request, response, next)
       return response.status(400).json({ message: 'Select a waste picture to upload.' });
     }
     try {
-      const stored = await persistUploadedFile(request.file, 'waste-images');
+      const stored = await persistUploadedFile(request.file, 'waste-images', { uploadedBy: request.user?.email || '' });
       return response.json({
         file_url: stored.fileUrl,
         public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl)

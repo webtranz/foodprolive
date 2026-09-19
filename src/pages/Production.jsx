@@ -37,7 +37,6 @@ import { ingredientForRecipeLine } from '../../shared/recipeLineWeight.js';
 import { getItemCode } from '../../shared/itemCode.js';
 import {
   formatProductionEventTitle,
-  formatProductionItemCountLabel,
   getProductionEventItemCount,
   getProductionEventScopeLabel
 } from '../../shared/productionLabels.js';
@@ -2780,7 +2779,7 @@ export default function Production() {
       production_issue_item_count: manifestItemCount,
       production_issue_dish_count: manifestItemCount
     }, {
-      fallback: `${group.meal_label} Menu (${formatProductionItemCountLabel(manifestItemCount)})`
+      fallback: `${group.meal_label} Menu`
     });
 
     return {
@@ -4024,7 +4023,7 @@ export default function Production() {
                             <div>
                               <p className="font-medium text-slate-950">{group.meal_label}</p>
                               <p className="mt-1 text-xs text-slate-500">
-                                {formatProductionItemCountLabel(group.items.length)} · {formatRecipeQuantity(group.production_covers, 'servings')} covers
+                                {formatRecipeQuantity(group.production_covers, 'servings')} covers
                               </p>
                             </div>
                             <Badge className={!issueInventoryReady ? 'bg-amber-600' : group.shortageCount > 0 ? 'bg-red-600' : 'bg-emerald-600'}>
@@ -5146,7 +5145,6 @@ export default function Production() {
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Menu Scope</p>
                   <p className="font-semibold text-slate-950">
                     {reportScopeLabel || 'Not classified'}
-                    {reportItemCount > 0 ? ` · ${formatProductionItemCountLabel(reportItemCount)}` : ''}
                   </p>
                 </div>
                 <div>
@@ -5186,9 +5184,6 @@ export default function Production() {
                       This production event contains every planned production line, including recipes and non-dish items.
                     </p>
                   </div>
-                  <Badge className="w-fit border border-emerald-300 bg-emerald-100 px-4 py-1.5 text-sm font-bold text-emerald-800 hover:bg-emerald-100">
-                    {formatProductionItemCountLabel(reportItemCount)}
-                  </Badge>
                 </div>
               ) : null}
               {reportUsedLegacyFallback || reportManifestCoverageIncomplete ? (

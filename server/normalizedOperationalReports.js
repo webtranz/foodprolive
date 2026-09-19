@@ -5,6 +5,7 @@ import {
   safeFoodCostNumber,
   titleCaseFoodCost
 } from '../shared/foodCostReport.js';
+import { normalizeProductionDisplayTitle } from '../shared/productionLabels.js';
 
 function normalizeDate(value, fallback) {
   const text = String(value || '').trim();
@@ -231,7 +232,7 @@ export async function loadNormalizedFoodCostReport({
       location: row.location,
       meal_type: titleCaseFoodCost(row.meal_type || 'unspecified'),
       menu_type: titleCaseFoodCost(row.menu_type || 'general'),
-      recipe: row.recipe,
+      recipe: normalizeProductionDisplayTitle(row.recipe),
       category: row.category || '-',
       servings: roundFoodCostNumber(servings, 3),
       portion_size_g: roundFoodCostNumber(row.portion_size_g, 2),
@@ -252,7 +253,7 @@ export async function loadNormalizedFoodCostReport({
     location: row.location,
     meal_type: titleCaseFoodCost(row.meal_type || 'unspecified'),
     menu_type: titleCaseFoodCost(row.menu_type || 'general'),
-    production: row.production,
+    production: normalizeProductionDisplayTitle(row.production),
     category: row.category || '-',
     produced_output_kg: roundFoodCostNumber(safeFoodCostNumber(row.produced_weight_grams) / 1000, 3),
     production_servings: roundFoodCostNumber(row.production_servings, 3),

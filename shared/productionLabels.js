@@ -27,6 +27,26 @@ function titleCase(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+export function stripProductionItemCountSuffix(value = '') {
+  return text(value).replace(/\s*\(\s*\d+\s+(?:items?|dishes?)\s*\)\s*$/i, '').trim();
+}
+
+export function normalizeProductionDisplayTitle(value = '') {
+  const stripped = stripProductionItemCountSuffix(value);
+  const scopedMenuMatch = stripped.match(/^(breakfast|lunch|dinner|snack)\s+menu\s+(.+?)\s*\/\s*(.+)$/i);
+  if (scopedMenuMatch) {
+    const mealLabel = MEAL_LABELS[scopedMenuMatch[1].toLowerCase()] || titleCase(scopedMenuMatch[1]);
+    const categoryLabel = titleCase(scopedMenuMatch[2]);
+    const typeLabel = titleCase(scopedMenuMatch[3]);
+    return [mealLabel, typeLabel, categoryLabel].filter(Boolean).join(' / ');
+  }
+  const genericMenuMatch = stripped.match(/^(breakfast|lunch|dinner|snack)\s+menu(?:\s+production)?$/i);
+  if (genericMenuMatch) {
+    return MEAL_LABELS[genericMenuMatch[1].toLowerCase()] || titleCase(genericMenuMatch[1]);
+  }
+  return stripped;
+}
+
 function getMealLabel(production = {}) {
   const normalized = text(production.meal_type).toLowerCase();
   return MEAL_LABELS[normalized] || titleCase(production.meal_type);
@@ -79,7 +99,7 @@ export function getProductionEventScopeLabel(production = {}) {
   const typeLabel = menuType
     ? getMenuCuisineLabel(menuType) || titleCase(menuType)
     : '';
-  return [categoryLabel, typeLabel].filter(Boolean).join(' / ');
+  return [typeLabel, categoryLabel].filter(Boolean).join(' / ');
 }
 
 function isMenuProduction(production = {}) {
@@ -98,16 +118,35 @@ function hasGenericMenuProductionName(value) {
   return /^[a-z]+\s+menu\s+production(?:\s*\(\d+\s+(?:items?|dishes?)\))?$/i.test(text(value));
 }
 
+function getProductionEventTitleParts(production = {}) {
+  const mealLabel = getMealLabel(production) || '';
+  const rawMenuType = text(
+    production.menu_type
+      || production.cuisine_type
+      || production.menu_cuisine
+  );
+  const rawMenuCategory = text(production.menu_category);
+  const menuType = rawMenuType ? normalizeMenuCuisine(rawMenuType, '') : '';
+  const menuCategory = rawMenuCategory ? normalizeMenuCategory(rawMenuCategory, '') : '';
+  const typeLabel = menuType
+    ? getMenuCuisineLabel(menuType) || titleCase(menuType)
+    : '';
+  const categoryLabel = menuCategory
+    ? getMenuCategoryLabel(menuCategory) || titleCase(menuCategory)
+    : '';
+  return [mealLabel, typeLabel, categoryLabel].filter(Boolean);
+}
+
 export function formatProductionEventTitle(
   production = {},
   {
-    includeDishCount = true,
+    includeDishCount = false,
     includeItemCount = includeDishCount,
     fallback = 'Production request',
     preferSavedName = false
   } = {}
 ) {
-  const savedName = text(
+  const savedName = normalizeProductionDisplayTitle(
     production.production_name
       || production.recipe_name
       || production.name
@@ -123,14 +162,10 @@ export function formatProductionEventTitle(
   }
 
   if (menuProduction) {
-    const mealLabel = getMealLabel(production) || 'Meal';
-    const scopeLabel = getProductionEventScopeLabel(production);
-    const itemCount = getProductionEventItemCount(production, 0);
-    const itemCountLabel = includeItemCount && itemCount > 0
-      ? ` (${formatProductionItemCountLabel(itemCount)})`
-      : '';
-    return `${mealLabel} Menu${scopeLabel ? ` ${scopeLabel}` : ''}${itemCountLabel}`;
+    const titleParts = getProductionEventTitleParts(production);
+    if (titleParts.length) return titleParts.join(' / ');
+    if (savedName) return savedName;
   }
 
-  return savedName || fallback;
+  return savedName || normalizeProductionDisplayTitle(fallback);
 }
