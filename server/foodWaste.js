@@ -155,6 +155,12 @@ function getWasteAllocationBatchId(allocation = {}) {
   );
 }
 
+function normalizeRealRecipeId(value) {
+  const recipeId = normalizeText(value);
+  if (!recipeId || recipeId.startsWith('batch-overproduction:')) return null;
+  return recipeId;
+}
+
 export function normalizeFoodWasteWeightGrams(quantity, unit = 'g') {
   const value = number(quantity, 0);
   const normalizedUnit = normalizeText(unit).toLowerCase();
@@ -166,33 +172,18 @@ export function normalizeFoodWasteWeightGrams(quantity, unit = 'g') {
   throw error;
 }
 
-function createBatchOverproductionCategoryRow(category) {
-  const rowKey = category.waste_key;
-  return {
-    waste_key: rowKey,
-    batch_overproduction_item_key: rowKey,
-    manifest_item_key: null,
-    source_menu_plan_item_key: null,
-    recipe_id: `batch-overproduction:${category.key}`,
-    recipe_name: category.label,
-    production_id: null,
-    production_name: `${category.label} batch overproduction`,
-    batch_recipe_id: null,
-    batch_recipe_name: null,
-    menu_category_key: category.key,
-    menu_category_label: category.label,
-    menu_type: category.menu_type,
-    menu_category: category.menu_category,
-    produced_servings: 0,
-    produced_weight_grams: 0,
-    raw_weight_grams: 0,
-    served_weight_grams: 0,
-    wasted_weight_grams: 0,
-    available_weight_grams: 0,
-    estimated_total_cost: 0,
-    batch_count: 0,
-    batches: []
-  };
+function normalizeBatchOverproductionKeyPart(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function buildBatchOverproductionRowKey(parts = []) {
+  return parts
+    .map(normalizeBatchOverproductionKeyPart)
+    .filter(Boolean)
+    .join(':');
 }
 
 function getBatchOverproductionCategory(batch = {}, production = {}) {
@@ -219,6 +210,151 @@ function getBatchOverproductionCategory(batch = {}, production = {}) {
   return null;
 }
 
+function getBatchManifestItems(batch = {}, production = {}) {
+  const candidateLists = [
+    batch.menu_issue_items,
+    batch.manifest_lines,
+    production?.menu_issue_items,
+    production?.manifest_lines
+  ];
+  const sourceItems = candidateLists.find((items) => Array.isArray(items) && items.length > 0);
+  if (!Array.isArray(sourceItems) || sourceItems.length === 0) {
+    return [{
+      key: batch.production_line_id
+        || batch.manifest_item_key
+        || batch.source_menu_plan_item_key
+        || batch.recipe_id
+        || batch.id,
+      recipe_id: batch.ingredient_id && batch.recipe_id === batch.ingredient_id ? null : batch.recipe_id,
+      ingredient_id: batch.ingredient_id || null,
+      recipe_name: batch.item_name
+        || batch.recipe_name
+        || batch.production_name
+        || production?.recipe_name
+        || 'Produced item',
+      produced_servings: batch.produced_servings,
+      produced_weight_grams: batch.produced_weight_grams,
+      yielded_weight_grams: batch.produced_weight_grams,
+      raw_weight_grams: getBatchRawWeight(batch, production),
+      estimated_batch_cost: getBatchProductionCost(batch, production)
+    }];
+  }
+
+  return sourceItems;
+}
+
+function getBatchManifestItemKey(item = {}, index = 0) {
+  return normalizeText(
+    item.production_line_id
+      || item.key
+      || item.original_source_menu_plan_item_key
+      || item.source_menu_plan_item_key
+      || item.menu_plan_item_key
+      || item.menu_plan_line_id
+      || (normalizeText(item.recipe_id || item.recipe_version_id) ? `recipe:${item.recipe_id || item.recipe_version_id}` : '')
+      || (normalizeText(item.ingredient_id) ? `ingredient:${item.ingredient_id}` : '')
+      || (normalizeText(item.recipe_name || item.item_name || item.name) ? `name:${item.recipe_name || item.item_name || item.name}` : '')
+      || `manifest-item-${index + 1}`
+  );
+}
+
+function getBatchManifestItemName(item = {}, batch = {}, production = {}) {
+  return normalizeText(
+    item.recipe_name
+      || item.item_name
+      || item.ingredient_name
+      || item.name
+      || batch.item_name
+      || batch.recipe_name
+      || production?.recipe_name
+      || batch.production_name
+  ) || 'Produced item';
+}
+
+function getBatchManifestItemRecipeId(item = {}) {
+  const recipeId = normalizeText(item.recipe_id || item.recipe_version_id);
+  const ingredientId = normalizeText(item.ingredient_id);
+  if (ingredientId && recipeId === ingredientId) return null;
+  return recipeId || null;
+}
+
+function getBatchManifestItemIngredientId(item = {}) {
+  return normalizeText(item.ingredient_id) || null;
+}
+
+function getBatchManifestItemProducedServings(item = {}, batch = {}) {
+  return roundQuantity(firstPositiveQuantity([
+    item.produced_servings,
+    item.production_covers,
+    item.expected_yield_servings,
+    item.expected_servings,
+    item.requested_servings,
+    item.planned_servings,
+    batch.produced_servings
+  ]));
+}
+
+function getBatchManifestItemProducedWeight(item = {}, batch = {}) {
+  const directWeight = firstPositiveQuantity([
+    item.produced_weight_grams,
+    item.yielded_weight_grams,
+    item.expected_finished_weight_grams,
+    item.actual_finished_weight_grams,
+    item.finished_weight_grams,
+    item.requested_weight_grams,
+    item.planned_weight_grams,
+    item.production_size_grams
+  ]);
+  if (directWeight > QUANTITY_EPSILON) return roundQuantity(directWeight);
+
+  const servings = getBatchManifestItemProducedServings(item, {});
+  const portionSize = firstPositiveQuantity([
+    item.portion_size_grams,
+    item.service_portion_size_grams,
+    batch.portion_size_grams
+  ]);
+  if (servings > QUANTITY_EPSILON && portionSize > QUANTITY_EPSILON) {
+    return roundQuantity(servings * portionSize);
+  }
+  return 0;
+}
+
+function isFilledBatchManifestItem(item = {}, batch = {}) {
+  return getBatchManifestItemProducedWeight(item, batch) > QUANTITY_EPSILON
+    || getBatchManifestItemProducedServings(item, batch) > QUANTITY_EPSILON;
+}
+
+function getExistingBatchOverproductionWasteByItem(existingWasteRows = []) {
+  const byBatchAndItem = new Map();
+
+  (Array.isArray(existingWasteRows) ? existingWasteRows : [])
+    .filter((record) => {
+      const status = normalizeText(record.status || record.approval_status).toLowerCase();
+      return normalizeText(record.source_type).toLowerCase() === 'batch_overproduction'
+        && !['reversed', 'voided', 'cancelled', 'canceled'].includes(status);
+    })
+    .forEach((record) => {
+      const allocations = Array.isArray(record.output_allocations) ? record.output_allocations : [];
+      allocations.forEach((allocation) => {
+        const batchId = normalizeText(getWasteAllocationBatchId(allocation));
+        const itemKeys = [
+          allocation.batch_overproduction_item_key
+            || record.batch_overproduction_item_key,
+          allocation.manifest_item_key || record.manifest_item_key,
+          allocation.source_menu_plan_item_key || record.source_menu_plan_item_key
+        ].map(normalizeText).filter(Boolean);
+        const wastedWeight = roundQuantity(number(allocation.wasted_weight_grams ?? allocation.waste_weight_grams, 0));
+        if (!itemKeys.length || wastedWeight <= QUANTITY_EPSILON) return;
+        if (batchId) itemKeys.forEach((itemKey) => {
+          const key = `${batchId}::${itemKey}`;
+          byBatchAndItem.set(key, roundQuantity((byBatchAndItem.get(key) || 0) + wastedWeight));
+        });
+      });
+    });
+
+  return { byBatchAndItem };
+}
+
 function getBatchProductionCost(batch = {}, production = {}) {
   return roundQuantity(firstPositiveQuantity([
     batch.total_cost,
@@ -243,18 +379,14 @@ function getBatchRawWeight(batch = {}, production = {}) {
   ]));
 }
 
-export function buildBatchOverproductionDishSummary(batches = [], productionRows = []) {
+export function buildBatchOverproductionDishSummary(batches = [], productionRows = [], existingWasteRows = []) {
   const productionMap = new Map(
     (Array.isArray(productionRows) ? productionRows : [])
       .filter((production) => production?.id)
       .map((production) => [String(production.id), production])
   );
-  const grouped = new Map(
-    BATCH_OVERPRODUCTION_MENU_CATEGORY_ROWS.map((category) => [
-      category.key,
-      createBatchOverproductionCategoryRow(category)
-    ])
-  );
+  const grouped = new Map();
+  const existingWaste = getExistingBatchOverproductionWasteByItem(existingWasteRows);
 
   (Array.isArray(batches) ? batches : [])
     .filter((batch) => (
@@ -268,43 +400,217 @@ export function buildBatchOverproductionDishSummary(batches = [], productionRows
       const production = productionMap.get(String(batch.production_id || ''));
       const category = getBatchOverproductionCategory(batch, production);
       if (!category) return;
+      const candidateItems = getBatchManifestItems(batch, production)
+        .map((item, index) => ({ item, index }));
+      const manifestItems = candidateItems
+        .filter(({ item }) => isFilledBatchManifestItem(item, batch));
+      const fallbackItems = manifestItems.length > 0
+        ? manifestItems
+        : [{
+          item: {
+            key: batch.production_line_id
+              || batch.manifest_item_key
+              || batch.source_menu_plan_item_key
+              || batch.recipe_id
+              || batch.id,
+            recipe_id: batch.ingredient_id && batch.recipe_id === batch.ingredient_id ? null : batch.recipe_id,
+            ingredient_id: batch.ingredient_id || null,
+            recipe_name: batch.item_name
+              || batch.recipe_name
+              || batch.production_name
+              || production?.recipe_name
+              || 'Produced item',
+            produced_servings: batch.produced_servings,
+            produced_weight_grams: batch.produced_weight_grams,
+            yielded_weight_grams: batch.produced_weight_grams,
+            raw_weight_grams: getBatchRawWeight(batch, production),
+            estimated_batch_cost: getBatchProductionCost(batch, production)
+          },
+          index: 0
+        }];
 
-      const row = grouped.get(category.key);
-      const producedWeight = roundQuantity(number(batch.produced_weight_grams, 0));
-      const availableWeight = getBatchAvailableWeight(batch);
-      const rowKey = category.waste_key;
-      row.produced_servings = roundQuantity(row.produced_servings + number(batch.produced_servings, 0));
-      row.produced_weight_grams = roundQuantity(row.produced_weight_grams + producedWeight);
-      row.raw_weight_grams = roundQuantity(row.raw_weight_grams + getBatchRawWeight(batch, production));
-      row.served_weight_grams = roundQuantity(row.served_weight_grams + number(batch.served_weight_grams, 0));
-      row.wasted_weight_grams = roundQuantity(row.wasted_weight_grams + number(batch.wasted_weight_grams, 0));
-      row.available_weight_grams = roundQuantity(row.available_weight_grams + availableWeight);
-      row.estimated_total_cost = roundQuantity(row.estimated_total_cost + getBatchProductionCost(batch, production));
-      row.batch_count += 1;
-      row.batches.push({
-        id: batch.id,
-        batch_number: batch.batch_number,
-        production_id: batch.production_id,
-        production_name: batch.production_name || production?.recipe_name || batch.recipe_name || null,
-        completed_at: batch.completed_at,
-        recipe_id: row.recipe_id,
-        recipe_name: row.recipe_name,
-        batch_recipe_id: batch.recipe_id || null,
-        batch_recipe_name: batch.recipe_name || null,
-        menu_category_key: category.key,
-        menu_category_label: category.label,
-        batch_overproduction_item_key: rowKey,
-        produced_weight_grams: producedWeight,
-        remaining_weight_grams: availableWeight
+      const rawItemDetails = fallbackItems
+        .map(({ item, index }) => {
+          const producedWeight = getBatchManifestItemProducedWeight(item, batch);
+          return {
+            item,
+            index,
+            producedWeight,
+            producedServings: getBatchManifestItemProducedServings(item, batch),
+            rawWeight: roundQuantity(firstPositiveQuantity([
+              item.raw_weight_grams,
+              item.recipe_raw_weight_grams,
+              item.total_raw_weight_grams
+            ]))
+          };
+        });
+      const directManifestWeight = roundQuantity(
+        rawItemDetails.reduce((sum, detail) => sum + Math.max(0, detail.producedWeight), 0)
+      );
+      const fallbackBatchWeight = roundQuantity(number(batch.produced_weight_grams, 0));
+      const missingWeightPool = roundQuantity(Math.max(0, fallbackBatchWeight - directManifestWeight));
+      const servingOnlyTotal = roundQuantity(
+        rawItemDetails.reduce((sum, detail) => (
+          detail.producedWeight > QUANTITY_EPSILON ? sum : sum + detail.producedServings
+        ), 0)
+      );
+      const itemDetails = rawItemDetails
+        .map((detail) => {
+          if (
+            detail.producedWeight > QUANTITY_EPSILON
+            || missingWeightPool <= QUANTITY_EPSILON
+            || servingOnlyTotal <= QUANTITY_EPSILON
+            || detail.producedServings <= QUANTITY_EPSILON
+          ) {
+            return detail;
+          }
+          return {
+            ...detail,
+            producedWeight: roundQuantity(missingWeightPool * (detail.producedServings / servingOnlyTotal))
+          };
+        })
+        .filter((detail) => detail.producedWeight > QUANTITY_EPSILON);
+      if (!itemDetails.length) return;
+
+      const manifestWeightTotal = roundQuantity(itemDetails.reduce((sum, detail) => sum + detail.producedWeight, 0));
+      const batchServedWeight = roundQuantity(number(batch.served_weight_grams, 0));
+      const batchWastedWeight = roundQuantity(number(batch.wasted_weight_grams, 0));
+      const batchAvailableWeight = getBatchAvailableWeight(batch);
+      const totalKnownItemWaste = roundQuantity(
+        itemDetails.reduce((sum, detail) => {
+          const itemKey = getBatchManifestItemKey(detail.item, detail.index);
+          return sum + number(existingWaste.byBatchAndItem.get(`${normalizeText(batch.id)}::${itemKey}`), 0);
+        }, 0)
+      );
+      const unassignedWasteWeight = roundQuantity(Math.max(0, batchWastedWeight - totalKnownItemWaste));
+
+      itemDetails.forEach((detail) => {
+        const item = detail.item;
+        const manifestItemKey = getBatchManifestItemKey(item, detail.index);
+        const recipeId = getBatchManifestItemRecipeId(item);
+        const ingredientId = getBatchManifestItemIngredientId(item);
+        const itemName = getBatchManifestItemName(item, batch, production);
+        const rowKey = buildBatchOverproductionRowKey([
+          'manifest-item',
+          category.key,
+          recipeId ? `recipe-${recipeId}` : '',
+          ingredientId ? `ingredient-${ingredientId}` : '',
+          manifestItemKey || itemName
+        ]);
+        if (!rowKey) return;
+
+        const producedWeight = detail.producedWeight;
+        const ratio = manifestWeightTotal > QUANTITY_EPSILON
+          ? producedWeight / manifestWeightTotal
+          : 1 / itemDetails.length;
+        const batchId = normalizeText(batch.id);
+        const itemSpecificWaste = roundQuantity(Math.max(
+          number(existingWaste.byBatchAndItem.get(`${batchId}::${rowKey}`), 0),
+          number(existingWaste.byBatchAndItem.get(`${batchId}::${manifestItemKey}`), 0)
+        ));
+        const servedWeight = roundQuantity(batchServedWeight * ratio);
+        const unassignedWasteForItem = roundQuantity(unassignedWasteWeight * ratio);
+        const availableWeight = roundQuantity(Math.max(
+          0,
+          Math.min(
+            producedWeight,
+            producedWeight - servedWeight - unassignedWasteForItem - itemSpecificWaste
+          )
+        ));
+        const batchAvailableCap = roundQuantity(Math.max(0, batchAvailableWeight));
+        const cappedAvailableWeight = Math.min(availableWeight, batchAvailableCap);
+
+        if (!grouped.has(rowKey)) {
+          grouped.set(rowKey, {
+            waste_key: rowKey,
+            batch_overproduction_item_key: rowKey,
+            manifest_item_key: manifestItemKey || null,
+            source_menu_plan_item_key: normalizeText(
+              item.original_source_menu_plan_item_key
+                || item.source_menu_plan_item_key
+                || item.menu_plan_item_key
+                || item.menu_plan_line_id
+            ) || manifestItemKey || null,
+            recipe_id: recipeId,
+            recipe_name: itemName,
+            ingredient_id: ingredientId,
+            ingredient_name: normalizeText(item.ingredient_name) || null,
+            production_id: null,
+            production_name: itemName,
+            batch_recipe_id: recipeId,
+            batch_recipe_name: itemName,
+            menu_category_key: category.key,
+            menu_category_label: category.label,
+            menu_type: category.menu_type,
+            menu_category: category.menu_category,
+            produced_servings: 0,
+            produced_weight_grams: 0,
+            raw_weight_grams: 0,
+            served_weight_grams: 0,
+            wasted_weight_grams: 0,
+            available_weight_grams: 0,
+            estimated_total_cost: 0,
+            batch_count: 0,
+            batches: []
+          });
+        }
+
+        const row = grouped.get(rowKey);
+        const cost = roundQuantity(firstPositiveQuantity([
+          item.estimated_batch_cost,
+          item.estimated_cost,
+          item.actual_cost,
+          item.total_cost,
+          getBatchProductionCost(batch, production) * ratio
+        ]));
+        row.produced_servings = roundQuantity(row.produced_servings + detail.producedServings);
+        row.produced_weight_grams = roundQuantity(row.produced_weight_grams + producedWeight);
+        row.raw_weight_grams = roundQuantity(row.raw_weight_grams + detail.rawWeight);
+        row.served_weight_grams = roundQuantity(row.served_weight_grams + servedWeight);
+        row.wasted_weight_grams = roundQuantity(row.wasted_weight_grams + itemSpecificWaste + unassignedWasteForItem);
+        row.available_weight_grams = roundQuantity(row.available_weight_grams + cappedAvailableWeight);
+        row.estimated_total_cost = roundQuantity(row.estimated_total_cost + cost);
+        row.batch_count += 1;
+        if (!row.production_id) row.production_id = batch.production_id || null;
+        if (row.production_id && normalizeText(row.production_id) !== normalizeText(batch.production_id)) {
+          row.production_id = null;
+        }
+        row.batches.push({
+          id: batch.id,
+          batch_number: batch.batch_number,
+          production_id: batch.production_id,
+          production_name: batch.production_name || production?.recipe_name || batch.recipe_name || null,
+          completed_at: batch.completed_at,
+          recipe_id: recipeId,
+          recipe_name: itemName,
+          ingredient_id: ingredientId,
+          ingredient_name: normalizeText(item.ingredient_name) || null,
+          batch_recipe_id: batch.recipe_id || null,
+          batch_recipe_name: batch.recipe_name || batch.item_name || null,
+          menu_category_key: category.key,
+          menu_category_label: category.label,
+          batch_overproduction_item_key: rowKey,
+          manifest_item_key: manifestItemKey || null,
+          source_menu_plan_item_key: row.source_menu_plan_item_key,
+          produced_weight_grams: producedWeight,
+          remaining_weight_grams: cappedAvailableWeight
+        });
       });
     });
 
-  return [...grouped.values()].map((row) => ({
-    ...row,
-    estimated_cost_per_gram: row.produced_weight_grams > QUANTITY_EPSILON
-      ? roundQuantity(row.estimated_total_cost / row.produced_weight_grams)
-      : 0
-  }));
+  return [...grouped.values()]
+    .filter((row) => row.produced_weight_grams > QUANTITY_EPSILON)
+    .map((row) => ({
+      ...row,
+      estimated_cost_per_gram: row.produced_weight_grams > QUANTITY_EPSILON
+        ? roundQuantity(row.estimated_total_cost / row.produced_weight_grams)
+        : 0
+    }))
+    .sort((left, right) => (
+      normalizeText(left.menu_category_label).localeCompare(normalizeText(right.menu_category_label))
+      || normalizeText(left.recipe_name).localeCompare(normalizeText(right.recipe_name))
+      || normalizeText(left.waste_key).localeCompare(normalizeText(right.waste_key))
+    ));
 }
 
 export function allocateBatchOverproductionWaste({
@@ -320,18 +626,18 @@ export function allocateBatchOverproductionWaste({
   const normalizedProductionId = normalizeText(productionId);
   const normalizedManifestItemKey = normalizeText(manifestItemKey);
   const requiredWeight = roundQuantity(wasteWeightGrams);
-  if (!normalizedRecipeId) {
-    const error = new Error('Select a menu category before recording batch overproduction waste.');
+  const summaryBatches = Array.isArray(summaryRow?.batches) ? summaryRow.batches : [];
+  if (!normalizedRecipeId && !normalizedManifestItemKey && summaryBatches.length === 0) {
+    const error = new Error('Select a produced menu item before recording batch overproduction waste.');
     error.status = 400;
     throw error;
   }
   if (requiredWeight <= QUANTITY_EPSILON) {
-    const error = new Error('Enter recorded food waste in grams for at least one menu category.');
+    const error = new Error('Enter recorded food waste in grams for at least one produced menu item.');
     error.status = 400;
     throw error;
   }
 
-  const summaryBatches = Array.isArray(summaryRow?.batches) ? summaryRow.batches : [];
   const summaryBatchById = new Map(
     summaryBatches
       .filter((batch) => normalizeText(batch.id))
@@ -372,7 +678,7 @@ export function allocateBatchOverproductionWaste({
     mutableBatches.reduce((sum, batch) => sum + getAllocatableWeight(batch), 0)
   );
   if (availableWeight + QUANTITY_EPSILON < requiredWeight) {
-    const error = new Error(`Recorded waste exceeds available produced quantity for this menu category. Available: ${availableWeight} g.`);
+    const error = new Error(`Recorded waste exceeds available produced quantity for this menu item. Available: ${availableWeight} g.`);
     error.status = 409;
     throw error;
   }
@@ -424,8 +730,10 @@ export function allocateBatchOverproductionWaste({
       remaining_weight_grams_before: actualBeforeWeight,
       remaining_weight_grams_after: batch.remaining_weight_grams,
       row_remaining_weight_grams_before: beforeWeight,
-      recipe_id: normalizedRecipeId,
+      recipe_id: normalizeRealRecipeId(summaryRow?.recipe_id) || normalizeRealRecipeId(normalizedRecipeId),
       recipe_name: summaryRow?.recipe_name || rowBatch.recipe_name || batch.recipe_name || null,
+      ingredient_id: summaryRow?.ingredient_id || rowBatch.ingredient_id || batch.ingredient_id || null,
+      ingredient_name: summaryRow?.ingredient_name || rowBatch.ingredient_name || batch.ingredient_name || null,
       batch_overproduction_item_key: rowItemKey || null,
       manifest_item_key: rowManifestKey || null,
       source_menu_plan_item_key: rowSourceMenuPlanItemKey || null,

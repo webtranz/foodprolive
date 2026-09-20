@@ -151,7 +151,7 @@ const cases = [
     }
   },
   {
-    name: 'builds four menu-category batch overproduction fields from produced batches',
+    name: 'builds per-manifest batch overproduction rows from produced batches',
     run() {
       const summary = buildBatchOverproductionDishSummary([
         {
@@ -211,26 +211,23 @@ const cases = [
         { id: 'production-3', total_cost: 96 }
       ]);
 
-      const senior = summary.find((row) => row.menu_category_key === 'senior');
-      const junior = summary.find((row) => row.menu_category_key === 'junior');
-      const labor = summary.find((row) => row.menu_category_key === 'labor');
-      const philippines = summary.find((row) => row.menu_category_key === 'philippines');
-      assert.equal(summary.length, 4);
-      assert.deepEqual(summary.map((row) => row.menu_category_label), ['Senior', 'Junior', 'Labor', 'Philippines']);
-      assert.equal(senior.recipe_name, 'Senior');
-      assert.equal(senior.batch_count, 2);
-      assert.equal(senior.produced_weight_grams, 1500);
-      assert.equal(senior.available_weight_grams, 1050);
-      assert.equal(senior.wasted_weight_grams, 150);
-      assert.equal(senior.estimated_cost_per_gram, 0.08);
-      assert.equal(junior.produced_weight_grams, 800);
-      assert.equal(junior.available_weight_grams, 800);
-      assert.equal(labor.produced_weight_grams, 0);
-      assert.equal(philippines.produced_weight_grams, 0);
+      const rice = summary.find((row) => row.recipe_id === 'rice');
+      const stew = summary.find((row) => row.recipe_id === 'stew');
+      assert.equal(summary.length, 2);
+      assert.deepEqual(summary.map((row) => row.recipe_name), ['Stew', 'Rice']);
+      assert.equal(rice.menu_category_label, 'Senior');
+      assert.equal(rice.batch_count, 2);
+      assert.equal(rice.produced_weight_grams, 1500);
+      assert.equal(rice.available_weight_grams, 1050);
+      assert.equal(rice.wasted_weight_grams, 150);
+      assert.equal(rice.estimated_cost_per_gram, 0.08);
+      assert.equal(stew.menu_category_label, 'Junior');
+      assert.equal(stew.produced_weight_grams, 800);
+      assert.equal(stew.available_weight_grams, 800);
     }
   },
   {
-    name: 'groups menu production output by category instead of manifest item rows',
+    name: 'splits menu production output into manifest item rows',
     run() {
       const summary = buildBatchOverproductionDishSummary([
         {
@@ -288,29 +285,31 @@ const cases = [
           output_allocations: [
             {
               produced_item_batch_id: 'batch-menu',
-              batch_overproduction_item_key: 'batch-menu::line-eggs',
+              batch_overproduction_item_key: 'manifest-item:junior:recipe-eggs:line-eggs',
+              manifest_item_key: 'line-eggs',
               wasted_weight_grams: 200
             }
           ]
         }
       ]);
 
-      const junior = summary.find((row) => row.menu_category_key === 'junior');
-      assert.equal(summary.length, 4);
-      assert.equal(junior.waste_key, 'menu-category:junior');
-      assert.equal(junior.recipe_id, 'batch-overproduction:junior');
-      assert.equal(junior.recipe_name, 'Junior');
-      assert.equal(junior.batch_count, 1);
-      assert.equal(junior.produced_weight_grams, 3000);
-      assert.equal(junior.served_weight_grams, 300);
-      assert.equal(junior.wasted_weight_grams, 200);
-      assert.equal(junior.available_weight_grams, 2500);
-      assert.equal(summary.some((row) => row.recipe_id === 'eggs'), false);
-      assert.equal(summary.some((row) => row.recipe_id === 'bread'), false);
+      const eggs = summary.find((row) => row.recipe_id === 'eggs');
+      const bread = summary.find((row) => row.recipe_id === 'bread');
+      assert.equal(summary.length, 2);
+      assert.equal(eggs.waste_key, 'manifest-item:junior:recipe-eggs:line-eggs');
+      assert.equal(eggs.recipe_name, 'Boiled Eggs');
+      assert.equal(eggs.batch_count, 1);
+      assert.equal(eggs.produced_weight_grams, 1000);
+      assert.equal(eggs.served_weight_grams, 100);
+      assert.equal(eggs.wasted_weight_grams, 200);
+      assert.equal(eggs.available_weight_grams, 700);
+      assert.equal(bread.produced_weight_grams, 2000);
+      assert.equal(bread.served_weight_grams, 200);
+      assert.equal(bread.available_weight_grams, 1800);
     }
   },
   {
-    name: 'exposes exactly the four approved batch overproduction category fields',
+    name: 'exposes only filled manifest rows for the selected meal category',
     run() {
       const summary = buildBatchOverproductionDishSummary([
         {
@@ -354,16 +353,14 @@ const cases = [
         }
       ]);
 
-      assert.equal(summary.length, 4);
-      assert.deepEqual(summary.map((row) => row.recipe_name), ['Senior', 'Junior', 'Labor', 'Philippines']);
+      assert.equal(summary.length, 2);
+      assert.deepEqual(summary.map((row) => row.recipe_name), ['Chana Masala', 'Classic Coffee']);
+      assert.deepEqual(summary.map((row) => row.menu_category_label), ['Philippines', 'Philippines']);
       assert.deepEqual(summary.map((row) => row.waste_key), [
-        'menu-category:senior',
-        'menu-category:junior',
-        'menu-category:labor',
-        'menu-category:philippines'
+        'manifest-item:philippines:recipe-chana:line-chana',
+        'manifest-item:philippines:recipe-coffee:line-coffee'
       ]);
-      assert.equal(summary.find((row) => row.menu_category_key === 'philippines').produced_weight_grams, 6000);
-      assert.equal(summary.find((row) => row.menu_category_key === 'senior').produced_weight_grams, 0);
+      assert.equal(summary.reduce((sum, row) => sum + row.produced_weight_grams, 0), 6000);
     }
   },
   {
@@ -457,7 +454,7 @@ const cases = [
       });
 
       assert.equal(allocation.wasted_weight_grams, 300);
-      assert.equal(allocation.allocations[0].recipe_id, 'batch-overproduction:junior');
+      assert.equal(allocation.allocations[0].recipe_id, null);
       assert.equal(allocation.allocations[0].recipe_name, 'Junior');
       assert.equal(allocation.allocations[0].batch_recipe_id, 'menu-event');
       assert.equal(allocation.allocations[0].batch_overproduction_item_key, 'menu-category:junior');
@@ -584,9 +581,9 @@ const cases = [
       assert.match(page, /record\.production_cost_total/);
       assert.match(page, /record\.ingredient_cost_total/);
       assert.match(page, /This weight will be deducted from the consumed amount under Meal Service Menu\./);
-      assert.match(page, /Batch Overproduction by Menu Category/);
-      assert.match(page, /total produced weight for each menu category/);
-      assert.match(page, /\{categoryLabel\} waste \(g\)/);
+      assert.match(page, /Batch Overproduction by Menu Manifest/);
+      assert.match(page, /each produced recipe\/menu item/);
+      assert.match(page, /Recorded waste \(g\)/);
       assert.match(foodWasteServer, /menu-category:senior/);
       assert.match(foodWasteServer, /menu-category:junior/);
       assert.match(foodWasteServer, /menu-category:labor/);

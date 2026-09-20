@@ -4822,6 +4822,8 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
         : batchOverproductionContextRow?.production_name || payload.production_name || null,
       recipe_id: batchOverproductionContextRow?.recipe_id || payload.recipe_id || null,
       recipe_name: batchOverproductionContextRow?.recipe_name || payload.recipe_name || null,
+      ingredient_id: batchOverproductionContextRow?.ingredient_id || payload.ingredient_id || null,
+      ingredient_name: batchOverproductionContextRow?.ingredient_name || payload.ingredient_name || null,
       batch_overproduction_item_key: batchOverproductionContextRow?.batch_overproduction_item_key
         || payload.batch_overproduction_item_key
         || payload.waste_key
@@ -4883,6 +4885,8 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
           production_name: batchOverproductionContextRow?.production_name || finalPayload.production_name || null,
           recipe_id: batchOverproductionContextRow?.recipe_id || finalPayload.recipe_id || null,
           recipe_name: batchOverproductionContextRow?.recipe_name || finalPayload.recipe_name || null,
+          ingredient_id: batchOverproductionContextRow?.ingredient_id || finalPayload.ingredient_id || null,
+          ingredient_name: batchOverproductionContextRow?.ingredient_name || finalPayload.ingredient_name || null,
           produced_weight_grams: batchOverproductionContextRow?.produced_weight_grams
             ?? finalPayload.produced_weight_grams
             ?? null,
