@@ -489,7 +489,7 @@ const cases = [
     name: 'requires photo evidence and deducts ingredient stock on waste create',
     run() {
       const server = read('server/index.js');
-      assert.match(server, /Add a waste picture before saving this record/);
+      assert.match(server, /Add at least one waste picture before saving this record/);
       assert.match(server, /Select the location and ingredient to remove from inventory/);
       assert.match(server, /adminHistoricalCreateAllowed/);
       assert.match(server, /deductStock\(\{/);
@@ -503,10 +503,12 @@ const cases = [
     run() {
       const page = read('src/pages/FoodWaste.jsx');
       const api = read('src/api/base44Client.js');
-      assert.match(page, /Waste Picture/);
+      assert.match(page, /Waste Pictures/);
       assert.match(page, /UploadWasteImage/);
-      assert.match(page, /Add required waste picture/);
-      assert.match(page, /!wasteImageFile && !formData\.evidence_image_url/);
+      assert.match(page, /Add required waste pictures/);
+      assert.match(page, /MAX_WASTE_PICTURES/);
+      assert.match(page, /compressWasteImageFile/);
+      assert.match(page, /!hasWasteEvidenceImages/);
       assert.match(api, /UploadWasteImage\(\{ file \}\)/);
       assert.match(api, /\/api\/integrations\/waste-image/);
     }

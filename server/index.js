@@ -3249,6 +3249,36 @@ function filterFoodWasteRows(rows, filters = {}) {
   });
 }
 
+const MAX_FOOD_WASTE_EVIDENCE_IMAGES = 8;
+
+function appendFoodWasteEvidenceValue(target, value) {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => appendFoodWasteEvidenceValue(target, entry));
+    return;
+  }
+  if (typeof value !== 'string') return;
+  const trimmed = value.trim();
+  if (!trimmed) return;
+  if (trimmed.startsWith('[')) {
+    try {
+      appendFoodWasteEvidenceValue(target, JSON.parse(trimmed));
+      return;
+    } catch {
+      // Store the original value when it is not a JSON array.
+    }
+  }
+  target.push(trimmed);
+}
+
+function normalizeFoodWasteEvidenceImages(payload = {}) {
+  const urls = [];
+  appendFoodWasteEvidenceValue(urls, payload.evidence_image_urls);
+  appendFoodWasteEvidenceValue(urls, payload.image_urls);
+  appendFoodWasteEvidenceValue(urls, payload.evidence_image_url);
+  appendFoodWasteEvidenceValue(urls, payload.image_url);
+  return [...new Set(urls)].slice(0, MAX_FOOD_WASTE_EVIDENCE_IMAGES);
+}
+
 function normalizeBaseUrl(value) {
   const trimmed = String(value || '').trim().replace(/\/+$/, '');
   if (!trimmed) return '';
@@ -4771,14 +4801,15 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
     const siteId = String(payload.site_id || '').trim();
     const wasteDate = normalizeDateOnly(payload.waste_date);
     const mealType = normalizeMealType(payload.meal_type);
-    const evidenceImageUrl = String(payload.evidence_image_url || payload.image_url || '').trim();
+    const evidenceImageUrls = normalizeFoodWasteEvidenceImages(payload);
+    const evidenceImageUrl = evidenceImageUrls[0] || '';
 
     const errors = validateFoodWasteContextInput({ siteId, wasteDate, mealType });
     if (errors.length) {
       return response.status(400).json({ message: errors[0], errors });
     }
     if (!evidenceImageUrl) {
-      return response.status(400).json({ message: 'Add a waste picture before saving this record.' });
+      return response.status(400).json({ message: 'Add at least one waste picture before saving this record.' });
     }
     if (String(payload.waste_scope || '').toLowerCase() === 'ingredient' && !String(payload.ingredient_id || '').trim()) {
       return response.status(400).json({ message: 'Select the location and ingredient to remove from inventory.' });
@@ -4834,6 +4865,8 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
         || null,
       evidence_image_url: evidenceImageUrl,
       image_url: evidenceImageUrl,
+      evidence_image_urls: evidenceImageUrls,
+      image_urls: evidenceImageUrls,
       status: payload.status || 'logged'
     };
 
@@ -5073,13 +5106,21 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
       return response.status(403).json({ message: 'Only administrators can edit food waste requests.' });
     }
 
-    if (!approvalOnly && !String(payload.evidence_image_url || payload.image_url || existing.evidence_image_url || existing.image_url || '').trim()) {
-      return response.status(400).json({ message: 'Add a waste picture before saving this record.' });
+    const mergedEvidenceImageUrls = normalizeFoodWasteEvidenceImages({
+      ...existing,
+      ...payload
+    });
+    if (!approvalOnly && !mergedEvidenceImageUrls.length) {
+      return response.status(400).json({ message: 'Add at least one waste picture before saving this record.' });
     }
 
     const merged = {
       ...existing,
       ...payload,
+      evidence_image_url: mergedEvidenceImageUrls[0] || null,
+      image_url: mergedEvidenceImageUrls[0] || null,
+      evidence_image_urls: mergedEvidenceImageUrls,
+      image_urls: mergedEvidenceImageUrls,
       meal_type: normalizeMealType(payload.meal_type ?? existing.meal_type),
       waste_date: normalizeDateOnly(payload.waste_date ?? existing.waste_date),
       site_id: String(payload.site_id ?? existing.site_id ?? '').trim()

@@ -80,6 +80,10 @@ const WASTE_REASONS = [
 const APPROVAL_THRESHOLD = 100;
 const MEAL_TYPE_OPTIONS = ['breakfast', 'lunch', 'dinner'];
 const BATCH_OVERPRODUCTION_CATEGORY = 'batch_overproduction';
+const MAX_WASTE_PICTURES = 8;
+const MAX_WASTE_PICTURE_TOTAL_BYTES = Math.round(1.5 * 1024 * 1024);
+const MAX_WASTE_PICTURE_BYTES = Math.floor(MAX_WASTE_PICTURE_TOTAL_BYTES / MAX_WASTE_PICTURES);
+const MAX_WASTE_PICTURE_LONG_EDGE = 1600;
 
 const CATEGORY_BADGES = Object.fromEntries(
   WASTE_CATEGORIES.map((item) => [item.value, `bg-white text-slate-700 border border-slate-200`])
@@ -123,8 +127,37 @@ function isValidWasteRecord(item = {}) {
   return !['reversed', 'voided', 'cancelled', 'canceled'].includes(status);
 }
 
+function appendWasteEvidenceValue(target, value) {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => appendWasteEvidenceValue(target, entry));
+    return;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith('[')) {
+      try {
+        appendWasteEvidenceValue(target, JSON.parse(trimmed));
+        return;
+      } catch {
+        // Keep the original string when it is not a JSON array.
+      }
+    }
+    target.push(trimmed);
+  }
+}
+
+function getWasteEvidenceUrls(item = {}) {
+  const urls = [];
+  appendWasteEvidenceValue(urls, item.evidence_image_urls);
+  appendWasteEvidenceValue(urls, item.image_urls);
+  appendWasteEvidenceValue(urls, item.evidence_image_url);
+  appendWasteEvidenceValue(urls, item.image_url);
+  return [...new Set(urls)].slice(0, MAX_WASTE_PICTURES);
+}
+
 function getWasteEvidenceUrl(item = {}) {
-  return String(item.evidence_image_url || item.image_url || '').trim();
+  return getWasteEvidenceUrls(item)[0] || '';
 }
 
 function getWasteSourceLabel(item = {}) {
@@ -268,6 +301,68 @@ function getBatchWasteItemLabel(row = {}) {
   ).trim();
 }
 
+function loadImageElementFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error(`Could not read ${file.name || 'the selected picture'}.`));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('Could not compress the selected picture.'));
+    }, type, quality);
+  });
+}
+
+function replaceImageExtension(name = 'waste-picture', extension = 'jpg') {
+  const safeName = String(name || 'waste-picture').replace(/\.[a-z0-9]+$/i, '');
+  return `${safeName}.${extension}`;
+}
+
+async function compressWasteImageFile(file) {
+  const image = await loadImageElementFromFile(file);
+  let quality = 0.86;
+  let longEdge = MAX_WASTE_PICTURE_LONG_EDGE;
+  let bestBlob = null;
+
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const scale = Math.min(1, longEdge / Math.max(image.width, image.height));
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0, width, height);
+    const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+    bestBlob = blob;
+    if (blob.size <= MAX_WASTE_PICTURE_BYTES) break;
+    if (quality > 0.58) {
+      quality = Number((quality - 0.06).toFixed(2));
+    } else {
+      longEdge = Math.max(720, Math.floor(longEdge * 0.85));
+      quality = 0.68;
+    }
+  }
+
+  return new File([bestBlob], replaceImageExtension(file.name, 'jpg'), {
+    type: 'image/jpeg',
+    lastModified: Date.now()
+  });
+}
+
 function sumRecipeIngredientCost(recipe, recipeMap, ingredientMap) {
   const expandedIngredients = expandRecipeIngredients(
     recipe,
@@ -303,6 +398,7 @@ function createDefaultWasteForm() {
     unit: 'kg',
     preventable: true,
     evidence_image_url: '',
+    evidence_image_urls: [],
     notes: ''
   };
 }
@@ -337,9 +433,11 @@ export default function FoodWaste() {
   const [reverseWasteDialog, setReverseWasteDialog] = useState({ open: false, record: null, reason: '' });
   const [formData, setFormData] = useState(createDefaultWasteForm);
   const [dishWasteGramsByRecipe, setDishWasteGramsByRecipe] = useState({});
-  const [wasteImageFile, setWasteImageFile] = useState(null);
-  const [wasteImagePreview, setWasteImagePreview] = useState('');
+  const [wasteImages, setWasteImages] = useState([]);
+  const [wasteImageProcessing, setWasteImageProcessing] = useState(false);
   const [wasteImageUploading, setWasteImageUploading] = useState(false);
+  const wasteImageCount = wasteImages.length;
+  const hasWasteEvidenceImages = wasteImages.some((item) => String(item.url || item.previewUrl || '').trim());
   const [targetForm, setTargetForm] = useState({
     site_id: '',
     target_percentage: '',
@@ -623,8 +721,7 @@ export default function FoodWaste() {
       setMessage('Waste record saved.');
       setFormData(createDefaultWasteForm());
       setDishWasteGramsByRecipe({});
-      setWasteImageFile(null);
-      setWasteImagePreview('');
+      setWasteImages([]);
     },
     onError: (error) => setMessage(error.message || 'Failed to save waste record')
   });
@@ -638,8 +735,7 @@ export default function FoodWaste() {
       setMessage('Waste record updated.');
       setFormData(createDefaultWasteForm());
       setDishWasteGramsByRecipe({});
-      setWasteImageFile(null);
-      setWasteImagePreview('');
+      setWasteImages([]);
     },
     onError: (error) => setMessage(error.message || 'Failed to update waste record')
   });
@@ -1117,18 +1213,31 @@ export default function FoodWaste() {
         return;
       }
     }
-    if (!wasteImageFile && !formData.evidence_image_url) {
-      setMessage('Add a waste picture before saving this record.');
+    if (!hasWasteEvidenceImages) {
+      setMessage('Add at least one waste picture before saving this record.');
       return;
     }
 
     const saveWasteRecord = async () => {
-      let evidenceImageUrl = String(formData.evidence_image_url || '').trim();
-      if (wasteImageFile) {
+      let evidenceImageUrls = wasteImages
+        .filter((item) => !item.file)
+        .map((item) => String(item.url || item.previewUrl || '').trim())
+        .filter(Boolean);
+      const filesToUpload = wasteImages.filter((item) => item.file);
+      if (filesToUpload.length) {
         setWasteImageUploading(true);
-        const uploadResult = await base44.integrations.Core.UploadWasteImage({ file: wasteImageFile });
-        evidenceImageUrl = uploadResult.file_url || uploadResult.public_file_url || '';
+        const uploadedUrls = [];
+        for (const image of filesToUpload) {
+          const uploadResult = await base44.integrations.Core.UploadWasteImage({ file: image.file });
+          const uploadedUrl = uploadResult.file_url || uploadResult.public_file_url || '';
+          if (uploadedUrl) uploadedUrls.push(uploadedUrl);
+        }
+        evidenceImageUrls = [...evidenceImageUrls, ...uploadedUrls].slice(0, MAX_WASTE_PICTURES);
         setWasteImageUploading(false);
+      }
+      const evidenceImageUrl = evidenceImageUrls[0] || '';
+      if (!evidenceImageUrl) {
+        throw new Error('Waste pictures could not be uploaded. Try again with a smaller image or different file.');
       }
 
       const buildPayload = ({ row = null, estimatedCost = handleAutoCostPreview() } = {}) => {
@@ -1174,6 +1283,8 @@ export default function FoodWaste() {
           high_value: estimatedCost >= APPROVAL_THRESHOLD,
           evidence_image_url: evidenceImageUrl,
           image_url: evidenceImageUrl,
+          evidence_image_urls: evidenceImageUrls,
+          image_urls: evidenceImageUrls,
           notes: formData.notes
         };
       };
@@ -1208,8 +1319,7 @@ export default function FoodWaste() {
     setEditingWasteId(null);
     setFormData(createDefaultWasteForm());
     setDishWasteGramsByRecipe({});
-    setWasteImageFile(null);
-    setWasteImagePreview('');
+    setWasteImages([]);
     setFormOpen(true);
   };
 
@@ -1237,11 +1347,16 @@ export default function FoodWaste() {
       quantity: String(record.quantity ?? ''),
       unit: record.unit || 'kg',
       preventable: record.avoidable_type !== 'unavoidable' || Boolean(record.preventable),
-      evidence_image_url: record.evidence_image_url || record.image_url || '',
+      evidence_image_url: getWasteEvidenceUrl(record),
+      evidence_image_urls: getWasteEvidenceUrls(record),
       notes: record.notes || ''
     });
-    setWasteImageFile(null);
-    setWasteImagePreview(record.evidence_image_url || record.image_url || '');
+    setWasteImages(getWasteEvidenceUrls(record).map((url, index) => ({
+      key: `existing-${index}-${url}`,
+      url,
+      previewUrl: url,
+      name: `Saved picture ${index + 1}`
+    })));
     setFormOpen(true);
   };
 
@@ -1271,15 +1386,57 @@ export default function FoodWaste() {
     reverseWasteMutation.mutate({ id: record.id, reason });
   };
 
-  const handleWasteImageChange = (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (!file.type?.startsWith('image/')) {
-      setMessage('Waste evidence must be an image file.');
+  const handleWasteImageChange = async (event) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!selectedFiles.length) return;
+
+    const nonImageFile = selectedFiles.find((file) => !file.type?.startsWith('image/'));
+    if (nonImageFile) {
+      setMessage('Waste evidence must be image files only.');
       return;
     }
-    setWasteImageFile(file);
-    setWasteImagePreview(URL.createObjectURL(file));
+
+    const availableSlots = MAX_WASTE_PICTURES - wasteImageCount;
+    if (availableSlots <= 0) {
+      setMessage(`You can upload a maximum of ${MAX_WASTE_PICTURES} waste pictures.`);
+      return;
+    }
+
+    const filesToUse = selectedFiles.slice(0, availableSlots);
+    if (selectedFiles.length > availableSlots) {
+      setMessage(`Only ${availableSlots} more waste ${availableSlots === 1 ? 'picture can' : 'pictures can'} be added. The extra file(s) were skipped.`);
+    }
+
+    try {
+      setWasteImageProcessing(true);
+      const preparedImages = [];
+      for (const file of filesToUse) {
+        const compressedFile = await compressWasteImageFile(file);
+        preparedImages.push({
+          key: `new-${Date.now()}-${preparedImages.length}-${file.name}`,
+          file: compressedFile,
+          previewUrl: URL.createObjectURL(compressedFile),
+          name: file.name,
+          size: compressedFile.size
+        });
+      }
+      setWasteImages((current) => [...current, ...preparedImages].slice(0, MAX_WASTE_PICTURES));
+    } catch (error) {
+      setMessage(error.message || 'Failed to prepare waste pictures.');
+    } finally {
+      setWasteImageProcessing(false);
+    }
+  };
+
+  const handleRemoveWasteImage = (imageKey) => {
+    setWasteImages((current) => {
+      const image = current.find((item) => item.key === imageKey);
+      if (image?.previewUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(image.previewUrl);
+      }
+      return current.filter((item) => item.key !== imageKey);
+    });
   };
 
   const exportWastePackage = (type = 'csv') => {
@@ -1922,7 +2079,8 @@ export default function FoodWaste() {
                     <TableCell colSpan={14} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
                   </TableRow>
                 ) : filteredWaste.slice(0, 30).map((item) => {
-                  const evidenceUrl = getWasteEvidenceUrl(item);
+                  const evidenceUrls = getWasteEvidenceUrls(item);
+                  const evidenceUrl = evidenceUrls[0] || '';
                   return (
                   <TableRow key={item.id}>
                     <TableCell className="font-mono text-xs text-slate-600">
@@ -1951,8 +2109,22 @@ export default function FoodWaste() {
                     <TableCell>{formatCurrency(getWasteCost(item, productionMap))}</TableCell>
                     <TableCell>
                       {evidenceUrl ? (
-                        <a className="text-sm font-medium text-emerald-700 hover:underline" href={evidenceUrl} target="_blank" rel="noreferrer">
-                          View
+                        <a
+                          className="group inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-1 pr-2 text-sm font-medium text-emerald-700 shadow-sm hover:border-emerald-200 hover:bg-emerald-50"
+                          href={evidenceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={evidenceUrls.length > 1 ? `${evidenceUrls.length} waste pictures attached` : 'View waste picture'}
+                        >
+                          <span className="relative block h-10 w-10 overflow-hidden rounded-md bg-slate-100">
+                            <img src={evidenceUrl} alt="Waste evidence thumbnail" className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+                            {evidenceUrls.length > 1 ? (
+                              <span className="absolute bottom-0 right-0 rounded-tl bg-black/75 px-1 text-[10px] font-bold leading-4 text-white">
+                                +{evidenceUrls.length - 1}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span>View</span>
                         </a>
                       ) : isMealServiceLeftover(item) ? (
                         <Badge className="bg-slate-100 text-slate-700">System generated</Badge>
@@ -2039,8 +2211,7 @@ export default function FoodWaste() {
               setEditingWasteId(null);
               setFormData(createDefaultWasteForm());
               setDishWasteGramsByRecipe({});
-              setWasteImageFile(null);
-              setWasteImagePreview('');
+              setWasteImages([]);
             }
           }}
         >
@@ -2373,24 +2544,64 @@ export default function FoodWaste() {
               <div className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <Label>Waste Picture <span className="text-red-600">*</span></Label>
-                    <p className="mt-1 text-xs text-slate-500">Photo evidence is required before this waste can be saved.</p>
+                    <Label>Waste Pictures <span className="text-red-600">*</span></Label>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Add up to {MAX_WASTE_PICTURES} pictures. The app compresses uploads in the background to keep all evidence near 1.5 MB total.
+                    </p>
                   </div>
-                  <Button type="button" variant="outline" onClick={() => wasteImageInputRef.current?.click()}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={wasteImageProcessing || wasteImageCount >= MAX_WASTE_PICTURES}
+                    onClick={() => wasteImageInputRef.current?.click()}
+                  >
                     <ImagePlus className="mr-2 h-4 w-4" />
-                    {wasteImagePreview ? 'Change Picture' : 'Add Picture'}
+                    {wasteImageProcessing ? 'Compressing...' : wasteImageCount ? 'Add More Pictures' : 'Add Pictures'}
                   </Button>
                 </div>
                 <input
                   ref={wasteImageInputRef}
                   type="file"
+                  multiple
                   accept="image/jpeg,image/png,image/webp,image/gif"
                   className="hidden"
                   onChange={handleWasteImageChange}
                 />
-                {wasteImagePreview ? (
-                  <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                    <img src={wasteImagePreview} alt="Waste evidence preview" className="h-48 w-full object-cover" />
+                {wasteImages.length ? (
+                  <div className="mt-3">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {wasteImages.map((image, index) => (
+                        <div key={image.key} className="group relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                          <img
+                            src={image.previewUrl || image.url}
+                            alt={`Waste evidence ${index + 1}`}
+                            className="h-28 w-full object-cover"
+                          />
+                          <div className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white">
+                            {index + 1}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveWasteImage(image.key)}
+                            className="absolute right-2 top-2 rounded-full bg-white/95 px-2 py-0.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-red-50 hover:text-red-700"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                      {wasteImageCount < MAX_WASTE_PICTURES ? (
+                        <button
+                          type="button"
+                          onClick={() => wasteImageInputRef.current?.click()}
+                          className="flex h-28 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-sm font-medium text-slate-500 hover:bg-slate-100"
+                        >
+                          Add another
+                        </button>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {wasteImageCount} / {MAX_WASTE_PICTURES} pictures attached. The first picture will appear as the record thumbnail.
+                    </p>
                   </div>
                 ) : (
                   <button
@@ -2398,7 +2609,7 @@ export default function FoodWaste() {
                     onClick={() => wasteImageInputRef.current?.click()}
                     className="mt-3 flex h-32 w-full items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-sm font-medium text-slate-500"
                   >
-                    Add required waste picture
+                    Add required waste pictures
                   </button>
                 )}
               </div>
@@ -2413,6 +2624,7 @@ export default function FoodWaste() {
                   setFormOpen(false);
                   setEditingWasteId(null);
                   setFormData(createDefaultWasteForm());
+                  setWasteImages([]);
                 }}>Cancel</Button>
                 <Button
                   type="submit"
@@ -2420,15 +2632,18 @@ export default function FoodWaste() {
                   disabled={
                     createWasteMutation.isPending
                     || updateWasteMutation.isPending
+                    || wasteImageProcessing
                     || wasteImageUploading
                     || !formData.site_id
                     || !formData.quantity
-                    || (!wasteImageFile && !formData.evidence_image_url)
+                    || !hasWasteEvidenceImages
                     || !formData.meal_type
                     || !wasteContextAllowsSave
                   }
                 >
-                  {createWasteMutation.isPending || updateWasteMutation.isPending || wasteImageUploading
+                  {wasteImageProcessing
+                    ? 'Preparing pictures...'
+                    : createWasteMutation.isPending || updateWasteMutation.isPending || wasteImageUploading
                     ? 'Saving...'
                     : editingWasteId ? 'Update Waste Record' : 'Save Waste Record'}
                 </Button>
