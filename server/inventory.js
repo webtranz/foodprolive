@@ -899,6 +899,7 @@ async function ensureInventoryRecord({
         );
         const openingLot = await createDocument('InventoryLot', {
           id: randomId('lot'),
+          inventory_id: normalizedExisting.id,
           site_id,
           site_name: identity.site.name || site_name || normalizedExisting.site_name || null,
           ingredient_id,
@@ -1273,6 +1274,7 @@ async function receiveStockWithExecutor({
 
   const lot = await createDocument('InventoryLot', {
     id: randomId('lot'),
+    inventory_id: inventory.id,
     site_id,
     site_name,
     ingredient_id,
