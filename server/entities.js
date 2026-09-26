@@ -62,7 +62,7 @@ const granularPagePermissionLabels = {
   access_auto_schedule: 'Open Auto Schedule',
   access_production: 'Open Production',
   access_inventory: 'Open Inventory',
-  access_material_requests: 'Open Material Requests',
+  access_material_requests: 'Open MR to Store',
   access_yield_cost: 'Open Yield & Cost',
   access_batch_tracking: 'Open Batch Tracking',
   access_branch_orders: 'Open Branch Orders',
@@ -148,9 +148,9 @@ export const permissionCatalog = [
   { key: 'cancel_production', label: 'Cancel Production & Return Inventory' },
   { key: 'start_production', label: 'Start Production' },
   { key: 'complete_production', label: 'Complete Production' },
-  { key: 'create_material_request', label: 'Create Material Request' },
-  { key: 'view_material_request', label: 'View Material Requests' },
-  { key: 'acknowledge_material_request', label: 'Acknowledge Material Requests' },
+  { key: 'create_material_request', label: 'Create MR to Store' },
+  { key: 'view_material_request', label: 'View MR to Store' },
+  { key: 'acknowledge_material_request', label: 'Acknowledge MR to Store' },
   { key: 'manage_procurement', label: 'Manage Procurement' },
   { key: 'approve_procurement', label: 'Approve Procurement' },
   { key: 'manage_suppliers', label: 'Manage Suppliers' },
@@ -1354,7 +1354,7 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
     const isProductionGenerated = String(payload?.source_type || resource?.source_type || '').toLowerCase() === 'production'
       || Boolean(payload?.source_production_id || resource?.source_production_id);
     if (isProductionGenerated && ['create', 'update', 'delete'].includes(action)) {
-      const error = new Error('Production material requests are managed only by the production and procurement workflow');
+      const error = new Error('Production MR to Store records are managed only by the production and procurement workflow');
       error.status = 409;
       throw error;
     }
@@ -1403,7 +1403,7 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
 
       if (nextStatus && nextStatus !== currentStatus) {
         if (nextStatus === 'cancelled') {
-          const error = new Error('Use the protected production cancellation action so committed inventory and the linked material request are returned together');
+          const error = new Error('Use the protected production cancellation action so committed inventory and the linked MR to Store record are returned together');
           error.status = 409;
           throw error;
         }
@@ -1516,7 +1516,7 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
         }
 
         if (nextStatus === 'in_progress' && !canStartApprovedProduction(resource)) {
-          const error = new Error('Production cannot start until Store / Procurement has acknowledged the material request and inventory is fully reserved');
+          const error = new Error('Production cannot start until Store / Procurement has acknowledged the MR to Store record and inventory is fully reserved');
           error.status = 409;
           throw error;
         }

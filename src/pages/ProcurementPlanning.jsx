@@ -236,7 +236,7 @@ export default function ProcurementPlanning() {
             disabled={createMRMutation.isPending || aggregatedNeeds.filter(n => n.toPurchase > 0).length === 0}
           >
             <Send className="w-4 h-4 mr-2" />
-            {createMRMutation.isPending ? 'Generating...' : 'Generate Material Request'}
+            {createMRMutation.isPending ? 'Generating...' : 'Generate MR to Store'}
           </Button>
         </PageHeader>
 
@@ -278,7 +278,7 @@ export default function ProcurementPlanning() {
           <TabsList className="bg-white border border-slate-200">
             <TabsTrigger value="master_list">Master Ingredient Summary</TabsTrigger>
             <TabsTrigger value="table">Detailed Table</TabsTrigger>
-            <TabsTrigger value="requests">Material Requests</TabsTrigger>
+            <TabsTrigger value="requests">MR to Store</TabsTrigger>
           </TabsList>
 
           <TabsContent value="master_list">
@@ -360,7 +360,7 @@ export default function ProcurementPlanning() {
 
           <TabsContent value="requests">
             <Card className="border-slate-100 shadow-sm">
-              <CardHeader><CardTitle>Generated Material Requests</CardTitle></CardHeader>
+              <CardHeader><CardTitle>Generated MR to Store</CardTitle></CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
@@ -395,7 +395,7 @@ export default function ProcurementPlanning() {
                       </TableRow>
                     ))}
                     {materialRequests.length === 0 && (
-                      <TableRow><TableCell colSpan={7} className="text-center text-slate-500 py-8">No material requests yet</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={7} className="text-center text-slate-500 py-8">No MR to Store records yet</TableCell></TableRow>
                     )}
                   </TableBody>
                 </Table>

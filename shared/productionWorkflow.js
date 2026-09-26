@@ -305,7 +305,7 @@ export function getProductionStartBlockReason(production) {
     return 'Production is not approved and ready to start.';
   }
   if (!hasAcknowledgedMaterialRequest(production)) {
-    return 'Production cannot start until Store / Procurement acknowledges the material request.';
+    return 'Production cannot start until Store / Procurement acknowledges the MR to Store record.';
   }
   if (!hasStartableProductionInventory(production)) {
     return 'Production cannot start until its yield-adjusted inventory requirement is fully reserved.';

@@ -270,7 +270,7 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
           ) : null}
           {materialRequest ? (
             <ProductionDetailRow
-              label="Material request"
+              label="MR to Store"
               value={`${materialRequest.request_number || 'MR'} - ${titleCase(materialRequest.status)}`}
               tone="indigo"
             />
@@ -345,7 +345,7 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
           <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
             {materialRequest
               ? 'Procurement acknowledgement is required before production can start.'
-              : 'A linked material request is required before production can start.'}
+              : 'A linked MR to Store record is required before production can start.'}
           </p>
         ) : null}
 

@@ -1133,7 +1133,7 @@ async function assertProductionStartPrerequisites(production, executor = null, u
   // start transaction repairs/reserves those records immediately before it
   // consumes stock, while current records must already pass the shared gate.
   if (!hasAreaProductionApproval(production) || !hasAcknowledgedMaterialRequest(production)) {
-    const error = new Error('Production cannot start until Store / Procurement has acknowledged the material request and inventory is fully reserved.');
+    const error = new Error('Production cannot start until Store / Procurement has acknowledged the MR to Store record and inventory is fully reserved.');
     error.status = 409;
     throw error;
   }
@@ -1168,7 +1168,7 @@ async function assertProductionStartPrerequisites(production, executor = null, u
     || String(materialRequest.source_production_id || '') !== String(production.id)
     || String(materialRequest.site_id || '') !== String(fulfillmentStore.id)
   ) {
-    const error = new Error('The linked material request has not been acknowledged by Store / Procurement.');
+    const error = new Error('The linked MR to Store record has not been acknowledged by Store / Procurement.');
     error.status = 409;
     throw error;
   }
@@ -1246,7 +1246,7 @@ async function syncMaterialRequestForProduction(
   const isDraftMode = normalizedMode === 'draft';
 
   if (!isDraftMode && String(production.status || '') !== 'pending_procurement') {
-    const error = new Error('Material requests can only be activated after PM approval.');
+    const error = new Error('MR to Store records can only be activated after PM approval.');
     error.status = 400;
     throw error;
   }
@@ -5991,7 +5991,7 @@ async function buildDeleteImpact(entity, existing, executor = undefined) {
       makeDeleteImpactLinkage('Inventory transactions', transactions, (item) => item.reference_number || item.reason_code || item.id),
       makeDeleteImpactLinkage('Recipes', recipes.filter((recipe) => includesIngredientId(recipe.ingredients, ingredientId))),
       makeDeleteImpactLinkage('Production records', productions.filter((production) => productionIncludesIngredient(production, ingredientId))),
-      makeDeleteImpactLinkage('Material requests', materialRequests.filter((request) => requestIncludesIngredient(request, ingredientId))),
+      makeDeleteImpactLinkage('MR to Store', materialRequests.filter((request) => requestIncludesIngredient(request, ingredientId))),
       makeDeleteImpactLinkage('Food waste records', foodWaste.filter((waste) => String(waste.ingredient_id || '') === String(ingredientId)))
     );
   } else {
@@ -6013,7 +6013,7 @@ async function buildDeleteImpact(entity, existing, executor = undefined) {
       makeDeleteImpactLinkage('Inventory lots / batches', lots, (item) => item.batch_number || item.id),
       makeDeleteImpactLinkage('Inventory transactions', transactions, (item) => item.reference_number || item.reason_code || item.id),
       makeDeleteImpactLinkage('Production records', productions.filter((production) => productionIncludesIngredient(production, ingredientId, siteId))),
-      makeDeleteImpactLinkage('Material requests', materialRequests.filter((request) => requestIncludesIngredient(request, ingredientId, siteId)))
+      makeDeleteImpactLinkage('MR to Store', materialRequests.filter((request) => requestIncludesIngredient(request, ingredientId, siteId)))
     );
   }
 
@@ -6197,7 +6197,7 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
           'rejected'
         ].includes(String(request.status || '').toLowerCase()));
         if (blockingMaterialRequest) {
-          const error = new Error('The linked material request has already moved into procurement. Cancel the production workflow instead of deleting it.');
+          const error = new Error('The linked MR to Store record has already moved into procurement. Cancel the production workflow instead of deleting it.');
           error.status = 409;
           throw error;
         }
@@ -6241,8 +6241,8 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
           friendly_changes: [
             'The draft production request was removed before any stock was reserved, consumed, or completed.',
             deletion.deleted_material_requests.length > 0
-              ? `${deletion.deleted_material_requests.length} linked draft material request${deletion.deleted_material_requests.length === 1 ? '' : 's'} were removed with it.`
-              : 'No linked material request had to be removed.'
+              ? `${deletion.deleted_material_requests.length} linked draft MR to Store record${deletion.deleted_material_requests.length === 1 ? '' : 's'} were removed with it.`
+              : 'No linked MR to Store record had to be removed.'
           ],
           deleted_record: deletion.deleted_record,
           deleted_material_requests: deletion.deleted_material_requests
@@ -6583,8 +6583,8 @@ function getProductionNotificationFields(log = {}) {
 
   if (action === 'production_material_request_activated') {
     return {
-      title: 'Material request pending Procurement',
-      message: `${recipeName} material request is ready for Store / Procurement acknowledgement.`,
+      title: 'MR to Store pending Procurement',
+      message: `${recipeName} MR to Store record is ready for Store / Procurement acknowledgement.`,
       workflow_step: 'Pending Store / Procurement'
     };
   }
@@ -7426,7 +7426,7 @@ async function repairMaterialRequestUnitIssues({ materialRequestId, ingredientId
   return withTransaction(async (client) => {
     const materialRequest = await findDocument('MaterialRequest', materialRequestId, client, true);
     if (!materialRequest || !filterRowsByAccessibleSites([materialRequest], scope).length) {
-      const error = new Error('Material request not found');
+      const error = new Error('MR to Store record not found');
       error.status = 404;
       throw error;
     }
@@ -7438,7 +7438,7 @@ async function repairMaterialRequestUnitIssues({ materialRequestId, ingredientId
       .filter((id) => !ingredientId || id === String(ingredientId)))]
       .sort();
     if (targetIngredientIds.length === 0) {
-      const error = new Error('No matching material request rows were found to repair');
+      const error = new Error('No matching MR to Store rows were found to repair');
       error.status = 400;
       throw error;
     }
@@ -7644,7 +7644,7 @@ app.post('/api/material-requests/from-production/:id', requireAuth, requirePermi
         throw error;
       }
       if (normalizeProductionStatus(production.status) !== 'pending_procurement') {
-        const error = new Error('A production material request can only be activated after Project Manager approval.');
+        const error = new Error('A production MR to Store record can only be activated after Project Manager approval.');
         error.status = 409;
         throw error;
       }
@@ -7692,7 +7692,7 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
     const scope = await getLocationScope(request.user);
     const scopedRequest = await findDocument('MaterialRequest', request.params.id);
     if (!scopedRequest || !filterRowsByAccessibleSites([scopedRequest], scope).length) {
-      return response.status(404).json({ message: 'Material request not found' });
+      return response.status(404).json({ message: 'MR to Store record not found' });
     }
     const sourceProductionId = String(scopedRequest.source_production_id || '').trim();
     const updated = await withTransaction(async (client) => {
@@ -7702,17 +7702,17 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
         : null;
       const materialRequest = await findDocument('MaterialRequest', request.params.id, client, true);
       if (!materialRequest || !filterRowsByAccessibleSites([materialRequest], scope).length) {
-        const error = new Error('Material request is outside your assigned Store scope');
+        const error = new Error('MR to Store record is outside your assigned Store scope');
         error.status = 403;
         throw error;
       }
       if (String(materialRequest.source_production_id || '').trim() !== sourceProductionId) {
-        const error = new Error('Material request source changed while it was being reviewed. Refresh and try again.');
+        const error = new Error('MR to Store source changed while it was being reviewed. Refresh and try again.');
         error.status = 409;
         throw error;
       }
       if (String(materialRequest?.status || '').toLowerCase() !== 'pending_procurement_ack') {
-        const error = new Error('Only a material request awaiting Store / Procurement acknowledgement can be approved');
+        const error = new Error('Only an MR to Store record awaiting Store / Procurement acknowledgement can be approved');
         error.status = 409;
         throw error;
       }
@@ -7722,12 +7722,12 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
         && requiresAreaProductionApproval(production)
       );
       if (materialRequest.source_type === 'production' && !materialRequest.source_production_id) {
-        const error = new Error('Production material request is missing its source production link');
+        const error = new Error('Production MR to Store record is missing its source production link');
         error.status = 409;
         throw error;
       }
       if (materialRequest.source_production_id && String(materialRequest.source_type || '').toLowerCase() !== 'production') {
-        const error = new Error('Linked production material request has an invalid source type');
+        const error = new Error('Linked production MR to Store record has an invalid source type');
         error.status = 409;
         throw error;
       }
@@ -7749,12 +7749,12 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
           production.linked_material_request_id
           && String(production.linked_material_request_id) !== String(materialRequest.id)
         ) {
-          const error = new Error('Material request does not match the Production linked request');
+          const error = new Error('MR to Store record does not match the Production linked request');
           error.status = 409;
           throw error;
         }
         if (String(materialRequest.site_id || '') !== String(fulfillmentStore.id)) {
-          const error = new Error('Material request is not routed to the Production fulfillment Store');
+          const error = new Error('MR to Store record is not routed to the Production fulfillment Store');
           error.status = 409;
           throw error;
         }
@@ -7762,7 +7762,7 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
           materialRequest.requesting_site_id
           && String(materialRequest.requesting_site_id) !== String(production.site_id)
         ) {
-          const error = new Error('Material request Project does not match the linked Production Project');
+          const error = new Error('MR to Store Project does not match the linked Production Project');
           error.status = 409;
           throw error;
         }
@@ -7770,7 +7770,7 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
           materialRequest.fulfillment_store_id
           && String(materialRequest.fulfillment_store_id) !== String(fulfillmentStore.id)
         ) {
-          const error = new Error('Material request fulfillment Store does not match the linked Production');
+          const error = new Error('MR to Store fulfillment Store does not match the linked Production');
           error.status = 409;
           throw error;
         }
@@ -8015,7 +8015,7 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
         materialStatus !== 'acknowledged'
         && !(materialStatus === 'not_required' && currentHasAuthoritativeEmptyIngredients)
       ) {
-        const error = new Error('Store / Procurement must acknowledge the material request before final production approval');
+        const error = new Error('Store / Procurement must acknowledge the MR to Store record before final production approval');
         error.status = 409;
         throw error;
       }
@@ -8024,12 +8024,12 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
           ? await findDocument('MaterialRequest', currentProduction.linked_material_request_id, client, true)
           : materialRequest;
         if (!materialRequest || String(materialRequest.status || '').toLowerCase() !== 'acknowledged') {
-          const error = new Error('The linked material request has not been acknowledged by Store / Procurement');
+          const error = new Error('The linked MR to Store record has not been acknowledged by Store / Procurement');
           error.status = 409;
           throw error;
         }
         if (String(materialRequest.source_production_id || '') !== String(currentProduction.id)) {
-          const error = new Error('The acknowledged material request belongs to a different Production request');
+          const error = new Error('The acknowledged MR to Store record belongs to a different Production request');
           error.status = 409;
           throw error;
         }
@@ -8039,7 +8039,7 @@ app.post('/api/productions/:id/area-approve', requireAuth, requirePermission('ap
         materialStatus === 'acknowledged'
         && String(materialRequest.site_id || '') !== String(fulfillmentStore.id)
       ) {
-        const error = new Error('The acknowledged material request is not assigned to the current fulfillment Store');
+        const error = new Error('The acknowledged MR to Store record is not assigned to the current fulfillment Store');
         error.status = 409;
         throw error;
       }
@@ -8188,7 +8188,7 @@ app.patch('/api/productions/:id/approved-quantity', requireAuth, requireAnyPermi
       const fulfillmentStore = resolveProductionFulfillmentStore(lockedProduction, siteCatalog);
       // Keep the acknowledged procurement snapshot aligned with the revised,
       // yield-adjusted demand. A quantity adjustment does not silently reopen
-      // approval, but it must never leave an old Material Request behind.
+      // approval, but it must never leave an old MR to Store record behind.
       await syncMaterialRequestForProduction(request.user, {
         ...lockedProduction,
         ...approvedSnapshot,

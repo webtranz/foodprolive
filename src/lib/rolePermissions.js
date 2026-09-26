@@ -97,13 +97,13 @@ export const ROLE_PERMISSION_SECTIONS = [
     description: 'Procurement submenu pages for requests, purchasing, and supplier records.',
     subsections: [
       { page: 'ProcurementModule', key: 'access_procurement', label: 'Procurement', description: 'Requests, purchase orders, receipts, and invoices.' },
-      { page: 'MaterialRequests', key: 'access_material_requests', label: 'Material Requests', description: 'Requests linking production demand to procurement.' },
+      { page: 'MaterialRequests', key: 'access_material_requests', label: 'MR to Store', description: 'Records linking production demand to procurement.' },
       { page: 'SupplierPortal', key: 'access_supplier_portal', label: 'Supplier Portal', description: 'Supplier records and performance.' }
     ],
     capabilities: [
-      { key: 'create_material_request', label: 'Create material requests' },
-      { key: 'view_material_request', label: 'View material requests' },
-      { key: 'acknowledge_material_request', label: 'Acknowledge material requests' },
+      { key: 'create_material_request', label: 'Create MR to Store records' },
+      { key: 'view_material_request', label: 'View MR to Store records' },
+      { key: 'acknowledge_material_request', label: 'Acknowledge MR to Store records' },
       { key: 'manage_procurement', label: 'Manage procurement' },
       { key: 'approve_procurement', label: 'Approve procurement' },
       { key: 'manage_suppliers', label: 'Manage suppliers' }

@@ -90,7 +90,7 @@ export default function MaterialRequests() {
     },
     onError: (error) => {
       setActionNotice('');
-      setActionError(error.message || 'Unable to acknowledge this material request.');
+      setActionError(error.message || 'Unable to acknowledge this MR to Store record.');
     }
   });
 
@@ -105,7 +105,7 @@ export default function MaterialRequests() {
     },
     onError: (error) => {
       setActionNotice('');
-      setActionError(error.message || 'Unable to repair this material request row.');
+      setActionError(error.message || 'Unable to repair this MR to Store row.');
     }
   });
 
@@ -266,8 +266,8 @@ export default function MaterialRequests() {
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-[1500px] space-y-6">
         <PageHeader
-          title="Material Requests"
-          description="Track production-related material requests from chef submission through procurement acknowledgement."
+          title="MR to Store"
+          description="Track production-related MR to Store records from chef submission through procurement acknowledgement."
         />
 
         <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
@@ -317,22 +317,22 @@ export default function MaterialRequests() {
         {requestsError ? (
           <Card className="border-red-200 bg-red-50">
             <CardContent className="py-8 text-center text-sm text-red-700">
-              {requestsError.message || 'Unable to load material requests. Please try again.'}
+              {requestsError.message || 'Unable to load MR to Store records. Please try again.'}
             </CardContent>
           </Card>
         ) : isLoading ? (
           <Card className="border-slate-200 bg-white">
             <CardContent className="flex items-center justify-center gap-2 py-12 text-sm text-slate-600">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading material requests...
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading MR to Store records...
             </CardContent>
           </Card>
         ) : visibleRequests.length === 0 ? (
           <Card className="border-dashed border-slate-300 bg-white">
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <ClipboardList className="mb-4 h-10 w-10 text-slate-400" />
-              <h3 className="text-lg font-semibold text-slate-900">No material requests yet</h3>
+              <h3 className="text-lg font-semibold text-slate-900">No MR to Store records yet</h3>
               <p className="mt-2 max-w-xl text-sm text-slate-500">
-                Approved production requests will appear here once the linked material request is released to procurement for acknowledgement.
+                Approved production requests will appear here once the linked MR to Store record is released to procurement for acknowledgement.
               </p>
             </CardContent>
           </Card>
@@ -441,7 +441,7 @@ export default function MaterialRequests() {
       }}>
         <DialogContent className="flex max-h-[92vh] max-w-5xl flex-col overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b border-slate-200 px-6 py-4">
-            <DialogTitle>Acknowledge Material Request</DialogTitle>
+            <DialogTitle>Acknowledge MR to Store</DialogTitle>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
             {actionError ? (

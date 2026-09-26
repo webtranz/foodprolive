@@ -3767,7 +3767,7 @@ export default function Production() {
                   {calculatedIngredients.some(ing => !ing.sufficient) && (
                     <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
                       <p className="text-sm text-amber-800">
-                        <strong>Note:</strong> A linked material request will be created with this production request and released to procurement after approval.
+                        <strong>Note:</strong> A linked MR to Store record will be created with this production request and released to procurement after approval.
                       </p>
                     </div>
                   )}
@@ -4275,15 +4275,15 @@ export default function Production() {
                   </p>
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
                     This is allowed for administrators only while the production is still draft, planned, or returned for changes.
-                    Any linked draft material request will be removed with it.
+                    Any linked draft MR to Store record will be removed with it.
                   </div>
                   {deleteProduction?.linked_material_request_number || materialRequestMap[deleteProduction?.id] ? (
                     <p>
-                      Linked material request:{' '}
+                      Linked MR to Store:{' '}
                       <span className="font-medium text-slate-900">
                         {deleteProduction?.linked_material_request_number
                           || materialRequestMap[deleteProduction?.id]?.request_number
-                          || 'Production material request'}
+                          || 'Production MR to Store'}
                       </span>
                     </p>
                   ) : null}
@@ -4675,7 +4675,7 @@ export default function Production() {
                         Store / Procurement Action Required After PM Approval
                       </p>
                       <p className="text-sm text-amber-700 mt-1">
-                        After PM approval, the linked material request moves to Store / Procurement. Store / Procurement approval reserves the yield-adjusted quantities and marks production ready to start; physical stock is deducted only when production starts.
+                        After PM approval, the linked MR to Store record moves to Store / Procurement. Store / Procurement acknowledgement reserves the yield-adjusted quantities and marks production ready to start; physical stock is deducted only when production starts.
                       </p>
                     </div>
                   </div>

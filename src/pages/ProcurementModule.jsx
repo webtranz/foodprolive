@@ -174,7 +174,7 @@ export default function ProcurementModule() {
   const canManageSuppliers = can('manage_suppliers');
   const canViewPerformance = canManageProcurement || canApproveProcurement;
 
-  const [activeTab, setActiveTab] = useState('monthly-purchase-requests');
+  const [activeTab, setActiveTab] = useState('requests');
   const [supplierDialogOpen, setSupplierDialogOpen] = useState(false);
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [orderDialogOpen, setOrderDialogOpen] = useState(false);
@@ -607,7 +607,7 @@ export default function ProcurementModule() {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-7">
           <KPI title="Suppliers" value={procurementStats.supplierCount} subtitle="Configured vendor accounts" icon={Building2} tone="bg-blue-100 text-blue-700" />
-          <KPI title="MR To Acknowledge" value={procurementStats.pendingMaterialRequests} subtitle="Chef-raised production requests" icon={ClipboardList} tone="bg-violet-100 text-violet-700" />
+          <KPI title="MR to Store" value={procurementStats.pendingMaterialRequests} subtitle="Chef-raised production requests" icon={ClipboardList} tone="bg-violet-100 text-violet-700" />
           <KPI title="Pending Requests" value={procurementStats.pendingRequests} subtitle="Awaiting approval" icon={ClipboardList} tone="bg-amber-100 text-amber-700" />
           <KPI title="D365 PR Exports" value={procurementStats.monthlyPrReadyForExport} subtitle="Area-approved monthly PRs" icon={FileSpreadsheet} tone="bg-cyan-100 text-cyan-700" />
           <KPI title="Approved Orders" value={procurementStats.approvedOrders} subtitle="Ready for delivery" icon={ShoppingCart} tone="bg-indigo-100 text-indigo-700" />
@@ -618,7 +618,7 @@ export default function ProcurementModule() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="h-auto w-full flex-wrap justify-start gap-2 bg-transparent p-0">
-            <TabsTrigger value="material-requests">Material Requests</TabsTrigger>
+            <TabsTrigger value="material-requests">MR to Store</TabsTrigger>
             <TabsTrigger value="monthly-purchase-requests">Purchase Requests</TabsTrigger>
             <TabsTrigger value="requests">Manual Requests</TabsTrigger>
             <TabsTrigger value="orders">Purchase Orders</TabsTrigger>
@@ -632,7 +632,7 @@ export default function ProcurementModule() {
           <TabsContent value="material-requests" className="space-y-4">
             <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
               <CardHeader>
-                <CardTitle>Chef Material Requests</CardTitle>
+                <CardTitle>Chef MR to Store</CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -684,7 +684,7 @@ export default function ProcurementModule() {
                     {visibleMaterialRequests.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={9} className="py-10 text-center text-sm text-slate-500">
-                          No production material requests are waiting for procurement.
+                          No production MR to Store records are waiting for procurement.
                         </TableCell>
                       </TableRow>
                     ) : null}

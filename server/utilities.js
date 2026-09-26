@@ -153,7 +153,7 @@ export const utilityModules = Object.freeze({
     ]
   },
   'material-requests': {
-    label: 'Material Requests',
+    label: 'MR to Store',
     entity: 'MaterialRequest',
     required: [],
     headers: [...commonSiteFields, 'request_number', 'production_id', 'production_name', 'request_date', 'required_date', 'status', 'items', 'notes']

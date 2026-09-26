@@ -1062,7 +1062,7 @@ export default function FoodWaste() {
         estimated_cost: item.estimated_cost,
         action,
         recommendation: action === 'Reduce purchasing / MR'
-          ? `Trim material requests and replenish in smaller batches for ${item.item_name}.`
+          ? `Trim MR to Store records and replenish in smaller batches for ${item.item_name}.`
           : `Keep ${item.item_name} under watch and confirm issue/portion discipline.`
       };
     });
@@ -1500,7 +1500,7 @@ export default function FoodWaste() {
             ))
           },
           {
-            heading: 'Material Request Actions',
+            heading: 'MR to Store Actions',
             lines: wasteReductionInsights.materialRequestActions.length
               ? wasteReductionInsights.materialRequestActions.map((item) => `${item.item_name}: ${item.recommendation} (${formatCurrency(item.waste_cost)} waste cost)`)
               : ['No MR reduction actions identified in the selected range.']
@@ -1726,7 +1726,7 @@ export default function FoodWaste() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <p className="text-sm font-medium text-slate-900">Material Request Guidance</p>
+                <p className="text-sm font-medium text-slate-900">MR to Store Guidance</p>
                 <div className="mt-2 space-y-2">
                   {wasteReductionInsights.materialRequestActions.length === 0 ? (
                     <p className="text-sm text-slate-500">No MR reduction actions identified.</p>
