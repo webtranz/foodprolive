@@ -511,6 +511,9 @@ const cases = [
       assert.match(page, /!hasWasteEvidenceImages/);
       assert.match(api, /UploadWasteImage\(\{ file \}\)/);
       assert.match(api, /\/api\/integrations\/waste-image/);
+      const server = read('server/index.js');
+      assert.match(server, /persistWasteEvidenceFile/);
+      assert.match(server, /persistDatabaseUploadedFile\(file, 'waste-images'/);
     }
   },
   {

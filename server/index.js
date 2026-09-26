@@ -412,6 +412,14 @@ async function persistUploadedFile(file, prefix = 'uploads', options = {}) {
   };
 }
 
+async function persistWasteEvidenceFile(file, options = {}) {
+  const stored = await persistDatabaseUploadedFile(file, 'waste-images', options.uploadedBy);
+  if (!stored) {
+    throw new Error('Waste picture storage failed. The uploaded picture could not be saved to the database.');
+  }
+  return stored;
+}
+
 function absoluteFileUrl(request, fileUrl) {
   const value = String(fileUrl || '').trim();
   if (/^https?:\/\//i.test(value)) return value;
@@ -6982,7 +6990,7 @@ app.post('/api/integrations/waste-image', requireAuth, (request, response, next)
       return response.status(400).json({ message: 'Select a waste picture to upload.' });
     }
     try {
-      const stored = await persistUploadedFile(request.file, 'waste-images', { uploadedBy: request.user?.email || '' });
+      const stored = await persistWasteEvidenceFile(request.file, { uploadedBy: request.user?.email || '' });
       return response.json({
         file_url: stored.fileUrl,
         public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl)
