@@ -2278,6 +2278,164 @@ CREATE INDEX IF NOT EXISTS idx_goods_receipts_order ON goods_receipts(purchase_o
 CREATE INDEX IF NOT EXISTS idx_supplier_invoices_supplier ON supplier_invoices(supplier_id, invoice_date DESC);
 CREATE INDEX IF NOT EXISTS idx_supplier_price_history_lookup ON supplier_price_history(ingredient_id, supplier_id, effective_date DESC);
 
+-- ---------------------------------------------------------------------------
+-- Monthly menu-plan based purchase requests
+-- ---------------------------------------------------------------------------
+-- This workflow is separate from the older ad-hoc purchase request/order flow.
+-- It stores the monthly PR header, aggregated D365-ready ingredient lines,
+-- source menu plan lines, low-pax warnings, business approvals, and export log
+-- in normalized tables so the feature can scale without JSON scans.
+CREATE TABLE IF NOT EXISTS monthly_purchase_requests (
+  request_id TEXT PRIMARY KEY,
+  request_number TEXT NOT NULL UNIQUE,
+  selected_site_id TEXT NOT NULL,
+  selected_site_name TEXT NOT NULL,
+  area_id TEXT,
+  area_name TEXT,
+  project_id TEXT,
+  project_name TEXT,
+  primary_warehouse_id TEXT,
+  primary_warehouse_name TEXT,
+  warehouse_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+  month_key TEXT NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  inclusions TEXT NOT NULL DEFAULT 'all_meals',
+  status TEXT NOT NULL DEFAULT 'pending_project_manager',
+  current_step TEXT NOT NULL DEFAULT 'project_manager',
+  prepared_by TEXT,
+  prepared_by_name TEXT,
+  project_manager_approved_by TEXT,
+  project_manager_approved_by_name TEXT,
+  project_manager_approved_at TIMESTAMPTZ,
+  area_manager_approved_by TEXT,
+  area_manager_approved_by_name TEXT,
+  area_manager_approved_at TIMESTAMPTZ,
+  exported_by TEXT,
+  exported_by_name TEXT,
+  exported_at TIMESTAMPTZ,
+  d365_status TEXT NOT NULL DEFAULT 'placeholder',
+  warning_count INTEGER NOT NULL DEFAULT 0,
+  line_count INTEGER NOT NULL DEFAULT 0,
+  total_estimated_cost NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  chef_warning_note TEXT,
+  return_reason TEXT,
+  notes TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_scope
+  ON monthly_purchase_requests (month_key, selected_site_id, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_status
+  ON monthly_purchase_requests (status, current_step, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_warehouse_ids
+  ON monthly_purchase_requests USING GIN (warehouse_ids);
+
+CREATE TABLE IF NOT EXISTS monthly_purchase_request_lines (
+  line_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES monthly_purchase_requests(request_id) ON DELETE CASCADE,
+  ingredient_id TEXT,
+  item_code TEXT,
+  item_name TEXT NOT NULL,
+  warehouse_id TEXT,
+  project_id TEXT,
+  delivery_date DATE,
+  requested_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL,
+  estimated_unit_price NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  estimated_line_amount NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  source_line_count INTEGER NOT NULL DEFAULT 0,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_lines_request
+  ON monthly_purchase_request_lines (request_id, item_name);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_lines_item
+  ON monthly_purchase_request_lines (ingredient_id, warehouse_id);
+
+CREATE TABLE IF NOT EXISTS monthly_purchase_request_source_lines (
+  source_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES monthly_purchase_requests(request_id) ON DELETE CASCADE,
+  menu_plan_id TEXT,
+  menu_plan_line_id TEXT,
+  warehouse_id TEXT,
+  plan_date DATE,
+  meal_period TEXT,
+  menu_type TEXT,
+  menu_category TEXT,
+  recipe_id TEXT,
+  recipe_name TEXT,
+  planned_covers NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  warning_codes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_source_request
+  ON monthly_purchase_request_source_lines (request_id, plan_date, meal_period, menu_category);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_source_plan
+  ON monthly_purchase_request_source_lines (menu_plan_id, menu_plan_line_id);
+
+CREATE TABLE IF NOT EXISTS monthly_purchase_request_warnings (
+  warning_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES monthly_purchase_requests(request_id) ON DELETE CASCADE,
+  warning_type TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'medium',
+  menu_plan_id TEXT,
+  menu_plan_line_id TEXT,
+  plan_date DATE,
+  meal_period TEXT,
+  menu_type TEXT,
+  menu_category TEXT,
+  recipe_id TEXT,
+  recipe_name TEXT,
+  planned_covers NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  message TEXT NOT NULL,
+  resolution_status TEXT NOT NULL DEFAULT 'open',
+  resolution_note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_warnings_request
+  ON monthly_purchase_request_warnings (request_id, severity, plan_date);
+
+CREATE TABLE IF NOT EXISTS monthly_purchase_request_workflow_actions (
+  action_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES monthly_purchase_requests(request_id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  actor_email TEXT,
+  actor_name TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_actions_request
+  ON monthly_purchase_request_workflow_actions (request_id, created_at);
+
+CREATE TABLE IF NOT EXISTS monthly_purchase_request_exports (
+  export_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES monthly_purchase_requests(request_id) ON DELETE CASCADE,
+  export_format TEXT NOT NULL DEFAULT 'csv',
+  exported_by TEXT,
+  exported_by_name TEXT,
+  d365_status TEXT NOT NULL DEFAULT 'manual_exported',
+  notes TEXT,
+  exported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_pr_exports_request
+  ON monthly_purchase_request_exports (request_id, exported_at DESC);
+
 CREATE OR REPLACE FUNCTION notify_foodpro_scoped_table_change()
 RETURNS TRIGGER AS $$
 DECLARE

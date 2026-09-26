@@ -121,6 +121,14 @@ import {
   getSupplierPerformanceDashboard
 } from './procurement.js';
 import {
+  buildMonthlyPurchaseRequestPreview,
+  listMonthlyPurchaseRequests,
+  createMonthlyPurchaseRequest,
+  getMonthlyPurchaseRequestById,
+  updateMonthlyPurchaseRequestWorkflow,
+  getMonthlyPurchaseRequestD365Export
+} from './monthlyPurchaseRequests.js';
+import {
   receiveStock,
   deductStock,
   adjustStock,
@@ -841,6 +849,26 @@ function filterRowsByAccessibleSites(rows = [], scope, fields = ['site_id']) {
 function assertProcurementRecordLocationAccess(record, scope, label) {
   if (!filterRowsByAccessibleSites([record], scope).length) {
     const error = new Error(`${label} is outside your assigned location scope`);
+    error.status = 403;
+    throw error;
+  }
+  return record;
+}
+
+function assertMonthlyPurchaseRequestAccess(record, scope) {
+  if (scope?.unrestricted) return record;
+  const siteIds = [
+    record?.selected_site_id,
+    record?.area_id,
+    record?.project_id,
+    record?.primary_warehouse_id,
+    ...(Array.isArray(record?.warehouse_ids) ? record.warehouse_ids : [])
+  ].filter(Boolean).map(String);
+  const hasAccess = siteIds.some((siteId) =>
+    scope?.accessibleSiteIds?.has(siteId) || scope?.accessibleTreeIds?.has(siteId)
+  );
+  if (!hasAccess) {
+    const error = new Error('Purchase request is outside your assigned location scope');
     error.status = 403;
     throw error;
   }
@@ -8395,6 +8423,104 @@ app.post('/api/productions/:id/cancel', requireAuth, requirePermission('cancel_p
 app.get('/api/procurement/suppliers', requireAuth, async (_request, response, next) => {
   try {
     response.json(await listSuppliers());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/monthly-purchase-requests', requireAuth, requireAnyPermission([
+  'generate_menu_plan_pr',
+  'manage_procurement',
+  'approve_procurement',
+  'export_data',
+  'access_procurement'
+]), async (request, response, next) => {
+  try {
+    response.json(await listMonthlyPurchaseRequests(request.user, request.query || {}));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/monthly-purchase-requests/preview', requireAuth, requireAnyPermission([
+  'generate_menu_plan_pr',
+  'manage_procurement'
+]), async (request, response, next) => {
+  try {
+    response.json(await buildMonthlyPurchaseRequestPreview(request.user, request.query || {}));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/monthly-purchase-requests', requireAuth, requireAnyPermission([
+  'generate_menu_plan_pr',
+  'manage_procurement'
+]), async (request, response, next) => {
+  try {
+    response.status(201).json(await createMonthlyPurchaseRequest(request.user, request.body || {}));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/monthly-purchase-requests/:id', requireAuth, requireAnyPermission([
+  'generate_menu_plan_pr',
+  'manage_procurement',
+  'approve_procurement',
+  'export_data',
+  'access_procurement'
+]), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const record = await getMonthlyPurchaseRequestById(request.params.id);
+    if (!record) {
+      return response.status(404).json({ message: 'Purchase request not found' });
+    }
+    assertMonthlyPurchaseRequestAccess(record, scope);
+    response.json(record);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/procurement/monthly-purchase-requests/:id/action', requireAuth, requireAnyPermission([
+  'manage_procurement',
+  'approve_procurement',
+  'export_data',
+  'access_procurement'
+]), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const existing = await getMonthlyPurchaseRequestById(request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Purchase request not found' });
+    }
+    assertMonthlyPurchaseRequestAccess(existing, scope);
+    response.json(await updateMonthlyPurchaseRequestWorkflow(
+      request.user,
+      request.params.id,
+      request.body || {}
+    ));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/procurement/monthly-purchase-requests/:id/d365-export', requireAuth, requireAnyPermission([
+  'manage_procurement',
+  'approve_procurement',
+  'export_data',
+  'access_procurement'
+]), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const existing = await getMonthlyPurchaseRequestById(request.params.id);
+    if (!existing) {
+      return response.status(404).json({ message: 'Purchase request not found' });
+    }
+    assertMonthlyPurchaseRequestAccess(existing, scope);
+    response.json(await getMonthlyPurchaseRequestD365Export(request.user, request.params.id));
   } catch (error) {
     next(error);
   }

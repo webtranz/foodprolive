@@ -41,6 +41,7 @@ const managementDashboardPermissions = Object.freeze([
 const areaManagerPermissions = Object.freeze([
   ...managementDashboardPermissions,
   'access_production',
+  'access_procurement',
   'manage_production',
   'view_inventory',
   'view_ingredients',
@@ -56,7 +57,7 @@ const areaManagerPermissions = Object.freeze([
 const projectManagerPermissions = Object.freeze([
   'granular_page_access', 'access_dashboard', 'access_sites', 'access_budget', 'access_menu',
   'access_menu_planning', 'access_event_planning', 'access_production',
-  'access_inventory', 'access_material_requests', 'access_food_waste',
+  'access_inventory', 'access_material_requests', 'access_procurement', 'access_food_waste',
   'access_reports', 'access_advanced_reports', 'access_data_exports',
   'access_reports_preview', 'access_meal_service', 'access_meal_qr_generator',
   'access_attendance', 'view_dashboard', 'view_reports', 'export_data', 'manage_projects',
@@ -215,7 +216,7 @@ const userPermissions = Object.freeze([
 const chefPermissions = Object.freeze([
   'granular_page_access', 'access_dashboard', 'access_ingredients', 'access_recipes',
   'access_menu', 'access_menu_planning', 'access_event_planning', 'access_production',
-  'access_material_requests', 'access_food_waste', 'access_quality_control', 'access_reports',
+  'access_material_requests', 'access_procurement', 'access_food_waste', 'access_quality_control', 'access_reports',
   'view_dashboard', 'view_reports', 'view_inventory', 'manage_ingredients', 'manage_recipes',
   'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event',
   'edit_special_event', 'submit_special_event', 'manage_production',
@@ -226,7 +227,7 @@ const chefPermissions = Object.freeze([
 
 const storekeeperPermissions = Object.freeze([
   'granular_page_access', 'access_dashboard', 'access_ingredients', 'access_inventory',
-  'access_material_requests', 'access_production_transfer', 'access_reports',
+  'access_material_requests', 'access_procurement', 'access_production_transfer', 'access_reports',
   'access_data_exports', 'view_dashboard', 'view_reports', 'export_data',
   'manage_inventory', 'transfer_inventory', 'manage_ingredients',
   'view_material_request', 'acknowledge_material_request'

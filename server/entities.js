@@ -225,7 +225,7 @@ export const systemRoleDefinitions = {
     access_level: 'user',
     description: 'Kitchen leadership role focused on recipes, menus, production, and food quality.',
     permissions: [
-      'view_dashboard', 'view_reports', 'view_inventory', 'manage_ingredients', 'manage_recipes',
+      'view_dashboard', 'view_reports', 'access_procurement', 'view_inventory', 'manage_ingredients', 'manage_recipes',
       'manage_menu_planning', 'generate_menu_plan_pr', 'create_special_event', 'edit_special_event',
       'submit_special_event', 'manage_production', 'create_production_request',
       'edit_production_request', 'submit_production_request', 'cancel_production', 'start_production',
@@ -243,7 +243,7 @@ export const systemRoleDefinitions = {
     access_level: 'manager',
     description: 'Warehouse and stock control role for receiving, adjustments, and transfers.',
     permissions: [
-      'view_dashboard', 'view_reports', 'export_data', 'manage_inventory',
+      'view_dashboard', 'view_reports', 'access_procurement', 'export_data', 'manage_inventory',
       'transfer_inventory', 'manage_ingredients', 'view_material_request',
       'acknowledge_material_request'
     ]

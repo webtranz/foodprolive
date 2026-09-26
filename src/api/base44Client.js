@@ -534,6 +534,27 @@ export const base44 = {
     },
     getPerformance() {
       return apiRequest('/api/procurement/performance');
+    },
+    listMonthlyPurchaseRequests(filters = {}) {
+      return apiRequest(`/api/procurement/monthly-purchase-requests${buildQueryString(filters)}`);
+    },
+    previewMonthlyPurchaseRequest(filters = {}) {
+      return apiRequest(`/api/procurement/monthly-purchase-requests/preview${buildQueryString(filters)}`);
+    },
+    createMonthlyPurchaseRequest(data) {
+      return apiRequest('/api/procurement/monthly-purchase-requests', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    monthlyPurchaseRequestAction(id, data = {}) {
+      return apiRequest(`/api/procurement/monthly-purchase-requests/${id}/action`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    getMonthlyPurchaseRequestD365Export(id) {
+      return apiRequest(`/api/procurement/monthly-purchase-requests/${id}/d365-export`);
     }
   },
   materialRequests: {

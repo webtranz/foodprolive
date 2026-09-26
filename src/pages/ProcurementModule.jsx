@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { usePermissions } from '@/components/auth/usePermissions';
@@ -19,9 +19,14 @@ import { normalizeSiteType, SITE_HIERARCHY_TYPES } from '../../shared/siteHierar
 import {
   AlertTriangle,
   Building2,
+  CheckCircle2,
   ClipboardList,
+  Download,
   DollarSign,
+  FileSpreadsheet,
   Plus,
+  RotateCcw,
+  Send,
   ShoppingCart,
   Truck
 } from 'lucide-react';
@@ -90,10 +95,30 @@ function formatNumber(value, digits = 0) {
 
 function statusBadgeClass(status) {
   const normalized = String(status || '').toLowerCase();
-  if (['approved', 'received', 'posted', 'active'].includes(normalized)) return 'bg-emerald-100 text-emerald-700';
-  if (['partially_received', 'partially_accepted', 'pending'].includes(normalized)) return 'bg-amber-100 text-amber-700';
-  if (['cancelled', 'rejected'].includes(normalized)) return 'bg-red-100 text-red-700';
+  if (['approved', 'received', 'posted', 'active', 'exported', 'ready_for_storekeeper'].includes(normalized)) return 'bg-emerald-100 text-emerald-700';
+  if (['partially_received', 'partially_accepted', 'pending', 'pending_project_manager', 'pending_area_manager'].includes(normalized)) return 'bg-amber-100 text-amber-700';
+  if (['cancelled', 'rejected', 'returned_to_chef'].includes(normalized)) return 'bg-red-100 text-red-700';
   return 'bg-slate-100 text-slate-700';
+}
+
+function friendlyStatus(status) {
+  return String(status || '-').replace(/_/g, ' ');
+}
+
+function currentMonthKey() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function downloadTextFile(filename, content, type = 'text/csv;charset=utf-8') {
+  const blob = new Blob([content || ''], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function getActiveReceiptDestinationStores(order, sites = []) {
@@ -149,7 +174,7 @@ export default function ProcurementModule() {
   const canManageSuppliers = can('manage_suppliers');
   const canViewPerformance = canManageProcurement || canApproveProcurement;
 
-  const [activeTab, setActiveTab] = useState('requests');
+  const [activeTab, setActiveTab] = useState('monthly-purchase-requests');
   const [supplierDialogOpen, setSupplierDialogOpen] = useState(false);
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [orderDialogOpen, setOrderDialogOpen] = useState(false);
@@ -170,6 +195,11 @@ export default function ProcurementModule() {
   const [invoiceForm, setInvoiceForm] = useState(invoiceFormTemplate);
   const [priceIngredientId, setPriceIngredientId] = useState('');
   const [priceIngredient, setPriceIngredient] = useState(null);
+  const [monthlyPrSiteId, setMonthlyPrSiteId] = useState('');
+  const [monthlyPrMonth, setMonthlyPrMonth] = useState(currentMonthKey());
+  const [monthlyPrInclusions, setMonthlyPrInclusions] = useState('all_meals_special_events');
+  const [monthlyPrWarningNote, setMonthlyPrWarningNote] = useState('');
+  const [monthlyPrActionNotes, setMonthlyPrActionNotes] = useState({});
 
   const { data: suppliers = [] } = useQuery({
     queryKey: ['procurementSuppliers'],
@@ -207,6 +237,20 @@ export default function ProcurementModule() {
     queryFn: () => base44.entities.Site.list()
   });
 
+  const selectablePurchaseRequestSites = useMemo(() => (
+    sites
+      .filter((site) => site.is_active !== false)
+      .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')))
+  ), [sites]);
+
+  useEffect(() => {
+    if (!monthlyPrSiteId && selectablePurchaseRequestSites.length > 0) {
+      const preferred = selectablePurchaseRequestSites.find((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE)
+        || selectablePurchaseRequestSites[0];
+      setMonthlyPrSiteId(preferred.id);
+    }
+  }, [monthlyPrSiteId, selectablePurchaseRequestSites]);
+
   const resolveProcurementItemCode = (item) => getItemCode(item);
 
   const { data: inventory = [] } = useQuery({
@@ -220,6 +264,28 @@ export default function ProcurementModule() {
     enabled: canViewPerformance
   });
 
+  const monthlyPrFilters = useMemo(() => ({
+    site_id: monthlyPrSiteId || undefined,
+    month: monthlyPrMonth,
+    inclusions: monthlyPrInclusions
+  }), [monthlyPrSiteId, monthlyPrMonth, monthlyPrInclusions]);
+
+  const { data: monthlyPurchaseRequests = [] } = useQuery({
+    queryKey: ['monthlyPurchaseRequests', monthlyPrFilters],
+    queryFn: () => base44.procurement.listMonthlyPurchaseRequests(monthlyPrFilters),
+    enabled: Boolean(monthlyPrSiteId)
+  });
+
+  const {
+    data: monthlyPrPreview = null,
+    error: monthlyPrPreviewError = null,
+    isFetching: monthlyPrPreviewLoading
+  } = useQuery({
+    queryKey: ['monthlyPurchaseRequestPreview', monthlyPrFilters],
+    queryFn: () => base44.procurement.previewMonthlyPurchaseRequest(monthlyPrFilters),
+    enabled: Boolean(monthlyPrSiteId && (can('generate_menu_plan_pr') || canManageProcurement))
+  });
+
   const { data: priceComparison = [] } = useQuery({
     queryKey: ['procurementPriceComparison', priceIngredientId],
     queryFn: () => base44.procurement.getPriceComparison({
@@ -229,6 +295,8 @@ export default function ProcurementModule() {
 
   const refreshProcurement = () => {
     queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
+    queryClient.invalidateQueries({ queryKey: ['monthlyPurchaseRequests'] });
+    queryClient.invalidateQueries({ queryKey: ['monthlyPurchaseRequestPreview'] });
     queryClient.invalidateQueries({ queryKey: ['procurementSuppliers'] });
     queryClient.invalidateQueries({ queryKey: ['procurementRequests'] });
     queryClient.invalidateQueries({ queryKey: ['procurementOrders'] });
@@ -264,6 +332,25 @@ export default function ProcurementModule() {
       setSupplierForm(supplierFormTemplate);
       refreshProcurement();
     }
+  });
+
+  const createMonthlyPurchaseRequestMutation = useMutation({
+    mutationFn: () => base44.procurement.createMonthlyPurchaseRequest({
+      ...monthlyPrFilters,
+      warning_note: monthlyPrWarningNote
+    }),
+    onSuccess: () => {
+      setMonthlyPrWarningNote('');
+      refreshProcurement();
+    }
+  });
+
+  const monthlyPurchaseRequestActionMutation = useMutation({
+    mutationFn: ({ id, action }) => base44.procurement.monthlyPurchaseRequestAction(id, {
+      action,
+      notes: monthlyPrActionNotes[id] || ''
+    }),
+    onSuccess: () => refreshProcurement()
   });
 
   const createRequestMutation = useMutation({
@@ -386,11 +473,24 @@ export default function ProcurementModule() {
     supplierCount: suppliers.length,
     pendingMaterialRequests: materialRequests.filter((entry) => entry.status === 'pending_procurement_ack').length,
     pendingRequests: requests.filter((entry) => entry.status === 'pending').length,
+    monthlyPrReadyForExport: monthlyPurchaseRequests.filter((entry) => entry.status === 'ready_for_storekeeper').length,
     approvedOrders: orders.filter((entry) => entry.status === 'approved').length,
     receivedOrders: orders.filter((entry) => entry.status === 'received').length,
     pendingInvoices: invoices.filter((entry) => ['pending', 'draft'].includes(String(entry.status || '').toLowerCase())).length,
     lowStockCount: lowStockItems.length
-  }), [suppliers.length, materialRequests, requests, orders, invoices, lowStockItems.length]);
+  }), [suppliers.length, materialRequests, requests, monthlyPurchaseRequests, orders, invoices, lowStockItems.length]);
+
+  const canSubmitMonthlyPR = can('generate_menu_plan_pr') || canManageProcurement;
+  const canReviewMonthlyPR = ['admin', 'administrator', 'manager', 'project_manager', 'area_manager'].includes(String(role || '').toLowerCase());
+  const canExportMonthlyPR = ['admin', 'administrator', 'manager', 'storekeeper'].includes(String(role || '').toLowerCase());
+
+  const downloadMonthlyPurchaseRequest = async (requestRecord) => {
+    const exportData = await base44.procurement.getMonthlyPurchaseRequestD365Export(requestRecord.request_id);
+    downloadTextFile(
+      `${requestRecord.request_number || 'monthly-pr'}-d365.csv`,
+      exportData.csv || ''
+    );
+  };
 
   const openEditSupplier = (supplier) => {
     setEditingSupplier(supplier);
@@ -505,10 +605,11 @@ export default function ProcurementModule() {
           </Badge>
         </PageHeader>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-7">
           <KPI title="Suppliers" value={procurementStats.supplierCount} subtitle="Configured vendor accounts" icon={Building2} tone="bg-blue-100 text-blue-700" />
           <KPI title="MR To Acknowledge" value={procurementStats.pendingMaterialRequests} subtitle="Chef-raised production requests" icon={ClipboardList} tone="bg-violet-100 text-violet-700" />
           <KPI title="Pending Requests" value={procurementStats.pendingRequests} subtitle="Awaiting approval" icon={ClipboardList} tone="bg-amber-100 text-amber-700" />
+          <KPI title="D365 PR Exports" value={procurementStats.monthlyPrReadyForExport} subtitle="Area-approved monthly PRs" icon={FileSpreadsheet} tone="bg-cyan-100 text-cyan-700" />
           <KPI title="Approved Orders" value={procurementStats.approvedOrders} subtitle="Ready for delivery" icon={ShoppingCart} tone="bg-indigo-100 text-indigo-700" />
           <KPI title="Received Orders" value={procurementStats.receivedOrders} subtitle="Fully delivered" icon={Truck} tone="bg-emerald-100 text-emerald-700" />
           <KPI title="Pending Invoices" value={procurementStats.pendingInvoices} subtitle="Need finance action" icon={DollarSign} tone="bg-rose-100 text-rose-700" />
@@ -518,7 +619,8 @@ export default function ProcurementModule() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="h-auto w-full flex-wrap justify-start gap-2 bg-transparent p-0">
             <TabsTrigger value="material-requests">Material Requests</TabsTrigger>
-            <TabsTrigger value="requests">Purchase Requests</TabsTrigger>
+            <TabsTrigger value="monthly-purchase-requests">Purchase Requests</TabsTrigger>
+            <TabsTrigger value="requests">Manual Requests</TabsTrigger>
             <TabsTrigger value="orders">Purchase Orders</TabsTrigger>
             <TabsTrigger value="receipts">Goods Receipts</TabsTrigger>
             <TabsTrigger value="invoices">Supplier Invoices</TabsTrigger>
@@ -592,10 +694,348 @@ export default function ProcurementModule() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="monthly-purchase-requests" className="space-y-4">
+            <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
+              <CardHeader>
+                <CardTitle>Purchase Requests from Menu Plan</CardTitle>
+                <p className="text-sm text-slate-500">
+                  Select a site and month to build the D365-ready purchase request from planned meals, pax/covers, recipes, and ingredients.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+                  <div>
+                    <Label>Site / project / area</Label>
+                    <select
+                      className="mt-1 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+                      value={monthlyPrSiteId}
+                      onChange={(event) => setMonthlyPrSiteId(event.target.value)}
+                    >
+                      {selectablePurchaseRequestSites.map((site) => (
+                        <option key={site.id} value={site.id}>
+                          {site.name} {site.type ? `(${site.type})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Month</Label>
+                    <Input
+                      className="mt-1"
+                      type="month"
+                      value={monthlyPrMonth}
+                      onChange={(event) => setMonthlyPrMonth(event.target.value || currentMonthKey())}
+                    />
+                  </div>
+                  <div>
+                    <Label>Inclusions</Label>
+                    <select
+                      className="mt-1 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+                      value={monthlyPrInclusions}
+                      onChange={(event) => setMonthlyPrInclusions(event.target.value)}
+                    >
+                      <option value="all_meals">All Meals</option>
+                      <option value="all_meals_special_events">All Meals + Special Events</option>
+                    </select>
+                  </div>
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    <p className="font-semibold">D365 status: placeholder</p>
+                    <p className="mt-1">Store Keeper can download the upload file and mark it exported. Live D365 posting is disabled.</p>
+                  </div>
+                </div>
+
+                {monthlyPrPreviewError ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                    {monthlyPrPreviewError.message || 'Unable to load the purchase request preview.'}
+                  </div>
+                ) : null}
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                  <KPI
+                    title="Menu days"
+                    value={monthlyPrPreviewLoading ? '…' : (monthlyPrPreview?.menu_plan_count || 0)}
+                    subtitle="Plans included"
+                    icon={ClipboardList}
+                    tone="bg-blue-100 text-blue-700"
+                  />
+                  <KPI
+                    title="Pax warnings"
+                    value={monthlyPrPreviewLoading ? '…' : (monthlyPrPreview?.warning_count || 0)}
+                    subtitle="0/1 cover menu lines"
+                    icon={AlertTriangle}
+                    tone="bg-amber-100 text-amber-700"
+                  />
+                  <KPI
+                    title="D365 lines"
+                    value={monthlyPrPreviewLoading ? '…' : (monthlyPrPreview?.line_count || 0)}
+                    subtitle="Aggregated items"
+                    icon={FileSpreadsheet}
+                    tone="bg-cyan-100 text-cyan-700"
+                  />
+                  <KPI
+                    title="Estimated value"
+                    value={formatCurrency(monthlyPrPreview?.total_estimated_cost || 0)}
+                    subtitle="Based on current costs"
+                    icon={DollarSign}
+                    tone="bg-emerald-100 text-emerald-700"
+                  />
+                </div>
+
+                {monthlyPrPreview?.warnings?.length ? (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-semibold text-amber-900">Chef pax/covers warnings before submit</h3>
+                        <p className="text-sm text-amber-800">
+                          These warnings come from the menu plan, not ingredient lines. Wrong pax/covers will create wrong ingredient quantities.
+                        </p>
+                      </div>
+                      <Badge className="bg-amber-100 text-amber-700">{monthlyPrPreview.warning_count} warning(s)</Badge>
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Meal</TableHead>
+                          <TableHead>Menu</TableHead>
+                          <TableHead>Recipe</TableHead>
+                          <TableHead>Pax / covers</TableHead>
+                          <TableHead>Warning</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {monthlyPrPreview.warnings.slice(0, 12).map((warning) => (
+                          <TableRow key={warning.warning_id}>
+                            <TableCell>{warning.plan_date}</TableCell>
+                            <TableCell>{warning.meal_period}</TableCell>
+                            <TableCell>{warning.menu_category} / {warning.menu_type}</TableCell>
+                            <TableCell>{warning.recipe_name || '-'}</TableCell>
+                            <TableCell>{formatNumber(warning.planned_covers, 0)}</TableCell>
+                            <TableCell className="max-w-md text-sm text-amber-900">{warning.message}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    <div className="mt-4">
+                      <Label>Chef warning note</Label>
+                      <Textarea
+                        className="mt-1"
+                        value={monthlyPrWarningNote}
+                        onChange={(event) => setMonthlyPrWarningNote(event.target.value)}
+                        placeholder="Explain which menu plan pax/covers were corrected, excluded, or accepted before submitting."
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                <Card className="border border-slate-200 shadow-none">
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                      <CardTitle>D365-ready purchase request preview</CardTitle>
+                      <p className="text-sm text-slate-500">
+                        Business-facing output only: site, month, item, unit, quantity, delivery date, and estimated value.
+                      </p>
+                    </div>
+                    {canSubmitMonthlyPR ? (
+                      <Button
+                        onClick={() => createMonthlyPurchaseRequestMutation.mutate()}
+                        disabled={
+                          createMonthlyPurchaseRequestMutation.isPending
+                          || monthlyPrPreviewLoading
+                          || !monthlyPrPreview?.line_count
+                          || (monthlyPrPreview?.warning_count > 0 && !monthlyPrWarningNote.trim())
+                        }
+                        className="bg-emerald-600 hover:bg-emerald-700"
+                      >
+                        <Send className="mr-2 h-4 w-4" />
+                        Submit to Project Manager
+                      </Button>
+                    ) : null}
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>D365 Item</TableHead>
+                          <TableHead>Item Name</TableHead>
+                          <TableHead>Warehouse</TableHead>
+                          <TableHead>Delivery Date</TableHead>
+                          <TableHead>Quantity</TableHead>
+                          <TableHead>Unit</TableHead>
+                          <TableHead>Est. Amount</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(monthlyPrPreview?.lines || []).slice(0, 20).map((line) => (
+                          <TableRow key={line.line_id}>
+                            <TableCell className="font-mono text-xs">{line.item_code || line.ingredient_id || '-'}</TableCell>
+                            <TableCell>{line.item_name}</TableCell>
+                            <TableCell>{line.warehouse_id || monthlyPrPreview.primary_warehouse_name || '-'}</TableCell>
+                            <TableCell>{line.delivery_date || monthlyPrPreview.start_date}</TableCell>
+                            <TableCell>{formatNumber(line.requested_quantity, 3)}</TableCell>
+                            <TableCell>{line.unit}</TableCell>
+                            <TableCell>{formatCurrency(line.estimated_line_amount)}</TableCell>
+                          </TableRow>
+                        ))}
+                        {!monthlyPrPreview?.lines?.length ? (
+                          <TableRow>
+                            <TableCell colSpan={7} className="py-10 text-center text-sm text-slate-500">
+                              {monthlyPrPreviewLoading ? 'Loading preview…' : 'No D365 purchase request lines found for this site/month.'}
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </CardContent>
+            </Card>
+
+            <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
+              <CardHeader>
+                <CardTitle>Monthly Purchase Request Workflow</CardTitle>
+                <p className="text-sm text-slate-500">
+                  Chef → Project Manager → Area Manager → Store Keeper export. Store Keeper is not a business approver.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>PR #</TableHead>
+                      <TableHead>Site</TableHead>
+                      <TableHead>Month</TableHead>
+                      <TableHead>Lines</TableHead>
+                      <TableHead>Warnings</TableHead>
+                      <TableHead>Value</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Notes / Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {monthlyPurchaseRequests.map((requestRecord) => (
+                      <TableRow key={requestRecord.request_id}>
+                        <TableCell className="font-medium">{requestRecord.request_number}</TableCell>
+                        <TableCell>{requestRecord.selected_site_name}</TableCell>
+                        <TableCell>{requestRecord.month_key}</TableCell>
+                        <TableCell>{requestRecord.line_count}</TableCell>
+                        <TableCell>
+                          <Badge className={requestRecord.warning_count > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}>
+                            {requestRecord.warning_count}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{formatCurrency(requestRecord.total_estimated_cost)}</TableCell>
+                        <TableCell>
+                          <Badge className={statusBadgeClass(requestRecord.status)}>{friendlyStatus(requestRecord.status)}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex min-w-[360px] flex-col gap-2">
+                            <Input
+                              value={monthlyPrActionNotes[requestRecord.request_id] || ''}
+                              onChange={(event) => setMonthlyPrActionNotes((current) => ({
+                                ...current,
+                                [requestRecord.request_id]: event.target.value
+                              }))}
+                              placeholder="Optional approval/export note"
+                            />
+                            <div className="flex flex-wrap gap-2">
+                              {requestRecord.status === 'pending_project_manager' && canReviewMonthlyPR ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => monthlyPurchaseRequestActionMutation.mutate({
+                                    id: requestRecord.request_id,
+                                    action: 'project_approve'
+                                  })}
+                                  disabled={monthlyPurchaseRequestActionMutation.isPending}
+                                >
+                                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                                  PM approve
+                                </Button>
+                              ) : null}
+                              {requestRecord.status === 'pending_area_manager' && canReviewMonthlyPR ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => monthlyPurchaseRequestActionMutation.mutate({
+                                    id: requestRecord.request_id,
+                                    action: 'area_approve'
+                                  })}
+                                  disabled={monthlyPurchaseRequestActionMutation.isPending}
+                                >
+                                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                                  Area approve
+                                </Button>
+                              ) : null}
+                              {['pending_project_manager', 'pending_area_manager'].includes(requestRecord.status) && canReviewMonthlyPR ? (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-red-600 hover:text-red-700"
+                                  onClick={() => monthlyPurchaseRequestActionMutation.mutate({
+                                    id: requestRecord.request_id,
+                                    action: 'return_to_chef'
+                                  })}
+                                  disabled={monthlyPurchaseRequestActionMutation.isPending}
+                                >
+                                  <RotateCcw className="mr-2 h-4 w-4" />
+                                  Return
+                                </Button>
+                              ) : null}
+                              {requestRecord.status === 'ready_for_storekeeper' && canExportMonthlyPR ? (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => downloadMonthlyPurchaseRequest(requestRecord)}
+                                  >
+                                    <Download className="mr-2 h-4 w-4" />
+                                    D365 CSV
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => monthlyPurchaseRequestActionMutation.mutate({
+                                      id: requestRecord.request_id,
+                                      action: 'mark_exported'
+                                    })}
+                                    disabled={monthlyPurchaseRequestActionMutation.isPending}
+                                  >
+                                    Mark exported
+                                  </Button>
+                                </>
+                              ) : null}
+                              {requestRecord.status === 'exported' ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => downloadMonthlyPurchaseRequest(requestRecord)}
+                                >
+                                  <Download className="mr-2 h-4 w-4" />
+                                  Re-download CSV
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {monthlyPurchaseRequests.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="py-10 text-center text-sm text-slate-500">
+                          No monthly purchase requests have been submitted for this filter yet.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="requests" className="space-y-4">
             <Card className="border-0 shadow-sm ring-1 ring-slate-200/70">
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Purchase Requests</CardTitle>
+                <CardTitle>Manual Purchase Requests</CardTitle>
                 <div className="flex flex-wrap gap-2">
                   {canManageProcurement ? (
                     <>
