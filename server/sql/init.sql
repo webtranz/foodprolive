@@ -1223,7 +1223,10 @@ CREATE TABLE IF NOT EXISTS inventory_transactions (
   inventory_transaction_id TEXT PRIMARY KEY,
   inventory_id TEXT REFERENCES warehouse_inventory(inventory_id) ON DELETE RESTRICT,
   warehouse_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  warehouse_name TEXT,
   ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  ingredient_name TEXT,
+  item_code TEXT,
   lot_id TEXT REFERENCES inventory_lots(lot_id) ON DELETE RESTRICT,
   transaction_type TEXT NOT NULL,
   transaction_date DATE,
@@ -1237,7 +1240,27 @@ CREATE TABLE IF NOT EXISTS inventory_transactions (
   idempotency_key TEXT,
   status TEXT NOT NULL DEFAULT 'posted',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  notes TEXT,
+  performed_by TEXT,
+  batch_number TEXT,
+  expiry_date DATE,
+  stock_date DATE,
+  received_date DATE,
+  from_warehouse_id TEXT,
+  from_warehouse_name TEXT,
+  to_warehouse_id TEXT,
+  to_warehouse_name TEXT,
+  source TEXT,
+  source_type TEXT,
+  balance_before NUMERIC(18, 6),
+  balance_after NUMERIC(18, 6),
+  opening_quantity NUMERIC(18, 6),
+  addition_quantity NUMERIC(18, 6),
+  consumption_quantity NUMERIC(18, 6),
+  remaining_quantity NUMERIC(18, 6),
+  operation TEXT,
+  operation_id TEXT,
+  commitment_revision INTEGER,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1251,6 +1274,74 @@ CREATE INDEX IF NOT EXISTS idx_inventory_transactions_reference
 
 CREATE INDEX IF NOT EXISTS idx_inventory_transactions_scope
   ON inventory_transactions(warehouse_id, transaction_date, transaction_type, status);
+
+CREATE TABLE IF NOT EXISTS inventory_transaction_layers (
+  inventory_transaction_layer_id TEXT PRIMARY KEY,
+  inventory_transaction_id TEXT NOT NULL REFERENCES inventory_transactions(inventory_transaction_id) ON DELETE CASCADE,
+  layer_order INTEGER NOT NULL,
+  inventory_lot_id TEXT REFERENCES inventory_lots(lot_id) ON DELETE SET NULL,
+  batch_number TEXT,
+  stock_date DATE,
+  received_date DATE,
+  expiry_date DATE,
+  quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  quantity_before NUMERIC(18, 6),
+  quantity_after NUMERIC(18, 6),
+  reserved_quantity_before NUMERIC(18, 6),
+  reserved_quantity_after NUMERIC(18, 6),
+  available_quantity_before NUMERIC(18, 6),
+  available_quantity_after NUMERIC(18, 6),
+  unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  accounting_unit_cost NUMERIC(18, 6),
+  accounting_total_cost NUMERIC(18, 6),
+  production_id TEXT REFERENCES production_events(production_id) ON DELETE SET NULL,
+  commitment_revision INTEGER,
+  operation_id TEXT,
+  source_transaction_id TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(inventory_transaction_id, layer_order)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_layers_transaction
+  ON inventory_transaction_layers(inventory_transaction_id, layer_order);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_layers_lot
+  ON inventory_transaction_layers(inventory_lot_id);
+
+CREATE TABLE IF NOT EXISTS inventory_transaction_metadata (
+  inventory_transaction_metadata_id TEXT PRIMARY KEY,
+  inventory_transaction_id TEXT NOT NULL REFERENCES inventory_transactions(inventory_transaction_id) ON DELETE CASCADE,
+  metadata_key TEXT NOT NULL,
+  value_text TEXT,
+  value_numeric NUMERIC(18, 6),
+  value_boolean BOOLEAN,
+  value_date TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(inventory_transaction_id, metadata_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_metadata_transaction
+  ON inventory_transaction_metadata(inventory_transaction_id, metadata_key);
+
+CREATE TABLE IF NOT EXISTS inventory_transaction_metadata_items (
+  inventory_transaction_metadata_item_id TEXT PRIMARY KEY,
+  inventory_transaction_id TEXT NOT NULL REFERENCES inventory_transactions(inventory_transaction_id) ON DELETE CASCADE,
+  metadata_key TEXT NOT NULL,
+  container_type TEXT NOT NULL DEFAULT 'array',
+  item_order INTEGER NOT NULL DEFAULT 1,
+  attribute_name TEXT NOT NULL DEFAULT 'value',
+  attribute_value_text TEXT,
+  attribute_value_numeric NUMERIC(18, 6),
+  attribute_value_boolean BOOLEAN,
+  attribute_value_date TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(inventory_transaction_id, metadata_key, container_type, item_order, attribute_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_metadata_items_transaction
+  ON inventory_transaction_metadata_items(inventory_transaction_id, metadata_key, item_order);
 
 CREATE TABLE IF NOT EXISTS production_consumption_reports (
   report_id TEXT PRIMARY KEY,
@@ -1808,6 +1899,30 @@ ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '
 ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE warehouse_inventory ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS warehouse_name TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS ingredient_name TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS item_code TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS performed_by TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS batch_number TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS expiry_date DATE;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS stock_date DATE;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS received_date DATE;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS from_warehouse_id TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS from_warehouse_name TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS to_warehouse_id TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS to_warehouse_name TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS source TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS source_type TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS balance_before NUMERIC(18, 6);
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS balance_after NUMERIC(18, 6);
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS opening_quantity NUMERIC(18, 6);
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS addition_quantity NUMERIC(18, 6);
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS consumption_quantity NUMERIC(18, 6);
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS remaining_quantity NUMERIC(18, 6);
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS operation TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS operation_id TEXT;
+ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS commitment_revision INTEGER;
 ALTER TABLE recipes ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE recipe_versions ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE menu_plans ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
@@ -2183,6 +2298,462 @@ JOIN warehouse_inventory inventory
  AND inventory.ingredient_id = record.data->>'ingredient_id'
 WHERE record.entity_name = 'InventoryLot'
 ON CONFLICT (lot_id) DO NOTHING;
+
+INSERT INTO inventory_transactions (
+  inventory_transaction_id, inventory_id, warehouse_id, warehouse_name,
+  ingredient_id, ingredient_name, item_code, lot_id, transaction_type,
+  transaction_date, quantity, unit, unit_cost, total_cost, reference_type,
+  reference_id, reason_code, idempotency_key, status, source_name, notes,
+  performed_by, batch_number, expiry_date, stock_date, received_date,
+  from_warehouse_id, from_warehouse_name, to_warehouse_id, to_warehouse_name,
+  source, source_type, balance_before, balance_after, opening_quantity,
+  addition_quantity, consumption_quantity, remaining_quantity, operation,
+  operation_id, commitment_revision, created_at, updated_at
+)
+SELECT
+  record.id,
+  inventory.inventory_id,
+  warehouse.warehouse_id,
+  COALESCE(NULLIF(record.data->>'site_name', ''), warehouse.name),
+  ingredient.ingredient_id,
+  COALESCE(NULLIF(record.data->>'ingredient_name', ''), ingredient.name),
+  COALESCE(
+    NULLIF(record.data->>'item_code', ''),
+    NULLIF(ingredient.item_code, ''),
+    NULLIF(ingredient.ingredient_code, ''),
+    NULLIF(ingredient.d365_item_id, '')
+  ),
+  lot.lot_id,
+  COALESCE(NULLIF(record.data->>'transaction_type', ''), NULLIF(record.data->>'type', ''), 'adjustment'),
+  NULLIF(COALESCE(record.data->>'transaction_date', record.data->>'date', record.data->>'created_date'), '')::date,
+  COALESCE(NULLIF(record.data->>'quantity', '')::numeric, 0),
+  NULLIF(record.data->>'unit', ''),
+  COALESCE(NULLIF(COALESCE(record.data->>'unit_cost', record.data->>'cost_per_unit'), '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(record.data->>'total_cost', record.data->>'value'), '')::numeric, 0),
+  NULLIF(record.data->>'reference_type', ''),
+  NULLIF(record.data->>'reference_id', ''),
+  NULLIF(record.data->>'reason_code', ''),
+  NULLIF(record.data->>'idempotency_key', ''),
+  COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
+  NULLIF(record.data->>'source_name', ''),
+  NULLIF(record.data->>'notes', ''),
+  NULLIF(record.data->>'performed_by', ''),
+  NULLIF(record.data->>'batch_number', ''),
+  NULLIF(record.data->>'expiry_date', '')::date,
+  NULLIF(record.data->>'stock_date', '')::date,
+  NULLIF(record.data->>'received_date', '')::date,
+  NULLIF(record.data->>'from_site_id', ''),
+  NULLIF(record.data->>'from_site_name', ''),
+  NULLIF(record.data->>'to_site_id', ''),
+  NULLIF(record.data->>'to_site_name', ''),
+  NULLIF(record.data->>'source', ''),
+  NULLIF(record.data->>'source_type', ''),
+  NULLIF(record.data->>'balance_before', '')::numeric,
+  NULLIF(record.data->>'balance_after', '')::numeric,
+  NULLIF(record.data->>'opening_quantity', '')::numeric,
+  NULLIF(record.data->>'addition_quantity', '')::numeric,
+  NULLIF(record.data->>'consumption_quantity', '')::numeric,
+  NULLIF(record.data->>'remaining_quantity', '')::numeric,
+  NULLIF(record.data->>'operation', ''),
+  NULLIF(record.data->>'operation_id', ''),
+  NULLIF(record.data->>'commitment_revision', '')::integer,
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+LEFT JOIN warehouses warehouse ON warehouse.warehouse_id = record.data->>'site_id'
+LEFT JOIN ingredients ingredient ON ingredient.ingredient_id = record.data->>'ingredient_id'
+LEFT JOIN warehouse_inventory inventory
+  ON inventory.warehouse_id = warehouse.warehouse_id
+ AND inventory.ingredient_id = ingredient.ingredient_id
+LEFT JOIN inventory_lots lot
+  ON lot.lot_id = COALESCE(NULLIF(record.data->>'lot_id', ''), NULLIF(record.data->>'inventory_lot_id', ''))
+WHERE record.entity_name = 'InventoryTransaction'
+ON CONFLICT (inventory_transaction_id) DO NOTHING;
+
+INSERT INTO inventory_transaction_layers (
+  inventory_transaction_layer_id, inventory_transaction_id, layer_order,
+  inventory_lot_id, batch_number, stock_date, received_date, expiry_date,
+  quantity, quantity_before, quantity_after, reserved_quantity_before,
+  reserved_quantity_after, available_quantity_before, available_quantity_after,
+  unit_cost, total_cost, accounting_unit_cost, accounting_total_cost,
+  production_id, commitment_revision, operation_id, source_transaction_id,
+  source_name, created_at
+)
+SELECT
+  record.id || ':layer:' || layer_rows.layer_order,
+  record.id,
+  layer_rows.layer_order,
+  lot.lot_id,
+  NULLIF(layer_rows.layer_data->>'batch_number', ''),
+  NULLIF(layer_rows.layer_data->>'stock_date', '')::date,
+  NULLIF(layer_rows.layer_data->>'received_date', '')::date,
+  NULLIF(layer_rows.layer_data->>'expiry_date', '')::date,
+  COALESCE(NULLIF(layer_rows.layer_data->>'quantity', '')::numeric, 0),
+  NULLIF(layer_rows.layer_data->>'quantity_before', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'quantity_after', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'reserved_quantity_before', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'reserved_quantity_after', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'available_quantity_before', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'available_quantity_after', '')::numeric,
+  COALESCE(NULLIF(layer_rows.layer_data->>'unit_cost', '')::numeric, 0),
+  COALESCE(NULLIF(layer_rows.layer_data->>'total_cost', '')::numeric, 0),
+  NULLIF(layer_rows.layer_data->>'accounting_unit_cost', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'accounting_total_cost', '')::numeric,
+  production.production_id,
+  NULLIF(layer_rows.layer_data->>'commitment_revision', '')::integer,
+  NULLIF(layer_rows.layer_data->>'operation_id', ''),
+  NULLIF(COALESCE(layer_rows.layer_data->>'source_transaction_id', layer_rows.layer_data->>'transaction_id'), ''),
+  NULLIF(layer_rows.layer_data->>'source_name', ''),
+  record.created_at
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_array_elements(
+  CASE WHEN jsonb_typeof(record.data->'movement_layers') = 'array'
+    THEN record.data->'movement_layers'
+    ELSE '[]'::jsonb
+  END
+) WITH ORDINALITY AS layer_rows(layer_data, layer_order)
+JOIN inventory_transactions txn ON txn.inventory_transaction_id = record.id
+LEFT JOIN inventory_lots lot
+  ON lot.lot_id = COALESCE(NULLIF(layer_rows.layer_data->>'lot_id', ''), NULLIF(layer_rows.layer_data->>'inventory_lot_id', ''))
+LEFT JOIN production_events production
+  ON production.production_id = NULLIF(layer_rows.layer_data->>'production_id', '')
+WHERE record.entity_name = 'InventoryTransaction'
+ON CONFLICT (inventory_transaction_layer_id) DO NOTHING;
+
+INSERT INTO inventory_transaction_metadata (
+  inventory_transaction_metadata_id, inventory_transaction_id, metadata_key,
+  value_text, value_numeric, value_boolean, value_date, created_at
+)
+SELECT
+  record.id || ':meta:' || regexp_replace(meta_entry.key, '[^A-Za-z0-9_:-]+', '_', 'g'),
+  record.id,
+  meta_entry.key,
+  CASE WHEN jsonb_typeof(meta_entry.value) = 'string' THEN meta_entry.value #>> '{}' ELSE NULL END,
+  CASE WHEN jsonb_typeof(meta_entry.value) = 'number' THEN (meta_entry.value #>> '{}')::numeric ELSE NULL END,
+  CASE WHEN jsonb_typeof(meta_entry.value) = 'boolean' THEN (meta_entry.value #>> '{}')::boolean ELSE NULL END,
+  CASE
+    WHEN jsonb_typeof(meta_entry.value) = 'string'
+      AND (meta_entry.value #>> '{}') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      THEN (meta_entry.value #>> '{}')::timestamptz
+    ELSE NULL
+  END,
+  record.created_at
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_each(
+  CASE WHEN jsonb_typeof(record.data->'metadata') = 'object'
+    THEN record.data->'metadata'
+    ELSE '{}'::jsonb
+  END
+) AS meta_entry(key, value)
+JOIN inventory_transactions txn ON txn.inventory_transaction_id = record.id
+WHERE record.entity_name = 'InventoryTransaction'
+  AND jsonb_typeof(meta_entry.value) IN ('string', 'number', 'boolean')
+ON CONFLICT (inventory_transaction_metadata_id) DO NOTHING;
+
+WITH metadata_containers AS (
+  SELECT
+    record.id AS inventory_transaction_id,
+    record.created_at,
+    meta_entry.key AS metadata_key,
+    'array'::text AS container_type,
+    array_item.item_order::integer AS item_order,
+    array_item.item_value AS item_value
+  FROM entity_records record
+  CROSS JOIN LATERAL jsonb_each(
+    CASE WHEN jsonb_typeof(record.data->'metadata') = 'object'
+      THEN record.data->'metadata'
+      ELSE '{}'::jsonb
+    END
+  ) AS meta_entry(key, value)
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(meta_entry.value) = 'array'
+      THEN meta_entry.value
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS array_item(item_value, item_order)
+  JOIN inventory_transactions txn ON txn.inventory_transaction_id = record.id
+  WHERE record.entity_name = 'InventoryTransaction'
+    AND jsonb_typeof(meta_entry.value) = 'array'
+
+  UNION ALL
+
+  SELECT
+    record.id AS inventory_transaction_id,
+    record.created_at,
+    meta_entry.key AS metadata_key,
+    'object'::text AS container_type,
+    1 AS item_order,
+    meta_entry.value AS item_value
+  FROM entity_records record
+  CROSS JOIN LATERAL jsonb_each(
+    CASE WHEN jsonb_typeof(record.data->'metadata') = 'object'
+      THEN record.data->'metadata'
+      ELSE '{}'::jsonb
+    END
+  ) AS meta_entry(key, value)
+  JOIN inventory_transactions txn ON txn.inventory_transaction_id = record.id
+  WHERE record.entity_name = 'InventoryTransaction'
+    AND jsonb_typeof(meta_entry.value) = 'object'
+), metadata_attributes AS (
+  SELECT
+    container.inventory_transaction_id,
+    container.created_at,
+    container.metadata_key,
+    container.container_type,
+    container.item_order,
+    attribute.key AS attribute_name,
+    attribute.value AS attribute_value
+  FROM metadata_containers container
+  CROSS JOIN LATERAL jsonb_each(container.item_value) AS attribute(key, value)
+  WHERE jsonb_typeof(container.item_value) = 'object'
+
+  UNION ALL
+
+  SELECT
+    container.inventory_transaction_id,
+    container.created_at,
+    container.metadata_key,
+    container.container_type,
+    container.item_order,
+    'value'::text AS attribute_name,
+    container.item_value AS attribute_value
+  FROM metadata_containers container
+  WHERE jsonb_typeof(container.item_value) <> 'object'
+)
+INSERT INTO inventory_transaction_metadata_items (
+  inventory_transaction_metadata_item_id, inventory_transaction_id, metadata_key,
+  container_type, item_order, attribute_name, attribute_value_text,
+  attribute_value_numeric, attribute_value_boolean, attribute_value_date, created_at
+)
+SELECT
+  inventory_transaction_id || ':meta-item:' || regexp_replace(metadata_key, '[^A-Za-z0-9_:-]+', '_', 'g') || ':' || container_type || ':' || item_order || ':' || regexp_replace(attribute_name, '[^A-Za-z0-9_:-]+', '_', 'g'),
+  inventory_transaction_id,
+  metadata_key,
+  container_type,
+  item_order,
+  attribute_name,
+  CASE WHEN jsonb_typeof(attribute_value) = 'string' THEN attribute_value #>> '{}' ELSE NULL END,
+  CASE WHEN jsonb_typeof(attribute_value) = 'number' THEN (attribute_value #>> '{}')::numeric ELSE NULL END,
+  CASE WHEN jsonb_typeof(attribute_value) = 'boolean' THEN (attribute_value #>> '{}')::boolean ELSE NULL END,
+  CASE
+    WHEN jsonb_typeof(attribute_value) = 'string'
+      AND (attribute_value #>> '{}') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      THEN (attribute_value #>> '{}')::timestamptz
+    ELSE NULL
+  END,
+  created_at
+FROM metadata_attributes
+ON CONFLICT (inventory_transaction_metadata_item_id) DO NOTHING;
+
+DO $inventory_transaction_payload_cutover$
+DECLARE
+  has_payload_column BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'inventory_transactions'
+      AND column_name = 'payload'
+  ) INTO has_payload_column;
+
+  IF has_payload_column THEN
+    UPDATE inventory_transactions AS txn
+       SET warehouse_name = COALESCE(txn.warehouse_name, NULLIF(txn.payload->>'site_name', ''), NULLIF(txn.payload->>'warehouse_name', '')),
+           ingredient_name = COALESCE(txn.ingredient_name, NULLIF(txn.payload->>'ingredient_name', '')),
+           item_code = COALESCE(txn.item_code, NULLIF(txn.payload->>'item_code', '')),
+           notes = COALESCE(txn.notes, NULLIF(txn.payload->>'notes', '')),
+           performed_by = COALESCE(txn.performed_by, NULLIF(txn.payload->>'performed_by', '')),
+           batch_number = COALESCE(txn.batch_number, NULLIF(txn.payload->>'batch_number', '')),
+           expiry_date = COALESCE(txn.expiry_date, NULLIF(txn.payload->>'expiry_date', '')::date),
+           stock_date = COALESCE(txn.stock_date, NULLIF(txn.payload->>'stock_date', '')::date),
+           received_date = COALESCE(txn.received_date, NULLIF(txn.payload->>'received_date', '')::date),
+           from_warehouse_id = COALESCE(txn.from_warehouse_id, NULLIF(txn.payload->>'from_site_id', ''), NULLIF(txn.payload->>'from_warehouse_id', '')),
+           from_warehouse_name = COALESCE(txn.from_warehouse_name, NULLIF(txn.payload->>'from_site_name', ''), NULLIF(txn.payload->>'from_warehouse_name', '')),
+           to_warehouse_id = COALESCE(txn.to_warehouse_id, NULLIF(txn.payload->>'to_site_id', ''), NULLIF(txn.payload->>'to_warehouse_id', '')),
+           to_warehouse_name = COALESCE(txn.to_warehouse_name, NULLIF(txn.payload->>'to_site_name', ''), NULLIF(txn.payload->>'to_warehouse_name', '')),
+           source = COALESCE(txn.source, NULLIF(txn.payload->>'source', '')),
+           source_type = COALESCE(txn.source_type, NULLIF(txn.payload->>'source_type', '')),
+           balance_before = COALESCE(txn.balance_before, NULLIF(txn.payload->>'balance_before', '')::numeric),
+           balance_after = COALESCE(txn.balance_after, NULLIF(txn.payload->>'balance_after', '')::numeric),
+           opening_quantity = COALESCE(txn.opening_quantity, NULLIF(txn.payload->>'opening_quantity', '')::numeric),
+           addition_quantity = COALESCE(txn.addition_quantity, NULLIF(txn.payload->>'addition_quantity', '')::numeric),
+           consumption_quantity = COALESCE(txn.consumption_quantity, NULLIF(txn.payload->>'consumption_quantity', '')::numeric),
+           remaining_quantity = COALESCE(txn.remaining_quantity, NULLIF(txn.payload->>'remaining_quantity', '')::numeric),
+           operation = COALESCE(txn.operation, NULLIF(txn.payload->>'operation', '')),
+           operation_id = COALESCE(txn.operation_id, NULLIF(txn.payload->>'operation_id', '')),
+           commitment_revision = COALESCE(txn.commitment_revision, NULLIF(txn.payload->>'commitment_revision', '')::integer);
+
+    INSERT INTO inventory_transaction_layers (
+      inventory_transaction_layer_id, inventory_transaction_id, layer_order,
+      inventory_lot_id, batch_number, stock_date, received_date, expiry_date,
+      quantity, quantity_before, quantity_after, reserved_quantity_before,
+      reserved_quantity_after, available_quantity_before, available_quantity_after,
+      unit_cost, total_cost, accounting_unit_cost, accounting_total_cost,
+      production_id, commitment_revision, operation_id, source_transaction_id,
+      source_name, created_at
+    )
+    SELECT
+      txn.inventory_transaction_id || ':layer:' || layer_rows.layer_order,
+      txn.inventory_transaction_id,
+      layer_rows.layer_order,
+      lot.lot_id,
+      NULLIF(layer_rows.layer_data->>'batch_number', ''),
+      NULLIF(layer_rows.layer_data->>'stock_date', '')::date,
+      NULLIF(layer_rows.layer_data->>'received_date', '')::date,
+      NULLIF(layer_rows.layer_data->>'expiry_date', '')::date,
+      COALESCE(NULLIF(layer_rows.layer_data->>'quantity', '')::numeric, 0),
+      NULLIF(layer_rows.layer_data->>'quantity_before', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'quantity_after', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'reserved_quantity_before', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'reserved_quantity_after', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'available_quantity_before', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'available_quantity_after', '')::numeric,
+      COALESCE(NULLIF(layer_rows.layer_data->>'unit_cost', '')::numeric, 0),
+      COALESCE(NULLIF(layer_rows.layer_data->>'total_cost', '')::numeric, 0),
+      NULLIF(layer_rows.layer_data->>'accounting_unit_cost', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'accounting_total_cost', '')::numeric,
+      production.production_id,
+      NULLIF(layer_rows.layer_data->>'commitment_revision', '')::integer,
+      NULLIF(layer_rows.layer_data->>'operation_id', ''),
+      NULLIF(COALESCE(layer_rows.layer_data->>'source_transaction_id', layer_rows.layer_data->>'transaction_id'), ''),
+      NULLIF(layer_rows.layer_data->>'source_name', ''),
+      txn.created_at
+    FROM inventory_transactions txn
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(txn.payload->'movement_layers') = 'array'
+        THEN txn.payload->'movement_layers'
+        ELSE '[]'::jsonb
+      END
+    ) WITH ORDINALITY AS layer_rows(layer_data, layer_order)
+    LEFT JOIN inventory_lots lot
+      ON lot.lot_id = COALESCE(NULLIF(layer_rows.layer_data->>'lot_id', ''), NULLIF(layer_rows.layer_data->>'inventory_lot_id', ''))
+    LEFT JOIN production_events production
+      ON production.production_id = NULLIF(layer_rows.layer_data->>'production_id', '')
+    ON CONFLICT (inventory_transaction_layer_id) DO NOTHING;
+
+    INSERT INTO inventory_transaction_metadata (
+      inventory_transaction_metadata_id, inventory_transaction_id, metadata_key,
+      value_text, value_numeric, value_boolean, value_date, created_at
+    )
+    SELECT
+      txn.inventory_transaction_id || ':meta:' || regexp_replace(meta_entry.key, '[^A-Za-z0-9_:-]+', '_', 'g'),
+      txn.inventory_transaction_id,
+      meta_entry.key,
+      CASE WHEN jsonb_typeof(meta_entry.value) = 'string' THEN meta_entry.value #>> '{}' ELSE NULL END,
+      CASE WHEN jsonb_typeof(meta_entry.value) = 'number' THEN (meta_entry.value #>> '{}')::numeric ELSE NULL END,
+      CASE WHEN jsonb_typeof(meta_entry.value) = 'boolean' THEN (meta_entry.value #>> '{}')::boolean ELSE NULL END,
+      CASE
+        WHEN jsonb_typeof(meta_entry.value) = 'string'
+          AND (meta_entry.value #>> '{}') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          THEN (meta_entry.value #>> '{}')::timestamptz
+        ELSE NULL
+      END,
+      txn.created_at
+    FROM inventory_transactions txn
+    CROSS JOIN LATERAL jsonb_each(
+      CASE WHEN jsonb_typeof(txn.payload->'metadata') = 'object'
+        THEN txn.payload->'metadata'
+        ELSE '{}'::jsonb
+      END
+    ) AS meta_entry(key, value)
+    WHERE jsonb_typeof(meta_entry.value) IN ('string', 'number', 'boolean')
+    ON CONFLICT (inventory_transaction_metadata_id) DO NOTHING;
+
+    WITH metadata_containers AS (
+      SELECT
+        txn.inventory_transaction_id,
+        txn.created_at,
+        meta_entry.key AS metadata_key,
+        'array'::text AS container_type,
+        array_item.item_order::integer AS item_order,
+        array_item.item_value
+      FROM inventory_transactions txn
+      CROSS JOIN LATERAL jsonb_each(
+        CASE WHEN jsonb_typeof(txn.payload->'metadata') = 'object'
+          THEN txn.payload->'metadata'
+          ELSE '{}'::jsonb
+        END
+      ) AS meta_entry(key, value)
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(meta_entry.value) = 'array'
+          THEN meta_entry.value
+          ELSE '[]'::jsonb
+        END
+      ) WITH ORDINALITY AS array_item(item_value, item_order)
+
+      UNION ALL
+
+      SELECT
+        txn.inventory_transaction_id,
+        txn.created_at,
+        meta_entry.key AS metadata_key,
+        'object'::text AS container_type,
+        1 AS item_order,
+        meta_entry.value AS item_value
+      FROM inventory_transactions txn
+      CROSS JOIN LATERAL jsonb_each(
+        CASE WHEN jsonb_typeof(txn.payload->'metadata') = 'object'
+          THEN txn.payload->'metadata'
+          ELSE '{}'::jsonb
+        END
+      ) AS meta_entry(key, value)
+      WHERE jsonb_typeof(meta_entry.value) = 'object'
+    ), metadata_attributes AS (
+      SELECT
+        container.inventory_transaction_id,
+        container.created_at,
+        container.metadata_key,
+        container.container_type,
+        container.item_order,
+        attribute.key AS attribute_name,
+        attribute.value AS attribute_value
+      FROM metadata_containers container
+      CROSS JOIN LATERAL jsonb_each(container.item_value) AS attribute(key, value)
+      WHERE jsonb_typeof(container.item_value) = 'object'
+
+      UNION ALL
+
+      SELECT
+        container.inventory_transaction_id,
+        container.created_at,
+        container.metadata_key,
+        container.container_type,
+        container.item_order,
+        'value'::text AS attribute_name,
+        container.item_value AS attribute_value
+      FROM metadata_containers container
+      WHERE jsonb_typeof(container.item_value) <> 'object'
+    )
+    INSERT INTO inventory_transaction_metadata_items (
+      inventory_transaction_metadata_item_id, inventory_transaction_id, metadata_key,
+      container_type, item_order, attribute_name, attribute_value_text,
+      attribute_value_numeric, attribute_value_boolean, attribute_value_date, created_at
+    )
+    SELECT
+      inventory_transaction_id || ':meta-item:' || regexp_replace(metadata_key, '[^A-Za-z0-9_:-]+', '_', 'g') || ':' || container_type || ':' || item_order || ':' || regexp_replace(attribute_name, '[^A-Za-z0-9_:-]+', '_', 'g'),
+      inventory_transaction_id,
+      metadata_key,
+      container_type,
+      item_order,
+      attribute_name,
+      CASE WHEN jsonb_typeof(attribute_value) = 'string' THEN attribute_value #>> '{}' ELSE NULL END,
+      CASE WHEN jsonb_typeof(attribute_value) = 'number' THEN (attribute_value #>> '{}')::numeric ELSE NULL END,
+      CASE WHEN jsonb_typeof(attribute_value) = 'boolean' THEN (attribute_value #>> '{}')::boolean ELSE NULL END,
+      CASE
+        WHEN jsonb_typeof(attribute_value) = 'string'
+          AND (attribute_value #>> '{}') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          THEN (attribute_value #>> '{}')::timestamptz
+        ELSE NULL
+      END,
+      created_at
+    FROM metadata_attributes
+    ON CONFLICT (inventory_transaction_metadata_item_id) DO NOTHING;
+
+    ALTER TABLE inventory_transactions DROP COLUMN payload;
+  END IF;
+END;
+$inventory_transaction_payload_cutover$;
 
 INSERT INTO recipes (recipe_id, canonical_name, description, status, source_name, payload, created_at, updated_at)
 SELECT

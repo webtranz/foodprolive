@@ -731,6 +731,87 @@ function rowJsonObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function isPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function metadataValueFromColumns(entry = {}, prefix = 'value') {
+  const booleanValue = entry[`${prefix}_boolean`];
+  if (booleanValue !== null && typeof booleanValue !== 'undefined') return booleanValue === true;
+  const numericValue = entry[`${prefix}_numeric`];
+  if (numericValue !== null && typeof numericValue !== 'undefined') return Number(numericValue);
+  const dateValue = entry[`${prefix}_date`];
+  if (dateValue !== null && typeof dateValue !== 'undefined') return rowTimestamp(dateValue);
+  const textValue = entry[`${prefix}_text`];
+  return textValue === null || typeof textValue === 'undefined' ? null : textValue;
+}
+
+function metadataWriteColumns(value) {
+  if (typeof value === 'boolean') {
+    return { text: null, numeric: null, boolean: value, date: null };
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return { text: null, numeric: value, boolean: null, date: null };
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return { text: null, numeric: null, boolean: null, date: value.toISOString() };
+  }
+  if (typeof value === 'string') {
+    return { text: value, numeric: null, boolean: null, date: null };
+  }
+  return { text: value === null || typeof value === 'undefined' ? null : String(value), numeric: null, boolean: null, date: null };
+}
+
+function inventoryTransactionMetadata(row = {}) {
+  const metadata = {};
+  rowJsonArray(row.metadata_entries).forEach((entry) => {
+    if (!entry?.metadata_key) return;
+    metadata[entry.metadata_key] = metadataValueFromColumns(entry, 'value');
+  });
+
+  const itemGroups = new Map();
+  rowJsonArray(row.metadata_items).forEach((entry) => {
+    if (!entry?.metadata_key) return;
+    const containerType = entry.container_type || 'array';
+    const itemOrder = Number(entry.item_order || 1);
+    const groupKey = `${entry.metadata_key}::${containerType}::${itemOrder}`;
+    if (!itemGroups.has(groupKey)) {
+      itemGroups.set(groupKey, {
+        metadata_key: entry.metadata_key,
+        container_type: containerType,
+        item_order: itemOrder,
+        attributes: {}
+      });
+    }
+    itemGroups.get(groupKey).attributes[entry.attribute_name || 'value'] = metadataValueFromColumns(entry, 'attribute_value');
+  });
+
+  const groupedByMetadataKey = new Map();
+  for (const item of itemGroups.values()) {
+    if (item.container_type === 'object') {
+      metadata[item.metadata_key] = { ...(metadata[item.metadata_key] || {}), ...item.attributes };
+      continue;
+    }
+    const list = groupedByMetadataKey.get(item.metadata_key) || [];
+    const attributeKeys = Object.keys(item.attributes);
+    list.push({
+      order: item.item_order,
+      value: attributeKeys.length === 1 && attributeKeys[0] === 'value'
+        ? item.attributes.value
+        : item.attributes
+    });
+    groupedByMetadataKey.set(item.metadata_key, list);
+  }
+
+  for (const [metadataKey, items] of groupedByMetadataKey.entries()) {
+    metadata[metadataKey] = items
+      .sort((left, right) => left.order - right.order)
+      .map((item) => item.value);
+  }
+
+  return metadata;
+}
+
 function productionConsumptionReportSections(ingredientLines = []) {
   const lines = rowJsonArray(ingredientLines);
   const lotLines = lines.flatMap((line) => (
@@ -926,13 +1007,18 @@ function rowToInventoryLot(row = {}) {
 }
 
 function rowToInventoryTransaction(row = {}) {
-  return withPayload(row, {
-    __entity: 'InventoryTransaction',
+  return hydrateDerivedFields('InventoryTransaction', {
     id: row.inventory_transaction_id,
     inventory_id: row.inventory_id || null,
     site_id: row.warehouse_id || null,
+    warehouse_id: row.warehouse_id || null,
+    site_name: row.warehouse_name || null,
+    warehouse_name: row.warehouse_name || null,
     ingredient_id: row.ingredient_id || null,
+    ingredient_name: row.ingredient_name || null,
+    item_code: row.item_code || null,
     inventory_lot_id: row.lot_id || null,
+    lot_id: row.lot_id || null,
     transaction_type: row.transaction_type,
     transaction_date: toDateOnlyOrNull(row.transaction_date),
     quantity: Number(row.quantity || 0),
@@ -944,7 +1030,36 @@ function rowToInventoryTransaction(row = {}) {
     reason_code: row.reason_code || null,
     idempotency_key: row.idempotency_key || null,
     status: row.status || 'posted',
-    source_name: row.source_name || null
+    source_name: row.source_name || null,
+    notes: row.notes || null,
+    performed_by: row.performed_by || null,
+    batch_number: row.batch_number || null,
+    expiry_date: toDateOnlyOrNull(row.expiry_date),
+    stock_date: toDateOnlyOrNull(row.stock_date),
+    received_date: toDateOnlyOrNull(row.received_date),
+    from_site_id: row.from_warehouse_id || null,
+    from_site_name: row.from_warehouse_name || null,
+    from_warehouse_id: row.from_warehouse_id || null,
+    from_warehouse_name: row.from_warehouse_name || null,
+    to_site_id: row.to_warehouse_id || null,
+    to_site_name: row.to_warehouse_name || null,
+    to_warehouse_id: row.to_warehouse_id || null,
+    to_warehouse_name: row.to_warehouse_name || null,
+    source: row.source || null,
+    source_type: row.source_type || null,
+    balance_before: toNumberOrNull(row.balance_before),
+    balance_after: toNumberOrNull(row.balance_after),
+    opening_quantity: toNumberOrNull(row.opening_quantity),
+    addition_quantity: toNumberOrNull(row.addition_quantity),
+    consumption_quantity: toNumberOrNull(row.consumption_quantity),
+    remaining_quantity: toNumberOrNull(row.remaining_quantity),
+    operation: row.operation || null,
+    operation_id: row.operation_id || null,
+    commitment_revision: toNumberOrNull(row.commitment_revision),
+    movement_layers: rowJsonArray(row.movement_layers),
+    metadata: inventoryTransactionMetadata(row),
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
@@ -1668,19 +1783,90 @@ const normalizedSimpleConfigs = {
     table: 'inventory_transactions',
     idColumn: 'inventory_transaction_id',
     mapper: rowToInventoryTransaction,
-    select: 'SELECT * FROM inventory_transactions',
+    select: `SELECT txn.*,
+             COALESCE((
+               SELECT jsonb_agg(jsonb_build_object(
+                 'inventory_transaction_layer_id', layer.inventory_transaction_layer_id,
+                 'id', layer.inventory_transaction_layer_id,
+                 'layer_order', layer.layer_order,
+                 'lot_id', layer.inventory_lot_id,
+                 'inventory_lot_id', layer.inventory_lot_id,
+                 'batch_number', layer.batch_number,
+                 'stock_date', layer.stock_date,
+                 'received_date', layer.received_date,
+                 'expiry_date', layer.expiry_date,
+                 'quantity', layer.quantity,
+                 'quantity_before', layer.quantity_before,
+                 'quantity_after', layer.quantity_after,
+                 'reserved_quantity_before', layer.reserved_quantity_before,
+                 'reserved_quantity_after', layer.reserved_quantity_after,
+                 'available_quantity_before', layer.available_quantity_before,
+                 'available_quantity_after', layer.available_quantity_after,
+                 'unit_cost', layer.unit_cost,
+                 'total_cost', layer.total_cost,
+                 'accounting_unit_cost', layer.accounting_unit_cost,
+                 'accounting_total_cost', layer.accounting_total_cost,
+                 'production_id', layer.production_id,
+                 'commitment_revision', layer.commitment_revision,
+                 'operation_id', layer.operation_id,
+                 'source_transaction_id', layer.source_transaction_id,
+                 'source_name', layer.source_name
+               ) ORDER BY layer.layer_order)
+               FROM inventory_transaction_layers layer
+               WHERE layer.inventory_transaction_id = txn.inventory_transaction_id
+             ), '[]'::jsonb) AS movement_layers,
+             COALESCE((
+               SELECT jsonb_agg(jsonb_build_object(
+                 'metadata_key', meta.metadata_key,
+                 'value_text', meta.value_text,
+                 'value_numeric', meta.value_numeric,
+                 'value_boolean', meta.value_boolean,
+                 'value_date', meta.value_date
+               ) ORDER BY meta.metadata_key)
+               FROM inventory_transaction_metadata meta
+               WHERE meta.inventory_transaction_id = txn.inventory_transaction_id
+             ), '[]'::jsonb) AS metadata_entries,
+             COALESCE((
+               SELECT jsonb_agg(jsonb_build_object(
+                 'metadata_key', item.metadata_key,
+                 'container_type', item.container_type,
+                 'item_order', item.item_order,
+                 'attribute_name', item.attribute_name,
+                 'attribute_value_text', item.attribute_value_text,
+                 'attribute_value_numeric', item.attribute_value_numeric,
+                 'attribute_value_boolean', item.attribute_value_boolean,
+                 'attribute_value_date', item.attribute_value_date
+               ) ORDER BY item.metadata_key, item.container_type, item.item_order, item.attribute_name)
+               FROM inventory_transaction_metadata_items item
+               WHERE item.inventory_transaction_id = txn.inventory_transaction_id
+             ), '[]'::jsonb) AS metadata_items
+             FROM inventory_transactions txn`,
     insertSql: `INSERT INTO inventory_transactions (
-      inventory_transaction_id, inventory_id, warehouse_id, ingredient_id, lot_id,
-      transaction_type, transaction_date, quantity, unit, unit_cost, total_cost,
-      reference_type, reference_id, reason_code, idempotency_key, status, source_name,
-      payload, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)`,
+      inventory_transaction_id, inventory_id, warehouse_id, warehouse_name,
+      ingredient_id, ingredient_name, item_code, lot_id, transaction_type,
+      transaction_date, quantity, unit, unit_cost, total_cost, reference_type,
+      reference_id, reason_code, idempotency_key, status, source_name, notes,
+      performed_by, batch_number, expiry_date, stock_date, received_date,
+      from_warehouse_id, from_warehouse_name, to_warehouse_id, to_warehouse_name,
+      source, source_type, balance_before, balance_after, opening_quantity,
+      addition_quantity, consumption_quantity, remaining_quantity, operation,
+      operation_id, commitment_revision, created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+      $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+      $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
+      $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,
+      $41,$42,$43
+    )`,
     values(record) {
       return [
         record.id,
         record.inventory_id || null,
         record.site_id || record.warehouse_id || null,
+        record.site_name || record.warehouse_name || null,
         record.ingredient_id || null,
+        record.ingredient_name || null,
+        record.item_code || null,
         record.lot_id || record.inventory_lot_id || null,
         record.transaction_type || record.type || 'adjustment',
         toDateOnlyOrNull(record.transaction_date || record.date || record.created_date),
@@ -1694,22 +1880,52 @@ const normalizedSimpleConfigs = {
         record.idempotency_key || null,
         record.status || 'posted',
         record.source_name || null,
-        jsonPayload(record),
+        record.notes || null,
+        record.performed_by || null,
+        record.batch_number || null,
+        toDateOnlyOrNull(record.expiry_date),
+        toDateOnlyOrNull(record.stock_date),
+        toDateOnlyOrNull(record.received_date),
+        record.from_site_id || record.from_warehouse_id || null,
+        record.from_site_name || record.from_warehouse_name || null,
+        record.to_site_id || record.to_warehouse_id || null,
+        record.to_site_name || record.to_warehouse_name || null,
+        record.source || null,
+        record.source_type || null,
+        toNumberOrNull(record.balance_before),
+        toNumberOrNull(record.balance_after),
+        toNumberOrNull(record.opening_quantity),
+        toNumberOrNull(record.addition_quantity),
+        toNumberOrNull(record.consumption_quantity),
+        toNumberOrNull(record.remaining_quantity),
+        record.operation || null,
+        record.operation_id || null,
+        record.commitment_revision === null || typeof record.commitment_revision === 'undefined'
+          ? null
+          : Math.max(0, Math.trunc(toNumberOrZero(record.commitment_revision))),
         record.created_date || nowIso(),
         record.updated_date || nowIso()
       ];
     },
     updateSql: `UPDATE inventory_transactions SET
-      inventory_id = $2, warehouse_id = $3, ingredient_id = $4, lot_id = $5,
-      transaction_type = $6, transaction_date = $7, quantity = $8, unit = $9,
-      unit_cost = $10, total_cost = $11, reference_type = $12, reference_id = $13,
-      reason_code = $14, idempotency_key = $15, status = $16, source_name = $17,
-      payload = $18::jsonb, updated_at = $19
+      inventory_id = $2, warehouse_id = $3, warehouse_name = $4,
+      ingredient_id = $5, ingredient_name = $6, item_code = $7, lot_id = $8,
+      transaction_type = $9, transaction_date = $10, quantity = $11, unit = $12,
+      unit_cost = $13, total_cost = $14, reference_type = $15, reference_id = $16,
+      reason_code = $17, idempotency_key = $18, status = $19, source_name = $20,
+      notes = $21, performed_by = $22, batch_number = $23, expiry_date = $24,
+      stock_date = $25, received_date = $26, from_warehouse_id = $27,
+      from_warehouse_name = $28, to_warehouse_id = $29, to_warehouse_name = $30,
+      source = $31, source_type = $32, balance_before = $33, balance_after = $34,
+      opening_quantity = $35, addition_quantity = $36, consumption_quantity = $37,
+      remaining_quantity = $38, operation = $39, operation_id = $40,
+      commitment_revision = $41, updated_at = $42
       WHERE inventory_transaction_id = $1`,
     updateValues(record) {
       const values = this.values(record);
-      return [values[0], ...values.slice(1, 18), record.updated_date || nowIso()];
-    }
+      return [values[0], ...values.slice(1, 41), record.updated_date || nowIso()];
+    },
+    afterSave: replaceInventoryTransactionDetails
   }
 };
 
@@ -2393,6 +2609,10 @@ function normalizedSqlColumnForField(entity, field) {
       ingredient_id: 'ingredient_id',
       inventory_lot_id: 'lot_id',
       lot_id: 'lot_id',
+      site_name: 'warehouse_name',
+      warehouse_name: 'warehouse_name',
+      ingredient_name: 'ingredient_name',
+      item_code: 'item_code',
       transaction_type: 'transaction_type',
       transaction_date: 'transaction_date',
       quantity: 'quantity',
@@ -2402,7 +2622,22 @@ function normalizedSqlColumnForField(entity, field) {
       reference_type: 'reference_type',
       reference_id: 'reference_id',
       reason_code: 'reason_code',
-      idempotency_key: 'idempotency_key'
+      idempotency_key: 'idempotency_key',
+      notes: 'notes',
+      performed_by: 'performed_by',
+      batch_number: 'batch_number',
+      expiry_date: 'expiry_date',
+      stock_date: 'stock_date',
+      received_date: 'received_date',
+      from_site_id: 'from_warehouse_id',
+      from_warehouse_id: 'from_warehouse_id',
+      to_site_id: 'to_warehouse_id',
+      to_warehouse_id: 'to_warehouse_id',
+      source: 'source',
+      source_type: 'source_type',
+      operation: 'operation',
+      operation_id: 'operation_id',
+      commitment_revision: 'commitment_revision'
     },
     Recipe: {
       recipe_master_id: 'recipe_id',
@@ -3334,6 +3569,175 @@ function normalizedMenuPlanLineType(value) {
 
 function lineNumberedId(prefix, parentId, lineNumber) {
   return `${parentId}:${prefix}:${lineNumber}`;
+}
+
+function relationalKeyPart(value, fallback = 'value') {
+  const cleaned = String(value || fallback)
+    .trim()
+    .replace(/[^A-Za-z0-9_:-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return cleaned || fallback;
+}
+
+async function replaceInventoryTransactionLayers(record, executor = pool) {
+  await query('DELETE FROM inventory_transaction_layers WHERE inventory_transaction_id = $1', [record.id], executor);
+  const layers = Array.isArray(record.movement_layers) ? record.movement_layers : [];
+  const createdAt = record.created_date || nowIso();
+  for (const [index, layer] of layers.entries()) {
+    const layerOrder = index + 1;
+    await query(
+      `INSERT INTO inventory_transaction_layers (
+        inventory_transaction_layer_id, inventory_transaction_id, layer_order,
+        inventory_lot_id, batch_number, stock_date, received_date, expiry_date,
+        quantity, quantity_before, quantity_after, reserved_quantity_before,
+        reserved_quantity_after, available_quantity_before, available_quantity_after,
+        unit_cost, total_cost, accounting_unit_cost, accounting_total_cost,
+        production_id, commitment_revision, operation_id, source_transaction_id,
+        source_name, created_at
+      ) VALUES (
+        $1,$2,$3,
+        (SELECT lot_id FROM inventory_lots WHERE lot_id = NULLIF($4::text, '') LIMIT 1),
+        $5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+        (SELECT production_id FROM production_events WHERE production_id = NULLIF($20::text, '') LIMIT 1),
+        $21,$22,$23,$24,$25
+      )`,
+      [
+        layer.inventory_transaction_layer_id || layer.id || lineNumberedId('layer', record.id, layerOrder),
+        record.id,
+        layerOrder,
+        layer.inventory_lot_id || layer.lot_id || null,
+        layer.batch_number || null,
+        toDateOnlyOrNull(layer.stock_date),
+        toDateOnlyOrNull(layer.received_date),
+        toDateOnlyOrNull(layer.expiry_date),
+        toNumberOrZero(layer.quantity ?? layer.deducted_quantity),
+        toNumberOrNull(layer.quantity_before),
+        toNumberOrNull(layer.quantity_after),
+        toNumberOrNull(layer.reserved_quantity_before),
+        toNumberOrNull(layer.reserved_quantity_after),
+        toNumberOrNull(layer.available_quantity_before),
+        toNumberOrNull(layer.available_quantity_after),
+        toNumberOrZero(layer.unit_cost),
+        toNumberOrZero(layer.total_cost ?? layer.cost),
+        toNumberOrNull(layer.accounting_unit_cost),
+        toNumberOrNull(layer.accounting_total_cost),
+        layer.production_id || null,
+        layer.commitment_revision === null || typeof layer.commitment_revision === 'undefined'
+          ? null
+          : Math.max(0, Math.trunc(toNumberOrZero(layer.commitment_revision))),
+        layer.operation_id || null,
+        layer.source_transaction_id || layer.transaction_id || null,
+        layer.source_name || record.source_name || null,
+        createdAt
+      ],
+      executor
+    );
+  }
+}
+
+async function insertInventoryTransactionMetadataScalar(recordId, key, value, createdAt, executor = pool) {
+  const columns = metadataWriteColumns(value);
+  await query(
+    `INSERT INTO inventory_transaction_metadata (
+      inventory_transaction_metadata_id, inventory_transaction_id, metadata_key,
+      value_text, value_numeric, value_boolean, value_date, created_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      `${recordId}:meta:${relationalKeyPart(key)}`,
+      recordId,
+      key,
+      columns.text,
+      columns.numeric,
+      columns.boolean,
+      columns.date,
+      createdAt
+    ],
+    executor
+  );
+}
+
+async function insertInventoryTransactionMetadataAttribute({
+  recordId,
+  key,
+  containerType,
+  itemOrder,
+  attributeName,
+  value,
+  createdAt,
+  executor = pool
+}) {
+  const columns = metadataWriteColumns(value);
+  await query(
+    `INSERT INTO inventory_transaction_metadata_items (
+      inventory_transaction_metadata_item_id, inventory_transaction_id, metadata_key,
+      container_type, item_order, attribute_name, attribute_value_text,
+      attribute_value_numeric, attribute_value_boolean, attribute_value_date, created_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [
+      `${recordId}:meta-item:${relationalKeyPart(key)}:${containerType}:${itemOrder}:${relationalKeyPart(attributeName)}`,
+      recordId,
+      key,
+      containerType,
+      itemOrder,
+      attributeName,
+      columns.text,
+      columns.numeric,
+      columns.boolean,
+      columns.date,
+      createdAt
+    ],
+    executor
+  );
+}
+
+async function replaceInventoryTransactionMetadata(record, executor = pool) {
+  await query('DELETE FROM inventory_transaction_metadata_items WHERE inventory_transaction_id = $1', [record.id], executor);
+  await query('DELETE FROM inventory_transaction_metadata WHERE inventory_transaction_id = $1', [record.id], executor);
+  if (!isPlainObject(record.metadata)) return;
+
+  const createdAt = record.created_date || nowIso();
+  for (const [key, value] of Object.entries(record.metadata)) {
+    if (!key) continue;
+    if (Array.isArray(value)) {
+      for (const [index, item] of value.entries()) {
+        const attributes = isPlainObject(item) ? Object.entries(item) : [['value', item]];
+        for (const [attributeName, attributeValue] of attributes) {
+          await insertInventoryTransactionMetadataAttribute({
+            recordId: record.id,
+            key,
+            containerType: 'array',
+            itemOrder: index + 1,
+            attributeName,
+            value: attributeValue,
+            createdAt,
+            executor
+          });
+        }
+      }
+      continue;
+    }
+    if (isPlainObject(value)) {
+      for (const [attributeName, attributeValue] of Object.entries(value)) {
+        await insertInventoryTransactionMetadataAttribute({
+          recordId: record.id,
+          key,
+          containerType: 'object',
+          itemOrder: 1,
+          attributeName,
+          value: attributeValue,
+          createdAt,
+          executor
+        });
+      }
+      continue;
+    }
+    await insertInventoryTransactionMetadataScalar(record.id, key, value, createdAt, executor);
+  }
+}
+
+async function replaceInventoryTransactionDetails(record, executor = pool) {
+  await replaceInventoryTransactionLayers(record, executor);
+  await replaceInventoryTransactionMetadata(record, executor);
 }
 
 async function replaceMenuPlanLines(record, executor = pool) {
@@ -4548,6 +4952,9 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
     const sql = existing ? config.updateSql : config.insertSql;
     const values = existing ? config.updateValues(record) : config.values(record);
     await query(sql, values, executor);
+    if (typeof config.afterSave === 'function') {
+      await config.afterSave(record, executor);
+    }
     return findNormalizedDocument(entity, record.id, executor);
   }
 
