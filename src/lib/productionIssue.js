@@ -60,6 +60,15 @@ export function finiteProductionNumber(value, fallback = 0) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+export function normalizeIssueDateOnly(value) {
+  if (value === null || typeof value === 'undefined' || value === '') return '';
+  const isoValue = value instanceof Date && !Number.isNaN(value.getTime())
+    ? value.toISOString()
+    : String(value || '').trim();
+  const match = isoValue.match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : '';
+}
+
 function firstFiniteProductionNumber(candidates = [], fallback = 0) {
   for (const candidate of candidates) {
     if (candidate === null || typeof candidate === 'undefined' || candidate === '') continue;
@@ -266,7 +275,7 @@ export function buildMenuPlanIssueItems(plan, { mealView = 'all', recipes = [] }
       source_menu_plan_item_index: index,
       site_id: plan?.site_id || meal?.site_id || '',
       site_name: plan?.site_name || meal?.site_name || '',
-      plan_date: plan?.plan_date || meal?.plan_date || '',
+      plan_date: normalizeIssueDateOnly(plan?.plan_date || meal?.plan_date),
       meal_type: mealType,
       meal_label: PRODUCTION_ISSUE_MEAL_LABELS[mealType],
       menu_type: plan?.cuisine_type || plan?.menu_type || meal?.cuisine_type || meal?.menu_type || 'general',
@@ -624,7 +633,7 @@ export function buildMenuIssueMealGroups(items = [], {
       source_menu_plan_id: item.source_menu_plan_id || '',
       site_id: item.site_id || '',
       site_name: item.site_name || '',
-      plan_date: item.plan_date || '',
+      plan_date: normalizeIssueDateOnly(item.plan_date),
       meal_type: mealType,
       meal_label: PRODUCTION_ISSUE_MEAL_LABELS[mealType],
       menu_type: item.menu_type || 'general',

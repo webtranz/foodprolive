@@ -583,6 +583,14 @@ function toNumberOrZero(value) {
 }
 
 function toDateOnlyOrNull(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  if (value && typeof value.toISOString === 'function') {
+    const isoValue = value.toISOString();
+    const isoMatch = String(isoValue || '').match(/^\d{4}-\d{2}-\d{2}/);
+    if (isoMatch) return isoMatch[0];
+  }
   const text = String(value || '').trim();
   if (!text) return null;
   const match = text.match(/^\d{4}-\d{2}-\d{2}/);
@@ -790,7 +798,7 @@ function rowToMenuPlan(row = {}) {
     __entity: 'MenuPlan',
     id: row.menu_plan_id,
     site_id: row.warehouse_id,
-    plan_date: row.plan_date,
+    plan_date: toDateOnlyOrNull(row.plan_date),
     cuisine_type: row.menu_type,
     menu_type: row.menu_type,
     menu_category: row.menu_category,
@@ -808,7 +816,7 @@ function rowToProduction(row = {}) {
     menu_plan_id: row.menu_plan_id || null,
     site_id: row.warehouse_id,
     fulfillment_store_id: row.warehouse_id,
-    production_date: row.production_date,
+    production_date: toDateOnlyOrNull(row.production_date),
     meal_type: row.meal_period,
     menu_type: row.menu_type,
     cuisine_type: row.menu_type,

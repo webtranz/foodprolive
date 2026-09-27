@@ -13,6 +13,7 @@ import {
   buildProductionOverrideAudit,
   isMenuPlanIssueItemAlreadyIssued,
   isMenuPlanIssueProductionBlocking,
+  normalizeIssueDateOnly,
   recalculateProductionIngredientSnapshot
 } from '../src/lib/productionIssue.js';
 
@@ -103,6 +104,14 @@ assert.equal(breakfastItems.length, 1);
 assert.equal(breakfastItems[0].meal_type, 'breakfast');
 assert.equal(breakfastItems[0].expected_servings, 30);
 assert.equal(breakfastItems[0].production_covers, 0);
+assert.equal(normalizeIssueDateOnly('2026-09-01T00:00:00.000Z'), '2026-09-01');
+assert.equal(
+  buildMenuPlanIssueItems(
+    { ...menuPlan, plan_date: '2026-09-01T00:00:00.000Z' },
+    { mealView: 'breakfast', recipes }
+  )[0].plan_date,
+  '2026-09-01'
+);
 
 assert.equal(
   isMenuPlanIssueProductionBlocking(

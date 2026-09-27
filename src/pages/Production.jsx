@@ -54,6 +54,7 @@ import {
   getMenuIssueInventoryCheckState,
   getProductionIngredientLineKey,
   isMenuPlanIssueItemAlreadyIssued,
+  normalizeIssueDateOnly,
   normalizeIssueMealView,
   PRODUCTION_ISSUE_MEAL_LABELS,
   PRODUCTION_ISSUE_MEAL_TYPES,
@@ -2787,7 +2788,8 @@ export default function Production() {
       site_name: site?.name || group.site_name || firstItem.site_name || '',
       fulfillment_store_id: productionStore?.id || '',
       fulfillment_store_name: productionStore?.name || '',
-      production_date: group.plan_date || firstItem.plan_date || issueSource?.plan_date || format(new Date(), 'yyyy-MM-dd'),
+      production_date: normalizeIssueDateOnly(group.plan_date || firstItem.plan_date || issueSource?.plan_date)
+        || format(new Date(), 'yyyy-MM-dd'),
       meal_type: group.meal_type,
       menu_type: menuType,
       cuisine_type: menuType,
@@ -2797,7 +2799,7 @@ export default function Production() {
       target_servings: finiteProductionNumber(group.production_covers, 0),
       kitchen_station: recipe.kitchen_station || recipe.station || '',
       notes: [
-        `Issued from menu plan ${issuePlan?.plan_date || group.plan_date || ''} ${group.meal_label}.`,
+        `Issued from menu plan ${normalizeIssueDateOnly(issuePlan?.plan_date || group.plan_date) || ''} ${group.meal_label}.`,
         isAdminReissue
           ? `Admin reissue ${adminReissueRunId}: this is an additional production run for already-issued planned item(s).`
           : '',
@@ -3861,7 +3863,12 @@ export default function Production() {
                     </div>
                     <div className="rounded-xl bg-white px-3 py-2">
                       <p className="text-xs uppercase tracking-wide text-slate-500">Production date</p>
-                      <p className="mt-1 font-semibold text-slate-900">{issuePlan.plan_date || issueSource?.plan_date || selectedDate}</p>
+                      <p className="mt-1 font-semibold text-slate-900">
+                        {normalizeIssueDateOnly(issuePlan.plan_date || issueSource?.plan_date || selectedDate)
+                          || issuePlan.plan_date
+                          || issueSource?.plan_date
+                          || selectedDate}
+                      </p>
                     </div>
                     <div className="rounded-xl bg-white px-3 py-2">
                       <p className="text-xs uppercase tracking-wide text-slate-500">Selected scope</p>
