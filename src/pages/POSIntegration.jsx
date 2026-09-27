@@ -36,7 +36,7 @@ const emptySourceForm = {
   sync_frequency: 'manual',
   default_site_id: '',
   is_active: true,
-  settingsText: '{\n  "headers": {}\n}'
+  headersText: ''
 };
 
 const emptyMappingForm = {
@@ -56,13 +56,6 @@ const defaultFilterState = {
   end_date: '',
   location_id: 'all'
 };
-
-function safeJsonParse(text) {
-  if (!String(text || '').trim()) {
-    return {};
-  }
-  return JSON.parse(text);
-}
 
 function formatNumber(value, digits = 0) {
   const numeric = Number(value || 0);
@@ -255,7 +248,6 @@ export default function POSIntegration() {
 
   const sourceMutation = useMutation({
     mutationFn: async (payload) => {
-      const settings = safeJsonParse(payload.settingsText);
       const site = sites.find((entry) => entry.id === payload.default_site_id);
       const body = {
         name: payload.name.trim(),
@@ -267,7 +259,7 @@ export default function POSIntegration() {
         default_site_id: payload.default_site_id || null,
         default_site_name: site?.name || null,
         is_active: payload.is_active,
-        settings
+        extra_headers_text: payload.headersText || ''
       };
 
       if (editingSource) {
@@ -409,7 +401,7 @@ export default function POSIntegration() {
       sync_frequency: source.sync_frequency || 'manual',
       default_site_id: source.default_site_id || '',
       is_active: source.is_active !== false,
-      settingsText: JSON.stringify(source.settings || { headers: {} }, null, 2)
+      headersText: source.extra_headers_text || ''
     });
     setSourceError('');
     setSourceDialogOpen(true);
@@ -448,12 +440,6 @@ export default function POSIntegration() {
     }
     if (sourceForm.source_type === 'api' && !sourceForm.api_url.trim()) {
       setSourceError('API URL is required for API sources');
-      return;
-    }
-    try {
-      safeJsonParse(sourceForm.settingsText);
-    } catch {
-      setSourceError('Settings JSON is invalid');
       return;
     }
     sourceMutation.mutate(sourceForm);
@@ -1230,13 +1216,14 @@ export default function POSIntegration() {
             </div>
 
             <div>
-              <Label>Extra settings JSON</Label>
+              <Label>Extra request headers</Label>
               <Textarea
-                rows={7}
-                value={sourceForm.settingsText}
-                onChange={(event) => setSourceForm((current) => ({ ...current, settingsText: event.target.value }))}
-                placeholder='{"headers":{"X-Store-Key":"value"}}'
+                rows={5}
+                value={sourceForm.headersText}
+                onChange={(event) => setSourceForm((current) => ({ ...current, headersText: event.target.value }))}
+                placeholder={'X-Store-Key: value\nX-Partner-Code: KBR-384'}
               />
+              <p className="mt-1 text-xs text-slate-500">One header per line. These are stored as normalized header rows, not JSON.</p>
             </div>
 
             <label className="flex items-center gap-2 text-sm text-slate-700">

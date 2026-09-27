@@ -224,18 +224,18 @@ function getJobSourceName(job = {}) {
 }
 
 function getJobRecipeType(job = {}) {
-  const recipeType = String(job.actor_snapshot?.bulk_options?.recipe_type || '').trim().toLowerCase();
+  const recipeType = String(job.recipe_type || job.actor_snapshot?.bulk_options?.recipe_type || '').trim().toLowerCase();
   if (recipeType === 'filipino') return 'Filipino';
   if (recipeType === 'general') return 'General';
   return '';
 }
 
 function getJobMenuCuisine(job = {}) {
-  return normalizeMenuCuisine(job.actor_snapshot?.bulk_options?.menu_cuisine, 'general');
+  return normalizeMenuCuisine(job.menu_cuisine || job.actor_snapshot?.bulk_options?.menu_cuisine, 'general');
 }
 
 function getJobMenuCategory(job = {}) {
-  return normalizeMenuCategory(job.actor_snapshot?.bulk_options?.menu_category, 'senior');
+  return normalizeMenuCategory(job.menu_category || job.actor_snapshot?.bulk_options?.menu_category, 'senior');
 }
 
 function getBulkClearScopeOptions(job = {}, extra = {}) {

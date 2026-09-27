@@ -141,6 +141,11 @@ function sanitizeUser(user) {
   return publicUser;
 }
 
+function normalizeTextArray(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))];
+}
+
 const USER_SELECT_SQL = `
 SELECT app_user.*,
        COALESCE(site_access.allowed_site_ids, ARRAY[]::text[]) AS allowed_site_ids,
@@ -7089,6 +7094,146 @@ async function createAppLog({ page_name, user_id, user_email, payload = {} }) {
   return { id, page_name, user_id, user_email, payload };
 }
 
+function auditDetailRowsFromValue(value, path = [], rows = []) {
+  const safePath = path.map((segment) => String(segment ?? '').trim()).filter(Boolean);
+  const pushPrimitive = (primitiveValue) => {
+    if (!safePath.length) safePath.push('value');
+    let valueType = 'null';
+    let stringValue = null;
+    let numericValue = null;
+    let booleanValue = null;
+    if (typeof primitiveValue === 'string') {
+      valueType = 'string';
+      stringValue = primitiveValue;
+    } else if (typeof primitiveValue === 'number' && Number.isFinite(primitiveValue)) {
+      valueType = 'number';
+      numericValue = primitiveValue;
+    } else if (typeof primitiveValue === 'boolean') {
+      valueType = 'boolean';
+      booleanValue = primitiveValue;
+    } else if (primitiveValue !== null && typeof primitiveValue !== 'undefined') {
+      valueType = 'string';
+      stringValue = String(primitiveValue);
+    }
+    rows.push({ path: safePath, valueType, stringValue, numericValue, booleanValue });
+  };
+
+  if (Array.isArray(value)) {
+    if (safePath.length) {
+      rows.push({ path: safePath, valueType: 'array', stringValue: null, numericValue: null, booleanValue: null });
+    }
+    value.slice(0, 200).forEach((item, index) => auditDetailRowsFromValue(item, [...safePath, String(index)], rows));
+    return rows.slice(0, 1000);
+  }
+
+  if (value && typeof value === 'object') {
+    if (safePath.length) {
+      rows.push({ path: safePath, valueType: 'object', stringValue: null, numericValue: null, booleanValue: null });
+    }
+    Object.entries(value).slice(0, 200).forEach(([key, nested]) => {
+      auditDetailRowsFromValue(nested, [...safePath, key], rows);
+    });
+    return rows.slice(0, 1000);
+  }
+
+  pushPrimitive(value);
+  return rows.slice(0, 1000);
+}
+
+function auditDetailValueFromRow(row = {}) {
+  const valueType = String(row.value_type || '').toLowerCase();
+  if (valueType === 'array') return [];
+  if (valueType === 'object') return {};
+  if (valueType === 'number') {
+    const value = Number(row.numeric_value);
+    return Number.isFinite(value) ? value : null;
+  }
+  if (valueType === 'boolean') return row.boolean_value === true;
+  if (valueType === 'null') return null;
+  return row.string_value ?? '';
+}
+
+function rebuildAuditDetails(rows = []) {
+  const root = {};
+  const sortedRows = [...rows].sort((left, right) => {
+    const leftPath = Array.isArray(left.detail_path) ? left.detail_path : [];
+    const rightPath = Array.isArray(right.detail_path) ? right.detail_path : [];
+    return leftPath.length - rightPath.length;
+  });
+  for (const row of sortedRows) {
+    const path = (Array.isArray(row.detail_path) ? row.detail_path : [])
+      .map((segment) => String(segment ?? '').trim())
+      .filter(Boolean);
+    if (!path.length) continue;
+    let cursor = root;
+    for (let index = 0; index < path.length; index += 1) {
+      const segment = path[index];
+      const key = Array.isArray(cursor) && /^\d+$/.test(segment) ? Number(segment) : segment;
+      const isLast = index === path.length - 1;
+      if (isLast) {
+        const nextValue = auditDetailValueFromRow(row);
+        if ((row.value_type === 'array' || row.value_type === 'object') && cursor[key] && typeof cursor[key] === 'object') continue;
+        cursor[key] = nextValue;
+        continue;
+      }
+      if (!cursor[key] || typeof cursor[key] !== 'object') {
+        cursor[key] = /^\d+$/.test(path[index + 1]) ? [] : {};
+      }
+      cursor = cursor[key];
+    }
+  }
+  return root;
+}
+
+async function replaceAuditLogDetails(auditLogId, details = {}, createdAt = nowIso(), executor = pool) {
+  await query('DELETE FROM audit_log_details WHERE audit_log_id = $1', [auditLogId], executor);
+  const rows = auditDetailRowsFromValue(details || {});
+  let order = 0;
+  for (const row of rows) {
+    order += 1;
+    await query(
+      `INSERT INTO audit_log_details (
+         id, audit_log_id, detail_path, value_type, string_value, numeric_value,
+         boolean_value, value_order, created_at
+       ) VALUES ($1, $2, $3::text[], $4, $5, $6, $7, $8, $9)`,
+      [
+        randomId('auditdet'),
+        auditLogId,
+        row.path,
+        row.valueType,
+        row.stringValue,
+        row.numericValue,
+        row.booleanValue,
+        order,
+        createdAt
+      ],
+      executor
+    );
+  }
+}
+
+async function listAuditLogDetails(auditLogIds = [], executor = pool) {
+  const ids = normalizeTextArray(auditLogIds);
+  if (!ids.length) return new Map();
+  const result = await query(
+    `SELECT audit_log_id, detail_path, value_type, string_value, numeric_value, boolean_value, value_order
+       FROM audit_log_details
+      WHERE audit_log_id = ANY($1::text[])
+      ORDER BY audit_log_id ASC, value_order ASC, id ASC`,
+    [ids],
+    executor
+  );
+  const grouped = result.rows.reduce((map, row) => {
+    if (!map.has(row.audit_log_id)) map.set(row.audit_log_id, []);
+    map.get(row.audit_log_id).push(row);
+    return map;
+  }, new Map());
+  for (const [auditLogId, rows] of grouped.entries()) {
+    grouped.set(auditLogId, rebuildAuditDetails(rows));
+  }
+  return grouped;
+}
+
 async function createAuditLog({
   actor_id = null,
   actor_email = null,
@@ -7106,8 +7251,8 @@ async function createAuditLog({
   await query(
     `INSERT INTO audit_logs (
        id, actor_id, actor_email, actor_name, role, action, entity, entity_id,
-       site_id, site_name, details, created_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
+       site_id, site_name, created_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       id,
       actor_id,
@@ -7119,11 +7264,11 @@ async function createAuditLog({
       entity_id,
       site_id,
       site_name,
-      JSON.stringify(details || {}),
       createdAt
     ],
     executor
   );
+  await replaceAuditLogDetails(id, details || {}, createdAt, executor);
   await query(
     `SELECT pg_notify(
        'foodpro_entity_events',
@@ -7182,7 +7327,17 @@ async function listAuditLogs({
       OR action ILIKE ${parameter}
       OR entity ILIKE ${parameter}
       OR COALESCE(entity_id, '') ILIKE ${parameter}
-      OR details::text ILIKE ${parameter}
+      OR EXISTS (
+        SELECT 1
+        FROM audit_log_details detail
+        WHERE detail.audit_log_id = audit_logs.id
+          AND (
+            array_to_string(detail.detail_path, '.') ILIKE ${parameter}
+            OR COALESCE(detail.string_value, '') ILIKE ${parameter}
+            OR COALESCE(detail.numeric_value::text, '') ILIKE ${parameter}
+            OR COALESCE(detail.boolean_value::text, '') ILIKE ${parameter}
+          )
+      )
     )`);
   }
   if (Array.isArray(siteIds)) {
@@ -7204,7 +7359,7 @@ async function listAuditLogs({
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const result = await query(
     `SELECT id, actor_id, actor_email, actor_name, role, action, entity, entity_id,
-            site_id, site_name, details, created_at
+            site_id, site_name, created_at
      FROM audit_logs
      ${where}
      ORDER BY created_at DESC
@@ -7212,7 +7367,11 @@ async function listAuditLogs({
     values,
     executor
   );
-  return result.rows;
+  const detailsByLog = await listAuditLogDetails(result.rows.map((row) => row.id), executor);
+  return result.rows.map((row) => ({
+    ...row,
+    details: detailsByLog.get(row.id) || {}
+  }));
 }
 
 async function createBulkUploadJob({
@@ -7231,16 +7390,19 @@ async function createBulkUploadJob({
 }, executor = pool) {
   const id = randomId('bulk');
   const createdAt = nowIso();
-  const actorSnapshot = {
-    ...(actor ? sanitizeUser(actor) : {}),
-    ...(options && Object.keys(options).length ? { bulk_options: options } : {})
-  };
+  const safeActor = actor ? sanitizeUser(actor) : {};
   await query(
     `INSERT INTO bulk_upload_jobs (
        id, module_key, entity_name, import_mode, file_name, file_path, file_size,
        batch_size, actor_id, actor_email, actor_name, role, site_id, site_name, source_name,
-       actor_snapshot, created_at, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $17)`,
+       recipe_type, menu_cuisine, menu_category, actor_role_access_level, actor_role_is_active,
+       actor_site_id, actor_site_name, actor_visibility_scope, actor_allowed_site_ids,
+       actor_allowed_site_names, actor_role_permissions, created_at, updated_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+       $11, $12, $13, $14, $15, $16, $17, $18, $19,
+       $20, $21, $22, $23, $24::text[], $25::text[], $26::text[], $27, $27
+     )`,
     [
       id,
       module_key,
@@ -7250,14 +7412,24 @@ async function createBulkUploadJob({
       file_path,
       Number(file_size) || 0,
       Number(batch_size) || 500,
-      actor?.id || null,
-      actor?.email || null,
-      actor?.full_name || actor?.email || 'System',
-      actor?.role || null,
+      safeActor?.id || null,
+      safeActor?.email || null,
+      safeActor?.full_name || safeActor?.email || 'System',
+      safeActor?.role || null,
       site_id,
       site_name,
       source_name,
-      JSON.stringify(actorSnapshot),
+      options?.recipe_type || null,
+      options?.menu_cuisine || null,
+      options?.menu_category || null,
+      safeActor?.role_access_level || safeActor?.access_level || null,
+      safeActor?.role_is_active === false ? false : true,
+      safeActor?.site_id || null,
+      safeActor?.site_name || null,
+      safeActor?.visibility_scope || null,
+      normalizeTextArray(safeActor?.allowed_site_ids),
+      normalizeTextArray(safeActor?.allowed_site_names),
+      normalizeTextArray(safeActor?.role_permissions),
       createdAt
     ],
     executor
@@ -7265,9 +7437,95 @@ async function createBulkUploadJob({
   return getBulkUploadJob(id, executor);
 }
 
+function buildBulkUploadJobActor(job = {}) {
+  if (!job?.actor_id && !job?.actor_email && !job?.role) return null;
+  return {
+    id: job.actor_id || null,
+    email: job.actor_email || null,
+    full_name: job.actor_name || job.actor_email || null,
+    role: job.role || null,
+    role_access_level: job.actor_role_access_level || null,
+    role_is_active: job.actor_role_is_active !== false,
+    site_id: job.actor_site_id || null,
+    site_name: job.actor_site_name || null,
+    visibility_scope: job.actor_visibility_scope || null,
+    allowed_site_ids: normalizeTextArray(job.actor_allowed_site_ids),
+    allowed_site_names: normalizeTextArray(job.actor_allowed_site_names),
+    role_permissions: normalizeTextArray(job.actor_role_permissions)
+  };
+}
+
+function bulkUploadJobOptions(job = {}) {
+  const options = {};
+  if (job.recipe_type) options.recipe_type = job.recipe_type;
+  if (job.menu_cuisine) options.menu_cuisine = job.menu_cuisine;
+  if (job.menu_category) options.menu_category = job.menu_category;
+  return options;
+}
+
+function hydrateBulkUploadJob(row = {}, errors = []) {
+  const job = {
+    ...row,
+    errors: Array.isArray(errors) ? errors : []
+  };
+  const actor = buildBulkUploadJobActor(job);
+  job.actor_snapshot = actor
+    ? {
+        ...actor,
+        bulk_options: bulkUploadJobOptions(job)
+      }
+    : null;
+  return job;
+}
+
+async function listBulkUploadJobErrors(jobIds = [], executor = pool) {
+  const ids = normalizeTextArray(jobIds);
+  if (!ids.length) return new Map();
+  const result = await query(
+    `SELECT job_id, row_number, message, error_order
+       FROM bulk_upload_job_errors
+      WHERE job_id = ANY($1::text[])
+      ORDER BY job_id ASC, error_order ASC, created_at ASC`,
+    [ids],
+    executor
+  );
+  return result.rows.reduce((map, row) => {
+    if (!map.has(row.job_id)) map.set(row.job_id, []);
+    map.get(row.job_id).push({
+      row: row.row_number,
+      message: row.message
+    });
+    return map;
+  }, new Map());
+}
+
+async function replaceBulkUploadJobErrors(jobId, errors = [], executor = pool) {
+  await query('DELETE FROM bulk_upload_job_errors WHERE job_id = $1', [jobId], executor);
+  const safeErrors = (Array.isArray(errors) ? errors : [])
+    .map((error, index) => ({
+      row: error?.row !== null && error?.row !== undefined && Number.isFinite(Number(error.row))
+        ? Number(error.row)
+        : null,
+      message: String(error?.message || 'Bulk upload failed.').trim() || 'Bulk upload failed.',
+      order: index + 1
+    }))
+    .slice(0, 100);
+  for (const error of safeErrors) {
+    await query(
+      `INSERT INTO bulk_upload_job_errors (
+         id, job_id, row_number, message, error_order, created_at
+       ) VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [randomId('bulkerr'), jobId, error.row, error.message, error.order],
+      executor
+    );
+  }
+}
+
 async function getBulkUploadJob(id, executor = pool) {
   const result = await query('SELECT * FROM bulk_upload_jobs WHERE id = $1 LIMIT 1', [id], executor);
-  return result.rowCount ? result.rows[0] : null;
+  if (!result.rowCount) return null;
+  const errorsByJob = await listBulkUploadJobErrors([id], executor);
+  return hydrateBulkUploadJob(result.rows[0], errorsByJob.get(id) || []);
 }
 
 async function listBulkUploadJobs({ limit = 100, statuses = [], siteIds = null, actorId = null } = {}, executor = pool) {
@@ -7298,7 +7556,8 @@ async function listBulkUploadJobs({ limit = 100, statuses = [], siteIds = null, 
     values,
     executor
   );
-  return result.rows;
+  const errorsByJob = await listBulkUploadJobErrors(result.rows.map((row) => row.id), executor);
+  return result.rows.map((row) => hydrateBulkUploadJob(row, errorsByJob.get(row.id) || []));
 }
 
 async function updateBulkUploadJob(id, patch = {}, executor = pool) {
@@ -7310,27 +7569,33 @@ async function updateBulkUploadJob(id, patch = {}, executor = pool) {
     applied_rows: 'applied_rows',
     skipped_rows: 'skipped_rows',
     failed_rows: 'failed_rows',
-    errors: 'errors',
     started_at: 'started_at',
     completed_at: 'completed_at'
   };
+  const hasErrorsPatch = Object.hasOwn(patch, 'errors');
   const assignments = [];
   const values = [];
   Object.entries(fieldMap).forEach(([key, column]) => {
     if (!Object.hasOwn(patch, key)) return;
-    const value = key === 'errors' ? JSON.stringify(patch[key] || []) : patch[key];
-    values.push(value);
-    assignments.push(`${column} = $${values.length}${key === 'errors' ? '::jsonb' : ''}`);
+    values.push(patch[key]);
+    assignments.push(`${column} = $${values.length}`);
   });
-  if (!assignments.length) return getBulkUploadJob(id, executor);
-  values.push(id);
-  await query(
-    `UPDATE bulk_upload_jobs
-     SET ${assignments.join(', ')}, updated_at = NOW()
-     WHERE id = $${values.length}`,
-    values,
-    executor
-  );
+  if (assignments.length) {
+    values.push(id);
+    await query(
+      `UPDATE bulk_upload_jobs
+       SET ${assignments.join(', ')}, updated_at = NOW()
+       WHERE id = $${values.length}`,
+      values,
+      executor
+    );
+  }
+  if (hasErrorsPatch) {
+    await replaceBulkUploadJobErrors(id, patch.errors, executor);
+    if (!assignments.length) {
+      await query('UPDATE bulk_upload_jobs SET updated_at = NOW() WHERE id = $1', [id], executor);
+    }
+  }
   return getBulkUploadJob(id, executor);
 }
 
@@ -7509,9 +7774,17 @@ async function acquireMealServiceScopeLock(scopeKey, executor = pool) {
 async function createEmailLog(payload) {
   const id = randomId('email');
   await query(
-    `INSERT INTO email_logs (id, recipient, subject, payload, status, created_at)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-    [id, payload.to || null, payload.subject || null, JSON.stringify(payload), payload.status || 'logged_only', nowIso()]
+    `INSERT INTO email_logs (id, recipient, subject, body_html, body_text, status, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      id,
+      Array.isArray(payload.to) ? payload.to.join(', ') : (payload.to || null),
+      payload.subject || null,
+      payload.html || null,
+      payload.body || null,
+      payload.status || 'logged_only',
+      nowIso()
+    ]
   );
   return { id, ...payload };
 }

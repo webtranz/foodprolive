@@ -6461,7 +6461,19 @@ app.delete('/api/entities/:entity/:id', requireAuth, async (request, response, n
 
 function serializeBulkUploadJob(job) {
   if (!job) return null;
-  const { file_path: _filePath, actor_snapshot: _actorSnapshot, ...safeJob } = job;
+  const {
+    file_path: _filePath,
+    actor_snapshot: _actorSnapshot,
+    actor_role_access_level: _actorRoleAccessLevel,
+    actor_role_is_active: _actorRoleIsActive,
+    actor_site_id: _actorSiteId,
+    actor_site_name: _actorSiteName,
+    actor_visibility_scope: _actorVisibilityScope,
+    actor_allowed_site_ids: _actorAllowedSiteIds,
+    actor_allowed_site_names: _actorAllowedSiteNames,
+    actor_role_permissions: _actorRolePermissions,
+    ...safeJob
+  } = job;
   return safeJob;
 }
 

@@ -4730,9 +4730,110 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   entity_id TEXT,
   site_id TEXT,
   site_name TEXT,
-  details JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS audit_log_details (
+  id TEXT PRIMARY KEY,
+  audit_log_id TEXT NOT NULL REFERENCES audit_logs(id) ON DELETE CASCADE,
+  detail_path TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  value_type TEXT NOT NULL,
+  string_value TEXT,
+  numeric_value NUMERIC,
+  boolean_value BOOLEAN,
+  value_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $audit_log_details_json_cutover$
+DECLARE
+  has_details BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'audit_logs'
+      AND column_name = 'details'
+  ) INTO has_details;
+
+  IF has_details THEN
+    EXECUTE $sql$
+      WITH RECURSIVE audit_json(audit_id, detail_path, detail_value, sort_path) AS (
+        SELECT id, ARRAY[]::TEXT[], details, ARRAY[0]::INTEGER[]
+        FROM audit_logs
+        WHERE details IS NOT NULL
+
+        UNION ALL
+
+        SELECT parent.audit_id,
+               parent.detail_path || child.key,
+               child.value,
+               parent.sort_path || child.ordinality::INTEGER
+        FROM audit_json parent
+        CROSS JOIN LATERAL (
+          SELECT entry.key, entry.value, ROW_NUMBER() OVER (ORDER BY entry.key)::INTEGER AS ordinality
+          FROM jsonb_each(parent.detail_value) AS entry(key, value)
+        ) AS child
+        WHERE jsonb_typeof(parent.detail_value) = 'object'
+
+        UNION ALL
+
+        SELECT parent.audit_id,
+               parent.detail_path || (child.ordinality - 1)::TEXT,
+               child.value,
+               parent.sort_path || child.ordinality::INTEGER
+        FROM audit_json parent
+        CROSS JOIN LATERAL jsonb_array_elements(parent.detail_value) WITH ORDINALITY AS child(value, ordinality)
+        WHERE jsonb_typeof(parent.detail_value) = 'array'
+      ),
+      flattened AS (
+        SELECT audit_id,
+               detail_path,
+               detail_value,
+               jsonb_typeof(detail_value) AS value_type,
+               ROW_NUMBER() OVER (PARTITION BY audit_id ORDER BY sort_path)::INTEGER AS value_order
+        FROM audit_json
+        WHERE cardinality(detail_path) > 0
+      )
+      INSERT INTO audit_log_details (
+        id, audit_log_id, detail_path, value_type, string_value, numeric_value,
+        boolean_value, value_order, created_at
+      )
+      SELECT 'auditdet_' || gen_random_uuid()::TEXT,
+             audit_id,
+             detail_path,
+             value_type,
+             CASE WHEN value_type = 'string' THEN detail_value #>> '{}' ELSE NULL END,
+             CASE WHEN value_type = 'number' THEN (detail_value #>> '{}')::NUMERIC ELSE NULL END,
+             CASE WHEN value_type = 'boolean' THEN (detail_value #>> '{}')::BOOLEAN ELSE NULL END,
+             value_order,
+             NOW()
+      FROM flattened source
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM audit_log_details existing
+        WHERE existing.audit_log_id = source.audit_id
+      )
+    $sql$;
+
+    EXECUTE 'ALTER TABLE audit_logs DROP COLUMN details';
+  END IF;
+END;
+$audit_log_details_json_cutover$;
+
+CREATE OR REPLACE FUNCTION foodpro_jsonb_text_array(value JSONB)
+RETURNS TEXT[]
+LANGUAGE SQL
+IMMUTABLE
+AS $$
+  SELECT COALESCE(
+    array_agg(BTRIM(item_value)) FILTER (WHERE COALESCE(BTRIM(item_value), '') <> ''),
+    ARRAY[]::TEXT[]
+  )
+  FROM jsonb_array_elements_text(
+    CASE WHEN jsonb_typeof(value) = 'array' THEN value ELSE '[]'::jsonb END
+  ) AS array_values(item_value);
+$$;
 
 CREATE TABLE IF NOT EXISTS bulk_upload_jobs (
   id TEXT PRIMARY KEY,
@@ -4750,7 +4851,6 @@ CREATE TABLE IF NOT EXISTS bulk_upload_jobs (
   failed_rows INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'QUEUED',
   message TEXT,
-  errors JSONB NOT NULL DEFAULT '[]'::jsonb,
   actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   actor_email TEXT,
   actor_name TEXT,
@@ -4758,7 +4858,17 @@ CREATE TABLE IF NOT EXISTS bulk_upload_jobs (
   site_id TEXT,
   site_name TEXT,
   source_name TEXT,
-  actor_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  recipe_type TEXT,
+  menu_cuisine TEXT,
+  menu_category TEXT,
+  actor_role_access_level TEXT,
+  actor_role_is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  actor_site_id TEXT,
+  actor_site_name TEXT,
+  actor_visibility_scope TEXT,
+  actor_allowed_site_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  actor_allowed_site_names TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  actor_role_permissions TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   started_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4766,7 +4876,107 @@ CREATE TABLE IF NOT EXISTS bulk_upload_jobs (
 );
 
 ALTER TABLE bulk_upload_jobs
-  ADD COLUMN IF NOT EXISTS source_name TEXT;
+  ADD COLUMN IF NOT EXISTS source_name TEXT,
+  ADD COLUMN IF NOT EXISTS recipe_type TEXT,
+  ADD COLUMN IF NOT EXISTS menu_cuisine TEXT,
+  ADD COLUMN IF NOT EXISTS menu_category TEXT,
+  ADD COLUMN IF NOT EXISTS actor_role_access_level TEXT,
+  ADD COLUMN IF NOT EXISTS actor_role_is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS actor_site_id TEXT,
+  ADD COLUMN IF NOT EXISTS actor_site_name TEXT,
+  ADD COLUMN IF NOT EXISTS actor_visibility_scope TEXT,
+  ADD COLUMN IF NOT EXISTS actor_allowed_site_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  ADD COLUMN IF NOT EXISTS actor_allowed_site_names TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  ADD COLUMN IF NOT EXISTS actor_role_permissions TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+
+CREATE TABLE IF NOT EXISTS bulk_upload_job_errors (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES bulk_upload_jobs(id) ON DELETE CASCADE,
+  row_number INTEGER,
+  message TEXT NOT NULL,
+  error_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $bulk_upload_jobs_json_cutover$
+DECLARE
+  has_actor_snapshot BOOLEAN;
+  has_errors BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'bulk_upload_jobs'
+      AND column_name = 'actor_snapshot'
+  ) INTO has_actor_snapshot;
+
+  IF has_actor_snapshot THEN
+    UPDATE bulk_upload_jobs
+       SET recipe_type = COALESCE(recipe_type, NULLIF(actor_snapshot->'bulk_options'->>'recipe_type', '')),
+           menu_cuisine = COALESCE(menu_cuisine, NULLIF(actor_snapshot->'bulk_options'->>'menu_cuisine', '')),
+           menu_category = COALESCE(menu_category, NULLIF(actor_snapshot->'bulk_options'->>'menu_category', '')),
+           actor_role_access_level = COALESCE(
+             actor_role_access_level,
+             NULLIF(actor_snapshot->>'role_access_level', ''),
+             NULLIF(actor_snapshot->>'access_level', '')
+           ),
+           actor_role_is_active = CASE
+             WHEN actor_snapshot ? 'role_is_active' THEN COALESCE((actor_snapshot->>'role_is_active')::boolean, TRUE)
+             ELSE COALESCE(actor_role_is_active, TRUE)
+           END,
+           actor_site_id = COALESCE(actor_site_id, NULLIF(actor_snapshot->>'site_id', '')),
+           actor_site_name = COALESCE(actor_site_name, NULLIF(actor_snapshot->>'site_name', '')),
+           actor_visibility_scope = COALESCE(actor_visibility_scope, NULLIF(actor_snapshot->>'visibility_scope', '')),
+           actor_allowed_site_ids = CASE
+             WHEN cardinality(actor_allowed_site_ids) > 0 THEN actor_allowed_site_ids
+             ELSE foodpro_jsonb_text_array(actor_snapshot->'allowed_site_ids')
+           END,
+           actor_allowed_site_names = CASE
+             WHEN cardinality(actor_allowed_site_names) > 0 THEN actor_allowed_site_names
+             ELSE foodpro_jsonb_text_array(actor_snapshot->'allowed_site_names')
+           END,
+           actor_role_permissions = CASE
+             WHEN cardinality(actor_role_permissions) > 0 THEN actor_role_permissions
+             ELSE foodpro_jsonb_text_array(actor_snapshot->'role_permissions')
+           END;
+
+    EXECUTE 'ALTER TABLE bulk_upload_jobs DROP COLUMN actor_snapshot';
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'bulk_upload_jobs'
+      AND column_name = 'errors'
+  ) INTO has_errors;
+
+  IF has_errors THEN
+    INSERT INTO bulk_upload_job_errors (id, job_id, row_number, message, error_order, created_at)
+    SELECT
+      'bulkerr_' || gen_random_uuid()::text,
+      job.id,
+      CASE
+        WHEN COALESCE(error_item.value->>'row', '') ~ '^[0-9]+$'
+          THEN (error_item.value->>'row')::integer
+        ELSE NULL
+      END,
+      COALESCE(NULLIF(error_item.value->>'message', ''), 'Bulk upload failed.'),
+      error_item.ordinality::integer,
+      job.updated_at
+    FROM bulk_upload_jobs job
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(job.errors) = 'array' THEN job.errors ELSE '[]'::jsonb END
+    ) WITH ORDINALITY AS error_item(value, ordinality)
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM bulk_upload_job_errors existing
+      WHERE existing.job_id = job.id
+    );
+
+    EXECUTE 'ALTER TABLE bulk_upload_jobs DROP COLUMN errors';
+  END IF;
+END;
+$bulk_upload_jobs_json_cutover$;
 
 UPDATE entity_records
 SET data = data || jsonb_build_object('source_name', 'D365'),
@@ -4834,10 +5044,42 @@ CREATE TABLE IF NOT EXISTS email_logs (
   id TEXT PRIMARY KEY,
   recipient TEXT,
   subject TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  body_html TEXT,
+  body_text TEXT,
   status TEXT NOT NULL DEFAULT 'queued',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE email_logs
+  ADD COLUMN IF NOT EXISTS body_html TEXT,
+  ADD COLUMN IF NOT EXISTS body_text TEXT;
+
+DO $email_logs_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'email_logs'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE email_logs
+         SET recipient = COALESCE(recipient, NULLIF(payload->>'to', '')),
+             subject = COALESCE(subject, NULLIF(payload->>'subject', '')),
+             body_html = COALESCE(body_html, NULLIF(payload->>'html', '')),
+             body_text = COALESCE(body_text, NULLIF(payload->>'body', '')),
+             status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'queued')
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    EXECUTE 'ALTER TABLE email_logs DROP COLUMN payload';
+  END IF;
+END;
+$email_logs_payload_cutover$;
 
 CREATE TABLE IF NOT EXISTS pos_sources (
   id TEXT PRIMARY KEY,
@@ -4850,10 +5092,64 @@ CREATE TABLE IF NOT EXISTS pos_sources (
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   default_site_id TEXT,
   default_site_name TEXT,
-  settings JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS pos_source_headers (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES pos_sources(id) ON DELETE CASCADE,
+  header_name TEXT NOT NULL,
+  header_value TEXT NOT NULL,
+  header_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $pos_source_settings_cutover$
+DECLARE
+  has_settings BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'pos_sources'
+      AND column_name = 'settings'
+  ) INTO has_settings;
+
+  IF has_settings THEN
+    EXECUTE $sql$
+      INSERT INTO pos_source_headers (
+        id, source_id, header_name, header_value, header_order, created_at, updated_at
+      )
+      SELECT 'poshdr_' || gen_random_uuid()::TEXT,
+             source.id,
+             header.key,
+             header.value #>> '{}',
+             ROW_NUMBER() OVER (PARTITION BY source.id ORDER BY header.key)::INTEGER,
+             NOW(),
+             NOW()
+      FROM pos_sources source
+      CROSS JOIN LATERAL jsonb_each(
+        CASE
+          WHEN jsonb_typeof(source.settings->'headers') = 'object'
+            THEN source.settings->'headers'
+          ELSE '{}'::jsonb
+        END
+      ) AS header(key, value)
+      WHERE COALESCE(header.key, '') <> ''
+        AND COALESCE(header.value #>> '{}', '') <> ''
+        AND NOT EXISTS (
+          SELECT 1
+          FROM pos_source_headers existing
+          WHERE existing.source_id = source.id
+        )
+    $sql$;
+
+    EXECUTE 'ALTER TABLE pos_sources DROP COLUMN settings';
+  END IF;
+END;
+$pos_source_settings_cutover$;
 
 CREATE TABLE IF NOT EXISTS pos_sales_orders (
   id TEXT PRIMARY KEY,
@@ -4869,7 +5165,6 @@ CREATE TABLE IF NOT EXISTS pos_sales_orders (
   total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
   sync_method TEXT NOT NULL DEFAULT 'manual_upload',
   inventory_applied BOOLEAN NOT NULL DEFAULT FALSE,
-  raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -4892,7 +5187,6 @@ CREATE TABLE IF NOT EXISTS pos_sales_items (
   site_id TEXT,
   site_name TEXT,
   deduction_status TEXT NOT NULL DEFAULT 'pending',
-  raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -4926,10 +5220,21 @@ CREATE TABLE IF NOT EXISTS pos_sync_logs (
   records_imported INTEGER NOT NULL DEFAULT 0,
   records_skipped INTEGER NOT NULL DEFAULT 0,
   message TEXT,
-  request_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-  response_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  request_url TEXT,
+  request_summary TEXT,
+  response_summary TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE pos_sync_logs
+  ADD COLUMN IF NOT EXISTS request_url TEXT,
+  ADD COLUMN IF NOT EXISTS request_summary TEXT,
+  ADD COLUMN IF NOT EXISTS response_summary TEXT;
+
+ALTER TABLE pos_sales_orders DROP COLUMN IF EXISTS raw_payload;
+ALTER TABLE pos_sales_items DROP COLUMN IF EXISTS raw_payload;
+ALTER TABLE pos_sync_logs DROP COLUMN IF EXISTS request_payload;
+ALTER TABLE pos_sync_logs DROP COLUMN IF EXISTS response_payload;
 
 CREATE TABLE IF NOT EXISTS suppliers (
   id TEXT PRIMARY KEY,
@@ -4955,20 +5260,6 @@ CREATE TABLE IF NOT EXISTS suppliers (
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS supplier_code TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS source_name TEXT;
 ALTER TABLE suppliers DROP COLUMN IF EXISTS payload;
-
-CREATE OR REPLACE FUNCTION foodpro_jsonb_text_array(value JSONB)
-RETURNS TEXT[]
-LANGUAGE SQL
-IMMUTABLE
-AS $$
-  SELECT COALESCE(
-    array_agg(BTRIM(category)) FILTER (WHERE COALESCE(BTRIM(category), '') <> ''),
-    ARRAY[]::TEXT[]
-  )
-  FROM jsonb_array_elements_text(
-    CASE WHEN jsonb_typeof(value) = 'array' THEN value ELSE '[]'::jsonb END
-  ) AS category_values(category);
-$$;
 
 DO $supplier_categories_text_array$
 DECLARE
@@ -5383,9 +5674,20 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DE
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity, entity_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_site ON audit_logs(site_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_details_log_order
+  ON audit_log_details(audit_log_id, value_order ASC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_details_path
+  ON audit_log_details USING GIN (detail_path);
+CREATE INDEX IF NOT EXISTS idx_audit_log_details_string_search
+  ON audit_log_details USING GIN (string_value gin_trgm_ops)
+  WHERE string_value IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_status ON bulk_upload_jobs(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_actor ON bulk_upload_jobs(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_site ON bulk_upload_jobs(site_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bulk_upload_job_errors_job_order
+  ON bulk_upload_job_errors(job_id, error_order ASC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_pos_source_headers_source_order
+  ON pos_source_headers(source_id, header_order ASC, header_name ASC);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_orders_source ON pos_sales_orders(source_id);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_items_order ON pos_sales_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_pos_recipe_mapping_source ON pos_recipe_mapping(source_id);

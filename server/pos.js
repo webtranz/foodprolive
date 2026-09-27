@@ -40,14 +40,124 @@ function businessDateFromDateTime(value) {
   return ensureDate(value).slice(0, 10);
 }
 
-function parseSettings(settings) {
+function parseSettingsObject(settings) {
   if (!settings) return {};
-  if (typeof settings === 'object') return settings;
+  if (typeof settings === 'object') return settings || {};
   try {
     return JSON.parse(settings);
   } catch {
     return {};
   }
+}
+
+function parseHeaderLines(text = '') {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separatorIndex = line.includes(':') ? line.indexOf(':') : line.indexOf('=');
+      if (separatorIndex <= 0) return null;
+      const header_name = line.slice(0, separatorIndex).trim();
+      const header_value = line.slice(separatorIndex + 1).trim();
+      return header_name && header_value ? { header_name, header_value } : null;
+    })
+    .filter(Boolean);
+}
+
+function normalizeSourceHeaders(payload = {}) {
+  const settings = parseSettingsObject(payload.settings);
+  const headers = [];
+  if (settings.headers && typeof settings.headers === 'object' && !Array.isArray(settings.headers)) {
+    Object.entries(settings.headers).forEach(([header_name, header_value]) => {
+      const name = normalizeText(header_name);
+      const value = normalizeText(header_value);
+      if (name && value) headers.push({ header_name: name, header_value: value });
+    });
+  }
+  parseHeaderLines(payload.extra_headers_text || payload.headers_text).forEach((header) => headers.push(header));
+  if (Array.isArray(payload.headers)) {
+    payload.headers.forEach((header) => {
+      const name = normalizeText(header.header_name || header.name || header.key);
+      const value = normalizeText(header.header_value || header.value);
+      if (name && value) headers.push({ header_name: name, header_value: value });
+    });
+  }
+  const deduped = new Map();
+  headers.forEach((header) => deduped.set(header.header_name.toLowerCase(), header));
+  return [...deduped.values()];
+}
+
+function headersObject(headers = []) {
+  return Object.fromEntries((Array.isArray(headers) ? headers : [])
+    .filter((header) => header?.header_name && header?.header_value)
+    .map((header) => [header.header_name, header.header_value]));
+}
+
+function headerLines(headers = []) {
+  return (Array.isArray(headers) ? headers : [])
+    .filter((header) => header?.header_name && header?.header_value)
+    .map((header) => `${header.header_name}: ${header.header_value}`)
+    .join('\n');
+}
+
+function hydratePosSource(row = {}, headers = []) {
+  const normalizedHeaders = Array.isArray(headers) ? headers : [];
+  return {
+    ...row,
+    settings: { headers: headersObject(normalizedHeaders) },
+    headers: normalizedHeaders,
+    extra_headers_text: headerLines(normalizedHeaders)
+  };
+}
+
+async function listPosSourceHeaders(sourceIds = [], executor = pool) {
+  const ids = [...new Set((Array.isArray(sourceIds) ? sourceIds : [])
+    .map((id) => normalizeText(id))
+    .filter(Boolean))];
+  if (!ids.length) return new Map();
+  const result = await query(
+    `SELECT source_id, header_name, header_value, header_order
+       FROM pos_source_headers
+      WHERE source_id = ANY($1::text[])
+      ORDER BY source_id ASC, header_order ASC, header_name ASC`,
+    [ids],
+    executor
+  );
+  return result.rows.reduce((map, row) => {
+    if (!map.has(row.source_id)) map.set(row.source_id, []);
+    map.get(row.source_id).push({
+      header_name: row.header_name,
+      header_value: row.header_value
+    });
+    return map;
+  }, new Map());
+}
+
+async function replacePosSourceHeaders(sourceId, headers = [], executor = pool) {
+  await query('DELETE FROM pos_source_headers WHERE source_id = $1', [sourceId], executor);
+  let order = 0;
+  for (const header of headers.slice(0, 50)) {
+    order += 1;
+    await query(
+      `INSERT INTO pos_source_headers (
+         id, source_id, header_name, header_value, header_order, created_at, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+      [randomId('poshdr'), sourceId, header.header_name, header.header_value, order],
+      executor
+    );
+  }
+}
+
+function syncPayloadSummary(payload = {}) {
+  const safePayload = payload && typeof payload === 'object' ? payload : {};
+  const parts = [];
+  if (safePayload.url) parts.push(`URL: ${safePayload.url}`);
+  if (safePayload.source_id || safePayload.sourceId) parts.push(`Source: ${safePayload.source_id || safePayload.sourceId}`);
+  if (safePayload.order_count !== undefined) parts.push(`Orders: ${safePayload.order_count}`);
+  if (safePayload.webhook) parts.push('Webhook import');
+  if (Array.isArray(safePayload.headers)) parts.push(`Headers: ${safePayload.headers.join(', ')}`);
+  return parts.join(' | ') || null;
 }
 
 async function query(text, params = [], executor = pool) {
@@ -95,8 +205,7 @@ function normalizeOrderPayload(order, source) {
     unit_price: toNumber(item.unit_price || item.price, 0),
     total_price: toNumber(item.total_price || item.line_total, 0),
     site_id: normalizeText(item.site_id || siteId),
-    site_name: normalizeText(item.site_name || siteName),
-    raw_payload: item
+    site_name: normalizeText(item.site_name || siteName)
   })).filter((item) => item.pos_item_name && item.quantity > 0);
 
   return {
@@ -109,35 +218,33 @@ function normalizeOrderPayload(order, source) {
     sold_at: soldAt,
     currency: normalizeText(order.currency || 'SAR') || 'SAR',
     total_amount: toNumber(order.total_amount || order.total || order.gross_total, 0),
-    items: normalizedItems,
-    raw_payload: order
+    items: normalizedItems
   };
 }
 
 async function getPosSources() {
   const result = await query('SELECT * FROM pos_sources ORDER BY updated_at DESC');
-  return result.rows.map((row) => ({
-    ...row,
-    is_active: row.is_active,
-    settings: row.settings || {}
-  }));
+  const headersBySource = await listPosSourceHeaders(result.rows.map((row) => row.id));
+  return result.rows.map((row) => hydratePosSource(row, headersBySource.get(row.id) || []));
 }
 
-async function getPosSourceById(id) {
-  const result = await query('SELECT * FROM pos_sources WHERE id = $1 LIMIT 1', [id]);
-  return result.rowCount ? result.rows[0] : null;
+async function getPosSourceById(id, executor = pool) {
+  const result = await query('SELECT * FROM pos_sources WHERE id = $1 LIMIT 1', [id], executor);
+  if (!result.rowCount) return null;
+  const headersBySource = await listPosSourceHeaders([id], executor);
+  return hydratePosSource(result.rows[0], headersBySource.get(id) || []);
 }
 
 async function createPosSource(payload) {
   return withTransaction(async (client) => {
     await requireSite(payload.default_site_id, client);
     const id = randomId('possrc');
-    const settings = parseSettings(payload.settings);
+    const headers = normalizeSourceHeaders(payload);
     const result = await query(
       `INSERT INTO pos_sources (
         id, name, source_type, api_url, api_key, api_secret, sync_frequency, is_active,
-        default_site_id, default_site_name, settings, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,NOW(),NOW())
+        default_site_id, default_site_name, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
       RETURNING *`,
       [
         id,
@@ -149,12 +256,12 @@ async function createPosSource(payload) {
         normalizeText(payload.sync_frequency || 'manual'),
         payload.is_active !== false,
         normalizeText(payload.default_site_id) || null,
-        normalizeText(payload.default_site_name) || null,
-        JSON.stringify(settings)
+        normalizeText(payload.default_site_name) || null
       ],
       client
     );
-    return result.rows[0];
+    await replacePosSourceHeaders(id, headers, client);
+    return hydratePosSource(result.rows[0], headers);
   });
 }
 
@@ -163,10 +270,12 @@ async function updatePosSource(id, patch) {
   if (!existing) return null;
   return withTransaction(async (client) => {
     await requireSite(patch.default_site_id ?? existing.default_site_id, client);
-    const mergedSettings = {
-      ...(existing.settings || {}),
-      ...parseSettings(patch.settings)
-    };
+    const headers = Object.hasOwn(patch || {}, 'settings')
+      || Object.hasOwn(patch || {}, 'extra_headers_text')
+      || Object.hasOwn(patch || {}, 'headers_text')
+      || Object.hasOwn(patch || {}, 'headers')
+      ? normalizeSourceHeaders(patch)
+      : existing.headers || [];
     const result = await query(
       `UPDATE pos_sources
        SET name = $2,
@@ -178,7 +287,6 @@ async function updatePosSource(id, patch) {
            is_active = $8,
            default_site_id = $9,
            default_site_name = $10,
-           settings = $11::jsonb,
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
@@ -192,12 +300,12 @@ async function updatePosSource(id, patch) {
         normalizeText(patch.sync_frequency ?? existing.sync_frequency),
         patch.is_active ?? existing.is_active,
         normalizeText(patch.default_site_id ?? existing.default_site_id) || null,
-        normalizeText(patch.default_site_name ?? existing.default_site_name) || null,
-        JSON.stringify(mergedSettings)
+        normalizeText(patch.default_site_name ?? existing.default_site_name) || null
       ],
       client
     );
-    return result.rows[0];
+    await replacePosSourceHeaders(id, headers, client);
+    return hydratePosSource(result.rows[0], headers);
   });
 }
 
@@ -312,8 +420,9 @@ async function createSyncLog(payload) {
   await query(
     `INSERT INTO pos_sync_logs (
       id, source_id, sync_type, status, started_at, finished_at, records_received,
-      records_imported, records_skipped, message, request_payload, response_payload, created_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,NOW())`,
+      records_imported, records_skipped, message, request_url, request_summary,
+      response_summary, created_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())`,
     [
       id,
       payload.source_id || null,
@@ -325,8 +434,9 @@ async function createSyncLog(payload) {
       toNumber(payload.records_imported, 0),
       toNumber(payload.records_skipped, 0),
       payload.message || null,
-      JSON.stringify(payload.request_payload || {}),
-      JSON.stringify(payload.response_payload || {})
+      payload.request_url || payload.request_payload?.url || null,
+      payload.request_summary || syncPayloadSummary(payload.request_payload),
+      payload.response_summary || syncPayloadSummary(payload.response_payload)
     ]
   );
   return id;
@@ -468,8 +578,8 @@ async function importPosOrders({ sourceId = null, syncType = 'manual_upload', ac
       `INSERT INTO pos_sales_orders (
         id, source_id, external_order_id, order_number, site_id, site_name, location_name,
         business_date, sold_at, currency, total_amount, sync_method, inventory_applied,
-        raw_payload, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,FALSE,$13::jsonb,NOW(),NOW())`,
+        created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,FALSE,NOW(),NOW())`,
       [
         orderId,
         sourceId,
@@ -482,8 +592,7 @@ async function importPosOrders({ sourceId = null, syncType = 'manual_upload', ac
         order.sold_at,
         order.currency,
         order.total_amount,
-        syncType,
-        JSON.stringify(order.raw_payload || {})
+        syncType
       ]
     );
 
@@ -494,8 +603,8 @@ async function importPosOrders({ sourceId = null, syncType = 'manual_upload', ac
       await query(
         `INSERT INTO pos_sales_items (
           id, order_id, external_item_id, pos_item_code, pos_item_name, recipe_id, recipe_name,
-          quantity, unit_price, total_price, site_id, site_name, deduction_status, raw_payload, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,NOW())`,
+          quantity, unit_price, total_price, site_id, site_name, deduction_status, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())`,
         [
           itemId,
           orderId,
@@ -509,8 +618,7 @@ async function importPosOrders({ sourceId = null, syncType = 'manual_upload', ac
           normalizedItem.total_price,
           normalizedItem.site_id || order.site_id || null,
           normalizedItem.site_name || order.site_name || null,
-          mapping?.auto_deduct ? 'ready' : 'unmapped',
-          JSON.stringify(normalizedItem.raw_payload || {})
+          mapping?.auto_deduct ? 'ready' : 'unmapped'
         ]
       );
 
@@ -562,11 +670,10 @@ async function syncPosSource(sourceId, actorEmail) {
   }
 
   requireApiSettings(source);
-  const settings = parseSettings(source.settings);
   const headers = {
     Accept: 'application/json',
     ...(source.api_key ? { Authorization: `Bearer ${source.api_key}` } : {}),
-    ...(settings.headers || {})
+    ...(source.settings?.headers || {})
   };
 
   const response = await fetch(source.api_url, {
