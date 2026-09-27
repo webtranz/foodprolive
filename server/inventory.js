@@ -4032,6 +4032,91 @@ function recordReferencesProducedOutput(record = {}, batch = {}, production = {}
   ));
 }
 
+function addManifestMatchKey(target, value) {
+  const key = normalizeText(value);
+  if (key) target.add(key);
+}
+
+function addNamedManifestMatchKey(target, prefix, value) {
+  const key = normalizeText(value);
+  if (key) target.add(`${prefix}:${key}`);
+}
+
+function addManifestNameMatchKey(target, value) {
+  const name = normalizeText(value)
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  if (name) target.add(`name:${name}`);
+}
+
+function collectProducedOutputManifestMatchKeys(source = {}, index = 0) {
+  const keys = new Set();
+  if (!source || typeof source !== 'object') return keys;
+  [
+    source.manifest_item_key,
+    source.production_line_id,
+    source.production_manifest_line_id,
+    source.output_production_line_id,
+    source.key,
+    source.item_key,
+    source.batch_overproduction_item_key,
+    source.original_source_menu_plan_item_key,
+    source.source_menu_plan_item_key,
+    source.menu_plan_item_key,
+    source.menu_plan_line_id
+  ].forEach((value) => addManifestMatchKey(keys, value));
+  const derivedManifestKey = getPartialReversalManifestKey(source, index);
+  if (!/^manifest-item-\d+$/i.test(derivedManifestKey)) {
+    addManifestMatchKey(keys, derivedManifestKey);
+  }
+  addNamedManifestMatchKey(keys, 'recipe', source.recipe_id || source.recipe_version_id);
+  addNamedManifestMatchKey(keys, 'ingredient', source.ingredient_id);
+  addManifestNameMatchKey(
+    keys,
+    source.recipe_name
+      || source.item_name
+      || source.ingredient_name
+      || source.production_name
+      || source.name
+  );
+  return keys;
+}
+
+function collectSelectedPartialReversalManifestKeys(selectedRequests = []) {
+  const keys = new Set();
+  (Array.isArray(selectedRequests) ? selectedRequests : []).forEach((request) => {
+    addManifestMatchKey(keys, request?.key);
+    addManifestMatchKey(keys, getPartialReversalManifestKey(request?.item || {}, request?.index || 0));
+    collectProducedOutputManifestMatchKeys(request?.item || {}, request?.index || 0)
+      .forEach((key) => keys.add(key));
+  });
+  return keys;
+}
+
+function producedOutputManifestKeysOverlap(source = {}, selectedManifestKeys = null, index = 0) {
+  if (!(selectedManifestKeys instanceof Set) || selectedManifestKeys.size === 0) return false;
+  const keys = collectProducedOutputManifestMatchKeys(source, index);
+  return [...keys].some((key) => selectedManifestKeys.has(key));
+}
+
+function recordReferencesSelectedProductionManifest(record = {}, selectedManifestKeys = null, {
+  allocationFields = ['allocations']
+} = {}) {
+  if (!(selectedManifestKeys instanceof Set) || selectedManifestKeys.size === 0) return false;
+  if (producedOutputManifestKeysOverlap(record, selectedManifestKeys)) return true;
+  const nestedFields = [
+    ...allocationFields,
+    'lines',
+    'waste_lines',
+    'line_items',
+    'items'
+  ];
+  return nestedFields.some((field) => (
+    Array.isArray(record?.[field])
+    && record[field].some((entry, index) => producedOutputManifestKeysOverlap(entry, selectedManifestKeys, index))
+  ));
+}
+
 function isInactiveOutputDependency(record = {}) {
   const status = normalizeText(record.status).toLowerCase();
   const approvalStatus = normalizeText(record.approval_status).toLowerCase();
@@ -4085,7 +4170,8 @@ async function listActiveProducedOutputDependencies({
   production = {},
   batch = null,
   location = null,
-  lock = false
+  lock = false,
+  selectedManifestKeys = null
 } = {}, executor = null) {
   if (!batch) {
     return { meal_service_rows: [], food_waste_rows: [] };
@@ -4133,12 +4219,19 @@ async function listActiveProducedOutputDependencies({
     .filter((record) => recordReferencesProducedOutput(record, batch, production, { allocationFields: ['allocations'] }))
     .map((record) => compactProducedOutputDependency(record, 'meal_service'));
 
+  const hasSelectedManifestScope = selectedManifestKeys instanceof Set && selectedManifestKeys.size > 0;
   const foodWasteRows = wasteRecords
     .filter((record) => !isInactiveOutputDependency(record))
-    .filter((record) => recordReferencesProducedOutput(record, batch, production, {
-      allocationFields: ['output_allocations', 'allocations'],
-      allowDirectProductionMatch: true
-    }))
+    .filter((record) => (
+      hasSelectedManifestScope
+        ? recordReferencesSelectedProductionManifest(record, selectedManifestKeys, {
+          allocationFields: ['output_allocations', 'allocations']
+        })
+        : recordReferencesProducedOutput(record, batch, production, {
+          allocationFields: ['output_allocations', 'allocations'],
+          allowDirectProductionMatch: true
+        })
+    ))
     .map((record) => compactProducedOutputDependency(record, 'food_waste'));
 
   return {
@@ -4152,7 +4245,9 @@ async function buildProductionReversalDiagnosticsForRecords({
   report = null,
   producedItemBatch = null,
   location = null,
-  lock = false
+  lock = false,
+  selectedManifestKeys = null,
+  ignoreBalanceBlockers = false
 } = {}, executor = null) {
   const productionStatus = normalizeText(production?.status).toLowerCase();
   const reportStatus = normalizeText(report?.status).toLowerCase();
@@ -4170,12 +4265,13 @@ async function buildProductionReversalDiagnosticsForRecords({
     statusBlockers.push({ type: 'report_reversed', label: 'Production consumption report has already been reversed', status: report.status || null });
   }
 
-  const balanceBlockers = getProducedOutputBalanceBlockers(producedItemBatch);
+  const balanceBlockers = ignoreBalanceBlockers ? [] : getProducedOutputBalanceBlockers(producedItemBatch);
   const dependencies = await listActiveProducedOutputDependencies({
     production,
     batch: producedItemBatch,
     location,
-    lock
+    lock,
+    selectedManifestKeys
   }, executor);
   const activeDependencyCount = dependencies.meal_service_rows.length + dependencies.food_waste_rows.length;
   const canRepairStaleBalance = Boolean(
@@ -4234,6 +4330,41 @@ async function buildProductionReversalDiagnosticsForRecords({
           ? 'The produced-output batch still has used balances.'
           : 'No active produced-output usage blockers detected.'
   };
+}
+
+function sumProducedOutputDependencyField(rows = [], field) {
+  return roundQuantity(
+    (Array.isArray(rows) ? rows : [])
+      .reduce((sum, row) => sum + Math.max(0, toNumber(row?.[field], 0)), 0)
+  );
+}
+
+function getProducedOutputDependencyUsageTotals(dependencies = {}) {
+  const mealServiceRows = Array.isArray(dependencies.meal_service_rows)
+    ? dependencies.meal_service_rows
+    : [];
+  const foodWasteRows = Array.isArray(dependencies.food_waste_rows)
+    ? dependencies.food_waste_rows
+    : [];
+  const servedWeightGrams = sumProducedOutputDependencyField(mealServiceRows, 'weight_grams');
+  const wastedWeightGrams = sumProducedOutputDependencyField(foodWasteRows, 'weight_grams');
+  const servedServings = sumProducedOutputDependencyField(mealServiceRows, 'servings');
+  const wastedServings = sumProducedOutputDependencyField(foodWasteRows, 'servings');
+  return {
+    served_weight_grams: servedWeightGrams,
+    wasted_weight_grams: wastedWeightGrams,
+    used_weight_grams: roundQuantity(servedWeightGrams + wastedWeightGrams),
+    served_servings: servedServings,
+    wasted_servings: wastedServings,
+    used_servings: roundQuantity(servedServings + wastedServings)
+  };
+}
+
+function getProducedOutputStatusForRemainingBalance({ producedWeight = 0, remainingWeight = 0 } = {}) {
+  if (producedWeight <= QUANTITY_EPSILON) return 'consumed';
+  if (remainingWeight <= QUANTITY_EPSILON) return 'consumed';
+  if (remainingWeight < producedWeight - QUANTITY_EPSILON) return 'partial';
+  return 'available';
 }
 
 async function findProductionReportForReversal(production, executor, { lock = true } = {}) {
@@ -4666,25 +4797,6 @@ async function reverseCompletedProductionManifestPartWithExecutor(productionId, 
     error.status = 409;
     throw error;
   }
-  const reversalDiagnostics = await buildProductionReversalDiagnosticsForRecords({
-    production,
-    report,
-    producedItemBatch,
-    location: options?.location || null,
-    lock: true
-  }, executor);
-  if (!reversalDiagnostics.can_reverse) {
-    const dependencyCount = reversalDiagnostics.active_meal_service_rows.length
-      + reversalDiagnostics.active_food_waste_rows.length;
-    const error = new Error(dependencyCount > 0
-      ? 'This production output still has active Meal Service or Food Waste records. Reverse those records before partially reversing this production.'
-      : 'This production output has already been served or recorded as waste. Reverse those Meal Service or Food Waste records before partially reversing this production.');
-    error.status = 409;
-    error.details = reversalDiagnostics;
-    throw error;
-  }
-  assertProducedOutputUnused(producedItemBatch);
-
   const completionLines = getProductionReversalLines(production, report);
   if (completionLines.length === 0) {
     const error = new Error('This production does not have saved consumption lines, so its inventory cannot be partially reversed exactly');
@@ -4697,6 +4809,26 @@ async function reverseCompletedProductionManifestPartWithExecutor(productionId, 
     report,
     lines: options?.lines || []
   });
+  const selectedManifestKeys = collectSelectedPartialReversalManifestKeys(selected);
+  const selectedReversalDiagnostics = await buildProductionReversalDiagnosticsForRecords({
+    production,
+    report,
+    producedItemBatch,
+    location: options?.location || null,
+    lock: true,
+    selectedManifestKeys,
+    ignoreBalanceBlockers: true
+  }, executor);
+  if (!selectedReversalDiagnostics.can_reverse) {
+    const dependencyCount = selectedReversalDiagnostics.active_meal_service_rows.length
+      + selectedReversalDiagnostics.active_food_waste_rows.length;
+    const error = new Error(dependencyCount > 0
+      ? 'The selected production row still has active Meal Service or Food Waste records. Reverse those records before partially reversing this row.'
+      : 'This production output cannot be partially reversed until its reversal status blockers are cleared.');
+    error.status = 409;
+    error.details = selectedReversalDiagnostics;
+    throw error;
+  }
   const totalSelectedWeight = selected.reduce((sum, request) => sum + request.reverse_weight_grams, 0);
   const currentProducedWeight = positiveNumber(producedItemBatch?.produced_weight_grams)
     ?? positiveNumber(production.produced_weight_grams)
@@ -4712,6 +4844,27 @@ async function reverseCompletedProductionManifestPartWithExecutor(productionId, 
   if (totalSelectedWeight >= currentProducedWeight - QUANTITY_EPSILON) {
     const error = new Error('Use the full Reverse Completion action when reversing the entire remaining production.');
     error.status = 409;
+    throw error;
+  }
+
+  const activeOutputDependencies = await listActiveProducedOutputDependencies({
+    production,
+    batch: producedItemBatch,
+    location: options?.location || null,
+    lock: true
+  }, executor);
+  const preservedUsageTotals = getProducedOutputDependencyUsageTotals(activeOutputDependencies);
+  const nextProducedWeight = roundQuantity(Math.max(0, currentProducedWeight - totalSelectedWeight));
+  if (preservedUsageTotals.used_weight_grams - nextProducedWeight > QUANTITY_EPSILON) {
+    const error = new Error('This partial reversal would reduce the remaining production below active Meal Service or Food Waste already recorded for other rows.');
+    error.status = 409;
+    error.details = {
+      selected_reversal: selectedReversalDiagnostics,
+      active_dependencies: activeOutputDependencies,
+      active_dependency_usage: preservedUsageTotals,
+      requested_reversal_weight_grams: roundQuantity(totalSelectedWeight),
+      remaining_produced_weight_grams: nextProducedWeight
+    };
     throw error;
   }
 
@@ -4829,7 +4982,6 @@ async function reverseCompletedProductionManifestPartWithExecutor(productionId, 
     0,
     toNumber(report?.total_consumption_cost ?? production.production_cost_total ?? production.ingredient_cost_total, 0) - returnedTotalCost
   ).toFixed(2));
-  const nextProducedWeight = roundQuantity(Math.max(0, currentProducedWeight - totalSelectedWeight));
   const nextRawWeight = sumPositiveLineWeight(remainingCompletionLines, 'raw_weight_grams')
     ?? sumPositiveLineWeight(remainingMenuItems, 'raw_weight_grams');
   const nextYieldedWeight = sumPositiveLineWeight(remainingMenuItems, 'yielded_weight_grams')
@@ -4857,6 +5009,34 @@ async function reverseCompletedProductionManifestPartWithExecutor(productionId, 
       (sum, request) => sum + toNumber(request.item?.production_covers ?? request.item?.expected_servings, 0) * request.ratio,
       0
     )));
+  const preservedServedWeight = roundQuantity(Math.min(
+    nextProducedWeight,
+    preservedUsageTotals.served_weight_grams
+  ));
+  const preservedWastedWeight = roundQuantity(Math.min(
+    Math.max(0, nextProducedWeight - preservedServedWeight),
+    preservedUsageTotals.wasted_weight_grams
+  ));
+  const preservedServedServings = roundQuantity(Math.min(
+    nextProducedServings,
+    preservedUsageTotals.served_servings
+  ));
+  const preservedWastedServings = roundQuantity(Math.min(
+    Math.max(0, nextProducedServings - preservedServedServings),
+    preservedUsageTotals.wasted_servings
+  ));
+  const nextRemainingWeight = roundQuantity(Math.max(
+    0,
+    nextProducedWeight - preservedServedWeight - preservedWastedWeight
+  ));
+  const nextRemainingServings = roundQuantity(Math.max(
+    0,
+    nextProducedServings - preservedServedServings - preservedWastedServings
+  ));
+  const nextBatchStatus = getProducedOutputStatusForRemainingBalance({
+    producedWeight: nextProducedWeight,
+    remainingWeight: nextRemainingWeight
+  });
   const partialReversalSummary = {
     partially_reversed_at: timestamp,
     partially_reversed_by: actor?.email || actor?.id || 'admin',
@@ -4870,7 +5050,13 @@ async function reverseCompletedProductionManifestPartWithExecutor(productionId, 
     })),
     returned_line_count: returnedLines.length,
     returned_total_cost: returnedTotalCost,
-    returned_lines: returnedLines
+    returned_lines: returnedLines,
+    preserved_active_output_usage: {
+      served_weight_grams: preservedServedWeight,
+      wasted_weight_grams: preservedWastedWeight,
+      served_servings: preservedServedServings,
+      wasted_servings: preservedWastedServings
+    }
   };
   const partialHistory = [
     ...(Array.isArray(production.production_reversal_history)
@@ -4908,14 +5094,20 @@ async function reverseCompletedProductionManifestPartWithExecutor(productionId, 
     production_issue_item_count: nextItemCount,
     production_issue_dish_count: nextItemCount,
     menu_issue_items: remainingMenuItems,
+    initial_weight_grams: nextProducedWeight,
+    initial_servings: nextProducedServings,
     expected_servings: nextProducedServings,
     expected_finished_weight_grams: nextProducedWeight,
     actual_finished_weight_grams: nextProducedWeight,
     produced_servings: nextProducedServings,
     produced_weight_grams: nextProducedWeight,
-    remaining_servings: nextProducedServings,
-    remaining_weight_grams: nextProducedWeight,
-    status: 'available',
+    served_servings: preservedServedServings,
+    served_weight_grams: preservedServedWeight,
+    wasted_servings: preservedWastedServings,
+    wasted_weight_grams: preservedWastedWeight,
+    remaining_servings: nextRemainingServings,
+    remaining_weight_grams: nextRemainingWeight,
+    status: nextBatchStatus,
     partial_reversal_summary: partialReversalSummary,
     partial_reversal_history: [
       ...(Array.isArray(producedItemBatch.partial_reversal_history)

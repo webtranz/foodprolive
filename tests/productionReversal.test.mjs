@@ -195,7 +195,10 @@ test('admins can partially reverse selected production manifest rows without cha
   assert.match(inventory, /report\?\.manifest_lines/);
   assert.match(inventory, /operation:\s*'production_partial_reversal'/);
   assert.match(inventory, /Use the full Reverse Completion action when reversing the entire remaining production/);
-  assert.match(inventory, /assertProducedOutputUnused\(producedItemBatch\)/);
+  assert.match(inventory, /collectSelectedPartialReversalManifestKeys\(selected\)/);
+  assert.match(inventory, /selectedManifestKeys/);
+  assert.match(inventory, /ignoreBalanceBlockers:\s*true/);
+  assert.doesNotMatch(inventory, /reverseCompletedProductionManifestPartWithExecutor[\s\S]*assertProducedOutputUnused\(producedItemBatch\)[\s\S]*const activeOutputDependencies/);
   assert.match(inventory, /returnStockToCommittedLotsWithExecutor\(/);
 
   assert.match(api, /partialReverseCompletedProduction\(id,\s*data = \{\}\)/);
