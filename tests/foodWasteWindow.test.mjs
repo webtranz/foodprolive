@@ -584,6 +584,21 @@ const cases = [
     }
   },
   {
+    name: 'shows all waste pictures in a record gallery with meal category',
+    run() {
+      const page = read('src/pages/FoodWaste.jsx');
+      assert.match(page, /const \[wastePictureGallery, setWastePictureGallery\]/);
+      assert.match(page, /function getWasteMealCategoryLabel/);
+      assert.match(page, /<TableHead>Meal Category<\/TableHead>/);
+      assert.match(page, /<TableHead>Waste Category<\/TableHead>/);
+      assert.match(page, /handleOpenWastePictureGallery\(item\)/);
+      assert.match(page, /Waste Pictures/);
+      assert.match(page, /wastePictureGallery\.images\.map/);
+      assert.match(page, /Open selected picture/);
+      assert.doesNotMatch(page, /href=\{evidenceUrl\}[\s\S]*target="_blank"[\s\S]*View/);
+    }
+  },
+  {
     name: 'shows food waste save errors inside the dialog instead of silently disabling save',
     run() {
       const page = read('src/pages/FoodWaste.jsx');

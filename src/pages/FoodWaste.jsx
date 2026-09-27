@@ -160,6 +160,16 @@ function getWasteEvidenceUrl(item = {}) {
   return getWasteEvidenceUrls(item)[0] || '';
 }
 
+function getWasteMealCategoryLabel(item = {}, production = null) {
+  const value = String(
+    item.menu_category_label
+      || item.menu_category
+      || production?.menu_category
+      || ''
+  ).trim();
+  return value ? titleCase(value) : '-';
+}
+
 function getWasteSourceLabel(item = {}) {
   if (isMealServiceLeftover(item)) return 'Meal Service Leftover';
   return titleCase(item.source_type || 'manual_entry');
@@ -435,6 +445,12 @@ export default function FoodWaste() {
   });
   const [editingWasteId, setEditingWasteId] = useState(null);
   const [reverseWasteDialog, setReverseWasteDialog] = useState({ open: false, record: null, reason: '' });
+  const [wastePictureGallery, setWastePictureGallery] = useState({
+    open: false,
+    record: null,
+    images: [],
+    index: 0
+  });
   const [formData, setFormData] = useState(createDefaultWasteForm);
   const [dishWasteGramsByRecipe, setDishWasteGramsByRecipe] = useState({});
   const [wasteImages, setWasteImages] = useState([]);
@@ -1383,6 +1399,17 @@ export default function FoodWaste() {
     setFormOpen(true);
   };
 
+  const handleOpenWastePictureGallery = (record, index = 0) => {
+    const images = getWasteEvidenceUrls(record);
+    if (!images.length) return;
+    setWastePictureGallery({
+      open: true,
+      record,
+      images,
+      index: Math.min(Math.max(Number(index) || 0, 0), images.length - 1)
+    });
+  };
+
   const handleOpenReverseDialog = (record) => {
     if (!isAdmin) {
       setMessage('Only administrators can reverse waste requests.');
@@ -2102,8 +2129,9 @@ export default function FoodWaste() {
                   <TableHead>Item Name</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Meal</TableHead>
+                  <TableHead>Meal Category</TableHead>
                   <TableHead>Location</TableHead>
-                  <TableHead>Category</TableHead>
+                  <TableHead>Waste Category</TableHead>
                   <TableHead>Reason</TableHead>
                   <TableHead>Source</TableHead>
                   <TableHead>Quantity</TableHead>
@@ -2117,11 +2145,12 @@ export default function FoodWaste() {
               <TableBody>
                 {filteredWaste.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={14} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
+                    <TableCell colSpan={15} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
                   </TableRow>
                 ) : filteredWaste.slice(0, 30).map((item) => {
                   const evidenceUrls = getWasteEvidenceUrls(item);
                   const evidenceUrl = evidenceUrls[0] || '';
+                  const wasteProduction = productionMap.get(item.production_id);
                   return (
                   <TableRow key={item.id}>
                     <TableCell className="font-mono text-xs text-slate-600">
@@ -2134,6 +2163,11 @@ export default function FoodWaste() {
                     <TableCell>{item.ingredient_name || item.recipe_name || item.batch_reference || '-'}</TableCell>
                     <TableCell className="font-medium">{item.waste_date}</TableCell>
                     <TableCell>{titleCase(item.meal_type || '-')}</TableCell>
+                    <TableCell>
+                      <Badge className="bg-blue-50 text-blue-700">
+                        {getWasteMealCategoryLabel(item, wasteProduction)}
+                      </Badge>
+                    </TableCell>
                     <TableCell>{item.site_name}</TableCell>
                     <TableCell>
                       <Badge className={CATEGORY_BADGES[item.waste_category] || 'bg-slate-100 text-slate-700'}>
@@ -2150,11 +2184,10 @@ export default function FoodWaste() {
                     <TableCell>{formatCurrency(getWasteCost(item, productionMap))}</TableCell>
                     <TableCell>
                       {evidenceUrl ? (
-                        <a
+                        <button
+                          type="button"
                           className="group inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-1 pr-2 text-sm font-medium text-emerald-700 shadow-sm hover:border-emerald-200 hover:bg-emerald-50"
-                          href={evidenceUrl}
-                          target="_blank"
-                          rel="noreferrer"
+                          onClick={() => handleOpenWastePictureGallery(item)}
                           title={evidenceUrls.length > 1 ? `${evidenceUrls.length} waste pictures attached` : 'View waste picture'}
                         >
                           <span className="relative block h-10 w-10 overflow-hidden rounded-md bg-slate-100">
@@ -2166,7 +2199,7 @@ export default function FoodWaste() {
                             ) : null}
                           </span>
                           <span>View</span>
-                        </a>
+                        </button>
                       ) : isMealServiceLeftover(item) ? (
                         <Badge className="bg-slate-100 text-slate-700">System generated</Badge>
                       ) : (
@@ -2690,6 +2723,100 @@ export default function FoodWaste() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={wastePictureGallery.open}
+          onOpenChange={(open) => setWastePictureGallery((current) => ({
+            ...current,
+            open,
+            index: open ? current.index : 0,
+            record: open ? current.record : null,
+            images: open ? current.images : []
+          }))}
+        >
+          <DialogContent className="max-w-5xl">
+            <DialogHeader>
+              <DialogTitle>Waste Pictures</DialogTitle>
+            </DialogHeader>
+            {wastePictureGallery.record ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                    <Badge className="bg-slate-100 text-slate-700">
+                      {wastePictureGallery.record.waste_date || 'No date'}
+                    </Badge>
+                    <Badge className="bg-emerald-100 text-emerald-700">
+                      {titleCase(wastePictureGallery.record.meal_type || 'meal')}
+                    </Badge>
+                    <Badge className="bg-blue-100 text-blue-700">
+                      {getWasteMealCategoryLabel(
+                        wastePictureGallery.record,
+                        productionMap.get(wastePictureGallery.record.production_id)
+                      )}
+                    </Badge>
+                    <Badge className={CATEGORY_BADGES[wastePictureGallery.record.waste_category] || 'bg-slate-100 text-slate-700'}>
+                      {getCategoryMeta(wastePictureGallery.record.waste_category)?.label || wastePictureGallery.record.waste_category || 'Waste'}
+                    </Badge>
+                  </div>
+                  <p className="mt-3 text-lg font-semibold text-slate-900">
+                    {wastePictureGallery.record.ingredient_name
+                      || wastePictureGallery.record.recipe_name
+                      || wastePictureGallery.record.batch_reference
+                      || 'Waste record'}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {wastePictureGallery.images.length} picture{wastePictureGallery.images.length === 1 ? '' : 's'} attached
+                  </p>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+                  <div className="flex min-h-[420px] items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
+                    {wastePictureGallery.images[wastePictureGallery.index] ? (
+                      <img
+                        src={wastePictureGallery.images[wastePictureGallery.index]}
+                        alt={`Waste evidence ${wastePictureGallery.index + 1}`}
+                        className="max-h-[68vh] w-full object-contain"
+                      />
+                    ) : null}
+                  </div>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
+                      {wastePictureGallery.images.map((url, index) => (
+                        <button
+                          key={`${url}-${index}`}
+                          type="button"
+                          onClick={() => setWastePictureGallery((current) => ({ ...current, index }))}
+                          className={`group relative overflow-hidden rounded-xl border bg-slate-100 text-left shadow-sm ${
+                            wastePictureGallery.index === index ? 'border-emerald-500 ring-2 ring-emerald-100' : 'border-slate-200 hover:border-emerald-300'
+                          }`}
+                        >
+                          <img
+                            src={url}
+                            alt={`Waste evidence thumbnail ${index + 1}`}
+                            className="h-24 w-full object-cover transition-transform group-hover:scale-105"
+                          />
+                          <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white">
+                            {index + 1}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    {wastePictureGallery.images[wastePictureGallery.index] ? (
+                      <a
+                        href={wastePictureGallery.images[wastePictureGallery.index]}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                      >
+                        Open selected picture
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </DialogContent>
         </Dialog>
 
