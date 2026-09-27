@@ -591,7 +591,6 @@ function sortRecords(records, sort) {
 const SAFE_RELATIONAL_PAYLOAD_FIELD_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const relationalDocumentTables = Object.freeze({
-  AdvancedReportSchedule: 'advanced_report_schedules',
   ERPIntegrationConfig: 'erp_integration_configs',
   ERPIntegrationLog: 'erp_integration_logs',
   ForecastScenario: 'forecast_scenarios',
@@ -614,9 +613,7 @@ const relationalDocumentTables = Object.freeze({
   QRDelivery: 'qr_deliveries',
   QualityControl: 'quality_controls',
   RFQ: 'rfqs',
-  UserGroup: 'user_groups',
-  WasteTarget: 'waste_targets',
-  WasteDetectionLog: 'waste_detection_logs'
+  UserGroup: 'user_groups'
 });
 
 const normalizedCoreEnabled = process.env.FOODPRO_NORMALIZED_CORE !== 'false';
@@ -1686,7 +1683,189 @@ function rowToBudget(row = {}) {
   });
 }
 
+function rowToWasteTarget(row = {}) {
+  return hydrateDerivedFields('WasteTarget', {
+    __entity: 'WasteTarget',
+    id: row.id,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    target_month: row.target_month || null,
+    target_percentage: toNumberOrZero(row.target_percentage),
+    target_cost: toNumberOrZero(row.target_cost),
+    notes: row.notes || null,
+    status: row.status || 'active',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToAdvancedReportSchedule(row = {}) {
+  return hydrateDerivedFields('AdvancedReportSchedule', {
+    __entity: 'AdvancedReportSchedule',
+    id: row.id,
+    report_key: row.report_key || 'food_cost',
+    recipients: row.recipients || '',
+    frequency: row.frequency || 'weekly',
+    format: row.format || 'pdf',
+    location_id: row.location_id || row.site_id || 'all',
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    category: row.category || 'all',
+    notes: row.notes || '',
+    next_run_date: row.next_run_date ? String(row.next_run_date).slice(0, 10) : null,
+    status: row.status || 'active',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToWasteDetectionLog(row = {}) {
+  return hydrateDerivedFields('WasteDetectionLog', {
+    __entity: 'WasteDetectionLog',
+    id: row.id,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    image_url: row.image_url || null,
+    detected_food_types: normalizeTextArray(row.detected_food_types),
+    estimated_waste_grams: toNumberOrZero(row.estimated_waste_grams),
+    waste_percentage: toNumberOrZero(row.waste_percentage),
+    waste_category: row.waste_category || null,
+    confidence_score: toNumberOrZero(row.confidence_score),
+    ai_suggestions: normalizeTextArray(row.ai_suggestions),
+    cost_estimate: toNumberOrZero(row.cost_estimate),
+    detection_method: row.detection_method || 'camera',
+    detected_by: row.detected_by || null,
+    detected_at: rowTimestamp(row.detected_at) || rowTimestamp(row.created_at),
+    status: row.status || 'active',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
 const normalizedSimpleConfigs = {
+  WasteDetectionLog: {
+    table: 'waste_detection_logs',
+    idColumn: 'id',
+    mapper: rowToWasteDetectionLog,
+    select: 'SELECT * FROM waste_detection_logs',
+    insertSql: `INSERT INTO waste_detection_logs (
+      id, site_id, site_name, image_url, detected_food_types, estimated_waste_grams,
+      waste_percentage, waste_category, confidence_score, ai_suggestions, cost_estimate,
+      detection_method, detected_by, detected_at, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5::text[],$6,$7,$8,$9,$10::text[],$11,$12,$13,$14,$15,$16,$17,$18)`,
+    values(record) {
+      const createdAt = record.created_date || nowIso();
+      return [
+        record.id,
+        record.site_id || null,
+        record.site_name || null,
+        record.image_url || null,
+        normalizeTextArray(record.detected_food_types),
+        toNumberOrZero(record.estimated_waste_grams),
+        toNumberOrZero(record.waste_percentage),
+        record.waste_category || null,
+        toNumberOrZero(record.confidence_score),
+        normalizeTextArray(record.ai_suggestions || record.suggestions),
+        toNumberOrZero(record.cost_estimate),
+        record.detection_method || 'camera',
+        record.detected_by || null,
+        record.detected_at || createdAt,
+        record.status || 'active',
+        record.source_name || null,
+        createdAt,
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE waste_detection_logs SET
+      site_id = $2, site_name = $3, image_url = $4, detected_food_types = $5::text[],
+      estimated_waste_grams = $6, waste_percentage = $7, waste_category = $8,
+      confidence_score = $9, ai_suggestions = $10::text[], cost_estimate = $11,
+      detection_method = $12, detected_by = $13, detected_at = $14,
+      status = $15, source_name = $16, updated_at = $17
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 16), record.updated_date || nowIso()];
+    }
+  },
+  AdvancedReportSchedule: {
+    table: 'advanced_report_schedules',
+    idColumn: 'id',
+    mapper: rowToAdvancedReportSchedule,
+    select: 'SELECT * FROM advanced_report_schedules',
+    insertSql: `INSERT INTO advanced_report_schedules (
+      id, report_key, recipients, frequency, format, location_id, site_id, site_name,
+      category, notes, next_run_date, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    values(record) {
+      const locationId = record.location_id || record.site_id || 'all';
+      const scopedSiteId = record.site_id || (locationId && locationId !== 'all' ? locationId : null);
+      return [
+        record.id,
+        record.report_key || 'food_cost',
+        record.recipients || '',
+        record.frequency || 'weekly',
+        record.format || 'pdf',
+        locationId,
+        scopedSiteId,
+        record.site_name || null,
+        record.category || 'all',
+        record.notes || '',
+        toDateOnlyOrNull(record.next_run_date),
+        record.status || 'active',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE advanced_report_schedules SET
+      report_key = $2, recipients = $3, frequency = $4, format = $5,
+      location_id = $6, site_id = $7, site_name = $8, category = $9,
+      notes = $10, next_run_date = $11, status = $12, source_name = $13,
+      updated_at = $14
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 13), record.updated_date || nowIso()];
+    }
+  },
+  WasteTarget: {
+    table: 'waste_targets',
+    idColumn: 'id',
+    mapper: rowToWasteTarget,
+    select: 'SELECT * FROM waste_targets',
+    insertSql: `INSERT INTO waste_targets (
+      id, site_id, site_name, target_month, target_percentage, target_cost,
+      notes, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    values(record) {
+      return [
+        record.id,
+        record.site_id || null,
+        record.site_name || null,
+        record.target_month || null,
+        toNumberOrZero(record.target_percentage),
+        toNumberOrZero(record.target_cost),
+        record.notes || null,
+        record.status || 'active',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE waste_targets SET
+      site_id = $2, site_name = $3, target_month = $4,
+      target_percentage = $5, target_cost = $6, notes = $7,
+      status = $8, source_name = $9, updated_at = $10
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 9), record.updated_date || nowIso()];
+    }
+  },
   Budget: {
     table: 'budgets',
     idColumn: 'id',
@@ -3125,6 +3304,47 @@ function normalizedSqlColumnForField(entity, field) {
       monthly_budget_amount: 'monthly_budget_amount',
       status: 'status',
       notes: 'notes',
+      source_name: 'source_name'
+    },
+    WasteTarget: {
+      site_id: 'site_id',
+      site_name: 'site_name',
+      target_month: 'target_month',
+      target_percentage: 'target_percentage',
+      target_cost: 'target_cost',
+      notes: 'notes',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    AdvancedReportSchedule: {
+      report_key: 'report_key',
+      recipients: 'recipients',
+      frequency: 'frequency',
+      format: 'format',
+      location_id: 'location_id',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      category: 'category',
+      notes: 'notes',
+      next_run_date: 'next_run_date',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    WasteDetectionLog: {
+      site_id: 'site_id',
+      site_name: 'site_name',
+      image_url: 'image_url',
+      detected_food_types: 'detected_food_types',
+      estimated_waste_grams: 'estimated_waste_grams',
+      waste_percentage: 'waste_percentage',
+      waste_category: 'waste_category',
+      confidence_score: 'confidence_score',
+      ai_suggestions: 'ai_suggestions',
+      cost_estimate: 'cost_estimate',
+      detection_method: 'detection_method',
+      detected_by: 'detected_by',
+      detected_at: 'detected_at',
+      status: 'status',
       source_name: 'source_name'
     },
     Supplier: {

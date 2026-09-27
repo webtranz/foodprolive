@@ -251,7 +251,6 @@ BEGIN
   FOR document_table, entity_value IN
     SELECT *
     FROM (VALUES
-      ('advanced_report_schedules', 'AdvancedReportSchedule'),
       ('erp_integration_configs', 'ERPIntegrationConfig'),
       ('erp_integration_logs', 'ERPIntegrationLog'),
       ('forecast_scenarios', 'ForecastScenario'),
@@ -275,9 +274,7 @@ BEGIN
       ('qr_deliveries', 'QRDelivery'),
       ('quality_controls', 'QualityControl'),
       ('rfqs', 'RFQ'),
-      ('user_groups', 'UserGroup'),
-      ('waste_targets', 'WasteTarget'),
-      ('waste_detection_logs', 'WasteDetectionLog')
+      ('user_groups', 'UserGroup')
     ) AS mapped(document_table, entity_value)
   LOOP
     EXECUTE format($sql$
@@ -613,6 +610,610 @@ BEGIN
   END IF;
 END;
 $budget_trigger$;
+
+CREATE TABLE IF NOT EXISTS advanced_report_schedules (
+  id TEXT PRIMARY KEY,
+  report_key TEXT NOT NULL DEFAULT 'food_cost',
+  recipients TEXT NOT NULL DEFAULT '',
+  frequency TEXT NOT NULL DEFAULT 'weekly',
+  format TEXT NOT NULL DEFAULT 'pdf',
+  location_id TEXT NOT NULL DEFAULT 'all',
+  site_id TEXT,
+  site_name TEXT,
+  category TEXT NOT NULL DEFAULT 'all',
+  notes TEXT NOT NULL DEFAULT '',
+  next_run_date DATE,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS report_key TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS recipients TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS frequency TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS format TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS location_id TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS next_run_date DATE;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE advanced_report_schedules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $advanced_report_schedules_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'advanced_report_schedules'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE advanced_report_schedules
+         SET report_key = COALESCE(NULLIF(report_key, ''), NULLIF(payload->>'report_key', ''), 'food_cost'),
+             recipients = COALESCE(recipients, payload->>'recipients', ''),
+             frequency = COALESCE(NULLIF(frequency, ''), NULLIF(payload->>'frequency', ''), 'weekly'),
+             format = COALESCE(NULLIF(format, ''), NULLIF(payload->>'format', ''), 'pdf'),
+             location_id = COALESCE(NULLIF(location_id, ''), NULLIF(payload->>'location_id', ''), 'all'),
+             site_id = COALESCE(
+               NULLIF(site_id, ''),
+               NULLIF(payload->>'site_id', ''),
+               CASE
+                 WHEN COALESCE(NULLIF(payload->>'location_id', ''), 'all') <> 'all'
+                   THEN NULLIF(payload->>'location_id', '')
+                 ELSE NULL
+               END
+             ),
+             site_name = COALESCE(NULLIF(site_name, ''), NULLIF(payload->>'site_name', '')),
+             category = COALESCE(NULLIF(category, ''), NULLIF(payload->>'category', ''), 'all'),
+             notes = COALESCE(notes, payload->>'notes', ''),
+             next_run_date = COALESCE(next_run_date, CASE
+               WHEN COALESCE(payload->>'next_run_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'next_run_date')::date
+               ELSE NULL
+             END),
+             status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'active'),
+             source_name = COALESCE(source_name, NULLIF(payload->>'source_name', '')),
+             created_at = COALESCE(created_at, CASE
+               WHEN COALESCE(payload->>'created_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'created_date', '')::timestamptz
+               ELSE NULL
+             END, NOW()),
+             updated_at = COALESCE(updated_at, CASE
+               WHEN COALESCE(payload->>'updated_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'updated_date', '')::timestamptz
+               ELSE NULL
+             END, NOW())
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    DROP TRIGGER IF EXISTS advanced_report_schedules_realtime_change ON advanced_report_schedules;
+    DROP INDEX IF EXISTS idx_advanced_report_schedules_payload;
+    DROP INDEX IF EXISTS idx_advanced_report_schedules_site_ids;
+    DROP INDEX IF EXISTS idx_advanced_report_schedules_record_date;
+    EXECUTE 'ALTER TABLE advanced_report_schedules DROP COLUMN payload';
+  END IF;
+END;
+$advanced_report_schedules_payload_cutover$;
+
+INSERT INTO advanced_report_schedules (
+  id, report_key, recipients, frequency, format, location_id, site_id, site_name,
+  category, notes, next_run_date, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'report_key', ''), 'food_cost'),
+  COALESCE(record.data->>'recipients', ''),
+  COALESCE(NULLIF(record.data->>'frequency', ''), 'weekly'),
+  COALESCE(NULLIF(record.data->>'format', ''), 'pdf'),
+  COALESCE(NULLIF(record.data->>'location_id', ''), 'all'),
+  COALESCE(
+    NULLIF(record.data->>'site_id', ''),
+    CASE
+      WHEN COALESCE(NULLIF(record.data->>'location_id', ''), 'all') <> 'all'
+        THEN NULLIF(record.data->>'location_id', '')
+      ELSE NULL
+    END
+  ),
+  NULLIF(record.data->>'site_name', ''),
+  COALESCE(NULLIF(record.data->>'category', ''), 'all'),
+  COALESCE(record.data->>'notes', ''),
+  CASE
+    WHEN COALESCE(record.data->>'next_run_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      THEN (record.data->>'next_run_date')::date
+    ELSE NULL
+  END,
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'AdvancedReportSchedule'
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE advanced_report_schedules
+   SET report_key = COALESCE(NULLIF(report_key, ''), 'food_cost'),
+       recipients = COALESCE(recipients, ''),
+       frequency = COALESCE(NULLIF(frequency, ''), 'weekly'),
+       format = COALESCE(NULLIF(format, ''), 'pdf'),
+       location_id = COALESCE(NULLIF(location_id, ''), 'all'),
+       category = COALESCE(NULLIF(category, ''), 'all'),
+       notes = COALESCE(notes, ''),
+       status = COALESCE(NULLIF(status, ''), 'active');
+
+ALTER TABLE advanced_report_schedules ALTER COLUMN report_key SET NOT NULL;
+ALTER TABLE advanced_report_schedules ALTER COLUMN recipients SET NOT NULL;
+ALTER TABLE advanced_report_schedules ALTER COLUMN frequency SET NOT NULL;
+ALTER TABLE advanced_report_schedules ALTER COLUMN format SET NOT NULL;
+ALTER TABLE advanced_report_schedules ALTER COLUMN location_id SET NOT NULL;
+ALTER TABLE advanced_report_schedules ALTER COLUMN category SET NOT NULL;
+ALTER TABLE advanced_report_schedules ALTER COLUMN notes SET NOT NULL;
+ALTER TABLE advanced_report_schedules ALTER COLUMN status SET NOT NULL;
+
+ALTER TABLE advanced_report_schedules DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE advanced_report_schedules DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE advanced_report_schedules DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE advanced_report_schedules DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE advanced_report_schedules DROP COLUMN IF EXISTS record_date;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_advanced_report_schedule_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  schedule_row advanced_report_schedules%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    schedule_row := OLD;
+  ELSE
+    schedule_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'AdvancedReportSchedule',
+      'action', LOWER(TG_OP),
+      'id', schedule_row.id,
+      'site_id', schedule_row.site_id,
+      'site_ids', CASE
+        WHEN schedule_row.site_id IS NULL THEN '[]'::jsonb
+        ELSE jsonb_build_array(schedule_row.site_id)
+      END,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $advanced_report_schedule_trigger$
+BEGIN
+  DROP TRIGGER IF EXISTS advanced_report_schedules_realtime_change ON advanced_report_schedules;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'advanced_report_schedules_realtime_change' AND tgrelid = 'advanced_report_schedules'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER advanced_report_schedules_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON advanced_report_schedules
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_advanced_report_schedule_change()';
+  END IF;
+END;
+$advanced_report_schedule_trigger$;
+
+CREATE TABLE IF NOT EXISTS waste_targets (
+  id TEXT PRIMARY KEY,
+  site_id TEXT,
+  site_name TEXT,
+  target_month TEXT,
+  target_percentage NUMERIC(8, 3) NOT NULL DEFAULT 0,
+  target_cost NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS target_month TEXT;
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS target_percentage NUMERIC(8, 3) NOT NULL DEFAULT 0;
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS target_cost NUMERIC(14, 2) NOT NULL DEFAULT 0;
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE waste_targets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $waste_targets_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'waste_targets'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE waste_targets
+         SET site_id = COALESCE(NULLIF(site_id, ''), NULLIF(payload->>'site_id', '')),
+             site_name = COALESCE(NULLIF(site_name, ''), NULLIF(payload->>'site_name', '')),
+             target_month = COALESCE(NULLIF(target_month, ''), NULLIF(payload->>'target_month', '')),
+             target_percentage = COALESCE(CASE
+               WHEN COALESCE(payload->>'target_percentage', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'target_percentage')::numeric
+               ELSE NULL
+             END, target_percentage, 0),
+             target_cost = COALESCE(CASE
+               WHEN COALESCE(payload->>'target_cost', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'target_cost')::numeric
+               ELSE NULL
+             END, target_cost, 0),
+             notes = COALESCE(notes, NULLIF(payload->>'notes', '')),
+             status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'active'),
+             source_name = COALESCE(source_name, NULLIF(payload->>'source_name', '')),
+             created_at = COALESCE(created_at, CASE
+               WHEN COALESCE(payload->>'created_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'created_date', '')::timestamptz
+               ELSE NULL
+             END, NOW()),
+             updated_at = COALESCE(updated_at, CASE
+               WHEN COALESCE(payload->>'updated_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'updated_date', '')::timestamptz
+               ELSE NULL
+             END, NOW())
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    DROP TRIGGER IF EXISTS waste_targets_realtime_change ON waste_targets;
+    DROP INDEX IF EXISTS idx_waste_targets_payload;
+    EXECUTE 'ALTER TABLE waste_targets DROP COLUMN payload';
+  END IF;
+END;
+$waste_targets_payload_cutover$;
+
+INSERT INTO waste_targets (
+  id, site_id, site_name, target_month, target_percentage, target_cost,
+  notes, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  NULLIF(record.data->>'target_month', ''),
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'target_percentage', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'target_percentage')::numeric
+    ELSE NULL
+  END, 0),
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'target_cost', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'target_cost')::numeric
+    ELSE NULL
+  END, 0),
+  NULLIF(record.data->>'notes', ''),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'WasteTarget'
+ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE waste_targets DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE waste_targets DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE waste_targets DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE waste_targets DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE waste_targets DROP COLUMN IF EXISTS record_date;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_waste_target_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  target_row waste_targets%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    target_row := OLD;
+  ELSE
+    target_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'WasteTarget',
+      'action', LOWER(TG_OP),
+      'id', NULL,
+      'site_id', target_row.site_id,
+      'site_ids', CASE
+        WHEN target_row.site_id IS NULL THEN '[]'::jsonb
+        ELSE jsonb_build_array(target_row.site_id)
+      END,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $waste_target_trigger$
+BEGIN
+  DROP TRIGGER IF EXISTS waste_targets_realtime_change ON waste_targets;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'waste_targets_realtime_change' AND tgrelid = 'waste_targets'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER waste_targets_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON waste_targets
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_waste_target_change()';
+  END IF;
+END;
+$waste_target_trigger$;
+
+CREATE TABLE IF NOT EXISTS waste_detection_logs (
+  id TEXT PRIMARY KEY,
+  site_id TEXT,
+  site_name TEXT,
+  image_url TEXT,
+  detected_food_types TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+  estimated_waste_grams NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  waste_percentage NUMERIC(8, 3) NOT NULL DEFAULT 0,
+  waste_category TEXT,
+  confidence_score NUMERIC(8, 3) NOT NULL DEFAULT 0,
+  ai_suggestions TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+  cost_estimate NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  detection_method TEXT NOT NULL DEFAULT 'camera',
+  detected_by TEXT,
+  detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS detected_food_types TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS estimated_waste_grams NUMERIC(14, 3) NOT NULL DEFAULT 0;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS waste_percentage NUMERIC(8, 3) NOT NULL DEFAULT 0;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS waste_category TEXT;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS confidence_score NUMERIC(8, 3) NOT NULL DEFAULT 0;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS ai_suggestions TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS cost_estimate NUMERIC(14, 2) NOT NULL DEFAULT 0;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS detection_method TEXT NOT NULL DEFAULT 'camera';
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS detected_by TEXT;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE waste_detection_logs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $waste_detection_logs_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'waste_detection_logs'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE waste_detection_logs
+         SET site_id = COALESCE(NULLIF(site_id, ''), NULLIF(payload->>'site_id', '')),
+             site_name = COALESCE(NULLIF(site_name, ''), NULLIF(payload->>'site_name', '')),
+             image_url = COALESCE(NULLIF(image_url, ''), NULLIF(payload->>'image_url', '')),
+             detected_food_types = CASE
+               WHEN COALESCE(array_length(detected_food_types, 1), 0) > 0 THEN detected_food_types
+               WHEN jsonb_typeof(payload->'detected_food_types') = 'array'
+                 THEN ARRAY(SELECT jsonb_array_elements_text(payload->'detected_food_types'))
+               ELSE ARRAY[]::text[]
+             END,
+             estimated_waste_grams = COALESCE(CASE
+               WHEN COALESCE(payload->>'estimated_waste_grams', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'estimated_waste_grams')::numeric
+               ELSE NULL
+             END, estimated_waste_grams, 0),
+             waste_percentage = COALESCE(CASE
+               WHEN COALESCE(payload->>'waste_percentage', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'waste_percentage')::numeric
+               ELSE NULL
+             END, waste_percentage, 0),
+             waste_category = COALESCE(NULLIF(waste_category, ''), NULLIF(payload->>'waste_category', '')),
+             confidence_score = COALESCE(CASE
+               WHEN COALESCE(payload->>'confidence_score', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'confidence_score')::numeric
+               ELSE NULL
+             END, confidence_score, 0),
+             ai_suggestions = CASE
+               WHEN COALESCE(array_length(ai_suggestions, 1), 0) > 0 THEN ai_suggestions
+               WHEN jsonb_typeof(payload->'ai_suggestions') = 'array'
+                 THEN ARRAY(SELECT jsonb_array_elements_text(payload->'ai_suggestions'))
+               WHEN jsonb_typeof(payload->'suggestions') = 'array'
+                 THEN ARRAY(SELECT jsonb_array_elements_text(payload->'suggestions'))
+               ELSE ARRAY[]::text[]
+             END,
+             cost_estimate = COALESCE(CASE
+               WHEN COALESCE(payload->>'cost_estimate', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'cost_estimate')::numeric
+               ELSE NULL
+             END, cost_estimate, 0),
+             detection_method = COALESCE(NULLIF(detection_method, ''), NULLIF(payload->>'detection_method', ''), 'camera'),
+             detected_by = COALESCE(NULLIF(detected_by, ''), NULLIF(payload->>'detected_by', '')),
+             detected_at = COALESCE(detected_at, CASE
+               WHEN COALESCE(payload->>'detected_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'detected_at', '')::timestamptz
+               ELSE NULL
+             END, created_at, NOW()),
+             status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'active'),
+             source_name = COALESCE(source_name, NULLIF(payload->>'source_name', '')),
+             created_at = COALESCE(created_at, CASE
+               WHEN COALESCE(payload->>'created_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'created_date', '')::timestamptz
+               ELSE NULL
+             END, NOW()),
+             updated_at = COALESCE(updated_at, CASE
+               WHEN COALESCE(payload->>'updated_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'updated_date', '')::timestamptz
+               ELSE NULL
+             END, NOW())
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    DROP TRIGGER IF EXISTS waste_detection_logs_realtime_change ON waste_detection_logs;
+    DROP INDEX IF EXISTS idx_waste_detection_logs_payload;
+    DROP INDEX IF EXISTS idx_waste_detection_logs_site_ids;
+    DROP INDEX IF EXISTS idx_waste_detection_logs_record_date;
+    EXECUTE 'ALTER TABLE waste_detection_logs DROP COLUMN payload';
+  END IF;
+END;
+$waste_detection_logs_payload_cutover$;
+
+INSERT INTO waste_detection_logs (
+  id, site_id, site_name, image_url, detected_food_types, estimated_waste_grams,
+  waste_percentage, waste_category, confidence_score, ai_suggestions, cost_estimate,
+  detection_method, detected_by, detected_at, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  NULLIF(record.data->>'image_url', ''),
+  CASE
+    WHEN jsonb_typeof(record.data->'detected_food_types') = 'array'
+      THEN ARRAY(SELECT jsonb_array_elements_text(record.data->'detected_food_types'))
+    ELSE ARRAY[]::text[]
+  END,
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'estimated_waste_grams', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'estimated_waste_grams')::numeric
+    ELSE NULL
+  END, 0),
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'waste_percentage', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'waste_percentage')::numeric
+    ELSE NULL
+  END, 0),
+  NULLIF(record.data->>'waste_category', ''),
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'confidence_score', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'confidence_score')::numeric
+    ELSE NULL
+  END, 0),
+  CASE
+    WHEN jsonb_typeof(record.data->'ai_suggestions') = 'array'
+      THEN ARRAY(SELECT jsonb_array_elements_text(record.data->'ai_suggestions'))
+    WHEN jsonb_typeof(record.data->'suggestions') = 'array'
+      THEN ARRAY(SELECT jsonb_array_elements_text(record.data->'suggestions'))
+    ELSE ARRAY[]::text[]
+  END,
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'cost_estimate', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'cost_estimate')::numeric
+    ELSE NULL
+  END, 0),
+  COALESCE(NULLIF(record.data->>'detection_method', ''), 'camera'),
+  NULLIF(record.data->>'detected_by', ''),
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'detected_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      THEN NULLIF(record.data->>'detected_at', '')::timestamptz
+    ELSE NULL
+  END, record.created_at, NOW()),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'WasteDetectionLog'
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE waste_detection_logs
+   SET detected_food_types = COALESCE(detected_food_types, ARRAY[]::text[]),
+       estimated_waste_grams = COALESCE(estimated_waste_grams, 0),
+       waste_percentage = COALESCE(waste_percentage, 0),
+       confidence_score = COALESCE(confidence_score, 0),
+       ai_suggestions = COALESCE(ai_suggestions, ARRAY[]::text[]),
+       cost_estimate = COALESCE(cost_estimate, 0),
+       detection_method = COALESCE(NULLIF(detection_method, ''), 'camera'),
+       detected_at = COALESCE(detected_at, created_at, NOW()),
+       status = COALESCE(NULLIF(status, ''), 'active');
+
+ALTER TABLE waste_detection_logs ALTER COLUMN detected_food_types SET NOT NULL;
+ALTER TABLE waste_detection_logs ALTER COLUMN estimated_waste_grams SET NOT NULL;
+ALTER TABLE waste_detection_logs ALTER COLUMN waste_percentage SET NOT NULL;
+ALTER TABLE waste_detection_logs ALTER COLUMN confidence_score SET NOT NULL;
+ALTER TABLE waste_detection_logs ALTER COLUMN ai_suggestions SET NOT NULL;
+ALTER TABLE waste_detection_logs ALTER COLUMN cost_estimate SET NOT NULL;
+ALTER TABLE waste_detection_logs ALTER COLUMN detection_method SET NOT NULL;
+ALTER TABLE waste_detection_logs ALTER COLUMN detected_at SET NOT NULL;
+ALTER TABLE waste_detection_logs ALTER COLUMN status SET NOT NULL;
+
+ALTER TABLE waste_detection_logs DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE waste_detection_logs DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE waste_detection_logs DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE waste_detection_logs DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE waste_detection_logs DROP COLUMN IF EXISTS record_date;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_waste_detection_log_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  log_row waste_detection_logs%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    log_row := OLD;
+  ELSE
+    log_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'WasteDetectionLog',
+      'action', LOWER(TG_OP),
+      'id', log_row.id,
+      'site_id', log_row.site_id,
+      'site_ids', CASE
+        WHEN log_row.site_id IS NULL THEN '[]'::jsonb
+        ELSE jsonb_build_array(log_row.site_id)
+      END,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $waste_detection_log_trigger$
+BEGIN
+  DROP TRIGGER IF EXISTS waste_detection_logs_realtime_change ON waste_detection_logs;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'waste_detection_logs_realtime_change' AND tgrelid = 'waste_detection_logs'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER waste_detection_logs_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON waste_detection_logs
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_waste_detection_log_change()';
+  END IF;
+END;
+$waste_detection_log_trigger$;
 
 CREATE TABLE IF NOT EXISTS food_categories (
   id TEXT PRIMARY KEY,
@@ -6047,6 +6648,16 @@ CREATE INDEX IF NOT EXISTS idx_budgets_site_period_status
 CREATE INDEX IF NOT EXISTS idx_budgets_key_status
   ON budgets(budget_key, status)
   WHERE budget_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_advanced_report_schedules_report_status
+  ON advanced_report_schedules(report_key, status, next_run_date);
+CREATE INDEX IF NOT EXISTS idx_advanced_report_schedules_site_status
+  ON advanced_report_schedules(site_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_waste_targets_site_month_status
+  ON waste_targets(site_id, target_month, status);
+CREATE INDEX IF NOT EXISTS idx_waste_detection_logs_site_detected
+  ON waste_detection_logs(site_id, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_waste_detection_logs_category_status
+  ON waste_detection_logs(waste_category, status, detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_status ON bulk_upload_jobs(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_actor ON bulk_upload_jobs(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_site ON bulk_upload_jobs(site_id, created_at DESC);
