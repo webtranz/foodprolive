@@ -81,9 +81,9 @@ const APPROVAL_THRESHOLD = 100;
 const MEAL_TYPE_OPTIONS = ['breakfast', 'lunch', 'dinner'];
 const BATCH_OVERPRODUCTION_CATEGORY = 'batch_overproduction';
 const MAX_WASTE_PICTURES = 8;
-const MAX_WASTE_PICTURE_TOTAL_BYTES = Math.round(1.5 * 1024 * 1024);
-const MAX_WASTE_PICTURE_BYTES = Math.floor(MAX_WASTE_PICTURE_TOTAL_BYTES / MAX_WASTE_PICTURES);
-const MAX_WASTE_PICTURE_LONG_EDGE = 1600;
+const MAX_WASTE_PICTURE_TOTAL_BYTES = 500 * 1024;
+const MAX_WASTE_PICTURE_LONG_EDGE = 900;
+const MIN_WASTE_PICTURE_LONG_EDGE = 360;
 
 const CATEGORY_BADGES = Object.fromEntries(
   WASTE_CATEGORIES.map((item) => [item.value, `bg-white text-slate-700 border border-slate-200`])
@@ -331,7 +331,12 @@ function replaceImageExtension(name = 'waste-picture', extension = 'jpg') {
   return `${safeName}.${extension}`;
 }
 
-async function compressWasteImageFile(file) {
+function getWastePictureTargetBytes(imageCount = 1) {
+  const safeCount = Math.max(1, Math.min(MAX_WASTE_PICTURES, Number(imageCount) || 1));
+  return Math.floor(MAX_WASTE_PICTURE_TOTAL_BYTES / safeCount);
+}
+
+async function compressWasteImageFile(file, targetBytes = MAX_WASTE_PICTURE_TOTAL_BYTES) {
   const image = await loadImageElementFromFile(file);
   let quality = 0.86;
   let longEdge = MAX_WASTE_PICTURE_LONG_EDGE;
@@ -348,12 +353,11 @@ async function compressWasteImageFile(file) {
     context.drawImage(image, 0, 0, width, height);
     const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
     bestBlob = blob;
-    if (blob.size <= MAX_WASTE_PICTURE_BYTES) break;
-    if (quality > 0.58) {
+    if (blob.size <= targetBytes) break;
+    if (longEdge > MIN_WASTE_PICTURE_LONG_EDGE) {
+      longEdge = Math.max(MIN_WASTE_PICTURE_LONG_EDGE, Math.floor(longEdge * 0.82));
+    } else if (quality > 0.58) {
       quality = Number((quality - 0.06).toFixed(2));
-    } else {
-      longEdge = Math.max(720, Math.floor(longEdge * 0.85));
-      quality = 0.68;
     }
   }
 
@@ -1410,18 +1414,36 @@ export default function FoodWaste() {
 
     try {
       setWasteImageProcessing(true);
+      const savedImages = wasteImages.filter((item) => !item.file);
+      const currentLocalSources = wasteImages
+        .filter((item) => item.file)
+        .map((item) => ({
+          sourceFile: item.originalFile || item.file,
+          name: item.name || item.file?.name || 'waste-picture'
+        }));
+      const newSources = filesToUse.map((file) => ({
+        sourceFile: file,
+        name: file.name
+      }));
+      const localSources = [...currentLocalSources, ...newSources];
+      const targetBytes = getWastePictureTargetBytes(savedImages.length + localSources.length);
       const preparedImages = [];
-      for (const file of filesToUse) {
-        const compressedFile = await compressWasteImageFile(file);
+      for (const source of localSources) {
+        const compressedFile = await compressWasteImageFile(source.sourceFile, targetBytes);
         preparedImages.push({
-          key: `new-${Date.now()}-${preparedImages.length}-${file.name}`,
+          key: `new-${Date.now()}-${preparedImages.length}-${source.name}`,
           file: compressedFile,
+          originalFile: source.sourceFile,
           previewUrl: URL.createObjectURL(compressedFile),
-          name: file.name,
+          name: source.name,
           size: compressedFile.size
         });
       }
-      setWasteImages((current) => [...current, ...preparedImages].slice(0, MAX_WASTE_PICTURES));
+      const previousLocalPreviews = wasteImages
+        .map((item) => item.previewUrl)
+        .filter((url) => typeof url === 'string' && url.startsWith('blob:'));
+      setWasteImages([...savedImages, ...preparedImages].slice(0, MAX_WASTE_PICTURES));
+      previousLocalPreviews.forEach((url) => URL.revokeObjectURL(url));
     } catch (error) {
       setMessage(error.message || 'Failed to prepare waste pictures.');
     } finally {
@@ -2546,7 +2568,7 @@ export default function FoodWaste() {
                   <div>
                     <Label>Waste Pictures <span className="text-red-600">*</span></Label>
                     <p className="mt-1 text-xs text-slate-500">
-                      Add up to {MAX_WASTE_PICTURES} pictures. The app compresses uploads in the background to keep all evidence near 1.5 MB total.
+                      Add up to {MAX_WASTE_PICTURES} pictures. The app compresses the attached set in the background to keep all evidence near 500 KB total.
                     </p>
                   </div>
                   <Button
