@@ -252,10 +252,19 @@ export default function MenuPlanning() {
   }, [selectedMenuCategory, selectedMenuCategoryOptions]);
 
   useEffect(() => {
+    if (selectedPlanLoading) return;
     setFormData(buildDailyMenuState(selectedPlan));
-  }, [selectedPlan]);
+  }, [
+    selectedPlan,
+    selectedPlanLoading,
+    selectedSite,
+    selectedDate,
+    selectedMenuCuisine,
+    selectedMenuCategory
+  ]);
 
   useEffect(() => {
+    if (selectedPlanLoading) return;
     setSelectedBudgetId(
       selectedPlan?.budget_source === 'manual'
         ? 'manual'
@@ -270,7 +279,15 @@ export default function MenuPlanning() {
       lunch: selectedPlan?.meal_budget_limits?.lunch ? String(selectedPlan.meal_budget_limits.lunch) : '',
       dinner: selectedPlan?.meal_budget_limits?.dinner ? String(selectedPlan.meal_budget_limits.dinner) : ''
     });
-  }, [selectedPlan, autoLinkedBudget?.id]);
+  }, [
+    selectedPlan,
+    selectedPlanLoading,
+    autoLinkedBudget?.id,
+    selectedSite,
+    selectedDate,
+    selectedMenuCuisine,
+    selectedMenuCategory
+  ]);
 
   useEffect(() => {
     const schedule = prGenerationContext?.schedule;
