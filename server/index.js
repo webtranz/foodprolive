@@ -195,6 +195,7 @@ import {
   getFoodWasteRecordingWindow,
   getLatestSuccessfulProductionCompletedAt,
   isApprovalOnlyWastePatch,
+  normalizeRealRecipeId,
   normalizeFoodWasteWeightGrams,
   normalizeMealType
 } from './foodWaste.js';
@@ -2177,15 +2178,20 @@ async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = 
     : null;
 
   const menuPlanSummary = buildFoodWasteMenuPlanSummary(menuPlan, normalizedMealType);
+  const productionSiteIds = siteIdValue
+    ? await resolveFoodWasteProductionSiteIds(siteIdValue)
+    : [];
 
   const productionRows = siteIdValue && wasteDateValue
     ? await scopeEntityRecords(
       user,
       'Production',
-      await listDocuments('Production', {
-        filters: { site_id: siteIdValue, production_date: wasteDateValue },
-        limit: 500
-      })
+      (await Promise.all((productionSiteIds.length ? productionSiteIds : [siteIdValue]).map((productionSiteId) => (
+        listDocuments('Production', {
+          filters: { site_id: productionSiteId, production_date: wasteDateValue },
+          limit: 500
+        })
+      )))).flat()
     )
     : [];
 
@@ -2279,6 +2285,13 @@ function firstPositiveNumber(values = []) {
     if (numeric > FOOD_WASTE_QUANTITY_EPSILON) return numeric;
   }
   return 0;
+}
+
+async function resolveExistingDocumentId(entity, id, executor = null) {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) return null;
+  const document = await findDocument(entity, normalizedId, executor || undefined);
+  return document?.id || null;
 }
 
 function uniqueTextValues(values = []) {
@@ -2639,6 +2652,12 @@ async function updateBatchOverproductionFoodWasteRecord({
       executor: client
     });
     const firstAllocation = nextAllocation.allocations[0] || null;
+    const linkedRecipeId = await resolveExistingDocumentId(
+      'Recipe',
+      normalizeRealRecipeId(existing.recipe_id)
+        || normalizeRealRecipeId(payload.recipe_id),
+      client
+    );
     const updatedPayload = withFoodWasteCostAndApproval({
       ...payload,
       site_id: existing.site_id,
@@ -2650,7 +2669,7 @@ async function updateBatchOverproductionFoodWasteRecord({
       source_type: 'batch_overproduction',
       ingredient_id: null,
       ingredient_name: null,
-      recipe_id: existing.recipe_id || payload.recipe_id || null,
+      recipe_id: linkedRecipeId,
       recipe_name: existing.recipe_name || payload.recipe_name || null,
       production_id: payload.production_id || firstAllocation?.production_id || existing.production_id || null,
       production_name: payload.production_name || existing.production_name || null,
@@ -4941,6 +4960,17 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
           executor: client
         });
         const firstAllocation = batchWasteAllocation.allocations[0] || null;
+        const linkedRecipeId = await resolveExistingDocumentId(
+          'Recipe',
+          normalizeRealRecipeId(batchOverproductionContextRow?.recipe_id)
+            || normalizeRealRecipeId(finalPayload.recipe_id),
+          client
+        );
+        const linkedIngredientId = await resolveExistingDocumentId(
+          'Ingredient',
+          batchOverproductionContextRow?.ingredient_id || finalPayload.ingredient_id,
+          client
+        );
         payloadForCreate = withFoodWasteCostAndApproval({
           ...finalPayload,
           source_type: 'batch_overproduction',
@@ -4954,9 +4984,9 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
             || (batchOverproductionContextRow?.batch_count === 1 ? firstAllocation?.production_id : null)
             || null,
           production_name: batchOverproductionContextRow?.production_name || finalPayload.production_name || null,
-          recipe_id: batchOverproductionContextRow?.recipe_id || finalPayload.recipe_id || null,
+          recipe_id: linkedRecipeId,
           recipe_name: batchOverproductionContextRow?.recipe_name || finalPayload.recipe_name || null,
-          ingredient_id: batchOverproductionContextRow?.ingredient_id || finalPayload.ingredient_id || null,
+          ingredient_id: linkedIngredientId,
           ingredient_name: batchOverproductionContextRow?.ingredient_name || finalPayload.ingredient_name || null,
           produced_weight_grams: batchOverproductionContextRow?.produced_weight_grams
             ?? finalPayload.produced_weight_grams

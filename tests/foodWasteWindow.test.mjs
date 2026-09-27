@@ -10,7 +10,8 @@ import {
   getLatestSuccessfulProductionCompletedAt,
   isApprovalOnlyWastePatch,
   normalizeFoodWasteWeightGrams,
-  normalizeMealType
+  normalizeMealType,
+  normalizeRealRecipeId
 } from '../server/foodWaste.js';
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -413,6 +414,10 @@ const cases = [
   {
     name: 'allocates menu-category waste against its matching production batches',
     run() {
+      assert.equal(normalizeRealRecipeId('batch-overproduction:junior'), null);
+      assert.equal(normalizeRealRecipeId('menu-category:junior'), null);
+      assert.equal(normalizeRealRecipeId('recipe-1'), 'recipe-1');
+
       const allocation = allocateBatchOverproductionWaste({
         recipeId: 'batch-overproduction:junior',
         productionId: 'production-menu',
@@ -570,6 +575,7 @@ const cases = [
       const api = read('src/api/base44Client.js');
       const db = read('server/db.js');
       const server = read('server/index.js');
+      const mealService = read('server/mealService.js');
       const foodWasteServer = read('server/foodWaste.js');
       assert.doesNotMatch(page, /<SelectItem value="ingredient">Ingredient<\/SelectItem>/);
       assert.doesNotMatch(page, /<SelectItem value="location">Location<\/SelectItem>/);
@@ -617,6 +623,16 @@ const cases = [
       assert.match(api, /emitEntityChange\('ProducedItemBatch', \{ action: 'food-waste'/);
       assert.match(api, /emitEntityChange\('MealServiceConsumption', \{ action: 'plate-waste-adjustment'/);
       assert.match(db, /'batch_overproduction'/);
+      assert.match(db, /async function replaceFoodWasteLines/);
+      assert.match(db, /DELETE FROM food_waste_lines WHERE food_waste_id = \$1/);
+      assert.match(db, /INSERT INTO food_waste_lines/);
+      assert.match(db, /await replaceFoodWasteLines\(record, executor\)/);
+      assert.match(db, /'output_allocations'/);
+      assert.match(db, /FROM production_manifest_lines line/);
+      assert.match(db, /AS manifest_lines/);
+      assert.match(db, /menu_issue_items: payloadMenuIssueItems\.length \? payloadMenuIssueItems : manifestLines/);
+      assert.match(mealService, /manifest_lines: manifestLines/);
+      assert.match(server, /resolveFoodWasteProductionSiteIds\(siteIdValue\)/);
     }
   }
 ];

@@ -1340,10 +1340,11 @@ export function buildProducedItemBatchSnapshot({
   const productionEventTitle = formatProductionEventTitle(production, {
     fallback: production.recipe_name || recipe.name || production.id
   });
-  const productionItemCount = getProductionEventItemCount(
-    production,
-    Array.isArray(production.menu_issue_items) ? production.menu_issue_items.length : 0
-  );
+  const manifestLines = Array.isArray(production.manifest_lines) ? production.manifest_lines : [];
+  const menuIssueItems = Array.isArray(production.menu_issue_items) && production.menu_issue_items.length
+    ? production.menu_issue_items
+    : manifestLines;
+  const productionItemCount = getProductionEventItemCount(production, menuIssueItems.length);
 
   return {
     batch_number: `PIB-${dateToken}-${productionToken}`,
@@ -1367,7 +1368,8 @@ export function buildProducedItemBatchSnapshot({
     production_issue_grouped: Boolean(production.production_issue_grouped),
     production_issue_item_count: productionItemCount,
     production_issue_dish_count: number(production.production_issue_dish_count, productionItemCount),
-    menu_issue_items: Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [],
+    menu_issue_items: menuIssueItems,
+    manifest_lines: manifestLines,
     portion_size_grams: roundQuantity(portionSize),
     service_portion_size_grams: null,
     expected_servings: roundQuantity(expectedServings),

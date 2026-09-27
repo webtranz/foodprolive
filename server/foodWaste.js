@@ -155,9 +155,15 @@ function getWasteAllocationBatchId(allocation = {}) {
   );
 }
 
-function normalizeRealRecipeId(value) {
+export function normalizeRealRecipeId(value) {
   const recipeId = normalizeText(value);
-  if (!recipeId || recipeId.startsWith('batch-overproduction:')) return null;
+  if (
+    !recipeId
+    || recipeId.startsWith('batch-overproduction:')
+    || recipeId.startsWith('menu-category:')
+  ) {
+    return null;
+  }
   return recipeId;
 }
 
@@ -275,7 +281,7 @@ function getBatchManifestItemRecipeId(item = {}) {
   const recipeId = normalizeText(item.recipe_id || item.recipe_version_id);
   const ingredientId = normalizeText(item.ingredient_id);
   if (ingredientId && recipeId === ingredientId) return null;
-  return recipeId || null;
+  return normalizeRealRecipeId(recipeId);
 }
 
 function getBatchManifestItemIngredientId(item = {}) {

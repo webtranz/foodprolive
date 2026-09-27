@@ -582,6 +582,14 @@ function toNumberOrZero(value) {
   return toNumberOrNull(value) ?? 0;
 }
 
+function firstPositiveNumber(values = []) {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return 0;
+}
+
 function toDateOnlyOrNull(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value.toISOString().slice(0, 10);
@@ -814,6 +822,8 @@ function rowToMenuPlan(row = {}) {
 }
 
 function rowToProduction(row = {}) {
+  const manifestLines = Array.isArray(row.manifest_lines) ? row.manifest_lines : [];
+  const payloadMenuIssueItems = Array.isArray(row.payload?.menu_issue_items) ? row.payload.menu_issue_items : [];
   return withPayload(row, {
     __entity: 'Production',
     id: row.production_id,
@@ -832,7 +842,9 @@ function rowToProduction(row = {}) {
     reversed_by: row.reversed_by || null,
     reversed_at: row.reversed_at || null,
     reversal_reason: row.reversal_reason || null,
-    source_name: row.source_name || null
+    source_name: row.source_name || null,
+    manifest_lines: manifestLines,
+    menu_issue_items: payloadMenuIssueItems.length ? payloadMenuIssueItems : manifestLines
   });
 }
 
@@ -1203,7 +1215,36 @@ function normalizedSelectForEntity(entity) {
             JOIN recipes recipe ON recipe.recipe_id = version.recipe_id`;
   }
   if (entity === 'MenuPlan') return 'SELECT * FROM menu_plans';
-  if (entity === 'Production') return 'SELECT * FROM production_events';
+  if (entity === 'Production') {
+    return `SELECT event.*,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       COALESCE(line.payload, '{}'::jsonb) || jsonb_build_object(
+                         'id', line.production_line_id,
+                         'production_line_id', line.production_line_id,
+                         'menu_plan_line_id', line.menu_plan_line_id,
+                         'line_number', line.line_number,
+                         'recipe_id', line.recipe_version_id,
+                         'recipe_version_id', line.recipe_version_id,
+                         'ingredient_id', line.ingredient_id,
+                         'item_name', line.item_name,
+                         'recipe_name', line.item_name,
+                         'requested_servings', line.requested_servings,
+                         'requested_weight_grams', line.requested_weight_grams,
+                         'produced_servings', line.produced_servings,
+                         'produced_weight_grams', line.produced_weight_grams,
+                         'estimated_cost', line.estimated_cost,
+                         'actual_cost', line.actual_cost,
+                         'status', line.status,
+                         'source_name', line.source_name
+                       )
+                       ORDER BY line.line_number
+                     )
+                     FROM production_manifest_lines line
+                     WHERE line.production_id = event.production_id
+                   ), '[]'::jsonb) AS manifest_lines
+            FROM production_events event`;
+  }
   if (entity === 'ProductionConsumptionReport') return 'SELECT * FROM production_consumption_reports';
   if (entity === 'ProducedItemBatch') {
     return `SELECT batch.*, event.production_date, event.meal_period, event.menu_type,
@@ -2231,6 +2272,116 @@ async function replaceProductionManifestLines(record, executor = pool) {
   }
 }
 
+function foodWasteQuantityToGrams(quantity, unit = 'g') {
+  const value = toNumberOrZero(quantity);
+  if (value <= 0) return 0;
+  const normalizedUnit = String(unit || 'g').trim().toLowerCase();
+  if (normalizedUnit === 'kg') return value * 1000;
+  return value;
+}
+
+function foodWasteLineSources(record = {}) {
+  const allocations = Array.isArray(record.output_allocations)
+    ? record.output_allocations
+    : Array.isArray(record.allocations)
+      ? record.allocations
+      : [];
+  if (allocations.length) {
+    return allocations.map((allocation, index) => ({
+      ...allocation,
+      line_number: safeLineNumber(allocation?.line_number, index + 1),
+      waste_weight_grams: toNumberOrZero(
+        allocation?.wasted_weight_grams
+        ?? allocation?.waste_weight_grams
+        ?? allocation?.quantity_grams
+        ?? allocation?.quantity
+      )
+    }));
+  }
+  const wasteWeightGrams = toNumberOrZero(
+    record.wasted_weight_grams
+    ?? record.waste_weight_grams
+    ?? record.quantity_grams
+  ) || foodWasteQuantityToGrams(record.quantity, record.unit);
+  if (wasteWeightGrams <= 0) return [];
+  return [{
+    line_number: 1,
+    produced_item_batch_id: record.produced_item_batch_id || null,
+    output_batch_id: record.output_batch_id || null,
+    production_line_id: record.production_line_id || null,
+    ingredient_id: record.ingredient_id || null,
+    waste_weight_grams: wasteWeightGrams,
+    cost: record.estimated_cost || record.waste_cost || record.total_cost || 0
+  }];
+}
+
+async function replaceFoodWasteLines(record, executor = pool) {
+  await query('DELETE FROM food_waste_lines WHERE food_waste_id = $1', [record.id], executor);
+  const sources = foodWasteLineSources(record).filter((line) => toNumberOrZero(line?.waste_weight_grams) > 0);
+  if (!sources.length) return;
+
+  const createdAt = record.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  for (const [index, sourceLine] of sources.entries()) {
+    const lineNumber = safeLineNumber(sourceLine?.line_number, index + 1);
+    const lineWeightGrams = toNumberOrZero(sourceLine?.waste_weight_grams);
+    const lineCost = firstPositiveNumber([
+      sourceLine?.cost,
+      sourceLine?.estimated_cost,
+      sourceLine?.waste_cost,
+      sourceLine?.estimated_cost_per_gram && lineWeightGrams
+        ? Number(sourceLine.estimated_cost_per_gram) * lineWeightGrams
+        : null,
+      sources.length === 1 ? record.estimated_cost : null
+    ]);
+    const outputBatchId = sourceLine?.output_batch_id
+      || sourceLine?.produced_item_batch_id
+      || sourceLine?.batch_id
+      || null;
+    await query(
+      `INSERT INTO food_waste_lines (
+        food_waste_line_id, food_waste_id, output_batch_id, production_line_id, ingredient_id,
+        waste_weight_grams, cost, status, payload, created_at, updated_at
+      ) VALUES (
+        $1,
+        $2,
+        (SELECT output_batch_id FROM produced_output_batches WHERE output_batch_id = NULLIF($3::text, '') LIMIT 1),
+        (SELECT production_line_id FROM production_manifest_lines WHERE production_line_id = NULLIF($4::text, '') LIMIT 1),
+        (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($5::text, '') LIMIT 1),
+        $6,
+        $7,
+        $8,
+        $9::jsonb,
+        $10,
+        $11
+      )
+      ON CONFLICT (food_waste_line_id) DO UPDATE SET
+        output_batch_id = EXCLUDED.output_batch_id,
+        production_line_id = EXCLUDED.production_line_id,
+        ingredient_id = EXCLUDED.ingredient_id,
+        waste_weight_grams = EXCLUDED.waste_weight_grams,
+        cost = EXCLUDED.cost,
+        status = EXCLUDED.status,
+        payload = EXCLUDED.payload,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        sourceLine?.food_waste_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber),
+        record.id,
+        outputBatchId,
+        sourceLine?.production_line_id || sourceLine?.manifest_item_key || null,
+        sourceLine?.ingredient_id || record.ingredient_id || null,
+        lineWeightGrams,
+        toNumberOrZero(lineCost),
+        sourceLine?.status || record.status || 'posted',
+        jsonPayload(sourceLine),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+}
+
 async function insertOrUpdateNormalizedDocument(entity, record, existing = null, executor = pool) {
   if (entity === 'Site') return insertOrUpdateNormalizedSite(record, existing, executor);
   if (entity === 'Recipe') return insertOrUpdateNormalizedRecipe(record, existing, executor);
@@ -2573,6 +2724,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
       ],
       executor
     );
+    await replaceFoodWasteLines(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   return null;
@@ -2687,7 +2839,14 @@ const arrayReferenceTargets = new Map([
 ]);
 
 const opaqueDocumentFields = new Set([
+  'allocations',
   'data_mapping',
+  'evidence_image_urls',
+  'image_urls',
+  'inventory_movement_layers',
+  'meal_service_adjustment_consumption_ids',
+  'meal_service_source_consumption_ids',
+  'output_allocations',
   'payload',
   'raw_payload',
   'request_payload',
