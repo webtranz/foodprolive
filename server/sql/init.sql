@@ -484,7 +484,6 @@ CREATE TABLE IF NOT EXISTS areas (
   legacy_site_id TEXT UNIQUE,
   status TEXT NOT NULL DEFAULT 'active',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -501,7 +500,6 @@ CREATE TABLE IF NOT EXISTS projects (
   legacy_site_id TEXT UNIQUE,
   status TEXT NOT NULL DEFAULT 'active',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -521,7 +519,6 @@ CREATE TABLE IF NOT EXISTS warehouses (
   legacy_site_id TEXT UNIQUE,
   status TEXT NOT NULL DEFAULT 'active',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -547,7 +544,6 @@ CREATE TABLE IF NOT EXISTS ingredients (
   category_id TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -595,7 +591,6 @@ CREATE TABLE IF NOT EXISTS warehouse_inventory (
   stock_unit TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (warehouse_id, ingredient_id)
@@ -619,7 +614,6 @@ CREATE TABLE IF NOT EXISTS inventory_lots (
   unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   FOREIGN KEY (warehouse_id, ingredient_id)
@@ -1737,7 +1731,6 @@ CREATE TABLE IF NOT EXISTS cpu_production_orders (
   reversed_at TIMESTAMPTZ,
   reversal_reason TEXT,
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1756,7 +1749,6 @@ CREATE TABLE IF NOT EXISTS cpu_production_order_lines (
   produced_weight_grams NUMERIC(14, 3) NOT NULL DEFAULT 0,
   produced_servings NUMERIC(14, 3) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'planned',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1772,7 +1764,6 @@ CREATE TABLE IF NOT EXISTS cpu_manifest_lines (
   unit TEXT,
   estimated_unit_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
   estimated_line_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1789,7 +1780,6 @@ CREATE TABLE IF NOT EXISTS cpu_consumption_lines (
   unit_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
   total_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'posted',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1809,7 +1799,6 @@ CREATE TABLE IF NOT EXISTS cpu_output_batches (
   unit_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
   total_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'available',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1825,7 +1814,6 @@ CREATE TABLE IF NOT EXISTS cpu_dispatches (
   received_at TIMESTAMPTZ,
   status TEXT NOT NULL DEFAULT 'draft',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1839,7 +1827,6 @@ CREATE TABLE IF NOT EXISTS cpu_dispatch_lines (
   received_weight_grams NUMERIC(14, 3),
   received_servings NUMERIC(14, 3),
   status TEXT NOT NULL DEFAULT 'draft',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1852,7 +1839,6 @@ CREATE TABLE IF NOT EXISTS cpu_receipts (
   received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   status TEXT NOT NULL DEFAULT 'posted',
   notes TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1867,7 +1853,6 @@ CREATE TABLE IF NOT EXISTS cpu_cost_allocations (
   allocated_servings NUMERIC(14, 3),
   allocated_cost NUMERIC(14, 4) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'posted',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1893,12 +1878,22 @@ CREATE INDEX IF NOT EXISTS idx_cpu_receipts_dispatch
 CREATE INDEX IF NOT EXISTS idx_cpu_cost_allocations_destination
   ON cpu_cost_allocations(destination_warehouse_id, status, created_at DESC);
 
-ALTER TABLE areas ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE projects ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE warehouse_inventory ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE cpu_production_orders DROP COLUMN IF EXISTS payload;
+ALTER TABLE cpu_production_order_lines DROP COLUMN IF EXISTS payload;
+ALTER TABLE cpu_manifest_lines DROP COLUMN IF EXISTS payload;
+ALTER TABLE cpu_consumption_lines DROP COLUMN IF EXISTS payload;
+ALTER TABLE cpu_output_batches DROP COLUMN IF EXISTS payload;
+ALTER TABLE cpu_dispatches DROP COLUMN IF EXISTS payload;
+ALTER TABLE cpu_dispatch_lines DROP COLUMN IF EXISTS payload;
+ALTER TABLE cpu_receipts DROP COLUMN IF EXISTS payload;
+ALTER TABLE cpu_cost_allocations DROP COLUMN IF EXISTS payload;
+
+ALTER TABLE areas DROP COLUMN IF EXISTS payload;
+ALTER TABLE projects DROP COLUMN IF EXISTS payload;
+ALTER TABLE warehouses DROP COLUMN IF EXISTS payload;
+ALTER TABLE ingredients DROP COLUMN IF EXISTS payload;
+ALTER TABLE warehouse_inventory DROP COLUMN IF EXISTS payload;
+ALTER TABLE inventory_lots DROP COLUMN IF EXISTS payload;
 ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS warehouse_name TEXT;
 ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS ingredient_name TEXT;
 ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS item_code TEXT;
@@ -2159,7 +2154,7 @@ ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS available_weight_grams_bef
 -- Backfill core legacy JSON documents into the normalized cutover tables. The
 -- INSERT order follows the real foreign-key chain so a restart is safe and
 -- idempotent. Rows with missing parents are skipped instead of inventing links.
-INSERT INTO areas (area_id, area_code, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
+INSERT INTO areas (area_id, area_code, name, legacy_site_id, status, source_name, created_at, updated_at)
 SELECT
   record.id,
   NULLIF(BTRIM(COALESCE(record.data->>'area_code', record.data->>'project_code')), ''),
@@ -2167,7 +2162,6 @@ SELECT
   record.id,
   COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -2175,7 +2169,7 @@ WHERE record.entity_name = 'Site'
   AND LOWER(COALESCE(NULLIF(record.data->>'type', ''), 'area')) IN ('area', 'company', 'region')
 ON CONFLICT (area_id) DO NOTHING;
 
-INSERT INTO projects (project_id, area_id, project_code, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
+INSERT INTO projects (project_id, area_id, project_code, name, legacy_site_id, status, source_name, created_at, updated_at)
 SELECT
   record.id,
   record.data->>'parent_site_id',
@@ -2184,7 +2178,6 @@ SELECT
   record.id,
   COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -2195,7 +2188,7 @@ ON CONFLICT (project_id) DO NOTHING;
 
 INSERT INTO warehouses (
   warehouse_id, project_id, warehouse_code, d365_warehouse_id, name, legacy_site_id,
-  status, source_name, payload, created_at, updated_at
+  status, source_name, created_at, updated_at
 )
 SELECT
   record.id,
@@ -2206,7 +2199,6 @@ SELECT
   record.id,
   COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -2217,7 +2209,7 @@ ON CONFLICT (warehouse_id) DO NOTHING;
 
 INSERT INTO ingredients (
   ingredient_id, item_code, ingredient_code, sku, d365_item_id, name, base_unit,
-  category_id, status, source_name, payload, created_at, updated_at
+  category_id, status, source_name, created_at, updated_at
 )
 SELECT
   record.id,
@@ -2236,7 +2228,6 @@ SELECT
   NULLIF(BTRIM(COALESCE(record.data->>'category_id', record.data->>'category')), ''),
   COALESCE(NULLIF(record.data->>'status', ''), CASE WHEN record.data->>'is_active' = 'false' THEN 'inactive' ELSE 'active' END),
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -2246,7 +2237,7 @@ ON CONFLICT (ingredient_id) DO NOTHING;
 INSERT INTO warehouse_inventory (
   inventory_id, warehouse_id, ingredient_id, available_quantity, reserved_quantity,
   on_hand_quantity, average_unit_cost, last_unit_cost, stock_unit, status,
-  source_name, payload, created_at, updated_at
+  source_name, created_at, updated_at
 )
 SELECT
   record.id,
@@ -2260,7 +2251,6 @@ SELECT
   COALESCE(NULLIF(BTRIM(record.data->>'unit'), ''), ingredient.base_unit, 'EA'),
   COALESCE(NULLIF(record.data->>'status', ''), 'active'),
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -2272,7 +2262,7 @@ ON CONFLICT (inventory_id) DO NOTHING;
 INSERT INTO inventory_lots (
   lot_id, inventory_id, warehouse_id, ingredient_id, batch_number, received_date, stock_date,
   expiry_date, original_quantity, remaining_quantity, unit, unit_cost, status, source_name,
-  payload, created_at, updated_at
+  created_at, updated_at
 )
 SELECT
   record.id,
@@ -2289,7 +2279,6 @@ SELECT
   COALESCE(NULLIF(record.data->>'unit_cost', '')::numeric, NULLIF(record.data->>'cost_per_unit', '')::numeric, 0),
   COALESCE(NULLIF(record.data->>'status', ''), 'active'),
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -4699,7 +4688,10 @@ CREATE TABLE IF NOT EXISTS app_logs (
   user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   user_email TEXT,
   page_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  action TEXT,
+  site_id TEXT,
+  reference_id TEXT,
+  details_text TEXT,
   visited_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -4918,6 +4910,7 @@ CREATE TABLE IF NOT EXISTS pos_sync_logs (
 CREATE TABLE IF NOT EXISTS suppliers (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  supplier_code TEXT,
   contact_person TEXT,
   email TEXT,
   phone TEXT,
@@ -4935,19 +4928,25 @@ CREATE TABLE IF NOT EXISTS suppliers (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS supplier_code TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE suppliers DROP COLUMN IF EXISTS payload;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_supplier_code_unique
+  ON suppliers (LOWER(BTRIM(supplier_code)))
+  WHERE COALESCE(BTRIM(supplier_code), '') <> '';
 
 CREATE INDEX IF NOT EXISTS idx_suppliers_source_status
   ON suppliers (source_name, status, updated_at DESC);
 
 INSERT INTO suppliers (
-  id, name, contact_person, email, phone, address, city, country, payment_terms,
-  lead_time_days, status, rating, categories, notes, source_name, payload, created_at, updated_at
+  id, name, supplier_code, contact_person, email, phone, address, city, country, payment_terms,
+  lead_time_days, status, rating, categories, notes, source_name, created_at, updated_at
 )
 SELECT
   record.id,
   COALESCE(NULLIF(record.data->>'name', ''), NULLIF(record.data->>'supplier_name', ''), record.id),
+  NULLIF(record.data->>'supplier_code', ''),
   NULLIF(record.data->>'contact_person', ''),
   NULLIF(record.data->>'email', ''),
   NULLIF(record.data->>'phone', ''),
@@ -4963,7 +4962,6 @@ SELECT
   CASE WHEN jsonb_typeof(record.data->'categories') = 'array' THEN record.data->'categories' ELSE '[]'::jsonb END,
   NULLIF(record.data->>'notes', ''),
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -5288,7 +5286,37 @@ EXECUTE FUNCTION validate_supplier_invoice_chain();
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_users_site_status ON users(site_id, status);
 CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status);
+ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS action TEXT;
+ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS reference_id TEXT;
+ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS details_text TEXT;
+DO $app_logs_payload_cutover$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'app_logs'
+      AND column_name = 'payload'
+  ) THEN
+    UPDATE app_logs
+       SET action = COALESCE(action, NULLIF(payload->>'action', ''), NULLIF(payload->>'event', ''), NULLIF(payload->>'type', '')),
+           site_id = COALESCE(site_id, NULLIF(payload->>'site_id', ''), NULLIF(payload->>'location_id', ''), NULLIF(payload->>'warehouse_id', '')),
+           reference_id = COALESCE(
+             reference_id,
+             NULLIF(payload->>'reference_id', ''),
+             NULLIF(payload->>'generated_pr_id', ''),
+             NULLIF(payload->>'request_id', ''),
+             NULLIF(payload->>'scenario_id', ''),
+             NULLIF(payload->>'snapshot_id', '')
+           ),
+           details_text = COALESCE(details_text, payload::text);
+    ALTER TABLE app_logs DROP COLUMN payload;
+  END IF;
+END;
+$app_logs_payload_cutover$;
 CREATE INDEX IF NOT EXISTS idx_app_logs_user ON app_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_app_logs_site_action ON app_logs(site_id, action, visited_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity, entity_id, created_at DESC);
@@ -5364,7 +5392,8 @@ CREATE TABLE IF NOT EXISTS monthly_purchase_requests (
   chef_warning_note TEXT,
   return_reason TEXT,
   notes TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  missing_recipe_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+  missing_ingredient_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -5392,7 +5421,7 @@ CREATE TABLE IF NOT EXISTS monthly_purchase_request_lines (
   estimated_unit_price NUMERIC(18, 6) NOT NULL DEFAULT 0,
   estimated_line_amount NUMERIC(18, 6) NOT NULL DEFAULT 0,
   source_line_count INTEGER NOT NULL DEFAULT 0,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_line_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -5416,8 +5445,7 @@ CREATE TABLE IF NOT EXISTS monthly_purchase_request_source_lines (
   recipe_id TEXT,
   recipe_name TEXT,
   planned_covers NUMERIC(18, 6) NOT NULL DEFAULT 0,
-  warning_codes JSONB NOT NULL DEFAULT '[]'::jsonb,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  warning_codes TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -5426,6 +5454,42 @@ CREATE INDEX IF NOT EXISTS idx_monthly_pr_source_request
 
 CREATE INDEX IF NOT EXISTS idx_monthly_pr_source_plan
   ON monthly_purchase_request_source_lines (menu_plan_id, menu_plan_line_id);
+
+ALTER TABLE monthly_purchase_requests
+  ADD COLUMN IF NOT EXISTS missing_recipe_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+ALTER TABLE monthly_purchase_requests
+  ADD COLUMN IF NOT EXISTS missing_ingredient_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+ALTER TABLE monthly_purchase_requests DROP COLUMN IF EXISTS payload;
+
+ALTER TABLE monthly_purchase_request_lines
+  ADD COLUMN IF NOT EXISTS source_line_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+ALTER TABLE monthly_purchase_request_lines DROP COLUMN IF EXISTS payload;
+
+ALTER TABLE monthly_purchase_request_source_lines DROP COLUMN IF EXISTS payload;
+DO $monthly_purchase_request_warning_codes_cutover$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'monthly_purchase_request_source_lines'
+      AND column_name = 'warning_codes'
+      AND data_type = 'jsonb'
+  ) THEN
+    ALTER TABLE monthly_purchase_request_source_lines RENAME COLUMN warning_codes TO warning_codes_jsonb;
+    ALTER TABLE monthly_purchase_request_source_lines ADD COLUMN warning_codes TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+    UPDATE monthly_purchase_request_source_lines
+       SET warning_codes = COALESCE((
+         SELECT ARRAY_AGG(value)
+         FROM jsonb_array_elements_text(warning_codes_jsonb) AS extracted(value)
+       ), ARRAY[]::text[]);
+    ALTER TABLE monthly_purchase_request_source_lines DROP COLUMN warning_codes_jsonb;
+  ELSE
+    ALTER TABLE monthly_purchase_request_source_lines
+      ADD COLUMN IF NOT EXISTS warning_codes TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+  END IF;
+END;
+$monthly_purchase_request_warning_codes_cutover$;
 
 CREATE TABLE IF NOT EXISTS monthly_purchase_request_warnings (
   warning_id TEXT PRIMARY KEY,

@@ -584,10 +584,10 @@ async function createMonthlyPurchaseRequest(user, payload = {}) {
         project_id, project_name, primary_warehouse_id, primary_warehouse_name, warehouse_ids,
         month_key, start_date, end_date, inclusions, status, current_step,
         prepared_by, prepared_by_name, warning_count, line_count, total_estimated_cost,
-        chef_warning_note, d365_status, payload, created_at, updated_at
+        chef_warning_note, d365_status, missing_recipe_ids, missing_ingredient_ids, created_at, updated_at
       ) VALUES (
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text[],$12,$13,$14,$15,$16,$17,
-        $18,$19,$20,$21,$22,$23,'placeholder',$24::jsonb,NOW(),NOW()
+        $18,$19,$20,$21,$22,$23,'placeholder',$24::text[],$25::text[],NOW(),NOW()
       )`,
       [
         requestId,
@@ -613,10 +613,8 @@ async function createMonthlyPurchaseRequest(user, payload = {}) {
         preview.line_count,
         preview.total_estimated_cost,
         normalizeText(payload.warning_note) || null,
-        JSON.stringify({
-          missing_recipe_ids: preview.missing_recipe_ids,
-          missing_ingredient_ids: preview.missing_ingredient_ids
-        })
+        preview.missing_recipe_ids || [],
+        preview.missing_ingredient_ids || []
       ]
     );
 
@@ -625,8 +623,8 @@ async function createMonthlyPurchaseRequest(user, payload = {}) {
         `INSERT INTO monthly_purchase_request_lines (
           line_id, request_id, ingredient_id, item_code, item_name, warehouse_id,
           project_id, delivery_date, requested_quantity, unit, estimated_unit_price,
-          estimated_line_amount, source_line_count, payload, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,NOW(),NOW())`,
+          estimated_line_amount, source_line_count, source_line_ids, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::text[],NOW(),NOW())`,
         [
           line.line_id,
           requestId,
@@ -641,7 +639,7 @@ async function createMonthlyPurchaseRequest(user, payload = {}) {
           line.estimated_unit_price,
           line.estimated_line_amount,
           line.source_line_ids.length,
-          JSON.stringify(line)
+          line.source_line_ids || []
         ]
       );
     }
@@ -651,8 +649,8 @@ async function createMonthlyPurchaseRequest(user, payload = {}) {
         `INSERT INTO monthly_purchase_request_source_lines (
           source_id, request_id, menu_plan_id, menu_plan_line_id, warehouse_id,
           plan_date, meal_period, menu_type, menu_category, recipe_id, recipe_name,
-          planned_covers, warning_codes, payload, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb,NOW())`,
+          planned_covers, warning_codes, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::text[],NOW())`,
         [
           randomId('mprs'),
           requestId,
@@ -666,8 +664,7 @@ async function createMonthlyPurchaseRequest(user, payload = {}) {
           sourceLine.recipe_id,
           sourceLine.recipe_name,
           sourceLine.planned_covers,
-          JSON.stringify(sourceLine.warning_codes || []),
-          JSON.stringify(sourceLine)
+          sourceLine.warning_codes || []
         ]
       );
     }

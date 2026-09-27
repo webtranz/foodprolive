@@ -936,7 +936,7 @@ async function listRelationalDocumentReferenceRows(executor = pool) {
 }
 
 function rowToSite(row = {}) {
-  return withPayload(row, {
+  return hydrateDerivedFields('Site', {
     __entity: 'Site',
     id: row.id,
     name: row.name,
@@ -946,12 +946,14 @@ function rowToSite(row = {}) {
     d365_warehouse_id: row.d365_warehouse_id || null,
     source_name: row.source_name || null,
     is_active: row.status !== 'inactive',
-    status: row.status || 'active'
+    status: row.status || 'active',
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
 function rowToIngredient(row = {}) {
-  return withPayload(row, {
+  return hydrateDerivedFields('Ingredient', {
     __entity: 'Ingredient',
     id: row.ingredient_id,
     name: row.name,
@@ -964,12 +966,14 @@ function rowToIngredient(row = {}) {
     category: row.category_id || null,
     source_name: row.source_name || null,
     is_active: row.status !== 'inactive',
-    status: row.status || 'active'
+    status: row.status || 'active',
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
 function rowToInventory(row = {}) {
-  return withPayload(row, {
+  return hydrateDerivedFields('Inventory', {
     __entity: 'Inventory',
     id: row.inventory_id,
     site_id: row.warehouse_id,
@@ -982,12 +986,14 @@ function rowToInventory(row = {}) {
     last_unit_cost: Number(row.last_unit_cost || 0),
     unit: row.stock_unit,
     status: row.status || 'active',
-    source_name: row.source_name || null
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
 function rowToInventoryLot(row = {}) {
-  return withPayload(row, {
+  return hydrateDerivedFields('InventoryLot', {
     __entity: 'InventoryLot',
     id: row.lot_id,
     inventory_id: row.inventory_id,
@@ -1002,7 +1008,9 @@ function rowToInventoryLot(row = {}) {
     unit: row.unit,
     unit_cost: Number(row.unit_cost || 0),
     status: row.status || 'active',
-    source_name: row.source_name || null
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
@@ -1598,10 +1606,11 @@ function rowToFoodWaste(row = {}) {
 }
 
 function rowToSupplier(row = {}) {
-  return withPayload(row, {
+  return hydrateDerivedFields('Supplier', {
     __entity: 'Supplier',
     id: row.id,
     name: row.name,
+    supplier_code: row.supplier_code || null,
     contact_person: row.contact_person || null,
     email: row.email || null,
     phone: row.phone || null,
@@ -1614,7 +1623,9 @@ function rowToSupplier(row = {}) {
     rating: Number(row.rating || 0),
     categories: Array.isArray(row.categories) ? row.categories : [],
     notes: row.notes || null,
-    source_name: row.source_name || null
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
@@ -1625,14 +1636,15 @@ const normalizedSimpleConfigs = {
     mapper: rowToSupplier,
     select: 'SELECT * FROM suppliers',
     insertSql: `INSERT INTO suppliers (
-      id, name, contact_person, email, phone, address, city, country,
+      id, name, supplier_code, contact_person, email, phone, address, city, country,
       payment_terms, lead_time_days, status, rating, categories, notes,
-      source_name, payload, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17,$18)`,
+      source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18)`,
     values(record) {
       return [
         record.id,
         record.name || record.supplier_name || 'Supplier',
+        record.supplier_code || record.code || null,
         record.contact_person || null,
         record.email || null,
         record.phone || null,
@@ -1646,16 +1658,15 @@ const normalizedSimpleConfigs = {
         JSON.stringify(Array.isArray(record.categories) ? record.categories : []),
         record.notes || null,
         record.source_name || null,
-        jsonPayload(record),
         record.created_date || nowIso(),
         record.updated_date || nowIso()
       ];
     },
     updateSql: `UPDATE suppliers SET
-      name = $2, contact_person = $3, email = $4, phone = $5, address = $6,
-      city = $7, country = $8, payment_terms = $9, lead_time_days = $10,
-      status = $11, rating = $12, categories = $13::jsonb, notes = $14,
-      source_name = $15, payload = $16::jsonb, updated_at = $17
+      name = $2, supplier_code = $3, contact_person = $4, email = $5, phone = $6, address = $7,
+      city = $8, country = $9, payment_terms = $10, lead_time_days = $11,
+      status = $12, rating = $13, categories = $14::jsonb, notes = $15,
+      source_name = $16, updated_at = $17
       WHERE id = $1`,
     updateValues(record) {
       const values = this.values(record);
@@ -1669,8 +1680,8 @@ const normalizedSimpleConfigs = {
     select: 'SELECT * FROM ingredients',
     insertSql: `INSERT INTO ingredients (
       ingredient_id, item_code, ingredient_code, sku, d365_item_id, name, base_unit,
-      category_id, status, source_name, payload, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)`,
+      category_id, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     values(record) {
       const itemCode = String(record.item_code || record.ingredient_code || record.sku || record.d365_item_id || record.id).trim();
       return [
@@ -1684,7 +1695,6 @@ const normalizedSimpleConfigs = {
         record.category || record.category_id || null,
         record.status || (record.is_active === false ? 'inactive' : 'active'),
         record.source_name || null,
-        jsonPayload(record),
         record.created_date || nowIso(),
         record.updated_date || nowIso()
       ];
@@ -1692,11 +1702,11 @@ const normalizedSimpleConfigs = {
     updateSql: `UPDATE ingredients SET
       item_code = $2, ingredient_code = $3, sku = $4, d365_item_id = $5, name = $6,
       base_unit = $7, category_id = $8, status = $9, source_name = $10,
-      payload = $11::jsonb, updated_at = $12
+      updated_at = $11
       WHERE ingredient_id = $1`,
     updateValues(record) {
       const values = this.values(record);
-      return [values[0], ...values.slice(1, 11), record.updated_date || nowIso()];
+      return [values[0], ...values.slice(1, 10), record.updated_date || nowIso()];
     }
   },
   Inventory: {
@@ -1707,8 +1717,8 @@ const normalizedSimpleConfigs = {
     insertSql: `INSERT INTO warehouse_inventory (
       inventory_id, warehouse_id, ingredient_id, available_quantity, reserved_quantity,
       on_hand_quantity, average_unit_cost, last_unit_cost, stock_unit, status,
-      source_name, payload, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14)`,
+      source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     values(record) {
       return [
         record.id,
@@ -1722,7 +1732,6 @@ const normalizedSimpleConfigs = {
         record.stock_unit || record.unit || 'EA',
         record.status || 'active',
         record.source_name || null,
-        jsonPayload(record),
         record.created_date || nowIso(),
         record.updated_date || nowIso()
       ];
@@ -1730,11 +1739,11 @@ const normalizedSimpleConfigs = {
     updateSql: `UPDATE warehouse_inventory SET
       warehouse_id = $2, ingredient_id = $3, available_quantity = $4, reserved_quantity = $5,
       on_hand_quantity = $6, average_unit_cost = $7, last_unit_cost = $8, stock_unit = $9,
-      status = $10, source_name = $11, payload = $12::jsonb, updated_at = $13
+      status = $10, source_name = $11, updated_at = $12
       WHERE inventory_id = $1`,
     updateValues(record) {
       const values = this.values(record);
-      return [values[0], ...values.slice(1, 12), record.updated_date || nowIso()];
+      return [values[0], ...values.slice(1, 11), record.updated_date || nowIso()];
     }
   },
   InventoryLot: {
@@ -1745,8 +1754,8 @@ const normalizedSimpleConfigs = {
     insertSql: `INSERT INTO inventory_lots (
       lot_id, inventory_id, warehouse_id, ingredient_id, batch_number, received_date, stock_date,
       expiry_date, original_quantity, remaining_quantity, unit, unit_cost, status, source_name,
-      payload, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)`,
+      created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
     values(record) {
       return [
         record.id,
@@ -1763,7 +1772,6 @@ const normalizedSimpleConfigs = {
         toNumberOrZero(record.unit_cost ?? record.cost_per_unit),
         record.status || 'active',
         record.source_name || null,
-        jsonPayload(record),
         record.created_date || nowIso(),
         record.updated_date || nowIso()
       ];
@@ -1772,11 +1780,11 @@ const normalizedSimpleConfigs = {
       inventory_id = $2, warehouse_id = $3, ingredient_id = $4, batch_number = $5,
       received_date = $6, stock_date = $7, expiry_date = $8, original_quantity = $9,
       remaining_quantity = $10, unit = $11, unit_cost = $12, status = $13,
-      source_name = $14, payload = $15::jsonb, updated_at = $16
+      source_name = $14, updated_at = $15
       WHERE lot_id = $1`,
     updateValues(record) {
       const values = this.values(record);
-      return [values[0], ...values.slice(1, 15), record.updated_date || nowIso()];
+      return [values[0], ...values.slice(1, 14), record.updated_date || nowIso()];
     }
   },
   InventoryTransaction: {
@@ -1933,17 +1941,17 @@ function normalizedSelectForEntity(entity) {
   if (entity === 'Site') {
     return `SELECT area_id AS id, name, 'area' AS type, NULL::text AS parent_site_id,
                    area_code, NULL::text AS project_code, NULL::text AS warehouse_code,
-                   NULL::text AS d365_warehouse_id, status, source_name, payload, created_at, updated_at
+                   NULL::text AS d365_warehouse_id, status, source_name, created_at, updated_at
             FROM areas
             UNION ALL
             SELECT project_id AS id, name, 'project' AS type, area_id AS parent_site_id,
                    NULL::text AS area_code, project_code, NULL::text AS warehouse_code,
-                   NULL::text AS d365_warehouse_id, status, source_name, payload, created_at, updated_at
+                   NULL::text AS d365_warehouse_id, status, source_name, created_at, updated_at
             FROM projects
             UNION ALL
             SELECT warehouse_id AS id, name, 'store' AS type, project_id AS parent_site_id,
                    NULL::text AS area_code, NULL::text AS project_code, warehouse_code,
-                   d365_warehouse_id, status, source_name, payload, created_at, updated_at
+                   d365_warehouse_id, status, source_name, created_at, updated_at
             FROM warehouses`;
   }
   if (entity === 'Recipe') {
@@ -2952,6 +2960,7 @@ function normalizedSqlColumnForField(entity, field) {
       name: 'name',
       supplier_name: 'name',
       contact_person: 'contact_person',
+      supplier_code: 'supplier_code',
       email: 'email',
       phone: 'phone',
       city: 'city',
@@ -3321,11 +3330,11 @@ async function insertOrUpdateNormalizedSite(record, existing = null, executor = 
   }
   if (type === SITE_HIERARCHY_TYPES.AREA) {
     await query(
-      `INSERT INTO areas (area_id, area_code, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)
+      `INSERT INTO areas (area_id, area_code, name, legacy_site_id, status, source_name, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (area_id) DO UPDATE SET
          area_code = EXCLUDED.area_code, name = EXCLUDED.name, legacy_site_id = EXCLUDED.legacy_site_id,
-         status = EXCLUDED.status, source_name = EXCLUDED.source_name, payload = EXCLUDED.payload,
+         status = EXCLUDED.status, source_name = EXCLUDED.source_name,
          updated_at = EXCLUDED.updated_at`,
       [
         record.id,
@@ -3334,7 +3343,6 @@ async function insertOrUpdateNormalizedSite(record, existing = null, executor = 
         record.legacy_site_id || record.id,
         record.status || (record.is_active === false ? 'inactive' : 'active'),
         record.source_name || null,
-        jsonPayload(record),
         createdAt,
         updatedAt
       ],
@@ -3342,12 +3350,12 @@ async function insertOrUpdateNormalizedSite(record, existing = null, executor = 
     );
   } else if (type === SITE_HIERARCHY_TYPES.PROJECT) {
     await query(
-      `INSERT INTO projects (project_id, area_id, project_code, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
+      `INSERT INTO projects (project_id, area_id, project_code, name, legacy_site_id, status, source_name, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        ON CONFLICT (project_id) DO UPDATE SET
          area_id = EXCLUDED.area_id, project_code = EXCLUDED.project_code, name = EXCLUDED.name,
          legacy_site_id = EXCLUDED.legacy_site_id, status = EXCLUDED.status, source_name = EXCLUDED.source_name,
-         payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+         updated_at = EXCLUDED.updated_at`,
       [
         record.id,
         record.parent_site_id,
@@ -3356,7 +3364,6 @@ async function insertOrUpdateNormalizedSite(record, existing = null, executor = 
         record.legacy_site_id || record.id,
         record.status || (record.is_active === false ? 'inactive' : 'active'),
         record.source_name || null,
-        jsonPayload(record),
         createdAt,
         updatedAt
       ],
@@ -3364,13 +3371,13 @@ async function insertOrUpdateNormalizedSite(record, existing = null, executor = 
     );
   } else {
     await query(
-      `INSERT INTO warehouses (warehouse_id, project_id, warehouse_code, d365_warehouse_id, name, legacy_site_id, status, source_name, payload, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)
+      `INSERT INTO warehouses (warehouse_id, project_id, warehouse_code, d365_warehouse_id, name, legacy_site_id, status, source_name, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        ON CONFLICT (warehouse_id) DO UPDATE SET
          project_id = EXCLUDED.project_id, warehouse_code = EXCLUDED.warehouse_code,
          d365_warehouse_id = EXCLUDED.d365_warehouse_id, name = EXCLUDED.name,
          legacy_site_id = EXCLUDED.legacy_site_id, status = EXCLUDED.status, source_name = EXCLUDED.source_name,
-         payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+         updated_at = EXCLUDED.updated_at`,
       [
         record.id,
         record.parent_site_id,
@@ -3380,7 +3387,6 @@ async function insertOrUpdateNormalizedSite(record, existing = null, executor = 
         record.legacy_site_id || record.id,
         record.status || (record.is_active === false ? 'inactive' : 'active'),
         record.source_name || null,
-        jsonPayload(record),
         createdAt,
         updatedAt
       ],
@@ -7018,10 +7024,33 @@ async function inviteUser(email, role = 'user') {
 
 async function createAppLog({ page_name, user_id, user_email, payload = {} }) {
   const id = randomId('applog');
+  const textField = (value) => {
+    const text = String(value || '').trim();
+    return text || null;
+  };
+  const detailsText = payload && Object.keys(payload).length ? JSON.stringify(payload) : null;
   await query(
-    `INSERT INTO app_logs (id, user_id, user_email, page_name, payload, visited_at)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
-    [id, user_id || null, user_email || null, page_name || null, JSON.stringify(payload), nowIso()]
+    `INSERT INTO app_logs (
+       id, user_id, user_email, page_name, action, site_id, reference_id, details_text, visited_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      id,
+      user_id || null,
+      user_email || null,
+      page_name || null,
+      textField(payload.action || payload.event || payload.type),
+      textField(payload.site_id || payload.location_id || payload.warehouse_id),
+      textField(
+        payload.reference_id
+        || payload.generated_pr_id
+        || payload.request_id
+        || payload.scenario_id
+        || payload.snapshot_id
+      ),
+      detailsText,
+      nowIso()
+    ]
   );
   return { id, page_name, user_id, user_email, payload };
 }

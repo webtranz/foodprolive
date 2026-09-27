@@ -230,13 +230,14 @@ async function createSupplier(payload) {
   const id = randomId('sup');
   const result = await query(
     `INSERT INTO suppliers (
-      id, name, contact_person, email, phone, address, city, country, payment_terms,
+      id, name, supplier_code, contact_person, email, phone, address, city, country, payment_terms,
       lead_time_days, status, rating, categories, notes, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,NOW(),NOW())
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,NOW(),NOW())
     RETURNING *`,
     [
       id,
       normalizeText(payload.name),
+      normalizeText(payload.supplier_code || payload.code) || null,
       normalizeText(payload.contact_person) || null,
       normalizeText(payload.email) || null,
       normalizeText(payload.phone) || null,
@@ -260,24 +261,26 @@ async function updateSupplier(id, payload) {
   const result = await query(
     `UPDATE suppliers
      SET name = $2,
-         contact_person = $3,
-         email = $4,
-         phone = $5,
-         address = $6,
-         city = $7,
-         country = $8,
-         payment_terms = $9,
-         lead_time_days = $10,
-         status = $11,
-         rating = $12,
-         categories = $13::jsonb,
-         notes = $14,
+         supplier_code = $3,
+         contact_person = $4,
+         email = $5,
+         phone = $6,
+         address = $7,
+         city = $8,
+         country = $9,
+         payment_terms = $10,
+         lead_time_days = $11,
+         status = $12,
+         rating = $13,
+         categories = $14::jsonb,
+         notes = $15,
          updated_at = NOW()
      WHERE id = $1
      RETURNING *`,
     [
       id,
       normalizeText(payload.name ?? existing.name),
+      normalizeText(payload.supplier_code ?? existing.supplier_code) || null,
       normalizeText(payload.contact_person ?? existing.contact_person) || null,
       normalizeText(payload.email ?? existing.email) || null,
       normalizeText(payload.phone ?? existing.phone) || null,
