@@ -263,6 +263,30 @@ assert.deepEqual(relationalMenuPlanLine.meals, [
   }
 ]);
 
+const groupedMenuPlanRows = groupBulkUploadRows('menu-plans', [
+  {
+    rowNumber: 4,
+    payload: mapCsvRow(
+      'menu-plans',
+      ['site_id', 'plan_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'recipe_code', 'recipe_name', 'expected_servings'],
+      ['store-1', '2026-09-01', 'Breakfast', 'General', 'Labor', '1', 'RCP-LAB', 'Labor Breakfast', '120']
+    )
+  },
+  {
+    rowNumber: 5,
+    payload: mapCsvRow(
+      'menu-plans',
+      ['site_id', 'plan_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'recipe_code', 'recipe_name', 'expected_servings'],
+      ['store-1', '2026-09-01', 'Breakfast', 'General', 'Junior', '1', 'RCP-JUN', 'Junior Breakfast', '80']
+    )
+  }
+]);
+assert.equal(groupedMenuPlanRows.length, 2);
+assert.deepEqual(
+  groupedMenuPlanRows.map((row) => row.payload.menu_category).sort(),
+  ['junior', 'labor']
+);
+
 const relationalProductionLine = mapCsvRow(
   'production',
   ['site_id', 'production_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'menu_plan_line_id', 'recipe_code', 'recipe_name', 'requested_servings', 'requested_weight_kg', 'produced_weight_kg', 'estimated_cost'],

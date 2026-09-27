@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import './menuRecipeLinks.test.mjs';
 
 import {
+  assertMenuPlanScopeUnchanged,
   buildApiObjectResponse,
   buildMenuPlanWeekRange,
   filterMenuPlansForWeek,
@@ -102,6 +103,33 @@ const cases = [
         ['monday', 'friday', 'sunday']
       );
       assert.deepEqual(filterMenuPlansForWeek(records, '', '2026-08-10'), []);
+    }
+  },
+  {
+    name: 'rejects menu plan updates that drift into another date or category',
+    run() {
+      const existing = {
+        id: 'plan-labor',
+        site_id: 'site-1',
+        plan_date: '2026-09-01',
+        cuisine_type: 'general',
+        menu_category: 'labor'
+      };
+
+      assert.doesNotThrow(() => assertMenuPlanScopeUnchanged(existing, {
+        site_id: 'site-1',
+        plan_date: '2026-09-01',
+        cuisine_type: 'General',
+        menu_category: 'Labour'
+      }));
+      assert.throws(
+        () => assertMenuPlanScopeUnchanged(existing, { ...existing, menu_category: 'junior' }),
+        /scope cannot be changed/i
+      );
+      assert.throws(
+        () => assertMenuPlanScopeUnchanged(existing, { ...existing, plan_date: '2026-09-02' }),
+        /scope cannot be changed/i
+      );
     }
   },
   {

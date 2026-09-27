@@ -19,7 +19,9 @@ import { usePermissions } from '@/components/auth/usePermissions';
 import {
   getMenuCategoryLabel,
   getMenuCategoryOptions,
-  MENU_CUISINE_OPTIONS
+  MENU_CUISINE_OPTIONS,
+  normalizeMenuCategory,
+  normalizeMenuCuisine
 } from '../../shared/menuCategories.js';
 import {
   buildDailyMenuState,
@@ -55,6 +57,14 @@ const MEAL_BADGES = {
 
 function isOperationalMenuPlan(plan) {
   return !String(plan?.event_name || '').trim();
+}
+
+function menuPlanMatchesCurrentScope(plan, siteId, planDate, menuCuisine, menuCategory) {
+  if (!plan) return false;
+  return String(plan.site_id || '').trim() === String(siteId || '').trim()
+    && String(plan.plan_date || '').trim().slice(0, 10) === String(planDate || '').trim()
+    && normalizeMenuCuisine(plan.cuisine_type ?? plan.menu_type, 'general') === normalizeMenuCuisine(menuCuisine, 'general')
+    && normalizeMenuCategory(plan.menu_category, 'senior') === normalizeMenuCategory(menuCategory, 'senior');
 }
 
 function getMealDroppableId(mealType) {
@@ -159,7 +169,13 @@ export default function MenuPlanning() {
     enabled: !!selectedSite && !!selectedDate
   });
 
-  const selectedPlan = selectedPlanResponse?.plan || null;
+  const selectedPlan = menuPlanMatchesCurrentScope(
+    selectedPlanResponse?.plan,
+    selectedSite,
+    selectedDate,
+    selectedMenuCuisine,
+    selectedMenuCategory
+  ) ? selectedPlanResponse.plan : null;
   const autoLinkedBudget = selectedPlanResponse?.linked_budget || null;
   const budgetCandidates = Array.isArray(selectedPlanResponse?.budget_candidates) ? selectedPlanResponse.budget_candidates : [];
 

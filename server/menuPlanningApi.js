@@ -60,6 +60,34 @@ function filterMenuPlansForWeek(records = [], siteId, weekStart, options = {}) {
   ));
 }
 
+function getMenuPlanScope(plan = {}) {
+  return {
+    site_id: normalizeText(plan?.site_id),
+    plan_date: normalizeDateOnly(plan?.plan_date),
+    cuisine_type: normalizeMenuCuisine(plan?.cuisine_type ?? plan?.menu_type, 'general'),
+    menu_category: normalizeMenuCategory(plan?.menu_category, 'senior')
+  };
+}
+
+function assertMenuPlanScopeUnchanged(existing = {}, payload = {}) {
+  const existingScope = getMenuPlanScope(existing);
+  const nextScope = {
+    site_id: normalizeText(payload?.site_id ?? existing?.site_id),
+    plan_date: normalizeDateOnly(payload?.plan_date ?? existing?.plan_date),
+    cuisine_type: normalizeMenuCuisine(payload?.cuisine_type ?? payload?.menu_type ?? existing?.cuisine_type ?? existing?.menu_type, 'general'),
+    menu_category: normalizeMenuCategory(payload?.menu_category ?? existing?.menu_category, 'senior')
+  };
+
+  const drifted = Object.keys(existingScope).some((key) => existingScope[key] !== nextScope[key]);
+  if (!drifted) return;
+
+  const error = new Error(
+    'Menu plan scope cannot be changed after it is created. Select the matching date, menu type, and menu category before saving.'
+  );
+  error.status = 409;
+  throw error;
+}
+
 function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
   const hasRecipeLines = (Array.isArray(recipe?.ingredients) && recipe.ingredients.length > 0)
     || (Array.isArray(recipe?.sub_recipes) && recipe.sub_recipes.length > 0);
@@ -246,6 +274,7 @@ function validateFoodWasteContextInput({ siteId, wasteDate, mealType, token = ''
 }
 
 export {
+  assertMenuPlanScopeUnchanged,
   buildApiObjectResponse,
   buildMenuPlanWeekRange,
   filterMenuPlansForWeek,

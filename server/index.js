@@ -177,6 +177,7 @@ import {
   generatePurchaseRequestFromMenuPlans
 } from './menuPlanningProcurement.js';
 import {
+  assertMenuPlanScopeUnchanged,
   buildApiObjectResponse,
   buildMenuPlanWeekRange,
   filterMenuPlansForWeek,
@@ -4016,6 +4017,7 @@ app.patch('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_pla
     if (errors.length) {
       return response.status(400).json({ message: errors[0], errors });
     }
+    assertMenuPlanScopeUnchanged(existing, payload);
     const selectedBudget = await validateMenuPlanBudgetSelection(request.user, payload);
     if (selectedBudget) {
       payload.budget_name = selectedBudget.name;

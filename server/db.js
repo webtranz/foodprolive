@@ -30,6 +30,7 @@ import {
   isRolePrimarySiteType,
   normalizeRoleLocationFields
 } from '../shared/roleLocationPolicy.js';
+import { normalizeMenuCategory, normalizeMenuCuisine } from '../shared/menuCategories.js';
 import {
   assertUserDeactivationAllowed,
   isActiveAdministratorAccount,
@@ -4275,7 +4276,34 @@ async function claimNextBulkUploadJob({ staleAfterMs = 15 * 60 * 1000 } = {}) {
   });
 }
 
-async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
+function bulkMenuPlanScopeOptions(options = {}) {
+  const planDates = Array.isArray(options.plan_dates ?? options.planDates)
+    ? (options.plan_dates ?? options.planDates)
+      .map((value) => String(value || '').trim())
+      .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    : [];
+  return {
+    cuisine_type: normalizeMenuCuisine(options.menu_cuisine ?? options.menuCuisine ?? options.cuisine_type ?? options.cuisineType, ''),
+    menu_category: normalizeMenuCategory(options.menu_category ?? options.menuCategory, ''),
+    plan_dates: [...new Set(planDates)]
+  };
+}
+
+function menuPlanMatchesBulkClearScope(record = {}, options = {}) {
+  const scope = bulkMenuPlanScopeOptions(options);
+  if (scope.cuisine_type && normalizeMenuCuisine(record?.cuisine_type ?? record?.menu_type, 'general') !== scope.cuisine_type) {
+    return false;
+  }
+  if (scope.menu_category && normalizeMenuCategory(record?.menu_category, 'senior') !== scope.menu_category) {
+    return false;
+  }
+  if (scope.plan_dates.length && !scope.plan_dates.includes(String(record?.plan_date || '').trim().slice(0, 10))) {
+    return false;
+  }
+  return true;
+}
+
+async function clearDocumentsForBulk(entity, siteIds = null, executor = pool, options = {}) {
   ensureKnownEntity(entity);
   if (['ProducedItemBatch', 'MealServiceAttendance', 'MealServiceConsumption'].includes(entity)) {
     const error = new Error(`${entity} records cannot be cleared through bulk upload; use the protected meal-service workflow`);
@@ -4320,6 +4348,9 @@ async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
       )) {
         return false;
       }
+      if (entity === 'MenuPlan' && !menuPlanMatchesBulkClearScope(record, options)) {
+        return false;
+      }
       if (!siteFilter) return true;
       const recordSiteIds = [
         record.site_id,
@@ -4339,6 +4370,17 @@ async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
     }
     return deletedCount;
   }
+  const menuPlanScope = entity === 'MenuPlan' ? bulkMenuPlanScopeOptions(options) : { cuisine_type: '', menu_category: '' };
+  const menuPlanScopeFilter = entity === 'MenuPlan'
+    ? `AND ($3::text = '' OR LOWER(REPLACE(COALESCE(data->>'cuisine_type', data->>'menu_type', 'general'), ' ', '_')) = $3)
+       AND ($4::text = '' OR LOWER(REPLACE(COALESCE(data->>'menu_category', 'senior'), ' ', '_')) = $4)
+       AND (COALESCE(array_length($5::text[], 1), 0) = 0 OR data->>'plan_date' = ANY($5::text[]))`
+    : '';
+  const globalMenuPlanScopeFilter = entity === 'MenuPlan'
+    ? `AND ($2::text = '' OR LOWER(REPLACE(COALESCE(data->>'cuisine_type', data->>'menu_type', 'general'), ' ', '_')) = $2)
+       AND ($3::text = '' OR LOWER(REPLACE(COALESCE(data->>'menu_category', 'senior'), ' ', '_')) = $3)
+       AND (COALESCE(array_length($4::text[], 1), 0) = 0 OR data->>'plan_date' = ANY($4::text[]))`
+    : '';
   if (Array.isArray(siteIds)) {
     if (!siteIds.length) return 0;
     const result = await query(
@@ -4348,15 +4390,20 @@ async function clearDocumentsForBulk(entity, siteIds = null, executor = pool) {
            data->>'site_id' = ANY($2::text[])
            OR COALESCE(data->'site_ids', '[]'::jsonb) ?| $2::text[]
          )
-       ${preserveServerMealServiceWaste}`,
-      [entity, siteIds],
+       ${menuPlanScopeFilter}
+      ${preserveServerMealServiceWaste}`,
+      entity === 'MenuPlan'
+        ? [entity, siteIds, menuPlanScope.cuisine_type, menuPlanScope.menu_category, menuPlanScope.plan_dates]
+        : [entity, siteIds],
       executor
     );
     return result.rowCount;
   }
   const result = await query(
-    `DELETE FROM entity_records WHERE entity_name = $1 ${preserveServerMealServiceWaste}`,
-    [entity],
+    `DELETE FROM entity_records WHERE entity_name = $1 ${globalMenuPlanScopeFilter} ${preserveServerMealServiceWaste}`,
+    entity === 'MenuPlan'
+      ? [entity, menuPlanScope.cuisine_type, menuPlanScope.menu_category, menuPlanScope.plan_dates]
+      : [entity],
     executor
   );
   return result.rowCount;

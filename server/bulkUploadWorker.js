@@ -238,6 +238,15 @@ function getJobMenuCategory(job = {}) {
   return normalizeMenuCategory(job.actor_snapshot?.bulk_options?.menu_category, 'senior');
 }
 
+function getBulkClearScopeOptions(job = {}, extra = {}) {
+  if (job.entity_name !== 'MenuPlan') return {};
+  return {
+    menu_cuisine: getJobMenuCuisine(job),
+    menu_category: getJobMenuCategory(job),
+    ...extra
+  };
+}
+
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -522,6 +531,23 @@ async function clearRecipeMatchesForBulkUpload(stagedPath, client) {
     if (await deleteDocumentRecordOnly('Recipe', recipe.id, client)) deletedRows += 1;
   }
   return deletedRows;
+}
+
+async function collectMenuPlanDatesForBulkClear(stagedPath) {
+  const planDates = new Set();
+  const input = fs.createReadStream(stagedPath, { encoding: 'utf8' });
+  const lines = readline.createInterface({ input, crlfDelay: Infinity });
+
+  for await (const line of lines) {
+    if (!line.trim()) continue;
+    const staged = JSON.parse(line);
+    const planDate = String(staged.payload?.plan_date || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(planDate)) {
+      planDates.add(planDate);
+    }
+  }
+
+  return [...planDates];
 }
 
 async function clearRecipesForBulkDelete(job, siteIds = null, client) {
@@ -958,7 +984,7 @@ async function run() {
       ? await withTransaction((client) => clearInventoryForBulkUpload(job, context, client))
       : job.entity_name === 'Recipe'
         ? await withTransaction((client) => clearRecipesForBulkDelete(job, destructiveSiteIds, client))
-        : await withTransaction((client) => clearDocumentsForBulk(job.entity_name, destructiveSiteIds, client));
+        : await withTransaction((client) => clearDocumentsForBulk(job.entity_name, destructiveSiteIds, client, getBulkClearScopeOptions(job)));
     const recipeType = job.entity_name === 'Recipe' ? getJobRecipeType(job) : '';
     const completedAt = new Date().toISOString();
     await updateBulkUploadJob(job.id, {
@@ -1017,6 +1043,9 @@ async function run() {
       context.scope.graph = createSiteGraph([]);
     }
   }
+  const menuPlanReplaceDates = job.import_mode === 'replace_existing' && job.entity_name === 'MenuPlan'
+    ? await collectMenuPlanDatesForBulkClear(stagedPath)
+    : [];
 
   const refreshedJob = await getBulkUploadJob(job.id);
   const applyRows = (options = {}) => applyStagedRows(
@@ -1033,7 +1062,12 @@ async function run() {
       if (job.entity_name === 'Inventory') {
         await clearInventoryForBulkUpload(job, context, client);
       } else {
-        await clearDocumentsForBulk(job.entity_name, destructiveSiteIds, client);
+        await clearDocumentsForBulk(
+          job.entity_name,
+          destructiveSiteIds,
+          client,
+          getBulkClearScopeOptions(job, menuPlanReplaceDates.length ? { plan_dates: menuPlanReplaceDates } : {})
+        );
         if (job.entity_name === 'Recipe') {
           await clearRecipeMatchesForBulkUpload(stagedPath, client);
         }
