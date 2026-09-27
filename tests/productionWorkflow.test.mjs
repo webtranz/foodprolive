@@ -153,6 +153,17 @@ const cases = [
     }
   },
   {
+    name: 'production start stores a normalized user reference',
+    run() {
+      const serverSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+      const dbSource = fs.readFileSync(new URL('../server/db.js', import.meta.url), 'utf8');
+      assert.match(serverSource, /started_by:\s*actor\.id\s*\|\|\s*null/);
+      assert.doesNotMatch(serverSource, /started_by:\s*actor\.email/);
+      assert.match(dbSource, /function userReferenceSql\(parameterNumber\)/);
+      assert.match(dbSource, /started_by,[\s\S]*\$\{userReferenceSql\(11\)\}/);
+    }
+  },
+  {
     name: 'procurement handoff is transactional and uses a consistent lock order',
     run() {
       const serverSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');

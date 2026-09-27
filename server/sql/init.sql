@@ -1357,10 +1357,28 @@ SELECT
   COALESCE(NULLIF(record.data->>'status', ''), 'planned'),
   COALESCE(NULLIF(record.data->>'issue_group_key', ''), record.id),
   record.data || jsonb_build_object('id', record.id),
-  NULLIF(record.data->>'started_by', ''),
-  NULLIF(record.data->>'completed_by', ''),
+  (
+    SELECT app_user.id
+    FROM users app_user
+    WHERE app_user.id = NULLIF(record.data->>'started_by', '')
+      OR LOWER(app_user.email) = LOWER(NULLIF(record.data->>'started_by', ''))
+    LIMIT 1
+  ),
+  (
+    SELECT app_user.id
+    FROM users app_user
+    WHERE app_user.id = NULLIF(record.data->>'completed_by', '')
+      OR LOWER(app_user.email) = LOWER(NULLIF(record.data->>'completed_by', ''))
+    LIMIT 1
+  ),
   NULLIF(record.data->>'completed_at', '')::timestamptz,
-  NULLIF(record.data->>'reversed_by', ''),
+  (
+    SELECT app_user.id
+    FROM users app_user
+    WHERE app_user.id = NULLIF(record.data->>'reversed_by', '')
+      OR LOWER(app_user.email) = LOWER(NULLIF(record.data->>'reversed_by', ''))
+    LIMIT 1
+  ),
   NULLIF(record.data->>'reversed_at', '')::timestamptz,
   NULLIF(record.data->>'reversal_reason', ''),
   NULLIF(record.data->>'source_name', ''),
@@ -1477,8 +1495,20 @@ SELECT
   COALESCE(NULLIF(COALESCE(record.data->>'covers', record.data->>'attendee_count'), '')::numeric, 0),
   COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
   record.data || jsonb_build_object('id', record.id),
-  NULLIF(COALESCE(record.data->>'posted_by', record.data->>'performed_by'), ''),
-  NULLIF(record.data->>'reversed_by', ''),
+  (
+    SELECT app_user.id
+    FROM users app_user
+    WHERE app_user.id = NULLIF(COALESCE(record.data->>'posted_by', record.data->>'performed_by'), '')
+      OR LOWER(app_user.email) = LOWER(NULLIF(COALESCE(record.data->>'posted_by', record.data->>'performed_by'), ''))
+    LIMIT 1
+  ),
+  (
+    SELECT app_user.id
+    FROM users app_user
+    WHERE app_user.id = NULLIF(record.data->>'reversed_by', '')
+      OR LOWER(app_user.email) = LOWER(NULLIF(record.data->>'reversed_by', ''))
+    LIMIT 1
+  ),
   NULLIF(record.data->>'reversed_at', '')::timestamptz,
   NULLIF(record.data->>'source_name', ''),
   record.created_at,
@@ -1556,8 +1586,20 @@ SELECT
   NULLIF(record.data->>'reason_code', ''),
   COALESCE(NULLIF(record.data->>'approval_status', ''), 'pending'),
   COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
-  NULLIF(record.data->>'recorded_by', ''),
-  NULLIF(record.data->>'reversed_by', ''),
+  (
+    SELECT app_user.id
+    FROM users app_user
+    WHERE app_user.id = NULLIF(record.data->>'recorded_by', '')
+      OR LOWER(app_user.email) = LOWER(NULLIF(record.data->>'recorded_by', ''))
+    LIMIT 1
+  ),
+  (
+    SELECT app_user.id
+    FROM users app_user
+    WHERE app_user.id = NULLIF(record.data->>'reversed_by', '')
+      OR LOWER(app_user.email) = LOWER(NULLIF(record.data->>'reversed_by', ''))
+    LIMIT 1
+  ),
   NULLIF(record.data->>'reversed_at', '')::timestamptz,
   NULLIF(record.data->>'reversal_reason', ''),
   NULLIF(record.data->>'source_name', ''),

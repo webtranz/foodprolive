@@ -601,6 +601,10 @@ function jsonPayload(record = {}) {
   return JSON.stringify(record || {});
 }
 
+function userReferenceSql(parameterNumber) {
+  return `(SELECT app_user.id FROM users app_user WHERE app_user.id = NULLIF($${parameterNumber}::text, '') OR LOWER(app_user.email) = LOWER(NULLIF($${parameterNumber}::text, '')) LIMIT 1)`;
+}
+
 function rowTimestamp(value) {
   return value?.toISOString?.() || value || null;
 }
@@ -2314,7 +2318,14 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
         menu_type, menu_category, status, issue_group_key, payload, started_by,
         completed_by, completed_at, reversed_by, reversed_at, reversal_reason,
         source_name, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,
+        ${userReferenceSql(11)},
+        ${userReferenceSql(12)},
+        $13,
+        ${userReferenceSql(14)},
+        $15,$16,$17,$18,$19
+      )
       ON CONFLICT (production_id) DO UPDATE SET
         menu_plan_id = EXCLUDED.menu_plan_id, warehouse_id = EXCLUDED.warehouse_id,
         production_date = EXCLUDED.production_date, meal_period = EXCLUDED.meal_period,
@@ -2435,7 +2446,12 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
         meal_service_id, service_reference, idempotency_key, warehouse_id, service_date,
         meal_period, menu_type, menu_category, serving_size_grams, covers, status,
         payload, posted_by, reversed_by, reversed_at, source_name, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18)
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,
+        ${userReferenceSql(13)},
+        ${userReferenceSql(14)},
+        $15,$16,$17,$18
+      )
       ON CONFLICT (meal_service_id) DO UPDATE SET
         service_reference = EXCLUDED.service_reference, idempotency_key = EXCLUDED.idempotency_key,
         warehouse_id = EXCLUDED.warehouse_id, service_date = EXCLUDED.service_date,
@@ -2517,7 +2533,12 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
         menu_type, menu_category, waste_category, reason_code, approval_status, status,
         recorded_by, reversed_by, reversed_at, reversal_reason, source_name, payload,
         created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+        ${userReferenceSql(13)},
+        ${userReferenceSql(14)},
+        $15,$16,$17,$18::jsonb,$19,$20
+      )
       ON CONFLICT (food_waste_id) DO UPDATE SET
         waste_reference = EXCLUDED.waste_reference, idempotency_key = EXCLUDED.idempotency_key,
         warehouse_id = EXCLUDED.warehouse_id, waste_date = EXCLUDED.waste_date,

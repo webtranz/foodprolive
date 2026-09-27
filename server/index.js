@@ -1104,7 +1104,7 @@ function applyProductionWorkflowMetadata(user, payload, existing = null, workflo
     historyAction = 'production_started';
     historyStage = 'production';
     Object.assign(prepared, {
-      started_by: actor.email,
+      started_by: actor.id || null,
       started_by_name: actor.name,
       started_at: now,
       last_review_action: 'production_started'
