@@ -211,6 +211,21 @@ test('normalized database dates are returned as strings for reversal updates', (
   const database = source('server/db.js');
 
   assert.match(database, /function rowToProductionConsumptionReport\(row = \{\}\)[\s\S]*production_date:\s*toDateOnlyOrNull\(row\.production_date\)/);
-  assert.match(database, /function rowToProducedItemBatch\(row = \{\}\)[\s\S]*production_date:\s*toDateOnlyOrNull\(row\.production_date\)/);
-  assert.match(database, /function rowToProducedItemBatch\(row = \{\}\)[\s\S]*completed_at:\s*rowTimestamp\(row\.completed_at\)/);
+  assert.match(database, /const productionDate = toDateOnlyOrNull\(row\.production_date\)[\s\S]*toDateOnlyOrNull\(payload\.production_date\)[\s\S]*toDateOnlyOrNull\(row\.created_at\)/);
+  assert.match(database, /const completedAt = rowTimestamp\(row\.completed_at\)[\s\S]*rowTimestamp\(payload\.completed_at\)[\s\S]*rowTimestamp\(row\.updated_at\)/);
+  assert.match(database, /function rowToProducedItemBatch\(row = \{\}\)[\s\S]*production_date:\s*productionDate/);
+  assert.match(database, /function rowToProducedItemBatch\(row = \{\}\)[\s\S]*completed_at:\s*completedAt/);
+});
+
+test('produced-item batch mapper keeps manifest-line waste saves valid', () => {
+  const entities = source('server/entities.js');
+  const database = source('server/db.js');
+  const producedItemConfigStart = entities.indexOf('ProducedItemBatch: {');
+  const producedItemConfigEnd = entities.indexOf('MealServiceAttendance:', producedItemConfigStart);
+  const producedItemConfig = entities.slice(producedItemConfigStart, producedItemConfigEnd);
+
+  assert.doesNotMatch(producedItemConfig, /fields:\s*\['production_id'\]/);
+  assert.match(database, /function rowToProducedItemBatch\(row = \{\}\)[\s\S]*batch_number:\s*row\.batch_number \|\| payload\.batch_number \|\| row\.output_batch_id/);
+  assert.match(database, /function rowToProducedItemBatch\(row = \{\}\)[\s\S]*recipe_id:\s*row\.recipe_version_id \|\| null/);
+  assert.match(database, /function rowToProducedItemBatch\(row = \{\}\)[\s\S]*status:\s*normalizeBatchStatus\(row\.status \|\| payload\.status\)/);
 });

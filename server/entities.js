@@ -399,7 +399,6 @@ export const entityRegistry = {
       cutover_version: 1
     },
     unique: [
-      { fields: ['production_id'], label: 'produced-item batch for this production' },
       { fields: ['batch_number'], label: 'produced-item batch number' }
     ],
     schema: z.object({
@@ -1184,7 +1183,9 @@ export function validateEntityPayload(entity, payload = {}) {
 
   const result = config.schema.safeParse(payload);
   if (!result.success) {
-    const error = new Error(result.error.issues[0]?.message || 'Invalid payload');
+    const issue = result.error.issues[0];
+    const path = issue?.path?.length ? `${entity}.${issue.path.join('.')}: ` : '';
+    const error = new Error(`${path}${issue?.message || 'Invalid payload'}`);
     error.status = 400;
     throw error;
   }

@@ -864,32 +864,117 @@ function rowToProductionConsumptionReport(row = {}) {
 
 function rowToProducedItemBatch(row = {}) {
   const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+  const productionDate = toDateOnlyOrNull(row.production_date)
+    || toDateOnlyOrNull(payload.production_date)
+    || toDateOnlyOrNull(row.created_at);
+  const completedAt = rowTimestamp(row.completed_at)
+    || rowTimestamp(payload.completed_at)
+    || rowTimestamp(row.updated_at)
+    || rowTimestamp(row.created_at)
+    || nowIso();
+  const producedWeightGrams = firstPositiveNumber([
+    row.initial_weight_grams,
+    payload.produced_weight_grams,
+    payload.initial_weight_grams,
+    payload.actual_finished_weight_grams,
+    payload.expected_finished_weight_grams
+  ]) || 1;
+  const remainingWeightValue = toNumberOrNull(
+    row.remaining_weight_grams
+      ?? payload.remaining_weight_grams
+      ?? payload.available_weight_grams
+  );
+  const remainingWeightGrams = remainingWeightValue === null
+    ? producedWeightGrams
+    : Math.max(0, Math.min(Number(remainingWeightValue), producedWeightGrams));
+  const producedServings = firstPositiveNumber([
+    row.initial_servings,
+    payload.produced_servings,
+    payload.initial_servings,
+    payload.expected_servings,
+    payload.remaining_servings
+  ]) || 1;
+  const remainingServingsValue = toNumberOrNull(
+    row.remaining_servings
+      ?? payload.remaining_servings
+      ?? payload.available_servings
+  );
+  const remainingServings = remainingServingsValue === null
+    ? producedServings
+    : Math.max(0, Math.min(Number(remainingServingsValue), producedServings));
+  const payloadServedWeight = toNumberOrNull(payload.served_weight_grams);
+  const payloadWastedWeight = toNumberOrNull(payload.wasted_weight_grams);
+  const servedWeightGrams = payloadServedWeight ?? (
+    payloadWastedWeight === null && remainingWeightGrams < producedWeightGrams
+      ? Math.max(0, producedWeightGrams - remainingWeightGrams)
+      : 0
+  );
+  const wastedWeightGrams = payloadWastedWeight ?? Math.max(0, producedWeightGrams - remainingWeightGrams - servedWeightGrams);
+  const payloadServedServings = toNumberOrNull(payload.served_servings);
+  const payloadWastedServings = toNumberOrNull(payload.wasted_servings);
+  const servedServings = payloadServedServings ?? (
+    payloadWastedServings === null && remainingServings < producedServings
+      ? Math.max(0, producedServings - remainingServings)
+      : 0
+  );
+  const wastedServings = payloadWastedServings ?? Math.max(0, producedServings - remainingServings - servedServings);
+  const portionSizeGrams = firstPositiveNumber([
+    payload.portion_size_grams,
+    producedServings > 0 ? producedWeightGrams / producedServings : 0,
+    payload.service_portion_size_grams
+  ]) || 1;
+  const normalizeMealPeriod = (value) => {
+    const candidate = String(value || '').trim().toLowerCase();
+    return ['breakfast', 'lunch', 'dinner', 'snack'].includes(candidate) ? candidate : 'breakfast';
+  };
+  const normalizeBatchStatus = (value) => {
+    const candidate = String(value || '').trim().toLowerCase();
+    if (candidate === 'reversed') return 'voided';
+    if (['available', 'partial', 'consumed', 'voided'].includes(candidate)) return candidate;
+    if (candidate === 'active') {
+      return remainingWeightGrams < producedWeightGrams || remainingServings < producedServings
+        ? 'partial'
+        : 'available';
+    }
+    return remainingWeightGrams <= 0 || remainingServings <= 0 ? 'consumed' : 'available';
+  };
   return withPayload(row, {
     __entity: 'ProducedItemBatch',
     id: row.output_batch_id,
-    production_id: row.production_id,
-    production_line_id: row.production_line_id,
-    site_id: row.warehouse_id,
-    fulfillment_store_id: row.warehouse_id,
-    production_date: toDateOnlyOrNull(row.production_date),
-    meal_type: row.meal_period || null,
-    menu_type: row.menu_type || null,
-    cuisine_type: row.menu_type || null,
-    menu_category: row.menu_category || null,
-    completed_at: rowTimestamp(row.completed_at),
-    recipe_id: row.recipe_version_id || payload.recipe_id || row.ingredient_id || null,
+    production_id: row.production_id || payload.production_id || null,
+    production_line_id: row.production_line_id || payload.production_line_id || null,
+    site_id: row.warehouse_id || payload.site_id || payload.warehouse_id || null,
+    fulfillment_store_id: row.warehouse_id || payload.fulfillment_store_id || payload.site_id || null,
+    production_date: productionDate,
+    meal_type: normalizeMealPeriod(row.meal_period || payload.meal_type),
+    menu_type: row.menu_type || payload.menu_type || payload.cuisine_type || null,
+    cuisine_type: row.menu_type || payload.cuisine_type || payload.menu_type || null,
+    menu_category: row.menu_category || payload.menu_category || null,
+    completed_at: completedAt,
+    recipe_id: row.recipe_version_id || null,
     recipe_name: row.item_name || payload.recipe_name || payload.production_name || null,
+    ingredient_id: row.ingredient_id || payload.ingredient_id || null,
     item_name: row.item_name || null,
-    batch_number: row.batch_number,
-    initial_weight_grams: Number(row.initial_weight_grams || 0),
-    remaining_weight_grams: Number(row.remaining_weight_grams || 0),
-    produced_weight_grams: Number(row.initial_weight_grams || 0),
-    available_weight_grams: Number(row.remaining_weight_grams || 0),
-    initial_servings: row.initial_servings === null ? null : Number(row.initial_servings || 0),
-    remaining_servings: row.remaining_servings === null ? null : Number(row.remaining_servings || 0),
+    batch_number: row.batch_number || payload.batch_number || row.output_batch_id,
+    initial_weight_grams: producedWeightGrams,
+    remaining_weight_grams: remainingWeightGrams,
+    produced_weight_grams: producedWeightGrams,
+    available_weight_grams: remainingWeightGrams,
+    initial_servings: producedServings,
+    expected_servings: toNumberOrNull(payload.expected_servings) ?? producedServings,
+    expected_finished_weight_grams: toNumberOrNull(payload.expected_finished_weight_grams) ?? producedWeightGrams,
+    actual_finished_weight_grams: toNumberOrNull(payload.actual_finished_weight_grams) ?? producedWeightGrams,
+    produced_servings: producedServings,
+    served_servings: servedServings,
+    served_weight_grams: servedWeightGrams,
+    wasted_servings: wastedServings,
+    wasted_weight_grams: wastedWeightGrams,
+    remaining_servings: remainingServings,
+    portion_size_grams: portionSizeGrams,
     unit_cost: Number(row.unit_cost || 0),
     total_cost: Number(row.total_cost || 0),
-    status: row.status || 'available',
+    status: normalizeBatchStatus(row.status || payload.status),
+    cutover_version: payload.cutover_version || 1,
     source_name: row.source_name || null
   });
 }
