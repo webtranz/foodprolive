@@ -863,6 +863,7 @@ function rowToProductionConsumptionReport(row = {}) {
 }
 
 function rowToProducedItemBatch(row = {}) {
+  const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
   return withPayload(row, {
     __entity: 'ProducedItemBatch',
     id: row.output_batch_id,
@@ -876,7 +877,8 @@ function rowToProducedItemBatch(row = {}) {
     cuisine_type: row.menu_type || null,
     menu_category: row.menu_category || null,
     completed_at: rowTimestamp(row.completed_at),
-    recipe_id: row.recipe_version_id || row.ingredient_id || null,
+    recipe_id: row.recipe_version_id || payload.recipe_id || row.ingredient_id || null,
+    recipe_name: row.item_name || payload.recipe_name || payload.production_name || null,
     item_name: row.item_name || null,
     batch_number: row.batch_number,
     initial_weight_grams: Number(row.initial_weight_grams || 0),
@@ -887,7 +889,7 @@ function rowToProducedItemBatch(row = {}) {
     remaining_servings: row.remaining_servings === null ? null : Number(row.remaining_servings || 0),
     unit_cost: Number(row.unit_cost || 0),
     total_cost: Number(row.total_cost || 0),
-    status: row.status || 'active',
+    status: row.status || 'available',
     source_name: row.source_name || null
   });
 }

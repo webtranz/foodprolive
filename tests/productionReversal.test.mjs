@@ -125,6 +125,40 @@ test('voided produced-item batches keep audit identity but cannot keep active ba
   );
 });
 
+test('produced-item batches can represent non-recipe manifest lines', () => {
+  const batch = validateEntityPayload('ProducedItemBatch', {
+    batch_number: 'PIB-20260914-002',
+    production_id: 'production-1',
+    production_name: 'Breakfast / General / Junior',
+    production_date: '2026-09-01',
+    completed_at: '2026-09-14T08:00:00.000Z',
+    site_id: 'store-384',
+    site_name: 'STORE 384',
+    recipe_id: null,
+    recipe_name: null,
+    meal_type: 'breakfast',
+    menu_type: 'general',
+    menu_category: 'junior',
+    portion_size_grams: 80,
+    expected_servings: 10,
+    expected_finished_weight_grams: 800,
+    actual_finished_weight_grams: 800,
+    produced_servings: 10,
+    produced_weight_grams: 800,
+    served_servings: 0,
+    served_weight_grams: 0,
+    wasted_servings: 0,
+    wasted_weight_grams: 0,
+    remaining_servings: 10,
+    remaining_weight_grams: 800,
+    status: 'available',
+    cutover_version: 1
+  });
+
+  assert.equal(batch.recipe_id, null);
+  assert.equal(batch.status, 'available');
+});
+
 test('front end exposes an admin-only direct reversal action', () => {
   const api = source('src/api/base44Client.js');
   const productionPage = source('src/pages/Production.jsx');
