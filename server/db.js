@@ -605,8 +605,6 @@ const relationalDocumentTables = Object.freeze({
   DinerScan: 'diner_scans',
   CustomerMealPlan: 'customer_meal_plans',
   MaterialRequest: 'material_requests',
-  Budget: 'budgets',
-  FoodCategory: 'food_categories',
   MenuPlanPRSchedule: 'menu_plan_pr_schedules',
   MenuPlanPRRun: 'menu_plan_pr_runs',
   ProductionBatch: 'production_batches',
@@ -1643,7 +1641,134 @@ function rowToSupplier(row = {}) {
   });
 }
 
+function rowToFoodCategory(row = {}) {
+  return hydrateDerivedFields('FoodCategory', {
+    __entity: 'FoodCategory',
+    id: row.id,
+    name: row.name || 'Food Category',
+    code: row.code || null,
+    description: row.description || null,
+    color: row.color || '#10b981',
+    status: row.status || (row.is_active === false ? 'inactive' : 'active'),
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToBudget(row = {}) {
+  return hydrateDerivedFields('Budget', {
+    __entity: 'Budget',
+    id: row.id,
+    budget_key: row.budget_key || null,
+    name: row.name || 'Budget',
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    start_date: row.start_date ? String(row.start_date).slice(0, 10) : null,
+    end_date: row.end_date ? String(row.end_date).slice(0, 10) : null,
+    budget_amount: toNumberOrZero(row.budget_amount),
+    currency: row.currency || 'SAR',
+    scope_type: row.scope_type || 'site_period',
+    meal_type: row.meal_type || 'all',
+    event_name: row.event_name || null,
+    category: row.category || null,
+    department: row.department || null,
+    source_module: row.source_module || null,
+    budget_level: row.budget_level || null,
+    budget_mode: row.budget_mode || null,
+    daily_budget_amount: toNumberOrZero(row.daily_budget_amount),
+    monthly_budget_amount: toNumberOrZero(row.monthly_budget_amount),
+    status: row.status || 'active',
+    notes: row.notes || null,
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
 const normalizedSimpleConfigs = {
+  Budget: {
+    table: 'budgets',
+    idColumn: 'id',
+    mapper: rowToBudget,
+    select: 'SELECT * FROM budgets',
+    insertSql: `INSERT INTO budgets (
+      id, budget_key, name, site_id, site_name, start_date, end_date, budget_amount,
+      currency, scope_type, meal_type, event_name, category, department, source_module,
+      budget_level, budget_mode, daily_budget_amount, monthly_budget_amount, status,
+      notes, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+    values(record) {
+      return [
+        record.id,
+        record.budget_key || null,
+        record.name || 'Budget',
+        record.site_id || null,
+        record.site_name || null,
+        toDateOnlyOrNull(record.start_date),
+        toDateOnlyOrNull(record.end_date),
+        toNumberOrZero(record.budget_amount),
+        record.currency || 'SAR',
+        record.scope_type || 'site_period',
+        record.meal_type || 'all',
+        record.event_name || null,
+        record.category || null,
+        record.department || null,
+        record.source_module || null,
+        record.budget_level || null,
+        record.budget_mode || null,
+        toNumberOrZero(record.daily_budget_amount),
+        toNumberOrZero(record.monthly_budget_amount),
+        record.status || 'active',
+        record.notes || null,
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE budgets SET
+      budget_key = $2, name = $3, site_id = $4, site_name = $5,
+      start_date = $6, end_date = $7, budget_amount = $8, currency = $9,
+      scope_type = $10, meal_type = $11, event_name = $12, category = $13,
+      department = $14, source_module = $15, budget_level = $16,
+      budget_mode = $17, daily_budget_amount = $18, monthly_budget_amount = $19,
+      status = $20, notes = $21, source_name = $22, updated_at = $23
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 22), record.updated_date || nowIso()];
+    }
+  },
+  FoodCategory: {
+    table: 'food_categories',
+    idColumn: 'id',
+    mapper: rowToFoodCategory,
+    select: 'SELECT * FROM food_categories',
+    insertSql: `INSERT INTO food_categories (
+      id, name, code, description, color, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    values(record) {
+      return [
+        record.id,
+        record.name || 'Food Category',
+        record.code || null,
+        record.description || null,
+        record.color || '#10b981',
+        record.status || (record.is_active === false ? 'inactive' : 'active'),
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE food_categories SET
+      name = $2, code = $3, description = $4, color = $5,
+      status = $6, source_name = $7, updated_at = $8
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 7), record.updated_date || nowIso()];
+    }
+  },
   Supplier: {
     table: 'suppliers',
     idColumn: 'id',
@@ -2969,6 +3094,38 @@ function normalizedSqlColumnForField(entity, field) {
       dashboard_variant: 'dashboard_variant',
       is_active: 'is_active',
       is_system: 'is_system'
+    },
+    FoodCategory: {
+      name: 'name',
+      code: 'code',
+      description: 'description',
+      color: 'color',
+      status: 'status',
+      is_active: 'status',
+      source_name: 'source_name'
+    },
+    Budget: {
+      budget_key: 'budget_key',
+      name: 'name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      start_date: 'start_date',
+      end_date: 'end_date',
+      budget_amount: 'budget_amount',
+      currency: 'currency',
+      scope_type: 'scope_type',
+      meal_type: 'meal_type',
+      event_name: 'event_name',
+      category: 'category',
+      department: 'department',
+      source_module: 'source_module',
+      budget_level: 'budget_level',
+      budget_mode: 'budget_mode',
+      daily_budget_amount: 'daily_budget_amount',
+      monthly_budget_amount: 'monthly_budget_amount',
+      status: 'status',
+      notes: 'notes',
+      source_name: 'source_name'
     },
     Supplier: {
       name: 'name',

@@ -265,8 +265,6 @@ BEGIN
       ('diner_scans', 'DinerScan'),
       ('customer_meal_plans', 'CustomerMealPlan'),
       ('material_requests', 'MaterialRequest'),
-      ('budgets', 'Budget'),
-      ('food_categories', 'FoodCategory'),
       ('menu_plan_pr_schedules', 'MenuPlanPRSchedule'),
       ('menu_plan_pr_runs', 'MenuPlanPRRun'),
       ('production_batches', 'ProductionBatch'),
@@ -380,6 +378,364 @@ BEGIN
   END LOOP;
 END;
 $document_tables$;
+
+CREATE TABLE IF NOT EXISTS budgets (
+  id TEXT PRIMARY KEY,
+  budget_key TEXT,
+  name TEXT NOT NULL,
+  site_id TEXT,
+  site_name TEXT,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'SAR',
+  scope_type TEXT NOT NULL DEFAULT 'site_period',
+  meal_type TEXT NOT NULL DEFAULT 'all',
+  event_name TEXT,
+  category TEXT,
+  department TEXT,
+  source_module TEXT,
+  budget_level TEXT,
+  budget_mode TEXT,
+  daily_budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  monthly_budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  notes TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS budget_key TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS start_date DATE;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS end_date DATE;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 0;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'SAR';
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS scope_type TEXT NOT NULL DEFAULT 'site_period';
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS meal_type TEXT NOT NULL DEFAULT 'all';
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS event_name TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS department TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS source_module TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS budget_level TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS budget_mode TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS daily_budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 0;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS monthly_budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 0;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $budgets_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'budgets'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE budgets
+         SET budget_key = COALESCE(NULLIF(budget_key, ''), NULLIF(payload->>'budget_key', '')),
+             name = COALESCE(NULLIF(name, ''), NULLIF(payload->>'name', ''), 'Budget'),
+             site_id = COALESCE(NULLIF(site_id, ''), NULLIF(payload->>'site_id', '')),
+             site_name = COALESCE(NULLIF(site_name, ''), NULLIF(payload->>'site_name', '')),
+             start_date = COALESCE(start_date, CASE
+               WHEN COALESCE(payload->>'start_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN LEFT(payload->>'start_date', 10)::date
+               ELSE NULL
+             END),
+             end_date = COALESCE(end_date, CASE
+               WHEN COALESCE(payload->>'end_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN LEFT(payload->>'end_date', 10)::date
+               ELSE NULL
+             END),
+             budget_amount = COALESCE(CASE
+               WHEN COALESCE(payload->>'budget_amount', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'budget_amount')::numeric
+               ELSE NULL
+             END, budget_amount, 0),
+             currency = COALESCE(NULLIF(currency, ''), NULLIF(payload->>'currency', ''), 'SAR'),
+             scope_type = COALESCE(NULLIF(scope_type, ''), NULLIF(payload->>'scope_type', ''), 'site_period'),
+             meal_type = COALESCE(NULLIF(meal_type, ''), NULLIF(payload->>'meal_type', ''), 'all'),
+             event_name = COALESCE(event_name, NULLIF(payload->>'event_name', '')),
+             category = COALESCE(category, NULLIF(payload->>'category', '')),
+             department = COALESCE(department, NULLIF(payload->>'department', '')),
+             source_module = COALESCE(source_module, NULLIF(payload->>'source_module', '')),
+             budget_level = COALESCE(budget_level, NULLIF(payload->>'budget_level', '')),
+             budget_mode = COALESCE(budget_mode, NULLIF(payload->>'budget_mode', '')),
+             daily_budget_amount = COALESCE(CASE
+               WHEN COALESCE(payload->>'daily_budget_amount', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'daily_budget_amount')::numeric
+               ELSE NULL
+             END, daily_budget_amount, 0),
+             monthly_budget_amount = COALESCE(CASE
+               WHEN COALESCE(payload->>'monthly_budget_amount', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'monthly_budget_amount')::numeric
+               ELSE NULL
+             END, monthly_budget_amount, 0),
+             status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'active'),
+             notes = COALESCE(notes, NULLIF(payload->>'notes', '')),
+             source_name = COALESCE(source_name, NULLIF(payload->>'source_name', '')),
+             created_at = COALESCE(created_at, CASE
+               WHEN COALESCE(payload->>'created_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'created_date', '')::timestamptz
+               ELSE NULL
+             END, NOW()),
+             updated_at = COALESCE(updated_at, CASE
+               WHEN COALESCE(payload->>'updated_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'updated_date', '')::timestamptz
+               ELSE NULL
+             END, NOW())
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    DROP TRIGGER IF EXISTS budgets_realtime_change ON budgets;
+    DROP INDEX IF EXISTS idx_budgets_payload;
+    EXECUTE 'ALTER TABLE budgets DROP COLUMN payload';
+  END IF;
+END;
+$budgets_payload_cutover$;
+
+INSERT INTO budgets (
+  id, budget_key, name, site_id, site_name, start_date, end_date, budget_amount,
+  currency, scope_type, meal_type, event_name, category, department, source_module,
+  budget_level, budget_mode, daily_budget_amount, monthly_budget_amount, status,
+  notes, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(record.data->>'budget_key', ''),
+  COALESCE(NULLIF(record.data->>'name', ''), 'Budget'),
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  CASE WHEN COALESCE(record.data->>'start_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+    THEN LEFT(record.data->>'start_date', 10)::date ELSE CURRENT_DATE END,
+  CASE WHEN COALESCE(record.data->>'end_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+    THEN LEFT(record.data->>'end_date', 10)::date ELSE CURRENT_DATE END,
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'budget_amount', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'budget_amount')::numeric
+    ELSE NULL
+  END, 0),
+  COALESCE(NULLIF(record.data->>'currency', ''), 'SAR'),
+  COALESCE(NULLIF(record.data->>'scope_type', ''), 'site_period'),
+  COALESCE(NULLIF(record.data->>'meal_type', ''), 'all'),
+  NULLIF(record.data->>'event_name', ''),
+  NULLIF(record.data->>'category', ''),
+  NULLIF(record.data->>'department', ''),
+  NULLIF(record.data->>'source_module', ''),
+  NULLIF(record.data->>'budget_level', ''),
+  NULLIF(record.data->>'budget_mode', ''),
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'daily_budget_amount', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'daily_budget_amount')::numeric
+    ELSE NULL
+  END, 0),
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'monthly_budget_amount', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'monthly_budget_amount')::numeric
+    ELSE NULL
+  END, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'notes', ''),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'Budget'
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE budgets
+   SET name = COALESCE(NULLIF(name, ''), 'Budget'),
+       start_date = COALESCE(start_date, CURRENT_DATE),
+       end_date = COALESCE(end_date, start_date, CURRENT_DATE);
+
+ALTER TABLE budgets ALTER COLUMN name SET NOT NULL;
+ALTER TABLE budgets ALTER COLUMN start_date SET NOT NULL;
+ALTER TABLE budgets ALTER COLUMN end_date SET NOT NULL;
+
+ALTER TABLE budgets DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE budgets DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE budgets DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE budgets DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE budgets DROP COLUMN IF EXISTS record_date;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_budget_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  budget_row budgets%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    budget_row := OLD;
+  ELSE
+    budget_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'Budget',
+      'action', LOWER(TG_OP),
+      'id', NULL,
+      'site_id', budget_row.site_id,
+      'site_ids', CASE
+        WHEN budget_row.site_id IS NULL THEN '[]'::jsonb
+        ELSE jsonb_build_array(budget_row.site_id)
+      END,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $budget_trigger$
+BEGIN
+  DROP TRIGGER IF EXISTS budgets_realtime_change ON budgets;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'budgets_realtime_change' AND tgrelid = 'budgets'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER budgets_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON budgets
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_budget_change()';
+  END IF;
+END;
+$budget_trigger$;
+
+CREATE TABLE IF NOT EXISTS food_categories (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT,
+  description TEXT,
+  color TEXT NOT NULL DEFAULT '#10b981',
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE food_categories ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE food_categories ADD COLUMN IF NOT EXISTS code TEXT;
+ALTER TABLE food_categories ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE food_categories ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#10b981';
+ALTER TABLE food_categories ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE food_categories ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE food_categories ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE food_categories ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $food_categories_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'food_categories'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE food_categories
+         SET name = COALESCE(NULLIF(name, ''), NULLIF(payload->>'name', ''), 'Food Category'),
+             code = COALESCE(NULLIF(code, ''), NULLIF(payload->>'code', '')),
+             description = COALESCE(description, NULLIF(payload->>'description', '')),
+             color = COALESCE(NULLIF(color, ''), NULLIF(payload->>'color', ''), '#10b981'),
+             status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'active'),
+             source_name = COALESCE(source_name, NULLIF(payload->>'source_name', '')),
+             created_at = COALESCE(created_at, CASE
+               WHEN COALESCE(payload->>'created_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'created_date', '')::timestamptz
+               ELSE NULL
+             END, NOW()),
+             updated_at = COALESCE(updated_at, CASE
+               WHEN COALESCE(payload->>'updated_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'updated_date', '')::timestamptz
+               ELSE NULL
+             END, NOW())
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    DROP TRIGGER IF EXISTS food_categories_realtime_change ON food_categories;
+    DROP INDEX IF EXISTS idx_food_categories_payload;
+    EXECUTE 'ALTER TABLE food_categories DROP COLUMN payload';
+  END IF;
+END;
+$food_categories_payload_cutover$;
+
+INSERT INTO food_categories (
+  id, name, code, description, color, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'name', ''), 'Food Category'),
+  NULLIF(record.data->>'code', ''),
+  NULLIF(record.data->>'description', ''),
+  COALESCE(NULLIF(record.data->>'color', ''), '#10b981'),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'FoodCategory'
+ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE food_categories ALTER COLUMN name SET NOT NULL;
+
+ALTER TABLE food_categories DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE food_categories DROP COLUMN IF EXISTS site_id;
+ALTER TABLE food_categories DROP COLUMN IF EXISTS site_name;
+ALTER TABLE food_categories DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE food_categories DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE food_categories DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE food_categories DROP COLUMN IF EXISTS record_date;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_food_category_change()
+RETURNS TRIGGER AS $$
+BEGIN
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'FoodCategory',
+      'action', LOWER(TG_OP),
+      'id', NULL,
+      'site_id', NULL,
+      'site_ids', '[]'::jsonb,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $food_category_trigger$
+BEGIN
+  DROP TRIGGER IF EXISTS food_categories_realtime_change ON food_categories;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'food_categories_realtime_change' AND tgrelid = 'food_categories'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER food_categories_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON food_categories
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_food_category_change()';
+  END IF;
+END;
+$food_category_trigger$;
 
 ALTER TABLE role_profiles ADD COLUMN IF NOT EXISTS role_key TEXT;
 ALTER TABLE role_profiles ADD COLUMN IF NOT EXISTS name TEXT;
@@ -5681,6 +6037,16 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_details_path
 CREATE INDEX IF NOT EXISTS idx_audit_log_details_string_search
   ON audit_log_details USING GIN (string_value gin_trgm_ops)
   WHERE string_value IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_food_categories_status_name
+  ON food_categories(status, name);
+CREATE INDEX IF NOT EXISTS idx_food_categories_code_lookup
+  ON food_categories(LOWER(BTRIM(code)))
+  WHERE COALESCE(BTRIM(code), '') <> '';
+CREATE INDEX IF NOT EXISTS idx_budgets_site_period_status
+  ON budgets(site_id, start_date, end_date, status);
+CREATE INDEX IF NOT EXISTS idx_budgets_key_status
+  ON budgets(budget_key, status)
+  WHERE budget_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_status ON bulk_upload_jobs(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_actor ON bulk_upload_jobs(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_site ON bulk_upload_jobs(site_id, created_at DESC);
