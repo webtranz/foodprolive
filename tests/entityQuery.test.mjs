@@ -118,8 +118,8 @@ await listDocuments('MealServiceConsumption', {
     return { rows: [] };
   }
 });
-assert.match(dbQuery.text, /record\.data->>'service_date' >= \$\d+::text/);
-assert.match(dbQuery.text, /record\.data->>'service_date' <= \$\d+::text/);
+assert.match(dbQuery.text, /normalized_record\.service_date >= \$\d+/);
+assert.match(dbQuery.text, /normalized_record\.service_date <= \$\d+/);
 assert.ok(dbQuery.parameters.includes('2026-08-01'));
 assert.ok(dbQuery.parameters.includes('2026-08-31'));
 

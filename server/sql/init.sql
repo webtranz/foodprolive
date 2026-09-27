@@ -779,7 +779,58 @@ CREATE TABLE IF NOT EXISTS production_events (
   menu_category TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'planned',
   issue_group_key TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_type TEXT,
+  source_event_id TEXT,
+  source_event_name TEXT,
+  source_event_recipe_id TEXT,
+  source_menu_plan_item_key TEXT,
+  production_issue_grouped BOOLEAN NOT NULL DEFAULT FALSE,
+  production_issue_group_key TEXT,
+  production_issue_scope TEXT,
+  production_issue_item_count INTEGER,
+  production_issue_dish_count INTEGER,
+  production_issue_admin_reissue BOOLEAN NOT NULL DEFAULT FALSE,
+  production_issue_reissue_run_id TEXT,
+  production_issue_reissue_original_group_key TEXT,
+  target_servings NUMERIC(18, 6),
+  ingredient_cost_total NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  production_cost_total NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  cost_per_serving NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  total_shortage_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  consumption_report_id TEXT,
+  consumption_report_number TEXT,
+  consumption_report_name TEXT,
+  consumption_report_generated_at TIMESTAMPTZ,
+  produced_item_batch_id TEXT,
+  produced_item_batch_number TEXT,
+  yield_adjustment_applied BOOLEAN NOT NULL DEFAULT FALSE,
+  yield_adjustment_version INTEGER,
+  yield_adjustment_updated_at TIMESTAMPTZ,
+  yield_snapshot_source TEXT,
+  quantity_semantics TEXT,
+  reconciliation_mode TEXT,
+  output_calculation_source TEXT,
+  recipe_raw_weight_grams NUMERIC(18, 6),
+  total_raw_consumption_weight_grams NUMERIC(18, 6),
+  total_yielded_weight_grams NUMERIC(18, 6),
+  expected_finished_weight_grams NUMERIC(18, 6),
+  actual_finished_weight_grams NUMERIC(18, 6),
+  portion_size_grams NUMERIC(18, 6),
+  portion_size_source TEXT,
+  expected_yield_servings NUMERIC(18, 6),
+  produced_servings NUMERIC(18, 6),
+  produced_weight_grams NUMERIC(18, 6),
+  completed_by_name TEXT,
+  fulfillment_store_name TEXT,
+  linked_material_request_id TEXT,
+  linked_material_request_number TEXT,
+  material_request_status TEXT,
+  last_review_action TEXT,
+  rejection_reason TEXT,
+  cancellation_reason TEXT,
+  cancelled_at TIMESTAMPTZ,
+  cancelled_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  cancelled_by_name TEXT,
   started_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   completed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   completed_at TIMESTAMPTZ,
@@ -811,15 +862,30 @@ CREATE TABLE IF NOT EXISTS production_manifest_lines (
   recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE RESTRICT,
   ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
   item_name TEXT NOT NULL,
+  line_type TEXT NOT NULL DEFAULT 'recipe',
+  item_key TEXT,
+  source_menu_plan_item_key TEXT,
+  recipe_code TEXT,
+  ingredient_name TEXT,
+  meal_period TEXT,
   requested_servings NUMERIC(18, 6),
   requested_weight_grams NUMERIC(18, 6),
   produced_servings NUMERIC(18, 6),
   produced_weight_grams NUMERIC(18, 6),
+  production_covers NUMERIC(18, 6),
+  raw_weight_grams NUMERIC(18, 6),
+  yielded_weight_grams NUMERIC(18, 6),
+  expected_finished_weight_grams NUMERIC(18, 6),
+  portion_size_grams NUMERIC(18, 6),
+  expected_yield_servings NUMERIC(18, 6),
+  output_calculation_source TEXT,
+  weight_calculation_source TEXT,
+  yield_calculation_source TEXT,
+  weight_snapshot_version INTEGER,
   estimated_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   actual_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (
@@ -852,7 +918,6 @@ CREATE TABLE IF NOT EXISTS production_consumption_lines (
   cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'posted',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -875,11 +940,35 @@ CREATE TABLE IF NOT EXISTS produced_output_batches (
   remaining_weight_grams NUMERIC(18, 6) NOT NULL CHECK (remaining_weight_grams >= 0),
   initial_servings NUMERIC(18, 6),
   remaining_servings NUMERIC(18, 6),
+  served_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  wasted_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  served_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  wasted_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  portion_size_grams NUMERIC(18, 6),
+  service_portion_size_grams NUMERIC(18, 6),
+  service_portion_updated_by TEXT,
+  service_portion_updated_by_name TEXT,
+  service_portion_updated_at TIMESTAMPTZ,
+  expected_servings NUMERIC(18, 6),
+  expected_finished_weight_grams NUMERIC(18, 6),
+  actual_finished_weight_grams NUMERIC(18, 6),
+  source_type TEXT,
+  source_event_id TEXT,
+  menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE SET NULL,
+  consumption_report_id TEXT,
+  consumption_report_number TEXT,
+  production_issue_grouped BOOLEAN NOT NULL DEFAULT FALSE,
+  production_issue_item_count INTEGER,
+  production_issue_dish_count INTEGER,
+  completed_by TEXT,
+  completed_by_name TEXT,
+  reconciliation_mode TEXT,
+  output_calculation_source TEXT,
+  cutover_version INTEGER NOT NULL DEFAULT 1,
   unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
   source_name TEXT,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (remaining_weight_grams <= initial_weight_grams)
@@ -912,10 +1001,35 @@ CREATE TABLE IF NOT EXISTS meal_service_headers (
   serving_size_grams NUMERIC(18, 6) NOT NULL CHECK (serving_size_grams > 0),
   covers NUMERIC(18, 6) NOT NULL CHECK (covers >= 0),
   status TEXT NOT NULL DEFAULT 'posted',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  request_fingerprint TEXT,
+  reversal_idempotency_key TEXT,
+  reversal_request_fingerprint TEXT,
+  scope_key TEXT,
+  menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE SET NULL,
+  menu_plan_name TEXT,
+  customer_meal_plan_id TEXT,
+  customer_meal_plan_name TEXT,
+  customer_name TEXT,
+  customer_id TEXT,
+  category TEXT,
+  attendee_count NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  scan_method TEXT,
+  notes TEXT,
+  required_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  required_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  served_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  served_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  shortage_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  shortage_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  recorded_by TEXT,
+  recorded_by_name TEXT,
+  recorded_at TIMESTAMPTZ,
   posted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   reversed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reversed_by_name TEXT,
   reversed_at TIMESTAMPTZ,
+  reversal_reason TEXT,
+  cutover_version INTEGER NOT NULL DEFAULT 1,
   source_name TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -932,13 +1046,43 @@ CREATE TABLE IF NOT EXISTS meal_service_lines (
   served_weight_grams NUMERIC(18, 6) NOT NULL CHECK (served_weight_grams >= 0),
   cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'posted',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_meal_service_lines_batch
   ON meal_service_lines(output_batch_id, status);
+
+CREATE TABLE IF NOT EXISTS meal_service_items (
+  meal_service_item_id TEXT PRIMARY KEY,
+  meal_service_id TEXT NOT NULL REFERENCES meal_service_headers(meal_service_id) ON DELETE CASCADE,
+  item_order INTEGER NOT NULL DEFAULT 1,
+  output_batch_id TEXT REFERENCES produced_output_batches(output_batch_id) ON DELETE SET NULL,
+  production_id TEXT REFERENCES production_events(production_id) ON DELETE SET NULL,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE SET NULL,
+  recipe_name TEXT,
+  item_name TEXT,
+  attendee_count NUMERIC(18, 6),
+  portions_per_attendee NUMERIC(18, 6),
+  servings_per_attendee NUMERIC(18, 6),
+  portion_size_grams NUMERIC(18, 6),
+  manual_portion_size_grams NUMERIC(18, 6),
+  portion_size_source TEXT,
+  required_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  required_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  served_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  served_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  consumed_production_equivalent_servings NUMERIC(18, 6),
+  shortage_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  shortage_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'posted',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_meal_service_items_header
+  ON meal_service_items(meal_service_id, item_order);
 
 CREATE TABLE IF NOT EXISTS food_waste_records (
   food_waste_id TEXT PRIMARY KEY,
@@ -951,9 +1095,46 @@ CREATE TABLE IF NOT EXISTS food_waste_records (
   menu_category TEXT,
   waste_category TEXT NOT NULL,
   reason_code TEXT,
+  reason TEXT,
+  waste_scope TEXT NOT NULL DEFAULT 'ingredient',
+  source_type TEXT NOT NULL DEFAULT 'manual_entry',
+  avoidable_type TEXT NOT NULL DEFAULT 'avoidable',
+  preventable BOOLEAN NOT NULL DEFAULT TRUE,
+  auto_generated BOOLEAN NOT NULL DEFAULT FALSE,
+  high_value BOOLEAN NOT NULL DEFAULT FALSE,
+  quantity_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL DEFAULT 'g',
+  estimated_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE SET NULL,
+  menu_plan_name TEXT,
+  meal_service_id TEXT REFERENCES meal_service_headers(meal_service_id) ON DELETE SET NULL,
+  production_id TEXT REFERENCES production_events(production_id) ON DELETE SET NULL,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE SET NULL,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE SET NULL,
+  production_name TEXT,
+  recipe_name TEXT,
+  ingredient_name TEXT,
+  batch_reference TEXT,
+  batch_overproduction_item_key TEXT,
+  manifest_item_key TEXT,
+  source_menu_plan_item_key TEXT,
+  batch_recipe_id TEXT,
+  batch_recipe_name TEXT,
+  produced_weight_grams NUMERIC(18, 6),
+  available_weight_grams_before NUMERIC(18, 6),
+  wasted_production_equivalent_servings NUMERIC(18, 6),
+  served_at TIMESTAMPTZ,
+  production_completed_at TIMESTAMPTZ,
+  recording_window_basis TEXT,
+  recording_window_open_at TIMESTAMPTZ,
+  recording_deadline_at TIMESTAMPTZ,
+  meal_service_adjustment_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  inventory_transaction_id TEXT,
+  inventory_deduction_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  inventory_shortage_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  notes TEXT,
   approval_status TEXT NOT NULL DEFAULT 'pending',
   status TEXT NOT NULL DEFAULT 'posted',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   recorded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   reversed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   reversed_at TIMESTAMPTZ,
@@ -966,16 +1147,32 @@ CREATE TABLE IF NOT EXISTS food_waste_records (
 CREATE INDEX IF NOT EXISTS idx_food_waste_records_scope
   ON food_waste_records(warehouse_id, waste_date, meal_period, menu_type, menu_category, waste_category, status);
 
+CREATE INDEX IF NOT EXISTS idx_food_waste_records_source
+  ON food_waste_records(source_type, waste_scope, status);
+
+CREATE INDEX IF NOT EXISTS idx_food_waste_records_operational_links
+  ON food_waste_records(production_id, meal_service_id, recipe_version_id, ingredient_id);
+
 CREATE TABLE IF NOT EXISTS food_waste_lines (
   food_waste_line_id TEXT PRIMARY KEY,
   food_waste_id TEXT NOT NULL REFERENCES food_waste_records(food_waste_id) ON DELETE CASCADE,
   output_batch_id TEXT REFERENCES produced_output_batches(output_batch_id) ON DELETE RESTRICT,
   production_line_id TEXT REFERENCES production_manifest_lines(production_line_id) ON DELETE RESTRICT,
+  production_id TEXT REFERENCES production_events(production_id) ON DELETE SET NULL,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE SET NULL,
   ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  line_number INTEGER NOT NULL DEFAULT 1,
+  item_name TEXT,
+  batch_number TEXT,
+  batch_overproduction_item_key TEXT,
+  manifest_item_key TEXT,
+  source_menu_plan_item_key TEXT,
+  wasted_production_equivalent_servings NUMERIC(18, 6),
+  produced_weight_grams_before NUMERIC(18, 6),
+  available_weight_grams_before NUMERIC(18, 6),
   waste_weight_grams NUMERIC(18, 6) NOT NULL CHECK (waste_weight_grams > 0),
   cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'posted',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -985,6 +1182,27 @@ CREATE INDEX IF NOT EXISTS idx_food_waste_lines_output_batch
 
 CREATE INDEX IF NOT EXISTS idx_food_waste_lines_audit
   ON food_waste_lines(food_waste_id, output_batch_id, production_line_id, ingredient_id, status);
+
+CREATE TABLE IF NOT EXISTS food_waste_inventory_movements (
+  food_waste_inventory_movement_id TEXT PRIMARY KEY,
+  food_waste_id TEXT NOT NULL REFERENCES food_waste_records(food_waste_id) ON DELETE CASCADE,
+  movement_order INTEGER NOT NULL DEFAULT 1,
+  inventory_transaction_id TEXT,
+  inventory_id TEXT REFERENCES warehouse_inventory(inventory_id) ON DELETE SET NULL,
+  lot_id TEXT REFERENCES inventory_lots(lot_id) ON DELETE SET NULL,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE SET NULL,
+  quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  unit TEXT,
+  unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  stock_date DATE,
+  expiry_date DATE,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_food_waste_inventory_movements_record
+  ON food_waste_inventory_movements(food_waste_id, movement_order);
 
 CREATE TABLE IF NOT EXISTS food_waste_images (
   food_waste_image_id TEXT PRIMARY KEY,
@@ -1074,7 +1292,28 @@ CREATE TABLE IF NOT EXISTS meal_service_consumptions (
   consumed_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
   cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'posted',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE SET NULL,
+  menu_type TEXT,
+  menu_category TEXT,
+  customer_meal_plan_id TEXT,
+  recipe_name TEXT,
+  attendee_count NUMERIC(18, 6),
+  portions_per_attendee NUMERIC(18, 6),
+  servings_per_attendee NUMERIC(18, 6),
+  portion_size_grams NUMERIC(18, 6),
+  manual_portion_size_grams NUMERIC(18, 6),
+  portion_size_source TEXT,
+  covers NUMERIC(18, 6),
+  required_servings NUMERIC(18, 6),
+  required_weight_grams NUMERIC(18, 6),
+  consumed_production_equivalent_servings NUMERIC(18, 6),
+  shortage_servings NUMERIC(18, 6),
+  shortage_weight_grams NUMERIC(18, 6),
+  reversal_reason TEXT,
+  performed_by TEXT,
+  performed_by_name TEXT,
+  performed_at TIMESTAMPTZ,
+  cutover_version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1096,6 +1335,34 @@ CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_reversal
 
 CREATE INDEX IF NOT EXISTS idx_meal_service_consumptions_food_cost
   ON meal_service_consumptions(service_date, meal_period, movement_type, status, meal_service_id, output_batch_id, production_id);
+
+CREATE TABLE IF NOT EXISTS meal_service_consumption_allocations (
+  meal_service_consumption_allocation_id TEXT PRIMARY KEY,
+  meal_consumption_id TEXT NOT NULL REFERENCES meal_service_consumptions(meal_consumption_id) ON DELETE CASCADE,
+  allocation_order INTEGER NOT NULL DEFAULT 1,
+  output_batch_id TEXT REFERENCES produced_output_batches(output_batch_id) ON DELETE SET NULL,
+  production_id TEXT REFERENCES production_events(production_id) ON DELETE SET NULL,
+  batch_number TEXT,
+  portion_size_grams NUMERIC(18, 6),
+  service_portion_size_grams NUMERIC(18, 6),
+  servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  production_equivalent_servings NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  meal_portions NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  remaining_servings_before NUMERIC(18, 6),
+  remaining_servings_after NUMERIC(18, 6),
+  remaining_weight_grams_before NUMERIC(18, 6),
+  remaining_weight_grams_after NUMERIC(18, 6),
+  status TEXT NOT NULL DEFAULT 'posted',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_meal_service_consumption_allocations_consumption
+  ON meal_service_consumption_allocations(meal_consumption_id, allocation_order);
+
+CREATE INDEX IF NOT EXISTS idx_meal_service_consumption_allocations_batch
+  ON meal_service_consumption_allocations(output_batch_id, status);
 
 -- ---------------------------------------------------------------------------
 -- CPU / central production schema
@@ -1287,14 +1554,196 @@ ALTER TABLE recipes ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'
 ALTER TABLE recipe_versions ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE menu_plans ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE menu_plan_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE production_events ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE production_consumption_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE meal_service_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS source_type TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS source_event_id TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS source_event_name TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS source_event_recipe_id TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS source_menu_plan_item_key TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS production_issue_grouped BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS production_issue_group_key TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS production_issue_scope TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS production_issue_item_count INTEGER;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS production_issue_dish_count INTEGER;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS production_issue_admin_reissue BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS production_issue_reissue_run_id TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS production_issue_reissue_original_group_key TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS target_servings NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS ingredient_cost_total NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS production_cost_total NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS cost_per_serving NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS total_shortage_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS consumption_report_id TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS consumption_report_number TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS consumption_report_name TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS consumption_report_generated_at TIMESTAMPTZ;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS produced_item_batch_id TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS produced_item_batch_number TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS yield_adjustment_applied BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS yield_adjustment_version INTEGER;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS yield_adjustment_updated_at TIMESTAMPTZ;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS yield_snapshot_source TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS quantity_semantics TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS reconciliation_mode TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS output_calculation_source TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS recipe_raw_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS total_raw_consumption_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS total_yielded_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS expected_finished_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS actual_finished_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS portion_size_grams NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS portion_size_source TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS expected_yield_servings NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS produced_servings NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS produced_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completed_by_name TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS fulfillment_store_name TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS linked_material_request_id TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS linked_material_request_number TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS material_request_status TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS last_review_action TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS cancelled_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS cancelled_by_name TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS line_type TEXT NOT NULL DEFAULT 'recipe';
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS item_key TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS source_menu_plan_item_key TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS recipe_code TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS ingredient_name TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS meal_period TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS production_covers NUMERIC(18, 6);
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS raw_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS yielded_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS expected_finished_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS portion_size_grams NUMERIC(18, 6);
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS expected_yield_servings NUMERIC(18, 6);
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS output_calculation_source TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS weight_calculation_source TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS yield_calculation_source TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS weight_snapshot_version INTEGER;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS served_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS wasted_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS served_servings NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS wasted_servings NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS portion_size_grams NUMERIC(18, 6);
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS service_portion_size_grams NUMERIC(18, 6);
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS service_portion_updated_by TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS service_portion_updated_by_name TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS service_portion_updated_at TIMESTAMPTZ;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS expected_servings NUMERIC(18, 6);
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS expected_finished_weight_grams NUMERIC(18, 6);
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS actual_finished_weight_grams NUMERIC(18, 6);
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS source_type TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS source_event_id TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE SET NULL;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS consumption_report_id TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS consumption_report_number TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS production_issue_grouped BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS production_issue_item_count INTEGER;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS production_issue_dish_count INTEGER;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS completed_by TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS completed_by_name TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS reconciliation_mode TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS output_calculation_source TEXT;
+ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS cutover_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS request_fingerprint TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS reversal_idempotency_key TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS reversal_request_fingerprint TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS scope_key TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE SET NULL;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS menu_plan_name TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS customer_meal_plan_id TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS customer_meal_plan_name TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS customer_name TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS customer_id TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS attendee_count NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS scan_method TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS required_servings NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS required_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS served_servings NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS served_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS shortage_servings NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS shortage_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS recorded_by TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS recorded_by_name TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMPTZ;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS reversed_by_name TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS reversal_reason TEXT;
+ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS cutover_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE SET NULL;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS menu_type TEXT;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS menu_category TEXT;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS customer_meal_plan_id TEXT;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS recipe_name TEXT;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS attendee_count NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS portions_per_attendee NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS servings_per_attendee NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS portion_size_grams NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS manual_portion_size_grams NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS portion_size_source TEXT;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS covers NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS required_servings NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS required_weight_grams NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS consumed_production_equivalent_servings NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS shortage_servings NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS shortage_weight_grams NUMERIC(18, 6);
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS reversal_reason TEXT;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS performed_by TEXT;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS performed_by_name TEXT;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS performed_at TIMESTAMPTZ;
+ALTER TABLE meal_service_consumptions ADD COLUMN IF NOT EXISTS cutover_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS reason TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS waste_scope TEXT NOT NULL DEFAULT 'ingredient';
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'manual_entry';
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS avoidable_type TEXT NOT NULL DEFAULT 'avoidable';
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS preventable BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS auto_generated BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS high_value BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS quantity_grams NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'g';
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS estimated_cost NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS menu_plan_id TEXT REFERENCES menu_plans(menu_plan_id) ON DELETE SET NULL;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS menu_plan_name TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS meal_service_id TEXT REFERENCES meal_service_headers(meal_service_id) ON DELETE SET NULL;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS production_id TEXT REFERENCES production_events(production_id) ON DELETE SET NULL;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE SET NULL;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE SET NULL;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS production_name TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS recipe_name TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS ingredient_name TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS batch_reference TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS batch_overproduction_item_key TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS manifest_item_key TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS source_menu_plan_item_key TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS batch_recipe_id TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS batch_recipe_name TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS produced_weight_grams NUMERIC(18, 6);
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS available_weight_grams_before NUMERIC(18, 6);
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS wasted_production_equivalent_servings NUMERIC(18, 6);
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS served_at TIMESTAMPTZ;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS production_completed_at TIMESTAMPTZ;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS recording_window_basis TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS recording_window_open_at TIMESTAMPTZ;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS recording_deadline_at TIMESTAMPTZ;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS meal_service_adjustment_cost NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS inventory_transaction_id TEXT;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS inventory_deduction_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS inventory_shortage_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE food_waste_records ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS production_id TEXT REFERENCES production_events(production_id) ON DELETE SET NULL;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE SET NULL;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS line_number INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS item_name TEXT;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS batch_number TEXT;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS batch_overproduction_item_key TEXT;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS manifest_item_key TEXT;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS source_menu_plan_item_key TEXT;
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS wasted_production_equivalent_servings NUMERIC(18, 6);
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS produced_weight_grams_before NUMERIC(18, 6);
+ALTER TABLE food_waste_lines ADD COLUMN IF NOT EXISTS available_weight_grams_before NUMERIC(18, 6);
 
 -- Backfill core legacy JSON documents into the normalized cutover tables. The
 -- INSERT order follows the real foreign-key chain so a restart is safe and
@@ -1510,8 +1959,23 @@ ON CONFLICT (menu_plan_id) DO NOTHING;
 
 INSERT INTO production_events (
   production_id, menu_plan_id, warehouse_id, production_date, meal_period, menu_type,
-  menu_category, status, issue_group_key, payload, started_by, completed_by, completed_at,
-  reversed_by, reversed_at, reversal_reason, source_name, created_at, updated_at
+  menu_category, status, issue_group_key, source_type, source_event_id, source_event_name,
+  source_event_recipe_id, source_menu_plan_item_key, production_issue_grouped,
+  production_issue_group_key, production_issue_scope, production_issue_item_count,
+  production_issue_dish_count, production_issue_admin_reissue, production_issue_reissue_run_id,
+  production_issue_reissue_original_group_key, target_servings, ingredient_cost_total,
+  production_cost_total, cost_per_serving, total_shortage_quantity, consumption_report_id,
+  consumption_report_number, consumption_report_name, consumption_report_generated_at,
+  produced_item_batch_id, produced_item_batch_number, yield_adjustment_applied,
+  yield_adjustment_version, yield_adjustment_updated_at, yield_snapshot_source,
+  quantity_semantics, reconciliation_mode, output_calculation_source, recipe_raw_weight_grams,
+  total_raw_consumption_weight_grams, total_yielded_weight_grams, expected_finished_weight_grams,
+  actual_finished_weight_grams, portion_size_grams, portion_size_source, expected_yield_servings,
+  produced_servings, produced_weight_grams, completed_by_name, fulfillment_store_name,
+  linked_material_request_id, linked_material_request_number, material_request_status,
+  last_review_action, rejection_reason, cancellation_reason, cancelled_at, cancelled_by,
+  cancelled_by_name, started_by, completed_by, completed_at, reversed_by, reversed_at,
+  reversal_reason, source_name, created_at, updated_at
 )
 SELECT
   record.id,
@@ -1523,7 +1987,64 @@ SELECT
   COALESCE(NULLIF(record.data->>'menu_category', ''), 'senior'),
   COALESCE(NULLIF(record.data->>'status', ''), 'planned'),
   COALESCE(NULLIF(record.data->>'issue_group_key', ''), record.id),
-  record.data || jsonb_build_object('id', record.id),
+  NULLIF(record.data->>'source_type', ''),
+  NULLIF(record.data->>'source_event_id', ''),
+  NULLIF(record.data->>'source_event_name', ''),
+  NULLIF(record.data->>'source_event_recipe_id', ''),
+  NULLIF(record.data->>'source_menu_plan_item_key', ''),
+  COALESCE((NULLIF(record.data->>'production_issue_grouped', ''))::boolean, FALSE),
+  NULLIF(record.data->>'production_issue_group_key', ''),
+  NULLIF(record.data->>'production_issue_scope', ''),
+  NULLIF(record.data->>'production_issue_item_count', '')::integer,
+  NULLIF(record.data->>'production_issue_dish_count', '')::integer,
+  COALESCE((NULLIF(record.data->>'production_issue_admin_reissue', ''))::boolean, FALSE),
+  NULLIF(record.data->>'production_issue_reissue_run_id', ''),
+  NULLIF(record.data->>'production_issue_reissue_original_group_key', ''),
+  NULLIF(COALESCE(record.data->>'target_servings', record.data->>'production_covers'), '')::numeric,
+  COALESCE(NULLIF(record.data->>'ingredient_cost_total', '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(record.data->>'production_cost_total', record.data->>'total_cost'), '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'cost_per_serving', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'total_shortage_quantity', '')::numeric, 0),
+  NULLIF(record.data->>'consumption_report_id', ''),
+  NULLIF(record.data->>'consumption_report_number', ''),
+  NULLIF(record.data->>'consumption_report_name', ''),
+  NULLIF(record.data->>'consumption_report_generated_at', '')::timestamptz,
+  NULLIF(record.data->>'produced_item_batch_id', ''),
+  NULLIF(record.data->>'produced_item_batch_number', ''),
+  COALESCE((NULLIF(record.data->>'yield_adjustment_applied', ''))::boolean, FALSE),
+  NULLIF(record.data->>'yield_adjustment_version', '')::integer,
+  NULLIF(record.data->>'yield_adjustment_updated_at', '')::timestamptz,
+  NULLIF(record.data->>'yield_snapshot_source', ''),
+  NULLIF(record.data->>'quantity_semantics', ''),
+  NULLIF(record.data->>'reconciliation_mode', ''),
+  NULLIF(record.data->>'output_calculation_source', ''),
+  NULLIF(record.data->>'recipe_raw_weight_grams', '')::numeric,
+  NULLIF(record.data->>'total_raw_consumption_weight_grams', '')::numeric,
+  NULLIF(record.data->>'total_yielded_weight_grams', '')::numeric,
+  NULLIF(record.data->>'expected_finished_weight_grams', '')::numeric,
+  NULLIF(record.data->>'actual_finished_weight_grams', '')::numeric,
+  NULLIF(record.data->>'portion_size_grams', '')::numeric,
+  NULLIF(record.data->>'portion_size_source', ''),
+  NULLIF(record.data->>'expected_yield_servings', '')::numeric,
+  NULLIF(record.data->>'produced_servings', '')::numeric,
+  NULLIF(record.data->>'produced_weight_grams', '')::numeric,
+  NULLIF(record.data->>'completed_by_name', ''),
+  NULLIF(record.data->>'fulfillment_store_name', ''),
+  NULLIF(record.data->>'linked_material_request_id', ''),
+  NULLIF(record.data->>'linked_material_request_number', ''),
+  NULLIF(record.data->>'material_request_status', ''),
+  NULLIF(record.data->>'last_review_action', ''),
+  NULLIF(record.data->>'rejection_reason', ''),
+  NULLIF(record.data->>'cancellation_reason', ''),
+  NULLIF(record.data->>'cancelled_at', '')::timestamptz,
+  (
+    SELECT app_user.id
+    FROM users app_user
+    WHERE app_user.id = NULLIF(record.data->>'cancelled_by', '')
+      OR LOWER(app_user.email) = LOWER(NULLIF(record.data->>'cancelled_by', ''))
+    LIMIT 1
+  ),
+  NULLIF(record.data->>'cancelled_by_name', ''),
   (
     SELECT app_user.id
     FROM users app_user
@@ -1560,8 +2081,12 @@ ON CONFLICT (production_id) DO NOTHING;
 
 INSERT INTO production_manifest_lines (
   production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
-  ingredient_id, item_name, requested_servings, requested_weight_grams, produced_servings,
-  produced_weight_grams, estimated_cost, actual_cost, status, source_name, payload,
+  ingredient_id, item_name, line_type, item_key, source_menu_plan_item_key, recipe_code,
+  ingredient_name, meal_period, requested_servings, requested_weight_grams, produced_servings,
+  produced_weight_grams, production_covers, raw_weight_grams, yielded_weight_grams,
+  expected_finished_weight_grams, portion_size_grams, expected_yield_servings,
+  output_calculation_source, weight_calculation_source, yield_calculation_source,
+  weight_snapshot_version, estimated_cost, actual_cost, status, source_name,
   created_at, updated_at
 )
 SELECT
@@ -1572,15 +2097,30 @@ SELECT
   recipe.recipe_version_id,
   ingredient.ingredient_id,
   COALESCE(NULLIF(record.data->>'recipe_name', ''), NULLIF(record.data->>'production_name', ''), record.id),
+  COALESCE(NULLIF(record.data->>'line_type', ''), 'recipe'),
+  NULLIF(COALESCE(record.data->>'key', record.data->>'manifest_item_key'), ''),
+  NULLIF(record.data->>'source_menu_plan_item_key', ''),
+  NULLIF(record.data->>'recipe_code', ''),
+  NULLIF(record.data->>'ingredient_name', ''),
+  NULLIF(record.data->>'meal_type', ''),
   NULLIF(COALESCE(record.data->>'target_servings', record.data->>'produced_servings'), '')::numeric,
   NULLIF(COALESCE(record.data->>'requested_weight_grams', record.data->>'production_size_grams'), '')::numeric,
   NULLIF(COALESCE(record.data->>'produced_servings', record.data->>'production_covers'), '')::numeric,
   NULLIF(COALESCE(record.data->>'produced_weight_grams', record.data->>'finished_weight_grams', record.data->>'production_size_grams'), '')::numeric,
+  NULLIF(COALESCE(record.data->>'production_covers', record.data->>'target_servings'), '')::numeric,
+  NULLIF(record.data->>'raw_weight_grams', '')::numeric,
+  NULLIF(record.data->>'yielded_weight_grams', '')::numeric,
+  NULLIF(record.data->>'expected_finished_weight_grams', '')::numeric,
+  NULLIF(record.data->>'portion_size_grams', '')::numeric,
+  NULLIF(record.data->>'expected_yield_servings', '')::numeric,
+  NULLIF(record.data->>'output_calculation_source', ''),
+  NULLIF(record.data->>'weight_calculation_source', ''),
+  NULLIF(COALESCE(record.data->>'yield_calculation_source', record.data->>'yield_source'), ''),
+  NULLIF(record.data->>'weight_snapshot_version', '')::integer,
   COALESCE(NULLIF(COALESCE(record.data->>'estimated_cost', record.data->>'estimated_batch_cost'), '')::numeric, 0),
   COALESCE(NULLIF(COALESCE(record.data->>'actual_cost', record.data->>'production_cost_total', record.data->>'total_cost'), '')::numeric, 0),
   'active',
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -1593,7 +2133,14 @@ ON CONFLICT (production_line_id) DO NOTHING;
 INSERT INTO produced_output_batches (
   output_batch_id, production_id, production_line_id, warehouse_id, recipe_version_id, ingredient_id,
   batch_number, initial_weight_grams, remaining_weight_grams, initial_servings, remaining_servings,
-  unit_cost, total_cost, status, source_name, payload, created_at, updated_at
+  served_weight_grams, wasted_weight_grams, served_servings, wasted_servings,
+  portion_size_grams, service_portion_size_grams, service_portion_updated_by,
+  service_portion_updated_by_name, service_portion_updated_at, expected_servings,
+  expected_finished_weight_grams, actual_finished_weight_grams, source_type,
+  source_event_id, menu_plan_id, consumption_report_id, consumption_report_number,
+  production_issue_grouped, production_issue_item_count, production_issue_dish_count,
+  completed_by, completed_by_name, reconciliation_mode, output_calculation_source,
+  cutover_version, unit_cost, total_cost, status, source_name, created_at, updated_at
 )
 SELECT
   record.id,
@@ -1607,11 +2154,35 @@ SELECT
   COALESCE(NULLIF(COALESCE(record.data->>'remaining_weight_grams', record.data->>'available_weight_grams', record.data->>'produced_weight_grams'), '')::numeric, 0),
   NULLIF(COALESCE(record.data->>'initial_servings', record.data->>'produced_servings'), '')::numeric,
   NULLIF(COALESCE(record.data->>'remaining_servings', record.data->>'available_servings', record.data->>'produced_servings'), '')::numeric,
+  COALESCE(NULLIF(record.data->>'served_weight_grams', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'wasted_weight_grams', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'served_servings', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'wasted_servings', '')::numeric, 0),
+  NULLIF(record.data->>'portion_size_grams', '')::numeric,
+  NULLIF(record.data->>'service_portion_size_grams', '')::numeric,
+  NULLIF(record.data->>'service_portion_updated_by', ''),
+  NULLIF(record.data->>'service_portion_updated_by_name', ''),
+  NULLIF(record.data->>'service_portion_updated_at', '')::timestamptz,
+  NULLIF(COALESCE(record.data->>'expected_servings', record.data->>'produced_servings'), '')::numeric,
+  NULLIF(COALESCE(record.data->>'expected_finished_weight_grams', record.data->>'produced_weight_grams'), '')::numeric,
+  NULLIF(COALESCE(record.data->>'actual_finished_weight_grams', record.data->>'produced_weight_grams'), '')::numeric,
+  NULLIF(record.data->>'source_type', ''),
+  NULLIF(record.data->>'source_event_id', ''),
+  NULLIF(record.data->>'menu_plan_id', ''),
+  NULLIF(record.data->>'consumption_report_id', ''),
+  NULLIF(record.data->>'consumption_report_number', ''),
+  COALESCE((NULLIF(record.data->>'production_issue_grouped', ''))::boolean, FALSE),
+  NULLIF(record.data->>'production_issue_item_count', '')::integer,
+  NULLIF(record.data->>'production_issue_dish_count', '')::integer,
+  NULLIF(record.data->>'completed_by', ''),
+  NULLIF(record.data->>'completed_by_name', ''),
+  NULLIF(record.data->>'reconciliation_mode', ''),
+  NULLIF(record.data->>'output_calculation_source', ''),
+  COALESCE(NULLIF(record.data->>'cutover_version', '')::integer, 1),
   COALESCE(NULLIF(record.data->>'unit_cost', '')::numeric, 0),
   COALESCE(NULLIF(record.data->>'total_cost', '')::numeric, 0),
   COALESCE(NULLIF(record.data->>'status', ''), 'active'),
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -1647,7 +2218,13 @@ ON CONFLICT (report_id) DO NOTHING;
 INSERT INTO meal_service_headers (
   meal_service_id, service_reference, idempotency_key, warehouse_id, service_date,
   meal_period, menu_type, menu_category, serving_size_grams, covers, status,
-  payload, posted_by, reversed_by, reversed_at, source_name, created_at, updated_at
+  request_fingerprint, reversal_idempotency_key, reversal_request_fingerprint,
+  scope_key, menu_plan_id, menu_plan_name, customer_meal_plan_id,
+  customer_meal_plan_name, customer_name, customer_id, category, attendee_count,
+  scan_method, notes, required_servings, required_weight_grams, served_servings,
+  served_weight_grams, shortage_servings, shortage_weight_grams, recorded_by,
+  recorded_by_name, recorded_at, posted_by, reversed_by, reversed_by_name,
+  reversed_at, reversal_reason, cutover_version, source_name, created_at, updated_at
 )
 SELECT
   record.id,
@@ -1661,7 +2238,29 @@ SELECT
   COALESCE(NULLIF(COALESCE(record.data->>'serving_size_grams', record.data->>'portion_size_grams'), '')::numeric, 1),
   COALESCE(NULLIF(COALESCE(record.data->>'covers', record.data->>'attendee_count'), '')::numeric, 0),
   COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
-  record.data || jsonb_build_object('id', record.id),
+  NULLIF(record.data->>'request_fingerprint', ''),
+  NULLIF(record.data->>'reversal_idempotency_key', ''),
+  NULLIF(record.data->>'reversal_request_fingerprint', ''),
+  NULLIF(record.data->>'scope_key', ''),
+  (SELECT menu_plan_id FROM menu_plans WHERE menu_plan_id = NULLIF(record.data->>'menu_plan_id', '') LIMIT 1),
+  NULLIF(record.data->>'menu_plan_name', ''),
+  NULLIF(record.data->>'customer_meal_plan_id', ''),
+  NULLIF(record.data->>'customer_meal_plan_name', ''),
+  NULLIF(record.data->>'customer_name', ''),
+  NULLIF(record.data->>'customer_id', ''),
+  NULLIF(record.data->>'category', ''),
+  COALESCE(NULLIF(record.data->>'attendee_count', '')::numeric, 0),
+  NULLIF(record.data->>'scan_method', ''),
+  NULLIF(record.data->>'notes', ''),
+  COALESCE(NULLIF(record.data->>'required_servings', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'required_weight_grams', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'served_servings', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'served_weight_grams', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'shortage_servings', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'shortage_weight_grams', '')::numeric, 0),
+  NULLIF(record.data->>'recorded_by', ''),
+  NULLIF(record.data->>'recorded_by_name', ''),
+  NULLIF(record.data->>'recorded_at', '')::timestamptz,
   (
     SELECT app_user.id
     FROM users app_user
@@ -1676,7 +2275,10 @@ SELECT
       OR LOWER(app_user.email) = LOWER(NULLIF(record.data->>'reversed_by', ''))
     LIMIT 1
   ),
+  NULLIF(record.data->>'reversed_by_name', ''),
   NULLIF(record.data->>'reversed_at', '')::timestamptz,
+  NULLIF(record.data->>'reversal_reason', ''),
+  COALESCE(NULLIF(record.data->>'cutover_version', '')::integer, 1),
   NULLIF(record.data->>'source_name', ''),
   record.created_at,
   record.updated_at
@@ -1688,10 +2290,60 @@ WHERE record.entity_name = 'MealServiceAttendance'
   AND COALESCE(record.data->>'service_date', '') <> ''
 ON CONFLICT (meal_service_id) DO NOTHING;
 
+INSERT INTO meal_service_items (
+  meal_service_item_id, meal_service_id, item_order, output_batch_id, production_id,
+  recipe_version_id, recipe_name, item_name, attendee_count, portions_per_attendee,
+  servings_per_attendee, portion_size_grams, manual_portion_size_grams,
+  portion_size_source, required_servings, required_weight_grams, served_servings,
+  served_weight_grams, consumed_production_equivalent_servings, shortage_servings,
+  shortage_weight_grams, cost, status, created_at, updated_at
+)
+SELECT
+  COALESCE(NULLIF(item.value->>'id', ''), record.id || ':item:' || item.ordinality),
+  record.id,
+  item.ordinality::integer,
+  (SELECT output_batch_id FROM produced_output_batches WHERE output_batch_id = NULLIF(COALESCE(item.value->>'output_batch_id', item.value->>'produced_item_batch_id', item.value->>'batch_id'), '') LIMIT 1),
+  (SELECT production_id FROM production_events WHERE production_id = NULLIF(item.value->>'production_id', '') LIMIT 1),
+  (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(COALESCE(item.value->>'recipe_id', item.value->>'recipe_version_id'), '') LIMIT 1),
+  NULLIF(item.value->>'recipe_name', ''),
+  NULLIF(COALESCE(item.value->>'item_name', item.value->>'recipe_name'), ''),
+  NULLIF(item.value->>'attendee_count', '')::numeric,
+  NULLIF(item.value->>'portions_per_attendee', '')::numeric,
+  NULLIF(item.value->>'servings_per_attendee', '')::numeric,
+  NULLIF(item.value->>'portion_size_grams', '')::numeric,
+  NULLIF(item.value->>'manual_portion_size_grams', '')::numeric,
+  NULLIF(item.value->>'portion_size_source', ''),
+  COALESCE(NULLIF(item.value->>'required_servings', '')::numeric, 0),
+  COALESCE(NULLIF(item.value->>'required_weight_grams', '')::numeric, 0),
+  COALESCE(NULLIF(item.value->>'served_servings', '')::numeric, 0),
+  COALESCE(NULLIF(item.value->>'served_weight_grams', '')::numeric, 0),
+  NULLIF(item.value->>'consumed_production_equivalent_servings', '')::numeric,
+  COALESCE(NULLIF(COALESCE(item.value->>'shortage_servings', item.value->>'short_servings'), '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(item.value->>'shortage_weight_grams', item.value->>'short_weight_grams'), '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(item.value->>'cost', item.value->>'total_cost'), '')::numeric, 0),
+  COALESCE(NULLIF(item.value->>'status', ''), 'posted'),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN meal_service_headers header ON header.meal_service_id = record.id
+CROSS JOIN LATERAL jsonb_array_elements(
+  CASE WHEN jsonb_typeof(record.data->'items') = 'array'
+    THEN record.data->'items'
+    ELSE '[]'::jsonb
+  END
+) WITH ORDINALITY AS item(value, ordinality)
+WHERE record.entity_name = 'MealServiceAttendance'
+ON CONFLICT (meal_service_item_id) DO NOTHING;
+
 INSERT INTO meal_service_consumptions (
   meal_consumption_id, meal_service_id, output_batch_id, production_id, recipe_version_id,
   reverses_consumption_id, idempotency_key, service_reference, movement_type, service_date, meal_period,
-  consumed_weight_grams, consumed_servings, cost, status, payload, created_at, updated_at
+  consumed_weight_grams, consumed_servings, cost, status, menu_plan_id, menu_type,
+  menu_category, customer_meal_plan_id, recipe_name, attendee_count, portions_per_attendee,
+  servings_per_attendee, portion_size_grams, manual_portion_size_grams, portion_size_source,
+  covers, required_servings, required_weight_grams, consumed_production_equivalent_servings,
+  shortage_servings, shortage_weight_grams, reversal_reason, performed_by, performed_by_name,
+  performed_at, cutover_version, created_at, updated_at
 )
 SELECT
   record.id,
@@ -1709,7 +2361,28 @@ SELECT
   COALESCE(NULLIF(COALESCE(record.data->>'consumed_servings', record.data->>'required_servings'), '')::numeric, 0),
   COALESCE(NULLIF(COALESCE(record.data->>'cost', record.data->>'total_cost'), '')::numeric, 0),
   COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
-  record.data || jsonb_build_object('id', record.id),
+  (SELECT menu_plan_id FROM menu_plans WHERE menu_plan_id = NULLIF(record.data->>'menu_plan_id', '') LIMIT 1),
+  NULLIF(record.data->>'menu_type', ''),
+  NULLIF(record.data->>'menu_category', ''),
+  NULLIF(record.data->>'customer_meal_plan_id', ''),
+  NULLIF(record.data->>'recipe_name', ''),
+  NULLIF(record.data->>'attendee_count', '')::numeric,
+  NULLIF(record.data->>'portions_per_attendee', '')::numeric,
+  NULLIF(record.data->>'servings_per_attendee', '')::numeric,
+  NULLIF(record.data->>'portion_size_grams', '')::numeric,
+  NULLIF(record.data->>'manual_portion_size_grams', '')::numeric,
+  NULLIF(record.data->>'portion_size_source', ''),
+  NULLIF(record.data->>'covers', '')::numeric,
+  NULLIF(record.data->>'required_servings', '')::numeric,
+  NULLIF(record.data->>'required_weight_grams', '')::numeric,
+  NULLIF(record.data->>'consumed_production_equivalent_servings', '')::numeric,
+  NULLIF(record.data->>'shortage_servings', '')::numeric,
+  NULLIF(record.data->>'shortage_weight_grams', '')::numeric,
+  NULLIF(record.data->>'reversal_reason', ''),
+  NULLIF(record.data->>'performed_by', ''),
+  NULLIF(record.data->>'performed_by_name', ''),
+  NULLIF(record.data->>'performed_at', '')::timestamptz,
+  COALESCE(NULLIF(record.data->>'cutover_version', '')::integer, 1),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -1724,21 +2397,60 @@ WHERE record.entity_name = 'MealServiceConsumption'
   AND COALESCE(record.data->>'service_reference', '') <> ''
 ON CONFLICT (meal_consumption_id) DO NOTHING;
 
-UPDATE meal_service_consumptions target
-SET reverses_consumption_id = NULLIF(COALESCE(target.payload->>'reverses_consumption_id', target.payload->>'source_consumption_id', target.payload->>'original_consumption_id'), '')
-WHERE target.reverses_consumption_id IS NULL
-  AND NULLIF(COALESCE(target.payload->>'reverses_consumption_id', target.payload->>'source_consumption_id', target.payload->>'original_consumption_id'), '') IS NOT NULL
-  AND EXISTS (
-    SELECT 1
-    FROM meal_service_consumptions source
-    WHERE source.meal_consumption_id = NULLIF(COALESCE(target.payload->>'reverses_consumption_id', target.payload->>'source_consumption_id', target.payload->>'original_consumption_id'), '')
-  );
+INSERT INTO meal_service_consumption_allocations (
+  meal_service_consumption_allocation_id, meal_consumption_id, allocation_order,
+  output_batch_id, production_id, batch_number, portion_size_grams,
+  service_portion_size_grams, servings, production_equivalent_servings,
+  meal_portions, weight_grams, remaining_servings_before,
+  remaining_servings_after, remaining_weight_grams_before,
+  remaining_weight_grams_after, status, created_at, updated_at
+)
+SELECT
+  COALESCE(NULLIF(allocation.value->>'id', ''), record.id || ':allocation:' || allocation.ordinality),
+  record.id,
+  allocation.ordinality::integer,
+  (SELECT output_batch_id FROM produced_output_batches WHERE output_batch_id = NULLIF(COALESCE(allocation.value->>'output_batch_id', allocation.value->>'produced_item_batch_id', allocation.value->>'batch_id'), '') LIMIT 1),
+  (SELECT production_id FROM production_events WHERE production_id = NULLIF(allocation.value->>'production_id', '') LIMIT 1),
+  NULLIF(allocation.value->>'batch_number', ''),
+  NULLIF(allocation.value->>'portion_size_grams', '')::numeric,
+  NULLIF(allocation.value->>'service_portion_size_grams', '')::numeric,
+  COALESCE(NULLIF(allocation.value->>'servings', '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(allocation.value->>'production_equivalent_servings', allocation.value->>'servings'), '')::numeric, 0),
+  COALESCE(NULLIF(allocation.value->>'meal_portions', '')::numeric, 0),
+  COALESCE(NULLIF(allocation.value->>'weight_grams', '')::numeric, 0),
+  NULLIF(allocation.value->>'remaining_servings_before', '')::numeric,
+  NULLIF(allocation.value->>'remaining_servings_after', '')::numeric,
+  NULLIF(allocation.value->>'remaining_weight_grams_before', '')::numeric,
+  NULLIF(allocation.value->>'remaining_weight_grams_after', '')::numeric,
+  COALESCE(NULLIF(allocation.value->>'status', ''), 'posted'),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+JOIN meal_service_consumptions consumption ON consumption.meal_consumption_id = record.id
+CROSS JOIN LATERAL jsonb_array_elements(
+  CASE WHEN jsonb_typeof(record.data->'allocations') = 'array'
+    THEN record.data->'allocations'
+    ELSE '[]'::jsonb
+  END
+) WITH ORDINALITY AS allocation(value, ordinality)
+WHERE record.entity_name = 'MealServiceConsumption'
+ON CONFLICT (meal_service_consumption_allocation_id) DO NOTHING;
 
 INSERT INTO food_waste_records (
   food_waste_id, waste_reference, idempotency_key, warehouse_id, waste_date, meal_period,
-  menu_type, menu_category, waste_category, reason_code, approval_status, status,
-  recorded_by, reversed_by, reversed_at, reversal_reason, source_name, payload,
-  created_at, updated_at
+  menu_type, menu_category, waste_category, reason_code, reason, waste_scope,
+  source_type, avoidable_type, preventable, auto_generated, high_value,
+  quantity_grams, unit, estimated_cost, menu_plan_id, menu_plan_name,
+  meal_service_id, production_id, recipe_version_id, ingredient_id,
+  production_name, recipe_name, ingredient_name, batch_reference,
+  batch_overproduction_item_key, manifest_item_key, source_menu_plan_item_key,
+  batch_recipe_id, batch_recipe_name, produced_weight_grams,
+  available_weight_grams_before, wasted_production_equivalent_servings,
+  served_at, production_completed_at, recording_window_basis,
+  recording_window_open_at, recording_deadline_at, meal_service_adjustment_cost,
+  inventory_transaction_id, inventory_deduction_quantity, inventory_shortage_quantity,
+  notes, approval_status, status, recorded_by, reversed_by, reversed_at,
+  reversal_reason, source_name, created_at, updated_at
 )
 SELECT
   record.id,
@@ -1751,6 +2463,59 @@ SELECT
   NULLIF(record.data->>'menu_category', ''),
   COALESCE(NULLIF(record.data->>'waste_category', ''), 'ingredient'),
   NULLIF(record.data->>'reason_code', ''),
+  NULLIF(record.data->>'reason', ''),
+  COALESCE(NULLIF(record.data->>'waste_scope', ''), 'ingredient'),
+  COALESCE(NULLIF(record.data->>'source_type', ''), 'manual_entry'),
+  COALESCE(NULLIF(record.data->>'avoidable_type', ''), 'avoidable'),
+  CASE
+    WHEN record.data ? 'preventable' THEN COALESCE((record.data->>'preventable')::boolean, TRUE)
+    ELSE TRUE
+  END,
+  CASE
+    WHEN record.data ? 'auto_generated' THEN COALESCE((record.data->>'auto_generated')::boolean, FALSE)
+    ELSE FALSE
+  END,
+  CASE
+    WHEN record.data ? 'high_value' THEN COALESCE((record.data->>'high_value')::boolean, FALSE)
+    ELSE FALSE
+  END,
+  COALESCE(
+    NULLIF(COALESCE(record.data->>'waste_weight_grams', record.data->>'quantity_grams', record.data->>'wasted_weight_grams'), '')::numeric,
+    CASE WHEN LOWER(COALESCE(record.data->>'unit', 'g')) = 'kg'
+      THEN COALESCE(NULLIF(record.data->>'quantity', '')::numeric, 0) * 1000
+      ELSE COALESCE(NULLIF(record.data->>'quantity', '')::numeric, 0)
+    END
+  ),
+  COALESCE(NULLIF(record.data->>'unit', ''), 'g'),
+  COALESCE(NULLIF(COALESCE(record.data->>'estimated_cost', record.data->>'waste_cost', record.data->>'cost'), '')::numeric, 0),
+  (SELECT menu_plan_id FROM menu_plans WHERE menu_plan_id = NULLIF(record.data->>'menu_plan_id', '') LIMIT 1),
+  NULLIF(record.data->>'menu_plan_name', ''),
+  (SELECT meal_service_id FROM meal_service_headers WHERE meal_service_id = NULLIF(record.data->>'meal_service_attendance_id', '') LIMIT 1),
+  (SELECT production_id FROM production_events WHERE production_id = NULLIF(record.data->>'production_id', '') LIMIT 1),
+  (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(record.data->>'recipe_id', '') LIMIT 1),
+  (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF(record.data->>'ingredient_id', '') LIMIT 1),
+  NULLIF(record.data->>'production_name', ''),
+  NULLIF(record.data->>'recipe_name', ''),
+  NULLIF(record.data->>'ingredient_name', ''),
+  NULLIF(record.data->>'batch_reference', ''),
+  NULLIF(record.data->>'batch_overproduction_item_key', ''),
+  NULLIF(record.data->>'manifest_item_key', ''),
+  NULLIF(record.data->>'source_menu_plan_item_key', ''),
+  NULLIF(record.data->>'batch_recipe_id', ''),
+  NULLIF(record.data->>'batch_recipe_name', ''),
+  NULLIF(record.data->>'produced_weight_grams', '')::numeric,
+  NULLIF(record.data->>'available_weight_grams_before', '')::numeric,
+  NULLIF(record.data->>'wasted_production_equivalent_servings', '')::numeric,
+  NULLIF(record.data->>'served_at', '')::timestamptz,
+  NULLIF(record.data->>'production_completed_at', '')::timestamptz,
+  NULLIF(record.data->>'recording_window_basis', ''),
+  NULLIF(record.data->>'recording_window_open_at', '')::timestamptz,
+  NULLIF(record.data->>'recording_deadline_at', '')::timestamptz,
+  COALESCE(NULLIF(record.data->>'meal_service_adjustment_cost', '')::numeric, 0),
+  NULLIF(record.data->>'inventory_transaction_id', ''),
+  COALESCE(NULLIF(record.data->>'inventory_deduction_quantity', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'inventory_shortage_quantity', '')::numeric, 0),
+  NULLIF(record.data->>'notes', ''),
   COALESCE(NULLIF(record.data->>'approval_status', ''), 'pending'),
   COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
   (
@@ -1770,7 +2535,6 @@ SELECT
   NULLIF(record.data->>'reversed_at', '')::timestamptz,
   NULLIF(record.data->>'reversal_reason', ''),
   NULLIF(record.data->>'source_name', ''),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -1780,15 +2544,30 @@ WHERE record.entity_name = 'FoodWaste'
 ON CONFLICT (food_waste_id) DO NOTHING;
 
 INSERT INTO food_waste_lines (
-  food_waste_line_id, food_waste_id, output_batch_id, production_line_id, ingredient_id,
-  waste_weight_grams, cost, status, payload, created_at, updated_at
+  food_waste_line_id, food_waste_id, output_batch_id, production_line_id,
+  production_id, recipe_version_id, ingredient_id, line_number, item_name,
+  batch_number, batch_overproduction_item_key, manifest_item_key,
+  source_menu_plan_item_key, wasted_production_equivalent_servings,
+  produced_weight_grams_before, available_weight_grams_before,
+  waste_weight_grams, cost, status, created_at, updated_at
 )
 SELECT
   record.id || ':line:1',
   record.id,
   output_batch.output_batch_id,
   NULL,
+  (SELECT production_id FROM production_events WHERE production_id = NULLIF(record.data->>'production_id', '') LIMIT 1),
+  (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(record.data->>'recipe_id', '') LIMIT 1),
   ingredient.ingredient_id,
+  1,
+  COALESCE(NULLIF(record.data->>'recipe_name', ''), NULLIF(record.data->>'ingredient_name', '')),
+  NULLIF(record.data->>'batch_reference', ''),
+  NULLIF(record.data->>'batch_overproduction_item_key', ''),
+  NULLIF(record.data->>'manifest_item_key', ''),
+  NULLIF(record.data->>'source_menu_plan_item_key', ''),
+  NULLIF(record.data->>'wasted_production_equivalent_servings', '')::numeric,
+  NULLIF(record.data->>'produced_weight_grams', '')::numeric,
+  NULLIF(record.data->>'available_weight_grams_before', '')::numeric,
   COALESCE(
     NULLIF(COALESCE(record.data->>'waste_weight_grams', record.data->>'quantity_grams'), '')::numeric,
     CASE WHEN LOWER(COALESCE(record.data->>'unit', 'g')) = 'kg'
@@ -1798,7 +2577,6 @@ SELECT
   ),
   COALESCE(NULLIF(COALESCE(record.data->>'estimated_cost', record.data->>'waste_cost', record.data->>'total_cost'), '')::numeric, 0),
   COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
-  record.data || jsonb_build_object('id', record.id),
   record.created_at,
   record.updated_at
 FROM entity_records record
@@ -1816,16 +2594,16 @@ ON CONFLICT (food_waste_line_id) DO NOTHING;
 
 WITH food_waste_image_source AS (
   SELECT
-    waste.food_waste_id,
+    record.id AS food_waste_id,
     btrim(raw.image_url) AS image_url,
     MIN(raw.image_order) AS image_order
-  FROM food_waste_records waste
+  FROM entity_records record
   CROSS JOIN LATERAL (
     SELECT image_value AS image_url, image_ordinal::integer AS image_order
     FROM jsonb_array_elements_text(
       CASE
-        WHEN jsonb_typeof(waste.payload->'evidence_image_urls') = 'array'
-          THEN waste.payload->'evidence_image_urls'
+        WHEN jsonb_typeof(record.data->'evidence_image_urls') = 'array'
+          THEN record.data->'evidence_image_urls'
         ELSE '[]'::jsonb
       END
     ) WITH ORDINALITY AS image_values(image_value, image_ordinal)
@@ -1833,20 +2611,22 @@ WITH food_waste_image_source AS (
     SELECT image_value AS image_url, (100 + image_ordinal)::integer AS image_order
     FROM jsonb_array_elements_text(
       CASE
-        WHEN jsonb_typeof(waste.payload->'image_urls') = 'array'
-          THEN waste.payload->'image_urls'
+        WHEN jsonb_typeof(record.data->'image_urls') = 'array'
+          THEN record.data->'image_urls'
         ELSE '[]'::jsonb
       END
     ) WITH ORDINALITY AS image_values(image_value, image_ordinal)
     UNION ALL
-    SELECT waste.payload->>'evidence_image_url' AS image_url, 1 AS image_order
-    WHERE COALESCE(waste.payload->>'evidence_image_url', '') <> ''
+    SELECT record.data->>'evidence_image_url' AS image_url, 1 AS image_order
+    WHERE COALESCE(record.data->>'evidence_image_url', '') <> ''
     UNION ALL
-    SELECT waste.payload->>'image_url' AS image_url, 2 AS image_order
-    WHERE COALESCE(waste.payload->>'image_url', '') <> ''
+    SELECT record.data->>'image_url' AS image_url, 2 AS image_order
+    WHERE COALESCE(record.data->>'image_url', '') <> ''
   ) raw
-  WHERE COALESCE(btrim(raw.image_url), '') <> ''
-  GROUP BY waste.food_waste_id, btrim(raw.image_url)
+  JOIN food_waste_records waste ON waste.food_waste_id = record.id
+  WHERE record.entity_name = 'FoodWaste'
+    AND COALESCE(btrim(raw.image_url), '') <> ''
+  GROUP BY record.id, btrim(raw.image_url)
 )
 INSERT INTO food_waste_images (
   food_waste_image_id, food_waste_id, image_url, image_order, created_at
@@ -1866,6 +2646,552 @@ SELECT
 FROM food_waste_image_source
 ON CONFLICT (food_waste_id, image_url) DO UPDATE SET
   image_order = LEAST(food_waste_images.image_order, EXCLUDED.image_order);
+
+WITH food_waste_inventory_movement_source AS (
+  SELECT
+    record.id AS food_waste_id,
+    movement.value AS movement_data,
+    movement.ordinality::integer AS movement_order
+  FROM entity_records record
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE
+      WHEN jsonb_typeof(record.data->'inventory_movement_layers') = 'array'
+        THEN record.data->'inventory_movement_layers'
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS movement(value, ordinality)
+  JOIN food_waste_records waste ON waste.food_waste_id = record.id
+  WHERE record.entity_name = 'FoodWaste'
+)
+INSERT INTO food_waste_inventory_movements (
+  food_waste_inventory_movement_id, food_waste_id, movement_order,
+  inventory_transaction_id, inventory_id, lot_id, ingredient_id,
+  quantity, unit, unit_cost, total_cost, stock_date, expiry_date, source_name,
+  created_at
+)
+SELECT
+  food_waste_id || ':movement:' || movement_order,
+  food_waste_id,
+  movement_order,
+  NULLIF(movement_data->>'inventory_transaction_id', ''),
+  (SELECT inventory_id FROM warehouse_inventory WHERE inventory_id = NULLIF(movement_data->>'inventory_id', '') LIMIT 1),
+  (SELECT lot_id FROM inventory_lots WHERE lot_id = NULLIF(movement_data->>'lot_id', '') LIMIT 1),
+  (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF(movement_data->>'ingredient_id', '') LIMIT 1),
+  COALESCE(NULLIF(COALESCE(movement_data->>'quantity', movement_data->>'deducted_quantity'), '')::numeric, 0),
+  NULLIF(movement_data->>'unit', ''),
+  COALESCE(NULLIF(movement_data->>'unit_cost', '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(movement_data->>'total_cost', movement_data->>'cost'), '')::numeric, 0),
+  NULLIF(movement_data->>'stock_date', '')::date,
+  NULLIF(movement_data->>'expiry_date', '')::date,
+  NULLIF(movement_data->>'source_name', ''),
+  NOW()
+FROM food_waste_inventory_movement_source
+ON CONFLICT (food_waste_inventory_movement_id) DO NOTHING;
+
+DO $production_payload_cutover$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'production_events'
+      AND column_name = 'payload'
+  ) THEN
+    UPDATE production_events production
+       SET source_type = COALESCE(production.source_type, NULLIF(production.payload->>'source_type', '')),
+           source_event_id = COALESCE(production.source_event_id, NULLIF(production.payload->>'source_event_id', '')),
+           source_event_name = COALESCE(production.source_event_name, NULLIF(production.payload->>'source_event_name', '')),
+           source_event_recipe_id = COALESCE(production.source_event_recipe_id, NULLIF(production.payload->>'source_event_recipe_id', '')),
+           source_menu_plan_item_key = COALESCE(production.source_menu_plan_item_key, NULLIF(production.payload->>'source_menu_plan_item_key', '')),
+           production_issue_grouped = CASE
+             WHEN production.payload ? 'production_issue_grouped' THEN COALESCE((production.payload->>'production_issue_grouped')::boolean, FALSE)
+             ELSE production.production_issue_grouped
+           END,
+           production_issue_group_key = COALESCE(production.production_issue_group_key, NULLIF(production.payload->>'production_issue_group_key', '')),
+           production_issue_scope = COALESCE(production.production_issue_scope, NULLIF(production.payload->>'production_issue_scope', '')),
+           production_issue_item_count = COALESCE(production.production_issue_item_count, NULLIF(production.payload->>'production_issue_item_count', '')::integer),
+           production_issue_dish_count = COALESCE(production.production_issue_dish_count, NULLIF(production.payload->>'production_issue_dish_count', '')::integer),
+           production_issue_admin_reissue = CASE
+             WHEN production.payload ? 'production_issue_admin_reissue' THEN COALESCE((production.payload->>'production_issue_admin_reissue')::boolean, FALSE)
+             ELSE production.production_issue_admin_reissue
+           END,
+           production_issue_reissue_run_id = COALESCE(production.production_issue_reissue_run_id, NULLIF(production.payload->>'production_issue_reissue_run_id', '')),
+           production_issue_reissue_original_group_key = COALESCE(production.production_issue_reissue_original_group_key, NULLIF(production.payload->>'production_issue_reissue_original_group_key', '')),
+           target_servings = COALESCE(production.target_servings, NULLIF(COALESCE(production.payload->>'target_servings', production.payload->>'production_covers'), '')::numeric),
+           ingredient_cost_total = COALESCE(NULLIF(production.payload->>'ingredient_cost_total', '')::numeric, production.ingredient_cost_total, 0),
+           production_cost_total = COALESCE(NULLIF(COALESCE(production.payload->>'production_cost_total', production.payload->>'total_cost'), '')::numeric, production.production_cost_total, 0),
+           cost_per_serving = COALESCE(NULLIF(production.payload->>'cost_per_serving', '')::numeric, production.cost_per_serving, 0),
+           total_shortage_quantity = COALESCE(NULLIF(production.payload->>'total_shortage_quantity', '')::numeric, production.total_shortage_quantity, 0),
+           consumption_report_id = COALESCE(production.consumption_report_id, NULLIF(production.payload->>'consumption_report_id', '')),
+           consumption_report_number = COALESCE(production.consumption_report_number, NULLIF(production.payload->>'consumption_report_number', '')),
+           consumption_report_name = COALESCE(production.consumption_report_name, NULLIF(production.payload->>'consumption_report_name', '')),
+           consumption_report_generated_at = COALESCE(production.consumption_report_generated_at, NULLIF(production.payload->>'consumption_report_generated_at', '')::timestamptz),
+           produced_item_batch_id = COALESCE(production.produced_item_batch_id, NULLIF(production.payload->>'produced_item_batch_id', '')),
+           produced_item_batch_number = COALESCE(production.produced_item_batch_number, NULLIF(production.payload->>'produced_item_batch_number', '')),
+           yield_adjustment_applied = CASE
+             WHEN production.payload ? 'yield_adjustment_applied' THEN COALESCE((production.payload->>'yield_adjustment_applied')::boolean, FALSE)
+             ELSE production.yield_adjustment_applied
+           END,
+           yield_adjustment_version = COALESCE(production.yield_adjustment_version, NULLIF(production.payload->>'yield_adjustment_version', '')::integer),
+           yield_adjustment_updated_at = COALESCE(production.yield_adjustment_updated_at, NULLIF(production.payload->>'yield_adjustment_updated_at', '')::timestamptz),
+           yield_snapshot_source = COALESCE(production.yield_snapshot_source, NULLIF(production.payload->>'yield_snapshot_source', '')),
+           quantity_semantics = COALESCE(production.quantity_semantics, NULLIF(production.payload->>'quantity_semantics', '')),
+           reconciliation_mode = COALESCE(production.reconciliation_mode, NULLIF(production.payload->>'reconciliation_mode', '')),
+           output_calculation_source = COALESCE(production.output_calculation_source, NULLIF(production.payload->>'output_calculation_source', '')),
+           recipe_raw_weight_grams = COALESCE(production.recipe_raw_weight_grams, NULLIF(production.payload->>'recipe_raw_weight_grams', '')::numeric),
+           total_raw_consumption_weight_grams = COALESCE(production.total_raw_consumption_weight_grams, NULLIF(production.payload->>'total_raw_consumption_weight_grams', '')::numeric),
+           total_yielded_weight_grams = COALESCE(production.total_yielded_weight_grams, NULLIF(production.payload->>'total_yielded_weight_grams', '')::numeric),
+           expected_finished_weight_grams = COALESCE(production.expected_finished_weight_grams, NULLIF(production.payload->>'expected_finished_weight_grams', '')::numeric),
+           actual_finished_weight_grams = COALESCE(production.actual_finished_weight_grams, NULLIF(production.payload->>'actual_finished_weight_grams', '')::numeric),
+           portion_size_grams = COALESCE(production.portion_size_grams, NULLIF(production.payload->>'portion_size_grams', '')::numeric),
+           portion_size_source = COALESCE(production.portion_size_source, NULLIF(production.payload->>'portion_size_source', '')),
+           expected_yield_servings = COALESCE(production.expected_yield_servings, NULLIF(production.payload->>'expected_yield_servings', '')::numeric),
+           produced_servings = COALESCE(production.produced_servings, NULLIF(production.payload->>'produced_servings', '')::numeric),
+           produced_weight_grams = COALESCE(production.produced_weight_grams, NULLIF(production.payload->>'produced_weight_grams', '')::numeric),
+           completed_by_name = COALESCE(production.completed_by_name, NULLIF(production.payload->>'completed_by_name', '')),
+           fulfillment_store_name = COALESCE(production.fulfillment_store_name, NULLIF(production.payload->>'fulfillment_store_name', '')),
+           linked_material_request_id = COALESCE(production.linked_material_request_id, NULLIF(production.payload->>'linked_material_request_id', '')),
+           linked_material_request_number = COALESCE(production.linked_material_request_number, NULLIF(production.payload->>'linked_material_request_number', '')),
+           material_request_status = COALESCE(production.material_request_status, NULLIF(production.payload->>'material_request_status', '')),
+           last_review_action = COALESCE(production.last_review_action, NULLIF(production.payload->>'last_review_action', '')),
+           rejection_reason = COALESCE(production.rejection_reason, NULLIF(production.payload->>'rejection_reason', '')),
+           cancellation_reason = COALESCE(production.cancellation_reason, NULLIF(production.payload->>'cancellation_reason', '')),
+           cancelled_at = COALESCE(production.cancelled_at, NULLIF(production.payload->>'cancelled_at', '')::timestamptz),
+           cancelled_by = COALESCE(production.cancelled_by, (
+             SELECT app_user.id
+             FROM users app_user
+             WHERE app_user.id = NULLIF(production.payload->>'cancelled_by', '')
+                OR LOWER(app_user.email) = LOWER(NULLIF(production.payload->>'cancelled_by', ''))
+             LIMIT 1
+           )),
+           cancelled_by_name = COALESCE(production.cancelled_by_name, NULLIF(production.payload->>'cancelled_by_name', ''));
+
+    ALTER TABLE production_events DROP COLUMN payload;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'production_manifest_lines'
+      AND column_name = 'payload'
+  ) THEN
+    UPDATE production_manifest_lines line
+       SET line_type = COALESCE(NULLIF(line.line_type, ''), NULLIF(line.payload->>'line_type', ''), 'recipe'),
+           item_key = COALESCE(line.item_key, NULLIF(COALESCE(line.payload->>'key', line.payload->>'manifest_item_key'), '')),
+           source_menu_plan_item_key = COALESCE(line.source_menu_plan_item_key, NULLIF(line.payload->>'source_menu_plan_item_key', '')),
+           recipe_code = COALESCE(line.recipe_code, NULLIF(line.payload->>'recipe_code', '')),
+           ingredient_name = COALESCE(line.ingredient_name, NULLIF(line.payload->>'ingredient_name', '')),
+           meal_period = COALESCE(line.meal_period, NULLIF(line.payload->>'meal_type', '')),
+           production_covers = COALESCE(line.production_covers, NULLIF(COALESCE(line.payload->>'production_covers', line.payload->>'expected_servings'), '')::numeric),
+           raw_weight_grams = COALESCE(line.raw_weight_grams, NULLIF(line.payload->>'raw_weight_grams', '')::numeric),
+           yielded_weight_grams = COALESCE(line.yielded_weight_grams, NULLIF(line.payload->>'yielded_weight_grams', '')::numeric),
+           expected_finished_weight_grams = COALESCE(line.expected_finished_weight_grams, NULLIF(line.payload->>'expected_finished_weight_grams', '')::numeric),
+           portion_size_grams = COALESCE(line.portion_size_grams, NULLIF(line.payload->>'portion_size_grams', '')::numeric),
+           expected_yield_servings = COALESCE(line.expected_yield_servings, NULLIF(line.payload->>'expected_yield_servings', '')::numeric),
+           output_calculation_source = COALESCE(line.output_calculation_source, NULLIF(line.payload->>'output_calculation_source', '')),
+           weight_calculation_source = COALESCE(line.weight_calculation_source, NULLIF(line.payload->>'weight_calculation_source', '')),
+           yield_calculation_source = COALESCE(line.yield_calculation_source, NULLIF(COALESCE(line.payload->>'yield_calculation_source', line.payload->>'yield_source'), '')),
+           weight_snapshot_version = COALESCE(line.weight_snapshot_version, NULLIF(line.payload->>'weight_snapshot_version', '')::integer);
+
+    ALTER TABLE production_manifest_lines DROP COLUMN payload;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'produced_output_batches'
+      AND column_name = 'payload'
+  ) THEN
+    UPDATE produced_output_batches batch
+       SET served_weight_grams = COALESCE(NULLIF(batch.payload->>'served_weight_grams', '')::numeric, batch.served_weight_grams, 0),
+           wasted_weight_grams = COALESCE(NULLIF(batch.payload->>'wasted_weight_grams', '')::numeric, batch.wasted_weight_grams, 0),
+           served_servings = COALESCE(NULLIF(batch.payload->>'served_servings', '')::numeric, batch.served_servings, 0),
+           wasted_servings = COALESCE(NULLIF(batch.payload->>'wasted_servings', '')::numeric, batch.wasted_servings, 0),
+           portion_size_grams = COALESCE(batch.portion_size_grams, NULLIF(batch.payload->>'portion_size_grams', '')::numeric),
+           service_portion_size_grams = COALESCE(batch.service_portion_size_grams, NULLIF(batch.payload->>'service_portion_size_grams', '')::numeric),
+           service_portion_updated_by = COALESCE(batch.service_portion_updated_by, NULLIF(batch.payload->>'service_portion_updated_by', '')),
+           service_portion_updated_by_name = COALESCE(batch.service_portion_updated_by_name, NULLIF(batch.payload->>'service_portion_updated_by_name', '')),
+           service_portion_updated_at = COALESCE(batch.service_portion_updated_at, NULLIF(batch.payload->>'service_portion_updated_at', '')::timestamptz),
+           expected_servings = COALESCE(batch.expected_servings, NULLIF(COALESCE(batch.payload->>'expected_servings', batch.payload->>'produced_servings'), '')::numeric),
+           expected_finished_weight_grams = COALESCE(batch.expected_finished_weight_grams, NULLIF(COALESCE(batch.payload->>'expected_finished_weight_grams', batch.payload->>'produced_weight_grams'), '')::numeric),
+           actual_finished_weight_grams = COALESCE(batch.actual_finished_weight_grams, NULLIF(COALESCE(batch.payload->>'actual_finished_weight_grams', batch.payload->>'produced_weight_grams'), '')::numeric),
+           source_type = COALESCE(batch.source_type, NULLIF(batch.payload->>'source_type', '')),
+           source_event_id = COALESCE(batch.source_event_id, NULLIF(batch.payload->>'source_event_id', '')),
+           menu_plan_id = COALESCE(batch.menu_plan_id, NULLIF(batch.payload->>'menu_plan_id', '')),
+           consumption_report_id = COALESCE(batch.consumption_report_id, NULLIF(batch.payload->>'consumption_report_id', '')),
+           consumption_report_number = COALESCE(batch.consumption_report_number, NULLIF(batch.payload->>'consumption_report_number', '')),
+           production_issue_grouped = CASE
+             WHEN batch.payload ? 'production_issue_grouped' THEN COALESCE((batch.payload->>'production_issue_grouped')::boolean, FALSE)
+             ELSE batch.production_issue_grouped
+           END,
+           production_issue_item_count = COALESCE(batch.production_issue_item_count, NULLIF(batch.payload->>'production_issue_item_count', '')::integer),
+           production_issue_dish_count = COALESCE(batch.production_issue_dish_count, NULLIF(batch.payload->>'production_issue_dish_count', '')::integer),
+           completed_by = COALESCE(batch.completed_by, NULLIF(batch.payload->>'completed_by', '')),
+           completed_by_name = COALESCE(batch.completed_by_name, NULLIF(batch.payload->>'completed_by_name', '')),
+           reconciliation_mode = COALESCE(batch.reconciliation_mode, NULLIF(batch.payload->>'reconciliation_mode', '')),
+           output_calculation_source = COALESCE(batch.output_calculation_source, NULLIF(batch.payload->>'output_calculation_source', '')),
+           cutover_version = COALESCE(NULLIF(batch.payload->>'cutover_version', '')::integer, batch.cutover_version, 1);
+
+    ALTER TABLE produced_output_batches DROP COLUMN payload;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'production_consumption_lines'
+      AND column_name = 'payload'
+  ) THEN
+    ALTER TABLE production_consumption_lines DROP COLUMN payload;
+  END IF;
+END;
+$production_payload_cutover$;
+
+DO $meal_service_payload_cutover$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'meal_service_headers'
+       AND column_name = 'payload'
+  ) THEN
+    UPDATE meal_service_headers header
+       SET request_fingerprint = COALESCE(header.request_fingerprint, NULLIF(header.payload->>'request_fingerprint', '')),
+           reversal_idempotency_key = COALESCE(header.reversal_idempotency_key, NULLIF(header.payload->>'reversal_idempotency_key', '')),
+           reversal_request_fingerprint = COALESCE(header.reversal_request_fingerprint, NULLIF(header.payload->>'reversal_request_fingerprint', '')),
+           scope_key = COALESCE(header.scope_key, NULLIF(header.payload->>'scope_key', '')),
+           menu_plan_id = COALESCE(header.menu_plan_id, (SELECT menu_plan_id FROM menu_plans WHERE menu_plan_id = NULLIF(header.payload->>'menu_plan_id', '') LIMIT 1)),
+           menu_plan_name = COALESCE(header.menu_plan_name, NULLIF(header.payload->>'menu_plan_name', '')),
+           customer_meal_plan_id = COALESCE(header.customer_meal_plan_id, NULLIF(header.payload->>'customer_meal_plan_id', '')),
+           customer_meal_plan_name = COALESCE(header.customer_meal_plan_name, NULLIF(header.payload->>'customer_meal_plan_name', '')),
+           customer_name = COALESCE(header.customer_name, NULLIF(header.payload->>'customer_name', '')),
+           customer_id = COALESCE(header.customer_id, NULLIF(header.payload->>'customer_id', '')),
+           category = COALESCE(header.category, NULLIF(header.payload->>'category', '')),
+           attendee_count = COALESCE(NULLIF(header.payload->>'attendee_count', '')::numeric, header.attendee_count, 0),
+           scan_method = COALESCE(header.scan_method, NULLIF(header.payload->>'scan_method', '')),
+           notes = COALESCE(header.notes, NULLIF(header.payload->>'notes', '')),
+           required_servings = COALESCE(NULLIF(header.payload->>'required_servings', '')::numeric, header.required_servings, 0),
+           required_weight_grams = COALESCE(NULLIF(header.payload->>'required_weight_grams', '')::numeric, header.required_weight_grams, 0),
+           served_servings = COALESCE(NULLIF(header.payload->>'served_servings', '')::numeric, header.served_servings, 0),
+           served_weight_grams = COALESCE(NULLIF(header.payload->>'served_weight_grams', '')::numeric, header.served_weight_grams, 0),
+           shortage_servings = COALESCE(NULLIF(COALESCE(header.payload->>'shortage_servings', header.payload->>'short_servings'), '')::numeric, header.shortage_servings, 0),
+           shortage_weight_grams = COALESCE(NULLIF(COALESCE(header.payload->>'shortage_weight_grams', header.payload->>'short_weight_grams'), '')::numeric, header.shortage_weight_grams, 0),
+           recorded_by = COALESCE(header.recorded_by, NULLIF(header.payload->>'recorded_by', '')),
+           recorded_by_name = COALESCE(header.recorded_by_name, NULLIF(header.payload->>'recorded_by_name', '')),
+           recorded_at = COALESCE(header.recorded_at, NULLIF(header.payload->>'recorded_at', '')::timestamptz),
+           reversed_by_name = COALESCE(header.reversed_by_name, NULLIF(header.payload->>'reversed_by_name', '')),
+           reversal_reason = COALESCE(header.reversal_reason, NULLIF(header.payload->>'reversal_reason', '')),
+           cutover_version = COALESCE(NULLIF(header.payload->>'cutover_version', '')::integer, header.cutover_version, 1);
+
+    INSERT INTO meal_service_items (
+      meal_service_item_id, meal_service_id, item_order, output_batch_id, production_id,
+      recipe_version_id, recipe_name, item_name, attendee_count, portions_per_attendee,
+      servings_per_attendee, portion_size_grams, manual_portion_size_grams,
+      portion_size_source, required_servings, required_weight_grams, served_servings,
+      served_weight_grams, consumed_production_equivalent_servings, shortage_servings,
+      shortage_weight_grams, cost, status, created_at, updated_at
+    )
+    SELECT
+      COALESCE(NULLIF(item.value->>'id', ''), header.meal_service_id || ':item:' || item.ordinality),
+      header.meal_service_id,
+      item.ordinality::integer,
+      (SELECT output_batch_id FROM produced_output_batches WHERE output_batch_id = NULLIF(COALESCE(item.value->>'output_batch_id', item.value->>'produced_item_batch_id', item.value->>'batch_id'), '') LIMIT 1),
+      (SELECT production_id FROM production_events WHERE production_id = NULLIF(item.value->>'production_id', '') LIMIT 1),
+      (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(COALESCE(item.value->>'recipe_id', item.value->>'recipe_version_id'), '') LIMIT 1),
+      NULLIF(item.value->>'recipe_name', ''),
+      NULLIF(COALESCE(item.value->>'item_name', item.value->>'recipe_name'), ''),
+      NULLIF(item.value->>'attendee_count', '')::numeric,
+      NULLIF(item.value->>'portions_per_attendee', '')::numeric,
+      NULLIF(item.value->>'servings_per_attendee', '')::numeric,
+      NULLIF(item.value->>'portion_size_grams', '')::numeric,
+      NULLIF(item.value->>'manual_portion_size_grams', '')::numeric,
+      NULLIF(item.value->>'portion_size_source', ''),
+      COALESCE(NULLIF(item.value->>'required_servings', '')::numeric, 0),
+      COALESCE(NULLIF(item.value->>'required_weight_grams', '')::numeric, 0),
+      COALESCE(NULLIF(item.value->>'served_servings', '')::numeric, 0),
+      COALESCE(NULLIF(item.value->>'served_weight_grams', '')::numeric, 0),
+      NULLIF(item.value->>'consumed_production_equivalent_servings', '')::numeric,
+      COALESCE(NULLIF(COALESCE(item.value->>'shortage_servings', item.value->>'short_servings'), '')::numeric, 0),
+      COALESCE(NULLIF(COALESCE(item.value->>'shortage_weight_grams', item.value->>'short_weight_grams'), '')::numeric, 0),
+      COALESCE(NULLIF(COALESCE(item.value->>'cost', item.value->>'total_cost'), '')::numeric, 0),
+      COALESCE(NULLIF(item.value->>'status', ''), 'posted'),
+      header.created_at,
+      header.updated_at
+    FROM meal_service_headers header
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(header.payload->'items') = 'array'
+        THEN header.payload->'items'
+        ELSE '[]'::jsonb
+      END
+    ) WITH ORDINALITY AS item(value, ordinality)
+    ON CONFLICT (meal_service_item_id) DO NOTHING;
+
+    ALTER TABLE meal_service_headers DROP COLUMN payload;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'meal_service_consumptions'
+       AND column_name = 'payload'
+  ) THEN
+    UPDATE meal_service_consumptions consumption
+       SET menu_plan_id = COALESCE(consumption.menu_plan_id, (SELECT menu_plan_id FROM menu_plans WHERE menu_plan_id = NULLIF(consumption.payload->>'menu_plan_id', '') LIMIT 1)),
+           menu_type = COALESCE(consumption.menu_type, NULLIF(consumption.payload->>'menu_type', '')),
+           menu_category = COALESCE(consumption.menu_category, NULLIF(consumption.payload->>'menu_category', '')),
+           customer_meal_plan_id = COALESCE(consumption.customer_meal_plan_id, NULLIF(consumption.payload->>'customer_meal_plan_id', '')),
+           recipe_name = COALESCE(consumption.recipe_name, NULLIF(consumption.payload->>'recipe_name', '')),
+           attendee_count = COALESCE(consumption.attendee_count, NULLIF(consumption.payload->>'attendee_count', '')::numeric),
+           portions_per_attendee = COALESCE(consumption.portions_per_attendee, NULLIF(consumption.payload->>'portions_per_attendee', '')::numeric),
+           servings_per_attendee = COALESCE(consumption.servings_per_attendee, NULLIF(consumption.payload->>'servings_per_attendee', '')::numeric),
+           portion_size_grams = COALESCE(consumption.portion_size_grams, NULLIF(consumption.payload->>'portion_size_grams', '')::numeric),
+           manual_portion_size_grams = COALESCE(consumption.manual_portion_size_grams, NULLIF(consumption.payload->>'manual_portion_size_grams', '')::numeric),
+           portion_size_source = COALESCE(consumption.portion_size_source, NULLIF(consumption.payload->>'portion_size_source', '')),
+           covers = COALESCE(consumption.covers, NULLIF(consumption.payload->>'covers', '')::numeric),
+           required_servings = COALESCE(consumption.required_servings, NULLIF(consumption.payload->>'required_servings', '')::numeric),
+           required_weight_grams = COALESCE(consumption.required_weight_grams, NULLIF(consumption.payload->>'required_weight_grams', '')::numeric),
+           consumed_production_equivalent_servings = COALESCE(consumption.consumed_production_equivalent_servings, NULLIF(consumption.payload->>'consumed_production_equivalent_servings', '')::numeric),
+           shortage_servings = COALESCE(consumption.shortage_servings, NULLIF(consumption.payload->>'shortage_servings', '')::numeric),
+           shortage_weight_grams = COALESCE(consumption.shortage_weight_grams, NULLIF(consumption.payload->>'shortage_weight_grams', '')::numeric),
+           reversal_reason = COALESCE(consumption.reversal_reason, NULLIF(consumption.payload->>'reversal_reason', '')),
+           performed_by = COALESCE(consumption.performed_by, NULLIF(consumption.payload->>'performed_by', '')),
+           performed_by_name = COALESCE(consumption.performed_by_name, NULLIF(consumption.payload->>'performed_by_name', '')),
+           performed_at = COALESCE(consumption.performed_at, NULLIF(consumption.payload->>'performed_at', '')::timestamptz),
+           cutover_version = COALESCE(NULLIF(consumption.payload->>'cutover_version', '')::integer, consumption.cutover_version, 1);
+
+    INSERT INTO meal_service_consumption_allocations (
+      meal_service_consumption_allocation_id, meal_consumption_id, allocation_order,
+      output_batch_id, production_id, batch_number, portion_size_grams,
+      service_portion_size_grams, servings, production_equivalent_servings,
+      meal_portions, weight_grams, remaining_servings_before,
+      remaining_servings_after, remaining_weight_grams_before,
+      remaining_weight_grams_after, status, created_at, updated_at
+    )
+    SELECT
+      COALESCE(NULLIF(allocation.value->>'id', ''), consumption.meal_consumption_id || ':allocation:' || allocation.ordinality),
+      consumption.meal_consumption_id,
+      allocation.ordinality::integer,
+      (SELECT output_batch_id FROM produced_output_batches WHERE output_batch_id = NULLIF(COALESCE(allocation.value->>'output_batch_id', allocation.value->>'produced_item_batch_id', allocation.value->>'batch_id'), '') LIMIT 1),
+      (SELECT production_id FROM production_events WHERE production_id = NULLIF(allocation.value->>'production_id', '') LIMIT 1),
+      NULLIF(allocation.value->>'batch_number', ''),
+      NULLIF(allocation.value->>'portion_size_grams', '')::numeric,
+      NULLIF(allocation.value->>'service_portion_size_grams', '')::numeric,
+      COALESCE(NULLIF(allocation.value->>'servings', '')::numeric, 0),
+      COALESCE(NULLIF(COALESCE(allocation.value->>'production_equivalent_servings', allocation.value->>'servings'), '')::numeric, 0),
+      COALESCE(NULLIF(allocation.value->>'meal_portions', '')::numeric, 0),
+      COALESCE(NULLIF(allocation.value->>'weight_grams', '')::numeric, 0),
+      NULLIF(allocation.value->>'remaining_servings_before', '')::numeric,
+      NULLIF(allocation.value->>'remaining_servings_after', '')::numeric,
+      NULLIF(allocation.value->>'remaining_weight_grams_before', '')::numeric,
+      NULLIF(allocation.value->>'remaining_weight_grams_after', '')::numeric,
+      COALESCE(NULLIF(allocation.value->>'status', ''), 'posted'),
+      consumption.created_at,
+      consumption.updated_at
+    FROM meal_service_consumptions consumption
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(consumption.payload->'allocations') = 'array'
+        THEN consumption.payload->'allocations'
+        ELSE '[]'::jsonb
+      END
+    ) WITH ORDINALITY AS allocation(value, ordinality)
+    ON CONFLICT (meal_service_consumption_allocation_id) DO NOTHING;
+
+    ALTER TABLE meal_service_consumptions DROP COLUMN payload;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'meal_service_lines'
+       AND column_name = 'payload'
+  ) THEN
+    ALTER TABLE meal_service_lines DROP COLUMN payload;
+  END IF;
+END;
+$meal_service_payload_cutover$;
+
+DO $food_waste_payload_cutover$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'food_waste_records'
+      AND column_name = 'payload'
+  ) THEN
+    EXECUTE $sql$
+      UPDATE food_waste_records waste
+         SET reason = COALESCE(waste.reason, NULLIF(waste.payload->>'reason', '')),
+             waste_scope = COALESCE(NULLIF(waste.waste_scope, ''), NULLIF(waste.payload->>'waste_scope', ''), 'ingredient'),
+             source_type = COALESCE(NULLIF(waste.source_type, ''), NULLIF(waste.payload->>'source_type', ''), 'manual_entry'),
+             avoidable_type = COALESCE(NULLIF(waste.avoidable_type, ''), NULLIF(waste.payload->>'avoidable_type', ''), 'avoidable'),
+             preventable = CASE
+               WHEN waste.payload ? 'preventable' THEN COALESCE((waste.payload->>'preventable')::boolean, TRUE)
+               ELSE waste.preventable
+             END,
+             auto_generated = CASE
+               WHEN waste.payload ? 'auto_generated' THEN COALESCE((waste.payload->>'auto_generated')::boolean, FALSE)
+               ELSE waste.auto_generated
+             END,
+             high_value = CASE
+               WHEN waste.payload ? 'high_value' THEN COALESCE((waste.payload->>'high_value')::boolean, FALSE)
+               ELSE waste.high_value
+             END,
+             quantity_grams = COALESCE(NULLIF(COALESCE(waste.payload->>'waste_weight_grams', waste.payload->>'quantity_grams', waste.payload->>'wasted_weight_grams'), '')::numeric, waste.quantity_grams, 0),
+             unit = COALESCE(NULLIF(waste.unit, ''), NULLIF(waste.payload->>'unit', ''), 'g'),
+             estimated_cost = COALESCE(NULLIF(COALESCE(waste.payload->>'estimated_cost', waste.payload->>'waste_cost', waste.payload->>'cost'), '')::numeric, waste.estimated_cost, 0),
+             menu_plan_id = COALESCE(waste.menu_plan_id, (SELECT menu_plan_id FROM menu_plans WHERE menu_plan_id = NULLIF(waste.payload->>'menu_plan_id', '') LIMIT 1)),
+             menu_plan_name = COALESCE(waste.menu_plan_name, NULLIF(waste.payload->>'menu_plan_name', '')),
+             meal_service_id = COALESCE(waste.meal_service_id, (SELECT meal_service_id FROM meal_service_headers WHERE meal_service_id = NULLIF(waste.payload->>'meal_service_attendance_id', '') LIMIT 1)),
+             production_id = COALESCE(waste.production_id, (SELECT production_id FROM production_events WHERE production_id = NULLIF(waste.payload->>'production_id', '') LIMIT 1)),
+             recipe_version_id = COALESCE(waste.recipe_version_id, (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(waste.payload->>'recipe_id', '') LIMIT 1)),
+             ingredient_id = COALESCE(waste.ingredient_id, (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF(waste.payload->>'ingredient_id', '') LIMIT 1)),
+             production_name = COALESCE(waste.production_name, NULLIF(waste.payload->>'production_name', '')),
+             recipe_name = COALESCE(waste.recipe_name, NULLIF(waste.payload->>'recipe_name', '')),
+             ingredient_name = COALESCE(waste.ingredient_name, NULLIF(waste.payload->>'ingredient_name', '')),
+             batch_reference = COALESCE(waste.batch_reference, NULLIF(waste.payload->>'batch_reference', '')),
+             batch_overproduction_item_key = COALESCE(waste.batch_overproduction_item_key, NULLIF(waste.payload->>'batch_overproduction_item_key', '')),
+             manifest_item_key = COALESCE(waste.manifest_item_key, NULLIF(waste.payload->>'manifest_item_key', '')),
+             source_menu_plan_item_key = COALESCE(waste.source_menu_plan_item_key, NULLIF(waste.payload->>'source_menu_plan_item_key', '')),
+             batch_recipe_id = COALESCE(waste.batch_recipe_id, NULLIF(waste.payload->>'batch_recipe_id', '')),
+             batch_recipe_name = COALESCE(waste.batch_recipe_name, NULLIF(waste.payload->>'batch_recipe_name', '')),
+             produced_weight_grams = COALESCE(waste.produced_weight_grams, NULLIF(waste.payload->>'produced_weight_grams', '')::numeric),
+             available_weight_grams_before = COALESCE(waste.available_weight_grams_before, NULLIF(waste.payload->>'available_weight_grams_before', '')::numeric),
+             wasted_production_equivalent_servings = COALESCE(waste.wasted_production_equivalent_servings, NULLIF(waste.payload->>'wasted_production_equivalent_servings', '')::numeric),
+             served_at = COALESCE(waste.served_at, NULLIF(waste.payload->>'served_at', '')::timestamptz),
+             production_completed_at = COALESCE(waste.production_completed_at, NULLIF(waste.payload->>'production_completed_at', '')::timestamptz),
+             recording_window_basis = COALESCE(waste.recording_window_basis, NULLIF(waste.payload->>'recording_window_basis', '')),
+             recording_window_open_at = COALESCE(waste.recording_window_open_at, NULLIF(waste.payload->>'recording_window_open_at', '')::timestamptz),
+             recording_deadline_at = COALESCE(waste.recording_deadline_at, NULLIF(waste.payload->>'recording_deadline_at', '')::timestamptz),
+             meal_service_adjustment_cost = COALESCE(NULLIF(waste.payload->>'meal_service_adjustment_cost', '')::numeric, waste.meal_service_adjustment_cost, 0),
+             inventory_transaction_id = COALESCE(waste.inventory_transaction_id, NULLIF(waste.payload->>'inventory_transaction_id', '')),
+             inventory_deduction_quantity = COALESCE(NULLIF(waste.payload->>'inventory_deduction_quantity', '')::numeric, waste.inventory_deduction_quantity, 0),
+             inventory_shortage_quantity = COALESCE(NULLIF(waste.payload->>'inventory_shortage_quantity', '')::numeric, waste.inventory_shortage_quantity, 0),
+             notes = COALESCE(waste.notes, NULLIF(waste.payload->>'notes', ''));
+    $sql$;
+
+    EXECUTE $sql$
+      WITH food_waste_image_source AS (
+        SELECT
+          waste.food_waste_id,
+          btrim(raw.image_url) AS image_url,
+          MIN(raw.image_order) AS image_order
+        FROM food_waste_records waste
+        CROSS JOIN LATERAL (
+          SELECT image_value AS image_url, image_ordinal::integer AS image_order
+          FROM jsonb_array_elements_text(
+            CASE
+              WHEN jsonb_typeof(waste.payload->'evidence_image_urls') = 'array'
+                THEN waste.payload->'evidence_image_urls'
+              ELSE '[]'::jsonb
+            END
+          ) WITH ORDINALITY AS image_values(image_value, image_ordinal)
+          UNION ALL
+          SELECT image_value AS image_url, (100 + image_ordinal)::integer AS image_order
+          FROM jsonb_array_elements_text(
+            CASE
+              WHEN jsonb_typeof(waste.payload->'image_urls') = 'array'
+                THEN waste.payload->'image_urls'
+              ELSE '[]'::jsonb
+            END
+          ) WITH ORDINALITY AS image_values(image_value, image_ordinal)
+          UNION ALL
+          SELECT waste.payload->>'evidence_image_url' AS image_url, 1 AS image_order
+          WHERE COALESCE(waste.payload->>'evidence_image_url', '') <> ''
+          UNION ALL
+          SELECT waste.payload->>'image_url' AS image_url, 2 AS image_order
+          WHERE COALESCE(waste.payload->>'image_url', '') <> ''
+        ) raw
+        WHERE COALESCE(btrim(raw.image_url), '') <> ''
+        GROUP BY waste.food_waste_id, btrim(raw.image_url)
+      )
+      INSERT INTO food_waste_images (
+        food_waste_image_id, food_waste_id, image_url, image_order, created_at
+      )
+      SELECT
+        food_waste_id || ':image:' || ROW_NUMBER() OVER (
+          PARTITION BY food_waste_id
+          ORDER BY image_order, image_url
+        ),
+        food_waste_id,
+        image_url,
+        ROW_NUMBER() OVER (
+          PARTITION BY food_waste_id
+          ORDER BY image_order, image_url
+        ),
+        NOW()
+      FROM food_waste_image_source
+      ON CONFLICT (food_waste_id, image_url) DO UPDATE SET
+        image_order = LEAST(food_waste_images.image_order, EXCLUDED.image_order);
+    $sql$;
+
+    EXECUTE $sql$
+      WITH food_waste_inventory_movement_source AS (
+        SELECT
+          waste.food_waste_id,
+          movement.value AS movement_data,
+          movement.ordinality::integer AS movement_order
+        FROM food_waste_records waste
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(waste.payload->'inventory_movement_layers') = 'array'
+              THEN waste.payload->'inventory_movement_layers'
+            ELSE '[]'::jsonb
+          END
+        ) WITH ORDINALITY AS movement(value, ordinality)
+      )
+      INSERT INTO food_waste_inventory_movements (
+        food_waste_inventory_movement_id, food_waste_id, movement_order,
+        inventory_transaction_id, inventory_id, lot_id, ingredient_id,
+        quantity, unit, unit_cost, total_cost, stock_date, expiry_date, source_name,
+        created_at
+      )
+      SELECT
+        food_waste_id || ':movement:' || movement_order,
+        food_waste_id,
+        movement_order,
+        NULLIF(movement_data->>'inventory_transaction_id', ''),
+        (SELECT inventory_id FROM warehouse_inventory WHERE inventory_id = NULLIF(movement_data->>'inventory_id', '') LIMIT 1),
+        (SELECT lot_id FROM inventory_lots WHERE lot_id = NULLIF(movement_data->>'lot_id', '') LIMIT 1),
+        (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF(movement_data->>'ingredient_id', '') LIMIT 1),
+        COALESCE(NULLIF(COALESCE(movement_data->>'quantity', movement_data->>'deducted_quantity'), '')::numeric, 0),
+        NULLIF(movement_data->>'unit', ''),
+        COALESCE(NULLIF(movement_data->>'unit_cost', '')::numeric, 0),
+        COALESCE(NULLIF(COALESCE(movement_data->>'total_cost', movement_data->>'cost'), '')::numeric, 0),
+        NULLIF(movement_data->>'stock_date', '')::date,
+        NULLIF(movement_data->>'expiry_date', '')::date,
+        NULLIF(movement_data->>'source_name', ''),
+        NOW()
+      FROM food_waste_inventory_movement_source
+      ON CONFLICT (food_waste_inventory_movement_id) DO NOTHING;
+    $sql$;
+
+    ALTER TABLE food_waste_records DROP COLUMN payload;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'food_waste_lines'
+      AND column_name = 'payload'
+  ) THEN
+    EXECUTE $sql$
+      UPDATE food_waste_lines line
+         SET production_id = COALESCE(line.production_id, (SELECT production_id FROM production_events WHERE production_id = NULLIF(line.payload->>'production_id', '') LIMIT 1)),
+             recipe_version_id = COALESCE(line.recipe_version_id, (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(COALESCE(line.payload->>'recipe_id', line.payload->>'recipe_version_id'), '') LIMIT 1)),
+             line_number = COALESCE(NULLIF(line.payload->>'line_number', '')::integer, line.line_number, 1),
+             item_name = COALESCE(line.item_name, NULLIF(COALESCE(line.payload->>'item_name', line.payload->>'recipe_name', line.payload->>'ingredient_name'), '')),
+             batch_number = COALESCE(line.batch_number, NULLIF(line.payload->>'batch_number', '')),
+             batch_overproduction_item_key = COALESCE(line.batch_overproduction_item_key, NULLIF(line.payload->>'batch_overproduction_item_key', '')),
+             manifest_item_key = COALESCE(line.manifest_item_key, NULLIF(line.payload->>'manifest_item_key', '')),
+             source_menu_plan_item_key = COALESCE(line.source_menu_plan_item_key, NULLIF(line.payload->>'source_menu_plan_item_key', '')),
+             wasted_production_equivalent_servings = COALESCE(line.wasted_production_equivalent_servings, NULLIF(line.payload->>'wasted_production_equivalent_servings', '')::numeric),
+             produced_weight_grams_before = COALESCE(line.produced_weight_grams_before, NULLIF(line.payload->>'produced_weight_grams', '')::numeric),
+             available_weight_grams_before = COALESCE(line.available_weight_grams_before, NULLIF(line.payload->>'available_weight_grams_before', '')::numeric);
+    $sql$;
+
+    ALTER TABLE food_waste_lines DROP COLUMN payload;
+  END IF;
+	END;
+	$food_waste_payload_cutover$;
 
 -- Backfill location ownership for legacy production-quality records whenever a
 -- trustworthy production or batch link is available. Records without such a

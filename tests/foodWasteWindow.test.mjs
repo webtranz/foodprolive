@@ -736,7 +736,8 @@ const cases = [
       assert.match(db, /'output_allocations'/);
       assert.match(db, /FROM production_manifest_lines line/);
       assert.match(db, /AS manifest_lines/);
-      assert.match(db, /menu_issue_items: payloadMenuIssueItems\.length \? payloadMenuIssueItems : manifestLines/);
+      assert.match(db, /menu_issue_items: manifestLines/);
+      assert.match(db, /'manifest_item_key', COALESCE\(line\.item_key, line\.source_menu_plan_item_key, line\.production_line_id\)/);
       assert.match(mealService, /manifest_lines: manifestLines/);
       assert.match(server, /resolveFoodWasteProductionSiteIds\(siteIdValue\)/);
     }

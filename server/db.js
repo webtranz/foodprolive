@@ -950,7 +950,6 @@ function rowToMenuPlan(row = {}) {
 
 function rowToProduction(row = {}) {
   const manifestLines = Array.isArray(row.manifest_lines) ? row.manifest_lines : [];
-  const payloadMenuIssueItems = Array.isArray(row.payload?.menu_issue_items) ? row.payload.menu_issue_items : [];
   return withPayload(row, {
     __entity: 'Production',
     id: row.production_id,
@@ -964,6 +963,58 @@ function rowToProduction(row = {}) {
     menu_category: row.menu_category,
     status: row.status || 'planned',
     issue_group_key: row.issue_group_key || null,
+    source_type: row.source_type || null,
+    source_event_id: row.source_event_id || null,
+    source_event_name: row.source_event_name || null,
+    source_event_recipe_id: row.source_event_recipe_id || null,
+    source_menu_plan_item_key: row.source_menu_plan_item_key || null,
+    production_issue_grouped: row.production_issue_grouped === true,
+    production_issue_group_key: row.production_issue_group_key || null,
+    production_issue_scope: row.production_issue_scope || null,
+    production_issue_item_count: toNumberOrNull(row.production_issue_item_count),
+    production_issue_dish_count: toNumberOrNull(row.production_issue_dish_count),
+    production_issue_admin_reissue: row.production_issue_admin_reissue === true,
+    production_issue_reissue_run_id: row.production_issue_reissue_run_id || null,
+    production_issue_reissue_original_group_key: row.production_issue_reissue_original_group_key || null,
+    target_servings: toNumberOrNull(row.target_servings),
+    ingredient_cost_total: Number(row.ingredient_cost_total || 0),
+    production_cost_total: Number(row.production_cost_total || 0),
+    cost_per_serving: Number(row.cost_per_serving || 0),
+    total_shortage_quantity: Number(row.total_shortage_quantity || 0),
+    consumption_report_id: row.consumption_report_id || null,
+    consumption_report_number: row.consumption_report_number || null,
+    consumption_report_name: row.consumption_report_name || null,
+    consumption_report_generated_at: rowTimestamp(row.consumption_report_generated_at),
+    produced_item_batch_id: row.produced_item_batch_id || null,
+    produced_item_batch_number: row.produced_item_batch_number || null,
+    yield_adjustment_applied: row.yield_adjustment_applied === true,
+    yield_adjustment_version: toNumberOrNull(row.yield_adjustment_version),
+    yield_adjustment_updated_at: rowTimestamp(row.yield_adjustment_updated_at),
+    yield_snapshot_source: row.yield_snapshot_source || null,
+    quantity_semantics: row.quantity_semantics || null,
+    reconciliation_mode: row.reconciliation_mode || null,
+    output_calculation_source: row.output_calculation_source || null,
+    recipe_raw_weight_grams: toNumberOrNull(row.recipe_raw_weight_grams),
+    total_raw_consumption_weight_grams: toNumberOrNull(row.total_raw_consumption_weight_grams),
+    total_yielded_weight_grams: toNumberOrNull(row.total_yielded_weight_grams),
+    expected_finished_weight_grams: toNumberOrNull(row.expected_finished_weight_grams),
+    actual_finished_weight_grams: toNumberOrNull(row.actual_finished_weight_grams),
+    portion_size_grams: toNumberOrNull(row.portion_size_grams),
+    portion_size_source: row.portion_size_source || null,
+    expected_yield_servings: toNumberOrNull(row.expected_yield_servings),
+    produced_servings: toNumberOrNull(row.produced_servings),
+    produced_weight_grams: toNumberOrNull(row.produced_weight_grams),
+    completed_by_name: row.completed_by_name || null,
+    fulfillment_store_name: row.fulfillment_store_name || null,
+    linked_material_request_id: row.linked_material_request_id || null,
+    linked_material_request_number: row.linked_material_request_number || null,
+    material_request_status: row.material_request_status || null,
+    last_review_action: row.last_review_action || null,
+    rejection_reason: row.rejection_reason || null,
+    cancellation_reason: row.cancellation_reason || null,
+    cancelled_at: rowTimestamp(row.cancelled_at),
+    cancelled_by: row.cancelled_by || null,
+    cancelled_by_name: row.cancelled_by_name || null,
     completed_by: row.completed_by || null,
     completed_at: rowTimestamp(row.completed_at),
     reversed_by: row.reversed_by || null,
@@ -971,7 +1022,7 @@ function rowToProduction(row = {}) {
     reversal_reason: row.reversal_reason || null,
     source_name: row.source_name || null,
     manifest_lines: manifestLines,
-    menu_issue_items: payloadMenuIssueItems.length ? payloadMenuIssueItems : manifestLines
+    menu_issue_items: manifestLines
   });
 }
 
@@ -1031,23 +1082,29 @@ function rowToProducedItemBatch(row = {}) {
     : Math.max(0, Math.min(Number(remainingServingsValue), producedServings));
   const payloadServedWeight = toNumberOrNull(payload.served_weight_grams);
   const payloadWastedWeight = toNumberOrNull(payload.wasted_weight_grams);
-  const servedWeightGrams = payloadServedWeight ?? (
+  const rowServedWeight = toNumberOrNull(row.served_weight_grams);
+  const rowWastedWeight = toNumberOrNull(row.wasted_weight_grams);
+  const servedWeightGrams = rowServedWeight ?? payloadServedWeight ?? (
     payloadWastedWeight === null && remainingWeightGrams < producedWeightGrams
       ? Math.max(0, producedWeightGrams - remainingWeightGrams)
       : 0
   );
-  const wastedWeightGrams = payloadWastedWeight ?? Math.max(0, producedWeightGrams - remainingWeightGrams - servedWeightGrams);
+  const wastedWeightGrams = rowWastedWeight ?? payloadWastedWeight ?? Math.max(0, producedWeightGrams - remainingWeightGrams - servedWeightGrams);
   const payloadServedServings = toNumberOrNull(payload.served_servings);
   const payloadWastedServings = toNumberOrNull(payload.wasted_servings);
-  const servedServings = payloadServedServings ?? (
+  const rowServedServings = toNumberOrNull(row.served_servings);
+  const rowWastedServings = toNumberOrNull(row.wasted_servings);
+  const servedServings = rowServedServings ?? payloadServedServings ?? (
     payloadWastedServings === null && remainingServings < producedServings
       ? Math.max(0, producedServings - remainingServings)
       : 0
   );
-  const wastedServings = payloadWastedServings ?? Math.max(0, producedServings - remainingServings - servedServings);
+  const wastedServings = rowWastedServings ?? payloadWastedServings ?? Math.max(0, producedServings - remainingServings - servedServings);
   const portionSizeGrams = firstPositiveNumber([
+    row.portion_size_grams,
     payload.portion_size_grams,
     producedServings > 0 ? producedWeightGrams / producedServings : 0,
+    row.service_portion_size_grams,
     payload.service_portion_size_grams
   ]) || 1;
   const normalizeMealPeriod = (value) => {
@@ -1078,6 +1135,14 @@ function rowToProducedItemBatch(row = {}) {
     cuisine_type: row.menu_type || payload.cuisine_type || payload.menu_type || null,
     menu_category: row.menu_category || payload.menu_category || null,
     completed_at: completedAt,
+    consumption_report_id: row.consumption_report_id || payload.consumption_report_id || null,
+    consumption_report_number: row.consumption_report_number || payload.consumption_report_number || null,
+    source_type: row.source_type || payload.source_type || null,
+    source_event_id: row.source_event_id || payload.source_event_id || null,
+    menu_plan_id: row.menu_plan_id || payload.menu_plan_id || null,
+    production_issue_grouped: row.production_issue_grouped === true || payload.production_issue_grouped === true,
+    production_issue_item_count: toNumberOrNull(row.production_issue_item_count ?? payload.production_issue_item_count),
+    production_issue_dish_count: toNumberOrNull(row.production_issue_dish_count ?? payload.production_issue_dish_count),
     recipe_id: row.recipe_version_id || null,
     recipe_name: row.item_name || payload.recipe_name || payload.production_name || null,
     ingredient_id: row.ingredient_id || payload.ingredient_id || null,
@@ -1088,9 +1153,9 @@ function rowToProducedItemBatch(row = {}) {
     produced_weight_grams: producedWeightGrams,
     available_weight_grams: remainingWeightGrams,
     initial_servings: producedServings,
-    expected_servings: toNumberOrNull(payload.expected_servings) ?? producedServings,
-    expected_finished_weight_grams: toNumberOrNull(payload.expected_finished_weight_grams) ?? producedWeightGrams,
-    actual_finished_weight_grams: toNumberOrNull(payload.actual_finished_weight_grams) ?? producedWeightGrams,
+    expected_servings: toNumberOrNull(row.expected_servings ?? payload.expected_servings) ?? producedServings,
+    expected_finished_weight_grams: toNumberOrNull(row.expected_finished_weight_grams ?? payload.expected_finished_weight_grams) ?? producedWeightGrams,
+    actual_finished_weight_grams: toNumberOrNull(row.actual_finished_weight_grams ?? payload.actual_finished_weight_grams) ?? producedWeightGrams,
     produced_servings: producedServings,
     served_servings: servedServings,
     served_weight_grams: servedWeightGrams,
@@ -1098,20 +1163,47 @@ function rowToProducedItemBatch(row = {}) {
     wasted_weight_grams: wastedWeightGrams,
     remaining_servings: remainingServings,
     portion_size_grams: portionSizeGrams,
+    service_portion_size_grams: toNumberOrNull(row.service_portion_size_grams ?? payload.service_portion_size_grams),
+    service_portion_updated_by: row.service_portion_updated_by || payload.service_portion_updated_by || null,
+    service_portion_updated_by_name: row.service_portion_updated_by_name || payload.service_portion_updated_by_name || null,
+    service_portion_updated_at: rowTimestamp(row.service_portion_updated_at) || rowTimestamp(payload.service_portion_updated_at),
     unit_cost: Number(row.unit_cost || 0),
     total_cost: Number(row.total_cost || 0),
     status: normalizeBatchStatus(row.status || payload.status),
-    cutover_version: payload.cutover_version || 1,
+    completed_by: row.completed_by || payload.completed_by || null,
+    completed_by_name: row.completed_by_name || payload.completed_by_name || null,
+    reconciliation_mode: row.reconciliation_mode || payload.reconciliation_mode || null,
+    output_calculation_source: row.output_calculation_source || payload.output_calculation_source || null,
+    cutover_version: Number(row.cutover_version || payload.cutover_version || 1),
     source_name: row.source_name || null
   });
 }
 
 function rowToMealServiceAttendance(row = {}) {
+  const items = Array.isArray(row.items) ? row.items : [];
+  const summary = {
+    required_servings: Number(row.required_servings || 0),
+    required_weight_grams: Number(row.required_weight_grams || 0),
+    served_servings: Number(row.served_servings || 0),
+    served_weight_grams: Number(row.served_weight_grams || 0),
+    shortage_servings: Number(row.shortage_servings || 0),
+    short_servings: Number(row.shortage_servings || 0),
+    shortage_weight_grams: Number(row.shortage_weight_grams || 0),
+    short_weight_grams: Number(row.shortage_weight_grams || 0)
+  };
   return withPayload(row, {
     __entity: 'MealServiceAttendance',
     id: row.meal_service_id,
     service_reference: row.service_reference,
     idempotency_key: row.idempotency_key,
+    request_fingerprint: row.request_fingerprint || null,
+    reversal_idempotency_key: row.reversal_idempotency_key || null,
+    reversal_request_fingerprint: row.reversal_request_fingerprint || null,
+    scope_key: row.scope_key || null,
+    menu_plan_id: row.menu_plan_id || null,
+    menu_plan_name: row.menu_plan_name || null,
+    customer_meal_plan_id: row.customer_meal_plan_id || null,
+    customer_meal_plan_name: row.customer_meal_plan_name || null,
     site_id: row.warehouse_id,
     service_date: toDateOnlyOrNull(row.service_date),
     meal_type: row.meal_period,
@@ -1119,15 +1211,36 @@ function rowToMealServiceAttendance(row = {}) {
     menu_category: row.menu_category,
     serving_size_grams: Number(row.serving_size_grams || 0),
     covers: Number(row.covers || 0),
+    customer_name: row.customer_name || null,
+    customer_id: row.customer_id || null,
+    category: row.category || null,
+    attendee_count: Number(row.attendee_count || 0),
+    scan_method: row.scan_method || null,
+    notes: row.notes || null,
+    items,
+    summary,
+    required_servings: summary.required_servings,
+    required_weight_grams: summary.required_weight_grams,
+    served_servings: summary.served_servings,
+    served_weight_grams: summary.served_weight_grams,
+    shortage_servings: summary.shortage_servings,
+    shortage_weight_grams: summary.shortage_weight_grams,
+    recorded_by: row.recorded_by || null,
+    recorded_by_name: row.recorded_by_name || null,
+    recorded_at: rowTimestamp(row.recorded_at),
     status: row.status || 'posted',
     posted_by: row.posted_by || null,
     reversed_by: row.reversed_by || null,
+    reversed_by_name: row.reversed_by_name || null,
     reversed_at: rowTimestamp(row.reversed_at),
+    reversal_reason: row.reversal_reason || null,
+    cutover_version: Number(row.cutover_version || 1),
     source_name: row.source_name || null
   });
 }
 
 function rowToMealServiceConsumption(row = {}) {
+  const allocations = Array.isArray(row.allocations) ? row.allocations : [];
   return withPayload(row, {
     __entity: 'MealServiceConsumption',
     id: row.meal_consumption_id,
@@ -1147,8 +1260,29 @@ function rowToMealServiceConsumption(row = {}) {
     menu_category: row.menu_category || null,
     consumed_weight_grams: Number(row.consumed_weight_grams || 0),
     consumed_servings: Number(row.consumed_servings || 0),
+    menu_plan_id: row.menu_plan_id || null,
+    customer_meal_plan_id: row.customer_meal_plan_id || null,
+    recipe_name: row.recipe_name || null,
+    attendee_count: toNumberOrNull(row.attendee_count),
+    portions_per_attendee: toNumberOrNull(row.portions_per_attendee),
+    servings_per_attendee: toNumberOrNull(row.servings_per_attendee),
+    portion_size_grams: toNumberOrNull(row.portion_size_grams),
+    manual_portion_size_grams: toNumberOrNull(row.manual_portion_size_grams),
+    portion_size_source: row.portion_size_source || null,
+    covers: toNumberOrNull(row.covers),
+    required_servings: toNumberOrNull(row.required_servings),
+    required_weight_grams: toNumberOrNull(row.required_weight_grams),
+    consumed_production_equivalent_servings: toNumberOrNull(row.consumed_production_equivalent_servings),
+    shortage_servings: toNumberOrNull(row.shortage_servings),
+    shortage_weight_grams: toNumberOrNull(row.shortage_weight_grams),
+    reversal_reason: row.reversal_reason || null,
+    performed_by: row.performed_by || null,
+    performed_by_name: row.performed_by_name || null,
+    performed_at: rowTimestamp(row.performed_at),
     cost: Number(row.cost || 0),
-    status: row.status || 'posted'
+    status: row.status || 'posted',
+    allocations,
+    cutover_version: Number(row.cutover_version || 1)
   });
 }
 
@@ -1166,14 +1300,21 @@ function rowToFoodWaste(row = {}) {
     : Array.isArray(payload.output_allocations)
       ? payload.output_allocations
       : [];
+  const inventoryMovementLayers = Array.isArray(row.inventory_movement_layers)
+    ? row.inventory_movement_layers
+    : Array.isArray(payload.inventory_movement_layers)
+      ? payload.inventory_movement_layers
+      : [];
   const storedWasteWeightGrams = toNumberOrZero(
     row.total_waste_weight_grams
+    ?? row.quantity_grams
     ?? payload.waste_weight_grams
     ?? payload.quantity_grams
   );
   const totalWasteWeightGrams = storedWasteWeightGrams || foodWasteQuantityToGrams(payload.quantity, payload.unit);
   const totalWasteCost = toNumberOrZero(
     row.total_waste_cost
+    ?? row.estimated_cost
     ?? payload.estimated_cost
     ?? payload.waste_cost
     ?? payload.cost
@@ -1190,6 +1331,44 @@ function rowToFoodWaste(row = {}) {
     menu_category: row.menu_category || null,
     waste_category: row.waste_category,
     reason_code: row.reason_code || null,
+    reason: row.reason || null,
+    waste_scope: row.waste_scope || 'ingredient',
+    source_type: row.source_type || 'manual_entry',
+    avoidable_type: row.avoidable_type || 'avoidable',
+    preventable: row.preventable !== false,
+    auto_generated: row.auto_generated === true,
+    high_value: row.high_value === true,
+    served_at: rowTimestamp(row.served_at),
+    production_completed_at: rowTimestamp(row.production_completed_at),
+    recording_window_basis: row.recording_window_basis || null,
+    recording_window_open_at: rowTimestamp(row.recording_window_open_at),
+    recording_deadline_at: rowTimestamp(row.recording_deadline_at),
+    menu_plan_id: row.menu_plan_id || null,
+    menu_plan_name: row.menu_plan_name || null,
+    meal_service_attendance_id: row.meal_service_id || null,
+    meal_service_id: row.meal_service_id || null,
+    production_id: row.production_id || null,
+    production_name: row.production_name || null,
+    recipe_id: row.recipe_version_id || null,
+    recipe_version_id: row.recipe_version_id || null,
+    recipe_name: row.recipe_name || null,
+    ingredient_id: row.ingredient_id || null,
+    ingredient_name: row.ingredient_name || null,
+    batch_reference: row.batch_reference || null,
+    batch_overproduction_item_key: row.batch_overproduction_item_key || null,
+    manifest_item_key: row.manifest_item_key || null,
+    source_menu_plan_item_key: row.source_menu_plan_item_key || null,
+    batch_recipe_id: row.batch_recipe_id || null,
+    batch_recipe_name: row.batch_recipe_name || null,
+    produced_weight_grams: toNumberOrNull(row.produced_weight_grams),
+    available_weight_grams_before: toNumberOrNull(row.available_weight_grams_before),
+    wasted_production_equivalent_servings: toNumberOrNull(row.wasted_production_equivalent_servings),
+    meal_service_adjustment_cost: toNumberOrZero(row.meal_service_adjustment_cost),
+    inventory_transaction_id: row.inventory_transaction_id || null,
+    inventory_deduction_quantity: toNumberOrZero(row.inventory_deduction_quantity),
+    inventory_shortage_quantity: toNumberOrZero(row.inventory_shortage_quantity),
+    inventory_movement_layers: inventoryMovementLayers,
+    notes: row.notes || null,
     approval_status: row.approval_status || 'pending',
     status: row.status || 'posted',
     recorded_by: row.recorded_by || null,
@@ -1200,7 +1379,7 @@ function rowToFoodWaste(row = {}) {
     quantity: totalWasteWeightGrams,
     quantity_grams: totalWasteWeightGrams,
     waste_weight_grams: totalWasteWeightGrams,
-    unit: 'g',
+    unit: row.unit || 'g',
     estimated_cost: totalWasteCost,
     waste_cost: totalWasteCost,
     cost: totalWasteCost,
@@ -1470,21 +1649,41 @@ function normalizedSelectForEntity(entity) {
     return `SELECT event.*,
                    COALESCE((
                      SELECT jsonb_agg(
-                       COALESCE(line.payload, '{}'::jsonb) || jsonb_build_object(
+                       jsonb_build_object(
                          'id', line.production_line_id,
                          'production_line_id', line.production_line_id,
                          'menu_plan_line_id', line.menu_plan_line_id,
                          'line_number', line.line_number,
+                         'line_type', line.line_type,
+                         'key', COALESCE(line.item_key, line.source_menu_plan_item_key, line.production_line_id),
+                         'manifest_item_key', COALESCE(line.item_key, line.source_menu_plan_item_key, line.production_line_id),
+                         'source_menu_plan_item_key', line.source_menu_plan_item_key,
                          'recipe_id', line.recipe_version_id,
                          'recipe_version_id', line.recipe_version_id,
+                         'recipe_code', line.recipe_code,
                          'ingredient_id', line.ingredient_id,
+                         'ingredient_name', line.ingredient_name,
                          'item_name', line.item_name,
                          'recipe_name', line.item_name,
+                         'name', line.item_name,
+                         'meal_type', line.meal_period,
                          'requested_servings', line.requested_servings,
                          'requested_weight_grams', line.requested_weight_grams,
                          'produced_servings', line.produced_servings,
                          'produced_weight_grams', line.produced_weight_grams,
+                         'production_covers', line.production_covers,
+                         'expected_servings', COALESCE(line.production_covers, line.requested_servings, line.produced_servings),
+                         'raw_weight_grams', line.raw_weight_grams,
+                         'yielded_weight_grams', line.yielded_weight_grams,
+                         'expected_finished_weight_grams', line.expected_finished_weight_grams,
+                         'portion_size_grams', line.portion_size_grams,
+                         'expected_yield_servings', line.expected_yield_servings,
+                         'output_calculation_source', line.output_calculation_source,
+                         'weight_calculation_source', line.weight_calculation_source,
+                         'yield_calculation_source', line.yield_calculation_source,
+                         'weight_snapshot_version', line.weight_snapshot_version,
                          'estimated_cost', line.estimated_cost,
+                         'estimated_batch_cost', line.estimated_cost,
                          'actual_cost', line.actual_cost,
                          'status', line.status,
                          'source_name', line.source_name
@@ -1504,9 +1703,78 @@ function normalizedSelectForEntity(entity) {
             JOIN production_events event ON event.production_id = batch.production_id
             JOIN production_manifest_lines line ON line.production_line_id = batch.production_line_id`;
   }
-  if (entity === 'MealServiceAttendance') return 'SELECT * FROM meal_service_headers';
+  if (entity === 'MealServiceAttendance') {
+    return `SELECT header.*,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'id', item.meal_service_item_id,
+                         'meal_service_item_id', item.meal_service_item_id,
+                         'output_batch_id', item.output_batch_id,
+                         'produced_item_batch_id', item.output_batch_id,
+                         'batch_id', item.output_batch_id,
+                         'production_id', item.production_id,
+                         'recipe_id', item.recipe_version_id,
+                         'recipe_version_id', item.recipe_version_id,
+                         'recipe_name', item.recipe_name,
+                         'item_name', item.item_name,
+                         'attendee_count', item.attendee_count,
+                         'portions_per_attendee', item.portions_per_attendee,
+                         'servings_per_attendee', item.servings_per_attendee,
+                         'portion_size_grams', item.portion_size_grams,
+                         'manual_portion_size_grams', item.manual_portion_size_grams,
+                         'portion_size_source', item.portion_size_source,
+                         'required_servings', item.required_servings,
+                         'required_weight_grams', item.required_weight_grams,
+                         'served_servings', item.served_servings,
+                         'served_weight_grams', item.served_weight_grams,
+                         'consumed_production_equivalent_servings', item.consumed_production_equivalent_servings,
+                         'shortage_servings', item.shortage_servings,
+                         'short_servings', item.shortage_servings,
+                         'shortage_weight_grams', item.shortage_weight_grams,
+                         'short_weight_grams', item.shortage_weight_grams,
+                         'cost', item.cost,
+                         'total_cost', item.cost,
+                         'status', item.status
+                       )
+                       ORDER BY item.item_order
+                     )
+                     FROM meal_service_items item
+                     WHERE item.meal_service_id = header.meal_service_id
+                   ), '[]'::jsonb) AS items
+            FROM meal_service_headers header`;
+  }
   if (entity === 'MealServiceConsumption') {
-    return `SELECT consumption.*, header.warehouse_id, header.menu_type, header.menu_category
+    return `SELECT consumption.*, header.warehouse_id,
+                   COALESCE(consumption.menu_type, header.menu_type) AS menu_type,
+                   COALESCE(consumption.menu_category, header.menu_category) AS menu_category,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'id', allocation.meal_service_consumption_allocation_id,
+                         'meal_service_consumption_allocation_id', allocation.meal_service_consumption_allocation_id,
+                         'output_batch_id', allocation.output_batch_id,
+                         'produced_item_batch_id', allocation.output_batch_id,
+                         'batch_id', allocation.output_batch_id,
+                         'production_id', allocation.production_id,
+                         'batch_number', allocation.batch_number,
+                         'portion_size_grams', allocation.portion_size_grams,
+                         'service_portion_size_grams', allocation.service_portion_size_grams,
+                         'servings', allocation.servings,
+                         'production_equivalent_servings', allocation.production_equivalent_servings,
+                         'meal_portions', allocation.meal_portions,
+                         'weight_grams', allocation.weight_grams,
+                         'remaining_servings_before', allocation.remaining_servings_before,
+                         'remaining_servings_after', allocation.remaining_servings_after,
+                         'remaining_weight_grams_before', allocation.remaining_weight_grams_before,
+                         'remaining_weight_grams_after', allocation.remaining_weight_grams_after,
+                         'status', allocation.status
+                       )
+                       ORDER BY allocation.allocation_order
+                     )
+                     FROM meal_service_consumption_allocations allocation
+                     WHERE allocation.meal_consumption_id = consumption.meal_consumption_id
+                   ), '[]'::jsonb) AS allocations
             FROM meal_service_consumptions consumption
             JOIN meal_service_headers header ON header.meal_service_id = consumption.meal_service_id`;
   }
@@ -1550,15 +1818,28 @@ function normalizedSelectForEntity(entity) {
                    ), 0) AS total_waste_cost,
                    COALESCE((
                      SELECT jsonb_agg(
-                       COALESCE(line.payload, '{}'::jsonb) || jsonb_build_object(
+                       jsonb_build_object(
                          'id', line.food_waste_line_id,
                          'food_waste_line_id', line.food_waste_line_id,
                          'produced_item_batch_id', line.output_batch_id,
                          'output_batch_id', line.output_batch_id,
+                         'production_id', line.production_id,
                          'production_line_id', line.production_line_id,
+                         'recipe_id', line.recipe_version_id,
+                         'recipe_version_id', line.recipe_version_id,
                          'ingredient_id', line.ingredient_id,
+                         'line_number', line.line_number,
+                         'item_name', line.item_name,
+                         'recipe_name', line.item_name,
+                         'batch_number', line.batch_number,
+                         'batch_overproduction_item_key', line.batch_overproduction_item_key,
+                         'manifest_item_key', line.manifest_item_key,
+                         'source_menu_plan_item_key', line.source_menu_plan_item_key,
                          'waste_weight_grams', line.waste_weight_grams,
                          'quantity_grams', line.waste_weight_grams,
+                         'wasted_production_equivalent_servings', line.wasted_production_equivalent_servings,
+                         'produced_weight_grams', line.produced_weight_grams_before,
+                         'available_weight_grams_before', line.available_weight_grams_before,
                          'cost', line.cost,
                          'status', line.status
                        )
@@ -1566,7 +1847,28 @@ function normalizedSelectForEntity(entity) {
                      )
                      FROM food_waste_lines line
                      WHERE line.food_waste_id = waste.food_waste_id
-                   ), '[]'::jsonb) AS output_allocations
+                   ), '[]'::jsonb) AS output_allocations,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'id', movement.food_waste_inventory_movement_id,
+                         'inventory_transaction_id', movement.inventory_transaction_id,
+                         'inventory_id', movement.inventory_id,
+                         'lot_id', movement.lot_id,
+                         'ingredient_id', movement.ingredient_id,
+                         'quantity', movement.quantity,
+                         'unit', movement.unit,
+                         'unit_cost', movement.unit_cost,
+                         'total_cost', movement.total_cost,
+                         'stock_date', movement.stock_date,
+                         'expiry_date', movement.expiry_date,
+                         'source_name', movement.source_name
+                       )
+                       ORDER BY movement.movement_order, movement.food_waste_inventory_movement_id
+                     )
+                     FROM food_waste_inventory_movements movement
+                     WHERE movement.food_waste_id = waste.food_waste_id
+                   ), '[]'::jsonb) AS inventory_movement_layers
             FROM food_waste_records waste`;
   }
   if (entity === 'RoleProfile') {
@@ -1763,6 +2065,30 @@ function normalizedSqlColumnForField(entity, field) {
       cuisine_type: 'menu_type',
       menu_category: 'menu_category',
       issue_group_key: 'issue_group_key',
+      source_type: 'source_type',
+      source_event_id: 'source_event_id',
+      source_event_recipe_id: 'source_event_recipe_id',
+      source_menu_plan_item_key: 'source_menu_plan_item_key',
+      production_issue_grouped: 'production_issue_grouped',
+      production_issue_group_key: 'production_issue_group_key',
+      production_issue_scope: 'production_issue_scope',
+      production_issue_item_count: 'production_issue_item_count',
+      production_issue_dish_count: 'production_issue_dish_count',
+      target_servings: 'target_servings',
+      ingredient_cost_total: 'ingredient_cost_total',
+      production_cost_total: 'production_cost_total',
+      cost_per_serving: 'cost_per_serving',
+      total_shortage_quantity: 'total_shortage_quantity',
+      consumption_report_id: 'consumption_report_id',
+      consumption_report_number: 'consumption_report_number',
+      produced_item_batch_id: 'produced_item_batch_id',
+      produced_item_batch_number: 'produced_item_batch_number',
+      reconciliation_mode: 'reconciliation_mode',
+      output_calculation_source: 'output_calculation_source',
+      portion_size_grams: 'portion_size_grams',
+      expected_yield_servings: 'expected_yield_servings',
+      produced_servings: 'produced_servings',
+      produced_weight_grams: 'produced_weight_grams',
       completed_by: 'completed_by',
       completed_at: 'completed_at',
       completed_date: 'completed_at',
@@ -1805,6 +2131,27 @@ function normalizedSqlColumnForField(entity, field) {
       available_weight_grams: 'remaining_weight_grams',
       initial_servings: 'initial_servings',
       remaining_servings: 'remaining_servings',
+      served_weight_grams: 'served_weight_grams',
+      wasted_weight_grams: 'wasted_weight_grams',
+      served_servings: 'served_servings',
+      wasted_servings: 'wasted_servings',
+      portion_size_grams: 'portion_size_grams',
+      service_portion_size_grams: 'service_portion_size_grams',
+      expected_servings: 'expected_servings',
+      expected_finished_weight_grams: 'expected_finished_weight_grams',
+      actual_finished_weight_grams: 'actual_finished_weight_grams',
+      source_type: 'source_type',
+      source_event_id: 'source_event_id',
+      menu_plan_id: 'menu_plan_id',
+      consumption_report_id: 'consumption_report_id',
+      consumption_report_number: 'consumption_report_number',
+      production_issue_grouped: 'production_issue_grouped',
+      production_issue_item_count: 'production_issue_item_count',
+      production_issue_dish_count: 'production_issue_dish_count',
+      completed_by: 'completed_by',
+      reconciliation_mode: 'reconciliation_mode',
+      output_calculation_source: 'output_calculation_source',
+      cutover_version: 'cutover_version',
       unit_cost: 'unit_cost',
       total_cost: 'total_cost'
     },
@@ -1822,11 +2169,37 @@ function normalizedSqlColumnForField(entity, field) {
       menu_category: 'menu_category',
       serving_size_grams: 'serving_size_grams',
       covers: 'covers',
+      request_fingerprint: 'request_fingerprint',
+      reversal_idempotency_key: 'reversal_idempotency_key',
+      reversal_request_fingerprint: 'reversal_request_fingerprint',
+      scope_key: 'scope_key',
+      menu_plan_id: 'menu_plan_id',
+      menu_plan_name: 'menu_plan_name',
+      customer_meal_plan_id: 'customer_meal_plan_id',
+      customer_meal_plan_name: 'customer_meal_plan_name',
+      customer_name: 'customer_name',
+      customer_id: 'customer_id',
+      category: 'category',
+      attendee_count: 'attendee_count',
+      scan_method: 'scan_method',
+      notes: 'notes',
+      required_servings: 'required_servings',
+      required_weight_grams: 'required_weight_grams',
+      served_servings: 'served_servings',
+      served_weight_grams: 'served_weight_grams',
+      shortage_servings: 'shortage_servings',
+      short_servings: 'shortage_servings',
+      shortage_weight_grams: 'shortage_weight_grams',
+      short_weight_grams: 'shortage_weight_grams',
+      recorded_by: 'recorded_by',
+      recorded_by_name: 'recorded_by_name',
+      recorded_at: 'recorded_at',
       posted_by: 'posted_by',
       reversed_by: 'reversed_by',
+      reversed_by_name: 'reversed_by_name',
       reversed_at: 'reversed_at',
-      scope_key: "payload->>'scope_key'",
-      reversal_idempotency_key: "payload->>'reversal_idempotency_key'"
+      reversal_reason: 'reversal_reason',
+      cutover_version: 'cutover_version'
     },
     MealServiceConsumption: {
       meal_consumption_id: 'meal_consumption_id',
@@ -1851,6 +2224,28 @@ function normalizedSqlColumnForField(entity, field) {
       menu_category: 'menu_category',
       consumed_weight_grams: 'consumed_weight_grams',
       consumed_servings: 'consumed_servings',
+      menu_plan_id: 'menu_plan_id',
+      customer_meal_plan_id: 'customer_meal_plan_id',
+      recipe_name: 'recipe_name',
+      attendee_count: 'attendee_count',
+      portions_per_attendee: 'portions_per_attendee',
+      servings_per_attendee: 'servings_per_attendee',
+      portion_size_grams: 'portion_size_grams',
+      manual_portion_size_grams: 'manual_portion_size_grams',
+      portion_size_source: 'portion_size_source',
+      covers: 'covers',
+      required_servings: 'required_servings',
+      required_weight_grams: 'required_weight_grams',
+      consumed_production_equivalent_servings: 'consumed_production_equivalent_servings',
+      shortage_servings: 'shortage_servings',
+      short_servings: 'shortage_servings',
+      shortage_weight_grams: 'shortage_weight_grams',
+      short_weight_grams: 'shortage_weight_grams',
+      reversal_reason: 'reversal_reason',
+      performed_by: 'performed_by',
+      performed_by_name: 'performed_by_name',
+      performed_at: 'performed_at',
+      cutover_version: 'cutover_version',
       cost: 'cost'
     },
     FoodWaste: {
@@ -1867,13 +2262,35 @@ function normalizedSqlColumnForField(entity, field) {
       menu_category: 'menu_category',
       waste_category: 'waste_category',
       reason_code: 'reason_code',
+      reason: 'reason',
+      waste_scope: 'waste_scope',
+      source_type: 'source_type',
+      avoidable_type: 'avoidable_type',
+      preventable: 'preventable',
+      auto_generated: 'auto_generated',
+      high_value: 'high_value',
+      quantity: 'quantity_grams',
+      quantity_grams: 'quantity_grams',
+      waste_weight_grams: 'quantity_grams',
+      unit: 'unit',
+      estimated_cost: 'estimated_cost',
+      cost: 'estimated_cost',
+      menu_plan_id: 'menu_plan_id',
+      meal_service_attendance_id: 'meal_service_id',
+      meal_service_id: 'meal_service_id',
+      production_id: 'production_id',
+      recipe_id: 'recipe_version_id',
+      recipe_version_id: 'recipe_version_id',
+      ingredient_id: 'ingredient_id',
+      batch_reference: 'batch_reference',
+      batch_overproduction_item_key: 'batch_overproduction_item_key',
+      manifest_item_key: 'manifest_item_key',
+      source_menu_plan_item_key: 'source_menu_plan_item_key',
+      inventory_transaction_id: 'inventory_transaction_id',
       approval_status: 'approval_status',
       recorded_by: 'recorded_by',
       reversed_by: 'reversed_by',
-      reversed_at: 'reversed_at',
-      waste_scope: "payload->>'waste_scope'",
-      meal_service_attendance_id: "payload->>'meal_service_attendance_id'",
-      auto_generated: "payload->>'auto_generated'"
+      reversed_at: 'reversed_at'
     },
     RoleProfile: {
       role_key: 'role_key',
@@ -1911,12 +2328,7 @@ function normalizedSqlColumnForField(entity, field) {
         || [
           'Recipe',
           'MenuPlan',
-          'Production',
-          'ProductionConsumptionReport',
-          'ProducedItemBatch',
-          'MealServiceAttendance',
-          'MealServiceConsumption',
-          'FoodWaste'
+          'ProductionConsumptionReport'
         ].includes(entity)
       )
     ) {
@@ -2443,10 +2855,20 @@ async function ensureProductionManifestLine(record, executor = pool) {
   await query(
     `INSERT INTO production_manifest_lines (
       production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
-      ingredient_id, item_name, requested_servings, requested_weight_grams, produced_servings,
-      produced_weight_grams, estimated_cost, actual_cost, status, source_name, payload,
+      ingredient_id, item_name, line_type, item_key, source_menu_plan_item_key,
+      recipe_code, ingredient_name, meal_period, requested_servings, requested_weight_grams,
+      produced_servings, produced_weight_grams, production_covers, raw_weight_grams,
+      yielded_weight_grams, expected_finished_weight_grams, portion_size_grams,
+      expected_yield_servings, output_calculation_source, weight_calculation_source,
+      yield_calculation_source, weight_snapshot_version, estimated_cost, actual_cost,
+      status, source_name,
       created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+      $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+      $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
+      $31,$32,$33
+    )
     ON CONFLICT (production_line_id) DO NOTHING`,
     [
       lineId,
@@ -2456,15 +2878,30 @@ async function ensureProductionManifestLine(record, executor = pool) {
       record.recipe_id || null,
       record.ingredient_id || null,
       record.production_name || record.recipe_name || record.name || 'Production item',
+      record.line_type || 'recipe',
+      record.key || record.manifest_item_key || record.source_menu_plan_item_key || null,
+      record.source_menu_plan_item_key || null,
+      record.recipe_code || null,
+      record.ingredient_name || null,
+      record.meal_type || null,
       toNumberOrNull(record.target_servings || record.production_covers || record.produced_servings),
       toNumberOrNull(record.requested_weight_grams || record.production_size_grams),
       toNumberOrNull(record.produced_servings || record.production_covers),
       toNumberOrNull(record.produced_weight_grams || record.finished_weight_grams || record.production_size_grams),
+      toNumberOrNull(record.production_covers || record.target_servings),
+      toNumberOrNull(record.raw_weight_grams),
+      toNumberOrNull(record.yielded_weight_grams),
+      toNumberOrNull(record.expected_finished_weight_grams),
+      toNumberOrNull(record.portion_size_grams),
+      toNumberOrNull(record.expected_yield_servings),
+      record.output_calculation_source || null,
+      record.weight_calculation_source || null,
+      record.yield_calculation_source || record.yield_source || null,
+      toNumberOrNull(record.weight_snapshot_version),
       toNumberOrZero(record.estimated_cost || record.estimated_batch_cost),
       toNumberOrZero(record.actual_cost || record.production_cost_total || record.total_cost),
       'active',
       record.source_name || null,
-      jsonPayload(record),
       record.created_date || nowIso(),
       record.updated_date || nowIso()
     ],
@@ -2575,20 +3012,43 @@ async function replaceProductionManifestLines(record, executor = pool) {
     await query(
       `INSERT INTO production_manifest_lines (
         production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
-        ingredient_id, item_name, requested_servings, requested_weight_grams, produced_servings,
-        produced_weight_grams, estimated_cost, actual_cost, status, source_name, payload,
+        ingredient_id, item_name, line_type, item_key, source_menu_plan_item_key,
+        recipe_code, ingredient_name, meal_period, requested_servings, requested_weight_grams,
+        produced_servings, produced_weight_grams, production_covers, raw_weight_grams,
+        yielded_weight_grams, expected_finished_weight_grams, portion_size_grams,
+        expected_yield_servings, output_calculation_source, weight_calculation_source,
+        yield_calculation_source, weight_snapshot_version, estimated_cost, actual_cost,
+        status, source_name,
         created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+        $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
+        $31,$32,$33
+      )
       ON CONFLICT (production_line_id) DO UPDATE SET
         menu_plan_line_id = EXCLUDED.menu_plan_line_id, line_number = EXCLUDED.line_number,
         recipe_version_id = EXCLUDED.recipe_version_id, ingredient_id = EXCLUDED.ingredient_id,
-        item_name = EXCLUDED.item_name, requested_servings = EXCLUDED.requested_servings,
+        item_name = EXCLUDED.item_name, line_type = EXCLUDED.line_type,
+        item_key = EXCLUDED.item_key, source_menu_plan_item_key = EXCLUDED.source_menu_plan_item_key,
+        recipe_code = EXCLUDED.recipe_code, ingredient_name = EXCLUDED.ingredient_name,
+        meal_period = EXCLUDED.meal_period, requested_servings = EXCLUDED.requested_servings,
         requested_weight_grams = EXCLUDED.requested_weight_grams,
         produced_servings = EXCLUDED.produced_servings,
         produced_weight_grams = EXCLUDED.produced_weight_grams,
+        production_covers = EXCLUDED.production_covers,
+        raw_weight_grams = EXCLUDED.raw_weight_grams,
+        yielded_weight_grams = EXCLUDED.yielded_weight_grams,
+        expected_finished_weight_grams = EXCLUDED.expected_finished_weight_grams,
+        portion_size_grams = EXCLUDED.portion_size_grams,
+        expected_yield_servings = EXCLUDED.expected_yield_servings,
+        output_calculation_source = EXCLUDED.output_calculation_source,
+        weight_calculation_source = EXCLUDED.weight_calculation_source,
+        yield_calculation_source = EXCLUDED.yield_calculation_source,
+        weight_snapshot_version = EXCLUDED.weight_snapshot_version,
         estimated_cost = EXCLUDED.estimated_cost, actual_cost = EXCLUDED.actual_cost,
         status = EXCLUDED.status, source_name = EXCLUDED.source_name,
-        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+        updated_at = EXCLUDED.updated_at`,
       [
         sourceLine?.production_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber),
         record.id,
@@ -2597,15 +3057,183 @@ async function replaceProductionManifestLines(record, executor = pool) {
         sourceLine?.recipe_id || sourceLine?.recipe_version_id || null,
         sourceLine?.ingredient_id || null,
         sourceLine?.item_name || sourceLine?.recipe_name || sourceLine?.ingredient_name || `Production line ${lineNumber}`,
+        sourceLine?.line_type || (sourceLine?.ingredient_id && !sourceLine?.recipe_id ? 'ingredient' : 'recipe'),
+        sourceLine?.key || sourceLine?.manifest_item_key || sourceLine?.source_menu_plan_item_key || null,
+        sourceLine?.source_menu_plan_item_key || sourceLine?.original_source_menu_plan_item_key || null,
+        sourceLine?.recipe_code || null,
+        sourceLine?.ingredient_name || null,
+        sourceLine?.meal_type || record.meal_type || null,
         requestedServings,
         requestedWeightGrams,
         producedServings,
         producedWeightGrams,
+        toNumberOrNull(sourceLine?.production_covers ?? sourceLine?.expected_servings ?? requestedServings),
+        toNumberOrNull(sourceLine?.raw_weight_grams),
+        toNumberOrNull(sourceLine?.yielded_weight_grams),
+        toNumberOrNull(sourceLine?.expected_finished_weight_grams ?? sourceLine?.yielded_weight_grams),
+        toNumberOrNull(sourceLine?.portion_size_grams),
+        toNumberOrNull(sourceLine?.expected_yield_servings),
+        sourceLine?.output_calculation_source || null,
+        sourceLine?.weight_calculation_source || null,
+        sourceLine?.yield_calculation_source || sourceLine?.yield_source || null,
+        toNumberOrNull(sourceLine?.weight_snapshot_version),
         toNumberOrZero(sourceLine?.estimated_cost),
         toNumberOrZero(sourceLine?.actual_cost),
         sourceLine?.status || 'active',
         sourceLine?.source_name || record.source_name || null,
-        jsonPayload(sourceLine),
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceMealServiceItems(record, executor = pool) {
+  if (!Array.isArray(record.items)) return;
+
+  await query('DELETE FROM meal_service_items WHERE meal_service_id = $1', [record.id], executor);
+  const createdAt = record.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  for (const [index, item] of record.items.entries()) {
+    const itemOrder = safeLineNumber(item?.item_order ?? item?.line_number, index + 1);
+    const outputBatchId = item?.output_batch_id || item?.produced_item_batch_id || item?.batch_id || null;
+    const itemName = item?.item_name || item?.recipe_name || `Meal service item ${itemOrder}`;
+    await query(
+      `INSERT INTO meal_service_items (
+        meal_service_item_id, meal_service_id, item_order, output_batch_id, production_id,
+        recipe_version_id, recipe_name, item_name, attendee_count, portions_per_attendee,
+        servings_per_attendee, portion_size_grams, manual_portion_size_grams,
+        portion_size_source, required_servings, required_weight_grams, served_servings,
+        served_weight_grams, consumed_production_equivalent_servings, shortage_servings,
+        shortage_weight_grams, cost, status, created_at, updated_at
+      ) VALUES (
+        $1,
+        $2,
+        $3,
+        (SELECT output_batch_id FROM produced_output_batches WHERE output_batch_id = NULLIF($4::text, '') LIMIT 1),
+        (SELECT production_id FROM production_events WHERE production_id = NULLIF($5::text, '') LIMIT 1),
+        (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF($6::text, '') LIMIT 1),
+        $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+      )
+      ON CONFLICT (meal_service_item_id) DO UPDATE SET
+        item_order = EXCLUDED.item_order,
+        output_batch_id = EXCLUDED.output_batch_id,
+        production_id = EXCLUDED.production_id,
+        recipe_version_id = EXCLUDED.recipe_version_id,
+        recipe_name = EXCLUDED.recipe_name,
+        item_name = EXCLUDED.item_name,
+        attendee_count = EXCLUDED.attendee_count,
+        portions_per_attendee = EXCLUDED.portions_per_attendee,
+        servings_per_attendee = EXCLUDED.servings_per_attendee,
+        portion_size_grams = EXCLUDED.portion_size_grams,
+        manual_portion_size_grams = EXCLUDED.manual_portion_size_grams,
+        portion_size_source = EXCLUDED.portion_size_source,
+        required_servings = EXCLUDED.required_servings,
+        required_weight_grams = EXCLUDED.required_weight_grams,
+        served_servings = EXCLUDED.served_servings,
+        served_weight_grams = EXCLUDED.served_weight_grams,
+        consumed_production_equivalent_servings = EXCLUDED.consumed_production_equivalent_servings,
+        shortage_servings = EXCLUDED.shortage_servings,
+        shortage_weight_grams = EXCLUDED.shortage_weight_grams,
+        cost = EXCLUDED.cost,
+        status = EXCLUDED.status,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        item?.meal_service_item_id || item?.id || lineNumberedId('item', record.id, itemOrder),
+        record.id,
+        itemOrder,
+        outputBatchId,
+        item?.production_id || null,
+        item?.recipe_id || item?.recipe_version_id || null,
+        item?.recipe_name || itemName,
+        itemName,
+        toNumberOrNull(item?.attendee_count ?? record.attendee_count ?? record.covers),
+        toNumberOrNull(item?.portions_per_attendee),
+        toNumberOrNull(item?.servings_per_attendee),
+        toNumberOrNull(item?.portion_size_grams),
+        toNumberOrNull(item?.manual_portion_size_grams),
+        item?.portion_size_source || null,
+        toNumberOrZero(item?.required_servings),
+        toNumberOrZero(item?.required_weight_grams),
+        toNumberOrZero(item?.served_servings),
+        toNumberOrZero(item?.served_weight_grams),
+        toNumberOrNull(item?.consumed_production_equivalent_servings),
+        toNumberOrZero(item?.shortage_servings ?? item?.short_servings),
+        toNumberOrZero(item?.shortage_weight_grams ?? item?.short_weight_grams),
+        toNumberOrZero(item?.cost ?? item?.total_cost),
+        item?.status || record.status || 'posted',
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceMealServiceConsumptionAllocations(record, executor = pool) {
+  if (!Array.isArray(record.allocations)) return;
+
+  await query('DELETE FROM meal_service_consumption_allocations WHERE meal_consumption_id = $1', [record.id], executor);
+  const createdAt = record.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  for (const [index, allocation] of record.allocations.entries()) {
+    const allocationOrder = safeLineNumber(allocation?.allocation_order ?? allocation?.line_number, index + 1);
+    const outputBatchId = allocation?.output_batch_id
+      || allocation?.produced_item_batch_id
+      || allocation?.batch_id
+      || null;
+    await query(
+      `INSERT INTO meal_service_consumption_allocations (
+        meal_service_consumption_allocation_id, meal_consumption_id, allocation_order,
+        output_batch_id, production_id, batch_number, portion_size_grams,
+        service_portion_size_grams, servings, production_equivalent_servings,
+        meal_portions, weight_grams, remaining_servings_before,
+        remaining_servings_after, remaining_weight_grams_before,
+        remaining_weight_grams_after, status, created_at, updated_at
+      ) VALUES (
+        $1,
+        $2,
+        $3,
+        (SELECT output_batch_id FROM produced_output_batches WHERE output_batch_id = NULLIF($4::text, '') LIMIT 1),
+        (SELECT production_id FROM production_events WHERE production_id = NULLIF($5::text, '') LIMIT 1),
+        $6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+      )
+      ON CONFLICT (meal_service_consumption_allocation_id) DO UPDATE SET
+        allocation_order = EXCLUDED.allocation_order,
+        output_batch_id = EXCLUDED.output_batch_id,
+        production_id = EXCLUDED.production_id,
+        batch_number = EXCLUDED.batch_number,
+        portion_size_grams = EXCLUDED.portion_size_grams,
+        service_portion_size_grams = EXCLUDED.service_portion_size_grams,
+        servings = EXCLUDED.servings,
+        production_equivalent_servings = EXCLUDED.production_equivalent_servings,
+        meal_portions = EXCLUDED.meal_portions,
+        weight_grams = EXCLUDED.weight_grams,
+        remaining_servings_before = EXCLUDED.remaining_servings_before,
+        remaining_servings_after = EXCLUDED.remaining_servings_after,
+        remaining_weight_grams_before = EXCLUDED.remaining_weight_grams_before,
+        remaining_weight_grams_after = EXCLUDED.remaining_weight_grams_after,
+        status = EXCLUDED.status,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        allocation?.meal_service_consumption_allocation_id || allocation?.id || lineNumberedId('allocation', record.id, allocationOrder),
+        record.id,
+        allocationOrder,
+        outputBatchId,
+        allocation?.production_id || record.production_id || null,
+        allocation?.batch_number || null,
+        toNumberOrNull(allocation?.portion_size_grams),
+        toNumberOrNull(allocation?.service_portion_size_grams),
+        toNumberOrZero(allocation?.servings),
+        toNumberOrZero(allocation?.production_equivalent_servings ?? allocation?.servings),
+        toNumberOrZero(allocation?.meal_portions),
+        toNumberOrZero(allocation?.weight_grams),
+        toNumberOrNull(allocation?.remaining_servings_before),
+        toNumberOrNull(allocation?.remaining_servings_after),
+        toNumberOrNull(allocation?.remaining_weight_grams_before),
+        toNumberOrNull(allocation?.remaining_weight_grams_after),
+        allocation?.status || record.status || 'posted',
         createdAt,
         updatedAt
       ],
@@ -2632,6 +3260,14 @@ function foodWasteLineSources(record = {}) {
     return allocations.map((allocation, index) => ({
       ...allocation,
       line_number: safeLineNumber(allocation?.line_number, index + 1),
+      production_id: allocation?.production_id || record.production_id || null,
+      recipe_id: allocation?.recipe_id || allocation?.recipe_version_id || record.recipe_id || null,
+      ingredient_id: allocation?.ingredient_id || record.ingredient_id || null,
+      item_name: allocation?.item_name || allocation?.recipe_name || allocation?.ingredient_name || record.recipe_name || record.ingredient_name || null,
+      batch_number: allocation?.batch_number || record.batch_reference || null,
+      batch_overproduction_item_key: allocation?.batch_overproduction_item_key || record.batch_overproduction_item_key || null,
+      manifest_item_key: allocation?.manifest_item_key || record.manifest_item_key || null,
+      source_menu_plan_item_key: allocation?.source_menu_plan_item_key || record.source_menu_plan_item_key || null,
       waste_weight_grams: toNumberOrZero(
         allocation?.wasted_weight_grams
         ?? allocation?.waste_weight_grams
@@ -2650,8 +3286,18 @@ function foodWasteLineSources(record = {}) {
     line_number: 1,
     produced_item_batch_id: record.produced_item_batch_id || null,
     output_batch_id: record.output_batch_id || null,
+    production_id: record.production_id || null,
     production_line_id: record.production_line_id || null,
+    recipe_id: record.recipe_id || record.recipe_version_id || null,
     ingredient_id: record.ingredient_id || null,
+    item_name: record.recipe_name || record.ingredient_name || null,
+    batch_number: record.batch_reference || null,
+    batch_overproduction_item_key: record.batch_overproduction_item_key || null,
+    manifest_item_key: record.manifest_item_key || null,
+    source_menu_plan_item_key: record.source_menu_plan_item_key || null,
+    wasted_production_equivalent_servings: record.wasted_production_equivalent_servings || null,
+    produced_weight_grams: record.produced_weight_grams || null,
+    available_weight_grams_before: record.available_weight_grams_before || null,
     waste_weight_grams: wasteWeightGrams,
     cost: record.estimated_cost || record.waste_cost || record.total_cost || 0
   }];
@@ -2682,40 +3328,74 @@ async function replaceFoodWasteLines(record, executor = pool) {
       || null;
     await query(
       `INSERT INTO food_waste_lines (
-        food_waste_line_id, food_waste_id, output_batch_id, production_line_id, ingredient_id,
-        waste_weight_grams, cost, status, payload, created_at, updated_at
+        food_waste_line_id, food_waste_id, output_batch_id, production_line_id,
+        production_id, recipe_version_id, ingredient_id, line_number, item_name,
+        batch_number, batch_overproduction_item_key, manifest_item_key,
+        source_menu_plan_item_key, wasted_production_equivalent_servings,
+        produced_weight_grams_before, available_weight_grams_before,
+        waste_weight_grams, cost, status, created_at, updated_at
       ) VALUES (
         $1,
         $2,
         (SELECT output_batch_id FROM produced_output_batches WHERE output_batch_id = NULLIF($3::text, '') LIMIT 1),
         (SELECT production_line_id FROM production_manifest_lines WHERE production_line_id = NULLIF($4::text, '') LIMIT 1),
-        (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($5::text, '') LIMIT 1),
-        $6,
-        $7,
+        (SELECT production_id FROM production_events WHERE production_id = NULLIF($5::text, '') LIMIT 1),
+        (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF($6::text, '') LIMIT 1),
+        (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($7::text, '') LIMIT 1),
         $8,
-        $9::jsonb,
+        $9,
         $10,
-        $11
+        $11,
+        $12,
+        $13,
+        $14,
+        $15,
+        $16,
+        $17,
+        $18,
+        $19,
+        $20,
+        $21
       )
       ON CONFLICT (food_waste_line_id) DO UPDATE SET
         output_batch_id = EXCLUDED.output_batch_id,
         production_line_id = EXCLUDED.production_line_id,
+        production_id = EXCLUDED.production_id,
+        recipe_version_id = EXCLUDED.recipe_version_id,
         ingredient_id = EXCLUDED.ingredient_id,
+        line_number = EXCLUDED.line_number,
+        item_name = EXCLUDED.item_name,
+        batch_number = EXCLUDED.batch_number,
+        batch_overproduction_item_key = EXCLUDED.batch_overproduction_item_key,
+        manifest_item_key = EXCLUDED.manifest_item_key,
+        source_menu_plan_item_key = EXCLUDED.source_menu_plan_item_key,
+        wasted_production_equivalent_servings = EXCLUDED.wasted_production_equivalent_servings,
+        produced_weight_grams_before = EXCLUDED.produced_weight_grams_before,
+        available_weight_grams_before = EXCLUDED.available_weight_grams_before,
         waste_weight_grams = EXCLUDED.waste_weight_grams,
         cost = EXCLUDED.cost,
         status = EXCLUDED.status,
-        payload = EXCLUDED.payload,
         updated_at = EXCLUDED.updated_at`,
       [
         sourceLine?.food_waste_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber),
         record.id,
         outputBatchId,
         sourceLine?.production_line_id || sourceLine?.manifest_item_key || null,
+        sourceLine?.production_id || record.production_id || null,
+        sourceLine?.recipe_id || sourceLine?.recipe_version_id || record.recipe_id || null,
         sourceLine?.ingredient_id || record.ingredient_id || null,
+        lineNumber,
+        sourceLine?.item_name || sourceLine?.recipe_name || sourceLine?.ingredient_name || record.recipe_name || record.ingredient_name || null,
+        sourceLine?.batch_number || record.batch_reference || null,
+        sourceLine?.batch_overproduction_item_key || record.batch_overproduction_item_key || null,
+        sourceLine?.manifest_item_key || record.manifest_item_key || null,
+        sourceLine?.source_menu_plan_item_key || record.source_menu_plan_item_key || null,
+        toNumberOrNull(sourceLine?.wasted_production_equivalent_servings ?? record.wasted_production_equivalent_servings),
+        toNumberOrNull(sourceLine?.produced_weight_grams ?? sourceLine?.produced_weight_grams_before ?? record.produced_weight_grams),
+        toNumberOrNull(sourceLine?.available_weight_grams_before ?? sourceLine?.available_weight_grams ?? record.available_weight_grams_before),
         lineWeightGrams,
         toNumberOrZero(lineCost),
         sourceLine?.status || record.status || 'posted',
-        jsonPayload(sourceLine),
         createdAt,
         updatedAt
       ],
@@ -2749,6 +3429,64 @@ async function replaceFoodWasteImages(record, executor = pool) {
         record.image_content_types?.[index] || null,
         toNumberOrNull(record.image_byte_sizes?.[index]),
         record.created_date || nowIso()
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceFoodWasteInventoryMovements(record, executor = pool) {
+  await query('DELETE FROM food_waste_inventory_movements WHERE food_waste_id = $1', [record.id], executor);
+  const movements = Array.isArray(record.inventory_movement_layers)
+    ? record.inventory_movement_layers
+    : [];
+  if (!movements.length) return;
+
+  const createdAt = record.created_date || nowIso();
+  for (const [index, movement] of movements.entries()) {
+    const movementOrder = safeLineNumber(movement?.movement_order ?? movement?.line_number, index + 1);
+    await query(
+      `INSERT INTO food_waste_inventory_movements (
+        food_waste_inventory_movement_id, food_waste_id, movement_order,
+        inventory_transaction_id, inventory_id, lot_id, ingredient_id,
+        quantity, unit, unit_cost, total_cost, stock_date, expiry_date, source_name,
+        created_at
+      ) VALUES (
+        $1,$2,$3,$4,
+        (SELECT inventory_id FROM warehouse_inventory WHERE inventory_id = NULLIF($5::text, '') LIMIT 1),
+        (SELECT lot_id FROM inventory_lots WHERE lot_id = NULLIF($6::text, '') LIMIT 1),
+        (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($7::text, '') LIMIT 1),
+        $8,$9,$10,$11,$12,$13,$14,$15
+      )
+      ON CONFLICT (food_waste_inventory_movement_id) DO UPDATE SET
+        movement_order = EXCLUDED.movement_order,
+        inventory_transaction_id = EXCLUDED.inventory_transaction_id,
+        inventory_id = EXCLUDED.inventory_id,
+        lot_id = EXCLUDED.lot_id,
+        ingredient_id = EXCLUDED.ingredient_id,
+        quantity = EXCLUDED.quantity,
+        unit = EXCLUDED.unit,
+        unit_cost = EXCLUDED.unit_cost,
+        total_cost = EXCLUDED.total_cost,
+        stock_date = EXCLUDED.stock_date,
+        expiry_date = EXCLUDED.expiry_date,
+        source_name = EXCLUDED.source_name`,
+      [
+        movement?.food_waste_inventory_movement_id || movement?.id || lineNumberedId('movement', record.id, movementOrder),
+        record.id,
+        movementOrder,
+        movement?.inventory_transaction_id || record.inventory_transaction_id || null,
+        movement?.inventory_id || null,
+        movement?.lot_id || null,
+        movement?.ingredient_id || record.ingredient_id || null,
+        toNumberOrZero(movement?.quantity ?? movement?.deducted_quantity),
+        movement?.unit || record.unit || null,
+        toNumberOrZero(movement?.unit_cost),
+        toNumberOrZero(movement?.total_cost ?? movement?.cost),
+        toDateOnlyOrNull(movement?.stock_date),
+        toDateOnlyOrNull(movement?.expiry_date),
+        movement?.source_name || record.source_name || null,
+        createdAt
       ],
       executor
     );
@@ -2898,51 +3636,93 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'Production') {
+    const productionColumns = [
+      ['production_id', record.id],
+      ['menu_plan_id', record.menu_plan_id || (String(record.source_type || '').toLowerCase() === 'menu_plan' ? record.source_event_id : null) || null],
+      ['warehouse_id', record.fulfillment_store_id || record.site_id || record.warehouse_id],
+      ['production_date', toDateOnlyOrNull(record.production_date || record.date)],
+      ['meal_period', record.meal_type || 'breakfast'],
+      ['menu_type', record.menu_type || record.cuisine_type || 'general'],
+      ['menu_category', record.menu_category || 'senior'],
+      ['status', record.status || 'planned'],
+      ['issue_group_key', record.issue_group_key || record.id],
+      ['source_type', record.source_type || null],
+      ['source_event_id', record.source_event_id || null],
+      ['source_event_name', record.source_event_name || null],
+      ['source_event_recipe_id', record.source_event_recipe_id || null],
+      ['source_menu_plan_item_key', record.source_menu_plan_item_key || null],
+      ['production_issue_grouped', record.production_issue_grouped === true],
+      ['production_issue_group_key', record.production_issue_group_key || null],
+      ['production_issue_scope', record.production_issue_scope || null],
+      ['production_issue_item_count', toNumberOrNull(record.production_issue_item_count)],
+      ['production_issue_dish_count', toNumberOrNull(record.production_issue_dish_count)],
+      ['production_issue_admin_reissue', record.production_issue_admin_reissue === true],
+      ['production_issue_reissue_run_id', record.production_issue_reissue_run_id || null],
+      ['production_issue_reissue_original_group_key', record.production_issue_reissue_original_group_key || null],
+      ['target_servings', toNumberOrNull(record.target_servings || record.production_covers)],
+      ['ingredient_cost_total', toNumberOrZero(record.ingredient_cost_total)],
+      ['production_cost_total', toNumberOrZero(record.production_cost_total ?? record.total_cost)],
+      ['cost_per_serving', toNumberOrZero(record.cost_per_serving)],
+      ['total_shortage_quantity', toNumberOrZero(record.total_shortage_quantity)],
+      ['consumption_report_id', record.consumption_report_id || null],
+      ['consumption_report_number', record.consumption_report_number || null],
+      ['consumption_report_name', record.consumption_report_name || null],
+      ['consumption_report_generated_at', record.consumption_report_generated_at || null],
+      ['produced_item_batch_id', record.produced_item_batch_id || null],
+      ['produced_item_batch_number', record.produced_item_batch_number || null],
+      ['yield_adjustment_applied', record.yield_adjustment_applied === true],
+      ['yield_adjustment_version', toNumberOrNull(record.yield_adjustment_version)],
+      ['yield_adjustment_updated_at', record.yield_adjustment_updated_at || null],
+      ['yield_snapshot_source', record.yield_snapshot_source || null],
+      ['quantity_semantics', record.quantity_semantics || null],
+      ['reconciliation_mode', record.reconciliation_mode || null],
+      ['output_calculation_source', record.output_calculation_source || null],
+      ['recipe_raw_weight_grams', toNumberOrNull(record.recipe_raw_weight_grams)],
+      ['total_raw_consumption_weight_grams', toNumberOrNull(record.total_raw_consumption_weight_grams)],
+      ['total_yielded_weight_grams', toNumberOrNull(record.total_yielded_weight_grams)],
+      ['expected_finished_weight_grams', toNumberOrNull(record.expected_finished_weight_grams)],
+      ['actual_finished_weight_grams', toNumberOrNull(record.actual_finished_weight_grams)],
+      ['portion_size_grams', toNumberOrNull(record.portion_size_grams)],
+      ['portion_size_source', record.portion_size_source || null],
+      ['expected_yield_servings', toNumberOrNull(record.expected_yield_servings)],
+      ['produced_servings', toNumberOrNull(record.produced_servings)],
+      ['produced_weight_grams', toNumberOrNull(record.produced_weight_grams)],
+      ['completed_by_name', record.completed_by_name || null],
+      ['fulfillment_store_name', record.fulfillment_store_name || null],
+      ['linked_material_request_id', record.linked_material_request_id || null],
+      ['linked_material_request_number', record.linked_material_request_number || null],
+      ['material_request_status', record.material_request_status || null],
+      ['last_review_action', record.last_review_action || null],
+      ['rejection_reason', record.rejection_reason || null],
+      ['cancellation_reason', record.cancellation_reason || null],
+      ['cancelled_at', record.cancelled_at || null],
+      ['cancelled_by', record.cancelled_by || null, 'user'],
+      ['cancelled_by_name', record.cancelled_by_name || null],
+      ['started_by', record.started_by || null, 'user'],
+      ['completed_by', record.completed_by || null, 'user'],
+      ['completed_at', record.completed_at || null],
+      ['reversed_by', record.reversed_by || null, 'user'],
+      ['reversed_at', record.reversed_at || null],
+      ['reversal_reason', record.reversal_reason || null],
+      ['source_name', record.source_name || null],
+      ['created_at', createdAt],
+      ['updated_at', updatedAt]
+    ];
+    const productionColumnNames = productionColumns.map(([column]) => column);
+    const productionValues = productionColumns.map(([, value]) => value);
+    const productionPlaceholders = productionColumns.map(([, , kind], index) => (
+      kind === 'user' ? userReferenceSql(index + 1) : `$${index + 1}`
+    ));
+    const productionUpdates = productionColumnNames
+      .filter((column) => !['production_id', 'created_at'].includes(column))
+      .map((column) => `${column} = EXCLUDED.${column}`)
+      .join(', ');
     await query(
       `INSERT INTO production_events (
-        production_id, menu_plan_id, warehouse_id, production_date, meal_period,
-        menu_type, menu_category, status, issue_group_key, payload, started_by,
-        completed_by, completed_at, reversed_by, reversed_at, reversal_reason,
-        source_name, created_at, updated_at
-      ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,
-        ${userReferenceSql(11)},
-        ${userReferenceSql(12)},
-        $13,
-        ${userReferenceSql(14)},
-        $15,$16,$17,$18,$19
-      )
-      ON CONFLICT (production_id) DO UPDATE SET
-        menu_plan_id = EXCLUDED.menu_plan_id, warehouse_id = EXCLUDED.warehouse_id,
-        production_date = EXCLUDED.production_date, meal_period = EXCLUDED.meal_period,
-        menu_type = EXCLUDED.menu_type, menu_category = EXCLUDED.menu_category,
-        status = EXCLUDED.status, issue_group_key = EXCLUDED.issue_group_key,
-        payload = EXCLUDED.payload, started_by = EXCLUDED.started_by,
-        completed_by = EXCLUDED.completed_by, completed_at = EXCLUDED.completed_at,
-        reversed_by = EXCLUDED.reversed_by, reversed_at = EXCLUDED.reversed_at,
-        reversal_reason = EXCLUDED.reversal_reason, source_name = EXCLUDED.source_name,
-        updated_at = EXCLUDED.updated_at`,
-      [
-        record.id,
-        record.menu_plan_id || record.source_event_id || null,
-        record.fulfillment_store_id || record.site_id || record.warehouse_id,
-        toDateOnlyOrNull(record.production_date || record.date),
-        record.meal_type || 'breakfast',
-        record.menu_type || record.cuisine_type || 'general',
-        record.menu_category || 'senior',
-        record.status || 'planned',
-        record.issue_group_key || record.id,
-        jsonPayload(record),
-        record.started_by || null,
-        record.completed_by || null,
-        record.completed_at || null,
-        record.reversed_by || null,
-        record.reversed_at || null,
-        record.reversal_reason || null,
-        record.source_name || null,
-        createdAt,
-        updatedAt
-      ],
+        ${productionColumnNames.join(', ')}
+      ) VALUES (${productionPlaceholders.join(', ')})
+      ON CONFLICT (production_id) DO UPDATE SET ${productionUpdates}`,
+      productionValues,
       executor
     );
     await replaceProductionManifestLines(record, executor);
@@ -2985,156 +3765,293 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
       recipe_id: record.recipe_id,
       production_name: record.production_name || record.recipe_name
     }, executor);
+    const producedBatchColumns = [
+      ['output_batch_id', record.id],
+      ['production_id', record.production_id],
+      ['production_line_id', productionLineId],
+      ['warehouse_id', record.site_id || record.warehouse_id],
+      ['recipe_version_id', record.recipe_id || null],
+      ['ingredient_id', record.ingredient_id || null],
+      ['batch_number', record.batch_number],
+      ['initial_weight_grams', toNumberOrZero(record.initial_weight_grams ?? record.produced_weight_grams)],
+      ['remaining_weight_grams', toNumberOrZero(record.remaining_weight_grams ?? record.available_weight_grams ?? record.produced_weight_grams)],
+      ['initial_servings', toNumberOrNull(record.initial_servings ?? record.produced_servings)],
+      ['remaining_servings', toNumberOrNull(record.remaining_servings ?? record.available_servings ?? record.produced_servings)],
+      ['served_weight_grams', toNumberOrZero(record.served_weight_grams)],
+      ['wasted_weight_grams', toNumberOrZero(record.wasted_weight_grams)],
+      ['served_servings', toNumberOrZero(record.served_servings)],
+      ['wasted_servings', toNumberOrZero(record.wasted_servings)],
+      ['portion_size_grams', toNumberOrNull(record.portion_size_grams)],
+      ['service_portion_size_grams', toNumberOrNull(record.service_portion_size_grams)],
+      ['service_portion_updated_by', record.service_portion_updated_by || null],
+      ['service_portion_updated_by_name', record.service_portion_updated_by_name || null],
+      ['service_portion_updated_at', record.service_portion_updated_at || null],
+      ['expected_servings', toNumberOrNull(record.expected_servings ?? record.produced_servings)],
+      ['expected_finished_weight_grams', toNumberOrNull(record.expected_finished_weight_grams ?? record.produced_weight_grams)],
+      ['actual_finished_weight_grams', toNumberOrNull(record.actual_finished_weight_grams ?? record.produced_weight_grams)],
+      ['source_type', record.source_type || null],
+      ['source_event_id', record.source_event_id || null],
+      ['menu_plan_id', record.menu_plan_id || null],
+      ['consumption_report_id', record.consumption_report_id || null],
+      ['consumption_report_number', record.consumption_report_number || null],
+      ['production_issue_grouped', record.production_issue_grouped === true],
+      ['production_issue_item_count', toNumberOrNull(record.production_issue_item_count)],
+      ['production_issue_dish_count', toNumberOrNull(record.production_issue_dish_count)],
+      ['completed_by', record.completed_by || null],
+      ['completed_by_name', record.completed_by_name || null],
+      ['reconciliation_mode', record.reconciliation_mode || null],
+      ['output_calculation_source', record.output_calculation_source || null],
+      ['cutover_version', toNumberOrNull(record.cutover_version) || 1],
+      ['unit_cost', toNumberOrZero(record.unit_cost)],
+      ['total_cost', toNumberOrZero(record.total_cost)],
+      ['status', record.status || 'active'],
+      ['source_name', record.source_name || null],
+      ['created_at', createdAt],
+      ['updated_at', updatedAt]
+    ];
+    const producedBatchColumnNames = producedBatchColumns.map(([column]) => column);
+    const producedBatchValues = producedBatchColumns.map(([, value]) => value);
+    const producedBatchPlaceholders = producedBatchValues.map((_, index) => `$${index + 1}`);
+    const producedBatchUpdates = producedBatchColumnNames
+      .filter((column) => !['output_batch_id', 'created_at'].includes(column))
+      .map((column) => `${column} = EXCLUDED.${column}`)
+      .join(', ');
     await query(
       `INSERT INTO produced_output_batches (
-        output_batch_id, production_id, production_line_id, warehouse_id, recipe_version_id,
-        ingredient_id, batch_number, initial_weight_grams, remaining_weight_grams,
-        initial_servings, remaining_servings, unit_cost, total_cost, status, source_name,
-        payload, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
-      ON CONFLICT (output_batch_id) DO UPDATE SET
-        production_id = EXCLUDED.production_id, production_line_id = EXCLUDED.production_line_id,
-        warehouse_id = EXCLUDED.warehouse_id, recipe_version_id = EXCLUDED.recipe_version_id,
-        ingredient_id = EXCLUDED.ingredient_id, batch_number = EXCLUDED.batch_number,
-        initial_weight_grams = EXCLUDED.initial_weight_grams,
-        remaining_weight_grams = EXCLUDED.remaining_weight_grams,
-        initial_servings = EXCLUDED.initial_servings, remaining_servings = EXCLUDED.remaining_servings,
-        unit_cost = EXCLUDED.unit_cost, total_cost = EXCLUDED.total_cost,
-        status = EXCLUDED.status, source_name = EXCLUDED.source_name,
-        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
-      [
-        record.id,
-        record.production_id,
-        productionLineId,
-        record.site_id || record.warehouse_id,
-        record.recipe_id || null,
-        record.ingredient_id || null,
-        record.batch_number,
-        toNumberOrZero(record.initial_weight_grams ?? record.produced_weight_grams),
-        toNumberOrZero(record.remaining_weight_grams ?? record.available_weight_grams ?? record.produced_weight_grams),
-        toNumberOrNull(record.initial_servings ?? record.produced_servings),
-        toNumberOrNull(record.remaining_servings ?? record.available_servings ?? record.produced_servings),
-        toNumberOrZero(record.unit_cost),
-        toNumberOrZero(record.total_cost),
-        record.status || 'active',
-        record.source_name || null,
-        jsonPayload(record),
-        createdAt,
-        updatedAt
-      ],
+        ${producedBatchColumnNames.join(', ')}
+      ) VALUES (${producedBatchPlaceholders.join(', ')})
+      ON CONFLICT (output_batch_id) DO UPDATE SET ${producedBatchUpdates}`,
+      producedBatchValues,
       executor
     );
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'MealServiceAttendance') {
+    const summary = record.summary && typeof record.summary === 'object' ? record.summary : {};
+    const mealServiceHeaderColumns = [
+      ['meal_service_id', record.id],
+      ['service_reference', record.service_reference],
+      ['idempotency_key', record.idempotency_key],
+      ['warehouse_id', record.site_id || record.warehouse_id],
+      ['service_date', toDateOnlyOrNull(record.service_date)],
+      ['meal_period', record.meal_type || 'breakfast'],
+      ['menu_type', record.menu_type || record.cuisine_type || 'general'],
+      ['menu_category', record.menu_category || 'senior'],
+      ['serving_size_grams', toNumberOrZero(record.serving_size_grams || record.portion_size_grams) || 1],
+      ['covers', toNumberOrZero(record.covers || record.attendee_count)],
+      ['status', record.status || 'posted'],
+      ['request_fingerprint', record.request_fingerprint || null],
+      ['reversal_idempotency_key', record.reversal_idempotency_key || null],
+      ['reversal_request_fingerprint', record.reversal_request_fingerprint || null],
+      ['scope_key', record.scope_key || null],
+      ['menu_plan_id', record.menu_plan_id || null, 'menu_plan'],
+      ['menu_plan_name', record.menu_plan_name || null],
+      ['customer_meal_plan_id', record.customer_meal_plan_id || null],
+      ['customer_meal_plan_name', record.customer_meal_plan_name || null],
+      ['customer_name', record.customer_name || null],
+      ['customer_id', record.customer_id || null],
+      ['category', record.category || null],
+      ['attendee_count', toNumberOrZero(record.attendee_count ?? record.covers)],
+      ['scan_method', record.scan_method || null],
+      ['notes', record.notes || null],
+      ['required_servings', toNumberOrZero(record.required_servings ?? summary.required_servings)],
+      ['required_weight_grams', toNumberOrZero(record.required_weight_grams ?? summary.required_weight_grams)],
+      ['served_servings', toNumberOrZero(record.served_servings ?? summary.served_servings)],
+      ['served_weight_grams', toNumberOrZero(record.served_weight_grams ?? summary.served_weight_grams)],
+      ['shortage_servings', toNumberOrZero(record.shortage_servings ?? record.short_servings ?? summary.shortage_servings ?? summary.short_servings)],
+      ['shortage_weight_grams', toNumberOrZero(record.shortage_weight_grams ?? record.short_weight_grams ?? summary.shortage_weight_grams ?? summary.short_weight_grams)],
+      ['recorded_by', record.recorded_by || null],
+      ['recorded_by_name', record.recorded_by_name || null],
+      ['recorded_at', record.recorded_at || null],
+      ['posted_by', record.posted_by || record.performed_by || record.recorded_by || null, 'user'],
+      ['reversed_by', record.reversed_by || null, 'user'],
+      ['reversed_by_name', record.reversed_by_name || null],
+      ['reversed_at', record.reversed_at || null],
+      ['reversal_reason', record.reversal_reason || null],
+      ['cutover_version', toNumberOrNull(record.cutover_version) || 1],
+      ['source_name', record.source_name || null],
+      ['created_at', createdAt],
+      ['updated_at', updatedAt]
+    ];
+    const mealServiceHeaderColumnNames = mealServiceHeaderColumns.map(([column]) => column);
+    const mealServiceHeaderValues = mealServiceHeaderColumns.map(([, value]) => value);
+    const mealServiceHeaderPlaceholders = mealServiceHeaderColumns.map(([, , kind], index) => {
+      if (kind === 'user') return userReferenceSql(index + 1);
+      if (kind === 'menu_plan') {
+        return `(SELECT menu_plan_id FROM menu_plans WHERE menu_plan_id = NULLIF($${index + 1}::text, '') LIMIT 1)`;
+      }
+      return `$${index + 1}`;
+    });
+    const mealServiceHeaderUpdates = mealServiceHeaderColumnNames
+      .filter((column) => !['meal_service_id', 'created_at'].includes(column))
+      .map((column) => `${column} = EXCLUDED.${column}`)
+      .join(', ');
     await query(
       `INSERT INTO meal_service_headers (
-        meal_service_id, service_reference, idempotency_key, warehouse_id, service_date,
-        meal_period, menu_type, menu_category, serving_size_grams, covers, status,
-        payload, posted_by, reversed_by, reversed_at, source_name, created_at, updated_at
-      ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,
-        ${userReferenceSql(13)},
-        ${userReferenceSql(14)},
-        $15,$16,$17,$18
-      )
-      ON CONFLICT (meal_service_id) DO UPDATE SET
-        service_reference = EXCLUDED.service_reference, idempotency_key = EXCLUDED.idempotency_key,
-        warehouse_id = EXCLUDED.warehouse_id, service_date = EXCLUDED.service_date,
-        meal_period = EXCLUDED.meal_period, menu_type = EXCLUDED.menu_type,
-        menu_category = EXCLUDED.menu_category, serving_size_grams = EXCLUDED.serving_size_grams,
-        covers = EXCLUDED.covers, status = EXCLUDED.status, payload = EXCLUDED.payload,
-        posted_by = EXCLUDED.posted_by, reversed_by = EXCLUDED.reversed_by,
-        reversed_at = EXCLUDED.reversed_at, source_name = EXCLUDED.source_name,
-        updated_at = EXCLUDED.updated_at`,
-      [
-        record.id,
-        record.service_reference,
-        record.idempotency_key,
-        record.site_id || record.warehouse_id,
-        toDateOnlyOrNull(record.service_date),
-        record.meal_type || 'breakfast',
-        record.menu_type || 'general',
-        record.menu_category || 'senior',
-        toNumberOrZero(record.serving_size_grams || record.portion_size_grams),
-        toNumberOrZero(record.covers || record.attendee_count),
-        record.status || 'posted',
-        jsonPayload(record),
-        record.posted_by || record.performed_by || null,
-        record.reversed_by || null,
-        record.reversed_at || null,
-        record.source_name || null,
-        createdAt,
-        updatedAt
-      ],
+        ${mealServiceHeaderColumnNames.join(', ')}
+      ) VALUES (${mealServiceHeaderPlaceholders.join(', ')})
+      ON CONFLICT (meal_service_id) DO UPDATE SET ${mealServiceHeaderUpdates}`,
+      mealServiceHeaderValues,
       executor
     );
+    await replaceMealServiceItems(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'MealServiceConsumption') {
     const allocation = Array.isArray(record.allocations) ? record.allocations[0] || {} : {};
+    const mealServiceConsumptionColumns = [
+      ['meal_consumption_id', record.id],
+      ['meal_service_id', record.meal_service_attendance_id || record.meal_service_id],
+      ['output_batch_id', record.produced_item_batch_id || allocation.produced_item_batch_id || allocation.output_batch_id || allocation.batch_id || null, 'output_batch'],
+      ['production_id', record.production_id || allocation.production_id || null, 'production'],
+      ['recipe_version_id', record.recipe_id || record.recipe_version_id || null, 'recipe_version'],
+      ['reverses_consumption_id', record.reverses_consumption_id || record.source_consumption_id || record.original_consumption_id || null],
+      ['idempotency_key', record.idempotency_key],
+      ['service_reference', record.service_reference],
+      ['movement_type', record.movement_type || 'consumption'],
+      ['service_date', toDateOnlyOrNull(record.service_date)],
+      ['meal_period', record.meal_type || null],
+      ['consumed_weight_grams', toNumberOrZero(record.consumed_weight_grams || record.required_weight_grams)],
+      ['consumed_servings', toNumberOrZero(record.consumed_servings || record.required_servings)],
+      ['cost', toNumberOrZero(record.cost || record.total_cost)],
+      ['status', record.status || 'posted'],
+      ['menu_plan_id', record.menu_plan_id || null, 'menu_plan'],
+      ['menu_type', record.menu_type || record.cuisine_type || null],
+      ['menu_category', record.menu_category || null],
+      ['customer_meal_plan_id', record.customer_meal_plan_id || null],
+      ['recipe_name', record.recipe_name || null],
+      ['attendee_count', toNumberOrNull(record.attendee_count)],
+      ['portions_per_attendee', toNumberOrNull(record.portions_per_attendee)],
+      ['servings_per_attendee', toNumberOrNull(record.servings_per_attendee)],
+      ['portion_size_grams', toNumberOrNull(record.portion_size_grams)],
+      ['manual_portion_size_grams', toNumberOrNull(record.manual_portion_size_grams)],
+      ['portion_size_source', record.portion_size_source || null],
+      ['covers', toNumberOrNull(record.covers)],
+      ['required_servings', toNumberOrNull(record.required_servings)],
+      ['required_weight_grams', toNumberOrNull(record.required_weight_grams)],
+      ['consumed_production_equivalent_servings', toNumberOrNull(record.consumed_production_equivalent_servings)],
+      ['shortage_servings', toNumberOrNull(record.shortage_servings ?? record.short_servings)],
+      ['shortage_weight_grams', toNumberOrNull(record.shortage_weight_grams ?? record.short_weight_grams)],
+      ['reversal_reason', record.reversal_reason || null],
+      ['performed_by', record.performed_by || null],
+      ['performed_by_name', record.performed_by_name || null],
+      ['performed_at', record.performed_at || null],
+      ['cutover_version', toNumberOrNull(record.cutover_version) || 1],
+      ['created_at', createdAt],
+      ['updated_at', updatedAt]
+    ];
+    const mealServiceConsumptionColumnNames = mealServiceConsumptionColumns.map(([column]) => column);
+    const mealServiceConsumptionValues = mealServiceConsumptionColumns.map(([, value]) => value);
+    const mealServiceConsumptionPlaceholders = mealServiceConsumptionColumns.map(([, , kind], index) => {
+      if (kind === 'menu_plan') {
+        return `(SELECT menu_plan_id FROM menu_plans WHERE menu_plan_id = NULLIF($${index + 1}::text, '') LIMIT 1)`;
+      }
+      if (kind === 'output_batch') {
+        return `(SELECT output_batch_id FROM produced_output_batches WHERE output_batch_id = NULLIF($${index + 1}::text, '') LIMIT 1)`;
+      }
+      if (kind === 'production') {
+        return `(SELECT production_id FROM production_events WHERE production_id = NULLIF($${index + 1}::text, '') LIMIT 1)`;
+      }
+      if (kind === 'recipe_version') {
+        return `(SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF($${index + 1}::text, '') LIMIT 1)`;
+      }
+      return `$${index + 1}`;
+    });
+    const mealServiceConsumptionUpdates = mealServiceConsumptionColumnNames
+      .filter((column) => !['meal_consumption_id', 'created_at'].includes(column))
+      .map((column) => `${column} = EXCLUDED.${column}`)
+      .join(', ');
     await query(
       `INSERT INTO meal_service_consumptions (
-        meal_consumption_id, meal_service_id, output_batch_id, production_id, recipe_version_id,
-        reverses_consumption_id, idempotency_key, service_reference, movement_type, service_date, meal_period,
-        consumed_weight_grams, consumed_servings, cost, status, payload, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
-      ON CONFLICT (meal_consumption_id) DO UPDATE SET
-        meal_service_id = EXCLUDED.meal_service_id, output_batch_id = EXCLUDED.output_batch_id,
-        production_id = EXCLUDED.production_id, recipe_version_id = EXCLUDED.recipe_version_id,
-        reverses_consumption_id = EXCLUDED.reverses_consumption_id,
-        idempotency_key = EXCLUDED.idempotency_key, service_reference = EXCLUDED.service_reference,
-        movement_type = EXCLUDED.movement_type, service_date = EXCLUDED.service_date,
-        meal_period = EXCLUDED.meal_period, consumed_weight_grams = EXCLUDED.consumed_weight_grams,
-        consumed_servings = EXCLUDED.consumed_servings, cost = EXCLUDED.cost,
-        status = EXCLUDED.status, payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
-      [
-        record.id,
-        record.meal_service_attendance_id,
-        record.produced_item_batch_id || allocation.produced_item_batch_id || allocation.batch_id || null,
-        record.production_id || allocation.production_id || null,
-        record.recipe_id || null,
-        record.reverses_consumption_id || record.source_consumption_id || record.original_consumption_id || null,
-        record.idempotency_key,
-        record.service_reference,
-        record.movement_type || 'consumption',
-        toDateOnlyOrNull(record.service_date),
-        record.meal_type || null,
-        toNumberOrZero(record.consumed_weight_grams || record.required_weight_grams),
-        toNumberOrZero(record.consumed_servings || record.required_servings),
-        toNumberOrZero(record.cost || record.total_cost),
-        record.status || 'posted',
-        jsonPayload(record),
-        createdAt,
-        updatedAt
-      ],
+        ${mealServiceConsumptionColumnNames.join(', ')}
+      ) VALUES (${mealServiceConsumptionPlaceholders.join(', ')})
+      ON CONFLICT (meal_consumption_id) DO UPDATE SET ${mealServiceConsumptionUpdates}`,
+      mealServiceConsumptionValues,
       executor
     );
+    await replaceMealServiceConsumptionAllocations(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'FoodWaste') {
+    const wasteWeightGrams = toNumberOrZero(
+      record.wasted_weight_grams
+      ?? record.waste_weight_grams
+      ?? record.quantity_grams
+    ) || foodWasteQuantityToGrams(record.quantity, record.unit);
+    const estimatedCost = toNumberOrZero(
+      record.estimated_cost
+      ?? record.waste_cost
+      ?? record.cost
+      ?? record.total_cost
+    );
     await query(
       `INSERT INTO food_waste_records (
         food_waste_id, waste_reference, idempotency_key, warehouse_id, waste_date, meal_period,
-        menu_type, menu_category, waste_category, reason_code, approval_status, status,
-        recorded_by, reversed_by, reversed_at, reversal_reason, source_name, payload,
-        created_at, updated_at
+        menu_type, menu_category, waste_category, reason_code, reason, waste_scope,
+        source_type, avoidable_type, preventable, auto_generated, high_value,
+        quantity_grams, unit, estimated_cost, menu_plan_id, menu_plan_name,
+        meal_service_id, production_id, recipe_version_id, ingredient_id,
+        production_name, recipe_name, ingredient_name, batch_reference,
+        batch_overproduction_item_key, manifest_item_key, source_menu_plan_item_key,
+        batch_recipe_id, batch_recipe_name, produced_weight_grams,
+        available_weight_grams_before, wasted_production_equivalent_servings,
+        served_at, production_completed_at, recording_window_basis,
+        recording_window_open_at, recording_deadline_at, meal_service_adjustment_cost,
+        inventory_transaction_id, inventory_deduction_quantity, inventory_shortage_quantity,
+        notes, approval_status, status, recorded_by, reversed_by, reversed_at,
+        reversal_reason, source_name, created_at, updated_at
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-        ${userReferenceSql(13)},
-        ${userReferenceSql(14)},
-        $15,$16,$17,$18::jsonb,$19,$20
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+        (SELECT menu_plan_id FROM menu_plans WHERE menu_plan_id = NULLIF($21::text, '') LIMIT 1),
+        $22,
+        (SELECT meal_service_id FROM meal_service_headers WHERE meal_service_id = NULLIF($23::text, '') LIMIT 1),
+        (SELECT production_id FROM production_events WHERE production_id = NULLIF($24::text, '') LIMIT 1),
+        (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF($25::text, '') LIMIT 1),
+        (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($26::text, '') LIMIT 1),
+        $27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,
+        ${userReferenceSql(51)},
+        ${userReferenceSql(52)},
+        $53,$54,$55,$56,$57
       )
       ON CONFLICT (food_waste_id) DO UPDATE SET
         waste_reference = EXCLUDED.waste_reference, idempotency_key = EXCLUDED.idempotency_key,
         warehouse_id = EXCLUDED.warehouse_id, waste_date = EXCLUDED.waste_date,
         meal_period = EXCLUDED.meal_period, menu_type = EXCLUDED.menu_type,
         menu_category = EXCLUDED.menu_category, waste_category = EXCLUDED.waste_category,
-        reason_code = EXCLUDED.reason_code, approval_status = EXCLUDED.approval_status,
+        reason_code = EXCLUDED.reason_code, reason = EXCLUDED.reason,
+        waste_scope = EXCLUDED.waste_scope, source_type = EXCLUDED.source_type,
+        avoidable_type = EXCLUDED.avoidable_type, preventable = EXCLUDED.preventable,
+        auto_generated = EXCLUDED.auto_generated, high_value = EXCLUDED.high_value,
+        quantity_grams = EXCLUDED.quantity_grams, unit = EXCLUDED.unit,
+        estimated_cost = EXCLUDED.estimated_cost, menu_plan_id = EXCLUDED.menu_plan_id,
+        menu_plan_name = EXCLUDED.menu_plan_name, meal_service_id = EXCLUDED.meal_service_id,
+        production_id = EXCLUDED.production_id, recipe_version_id = EXCLUDED.recipe_version_id,
+        ingredient_id = EXCLUDED.ingredient_id, production_name = EXCLUDED.production_name,
+        recipe_name = EXCLUDED.recipe_name, ingredient_name = EXCLUDED.ingredient_name,
+        batch_reference = EXCLUDED.batch_reference,
+        batch_overproduction_item_key = EXCLUDED.batch_overproduction_item_key,
+        manifest_item_key = EXCLUDED.manifest_item_key,
+        source_menu_plan_item_key = EXCLUDED.source_menu_plan_item_key,
+        batch_recipe_id = EXCLUDED.batch_recipe_id,
+        batch_recipe_name = EXCLUDED.batch_recipe_name,
+        produced_weight_grams = EXCLUDED.produced_weight_grams,
+        available_weight_grams_before = EXCLUDED.available_weight_grams_before,
+        wasted_production_equivalent_servings = EXCLUDED.wasted_production_equivalent_servings,
+        served_at = EXCLUDED.served_at,
+        production_completed_at = EXCLUDED.production_completed_at,
+        recording_window_basis = EXCLUDED.recording_window_basis,
+        recording_window_open_at = EXCLUDED.recording_window_open_at,
+        recording_deadline_at = EXCLUDED.recording_deadline_at,
+        meal_service_adjustment_cost = EXCLUDED.meal_service_adjustment_cost,
+        inventory_transaction_id = EXCLUDED.inventory_transaction_id,
+        inventory_deduction_quantity = EXCLUDED.inventory_deduction_quantity,
+        inventory_shortage_quantity = EXCLUDED.inventory_shortage_quantity,
+        notes = EXCLUDED.notes, approval_status = EXCLUDED.approval_status,
         status = EXCLUDED.status, recorded_by = EXCLUDED.recorded_by,
         reversed_by = EXCLUDED.reversed_by, reversed_at = EXCLUDED.reversed_at,
         reversal_reason = EXCLUDED.reversal_reason, source_name = EXCLUDED.source_name,
-        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+        updated_at = EXCLUDED.updated_at`,
       [
         record.id,
         record.waste_reference || record.service_reference || null,
@@ -3146,6 +4063,44 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
         record.menu_category || null,
         record.waste_category || 'ingredient',
         record.reason_code || null,
+        record.reason || null,
+        record.waste_scope || 'ingredient',
+        record.source_type || 'manual_entry',
+        record.avoidable_type || 'avoidable',
+        record.preventable !== false,
+        record.auto_generated === true,
+        record.high_value === true,
+        wasteWeightGrams,
+        record.unit || 'g',
+        estimatedCost,
+        record.menu_plan_id || null,
+        record.menu_plan_name || null,
+        record.meal_service_attendance_id || record.meal_service_id || null,
+        record.production_id || null,
+        record.recipe_id || record.recipe_version_id || null,
+        record.ingredient_id || null,
+        record.production_name || null,
+        record.recipe_name || null,
+        record.ingredient_name || null,
+        record.batch_reference || null,
+        record.batch_overproduction_item_key || null,
+        record.manifest_item_key || null,
+        record.source_menu_plan_item_key || null,
+        record.batch_recipe_id || null,
+        record.batch_recipe_name || null,
+        toNumberOrNull(record.produced_weight_grams),
+        toNumberOrNull(record.available_weight_grams_before),
+        toNumberOrNull(record.wasted_production_equivalent_servings),
+        record.served_at || null,
+        record.production_completed_at || null,
+        record.recording_window_basis || null,
+        record.recording_window_open_at || null,
+        record.recording_deadline_at || null,
+        toNumberOrZero(record.meal_service_adjustment_cost),
+        record.inventory_transaction_id || null,
+        toNumberOrZero(record.inventory_deduction_quantity),
+        toNumberOrZero(record.inventory_shortage_quantity),
+        record.notes || null,
         record.approval_status || 'pending',
         record.status || 'posted',
         record.recorded_by || null,
@@ -3153,7 +4108,6 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
         record.reversed_at || null,
         record.reversal_reason || null,
         record.source_name || null,
-        jsonPayload(record),
         createdAt,
         updatedAt
       ],
@@ -3161,6 +4115,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
     );
     await replaceFoodWasteLines(record, executor);
     await replaceFoodWasteImages(record, executor);
+    await replaceFoodWasteInventoryMovements(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   return null;
