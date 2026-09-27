@@ -157,6 +157,8 @@ test('admins can partially reverse selected production manifest rows without cha
 
   assert.match(inventory, /async function reverseCompletedProductionManifestPartWithExecutor/);
   assert.match(inventory, /function getProductionPartialReversalManifestItems/);
+  assert.match(inventory, /production\.manifest_lines/);
+  assert.match(inventory, /report\?\.manifest_lines/);
   assert.match(inventory, /operation:\s*'production_partial_reversal'/);
   assert.match(inventory, /Use the full Reverse Completion action when reversing the entire remaining production/);
   assert.match(inventory, /assertProducedOutputUnused\(producedItemBatch\)/);
@@ -166,6 +168,15 @@ test('admins can partially reverse selected production manifest rows without cha
   assert.match(api, /\/api\/inventory\/production\/\$\{id\}\/partial-reverse-completion/);
   assert.match(productionPage, /Partial Reverse/);
   assert.match(productionPage, /Partial Production Reversal/);
+  assert.match(productionPage, /production\?\.manifest_lines/);
   assert.match(productionPage, /The full Reverse Completion button and full reversal handling remain unchanged/);
   assert.match(productionPage, /base44\.inventory\.partialReverseCompletedProduction/);
+});
+
+test('normalized database dates are returned as strings for reversal updates', () => {
+  const database = source('server/db.js');
+
+  assert.match(database, /function rowToProductionConsumptionReport\(row = \{\}\)[\s\S]*production_date:\s*toDateOnlyOrNull\(row\.production_date\)/);
+  assert.match(database, /function rowToProducedItemBatch\(row = \{\}\)[\s\S]*production_date:\s*toDateOnlyOrNull\(row\.production_date\)/);
+  assert.match(database, /function rowToProducedItemBatch\(row = \{\}\)[\s\S]*completed_at:\s*rowTimestamp\(row\.completed_at\)/);
 });

@@ -2658,6 +2658,11 @@ async function updateBatchOverproductionFoodWasteRecord({
         || normalizeRealRecipeId(payload.recipe_id),
       client
     );
+    const linkedIngredientId = await resolveExistingDocumentId(
+      'Ingredient',
+      existing.ingredient_id || payload.ingredient_id || firstAllocation?.ingredient_id,
+      client
+    );
     const updatedPayload = withFoodWasteCostAndApproval({
       ...payload,
       site_id: existing.site_id,
@@ -2667,8 +2672,8 @@ async function updateBatchOverproductionFoodWasteRecord({
       waste_category: 'batch_overproduction',
       waste_scope: 'batch',
       source_type: 'batch_overproduction',
-      ingredient_id: null,
-      ingredient_name: null,
+      ingredient_id: linkedIngredientId,
+      ingredient_name: existing.ingredient_name || payload.ingredient_name || firstAllocation?.ingredient_name || null,
       recipe_id: linkedRecipeId,
       recipe_name: existing.recipe_name || payload.recipe_name || null,
       production_id: payload.production_id || firstAllocation?.production_id || existing.production_id || null,

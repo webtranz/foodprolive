@@ -3627,10 +3627,13 @@ function getPartialReversalManifestKey(item = {}, index = 0) {
   const recipeId = normalizeText(item.recipe_id);
   return normalizeText(
     item.key
+      || item.production_line_id
       || item.original_source_menu_plan_item_key
       || item.source_menu_plan_item_key
       || item.menu_plan_item_key
+      || item.menu_plan_line_id
       || (recipeId ? `recipe:${recipeId}` : '')
+      || (normalizeText(item.ingredient_id) ? `ingredient:${item.ingredient_id}` : '')
       || (recipeName ? `name:${recipeName}` : '')
       || `manifest-item-${index}`
   );
@@ -3659,20 +3662,33 @@ function getPartialReversalManifestWeight(item = {}, field) {
   if (field === 'raw_weight_grams') {
     const fallback = positiveNumber(item.recipe_raw_weight_grams)
       ?? positiveNumber(item.total_raw_weight_grams)
-      ?? positiveNumber(item.total_raw_consumption_weight_grams);
+      ?? positiveNumber(item.total_raw_consumption_weight_grams)
+      ?? positiveNumber(item.requested_weight_grams)
+      ?? positiveNumber(item.planned_weight_grams);
     if (fallback) return fallback;
   }
   if (field === 'yielded_weight_grams') {
     const fallback = positiveNumber(item.expected_finished_weight_grams)
       ?? positiveNumber(item.actual_finished_weight_grams)
-      ?? positiveNumber(item.total_yielded_weight_grams);
+      ?? positiveNumber(item.total_yielded_weight_grams)
+      ?? positiveNumber(item.produced_weight_grams)
+      ?? positiveNumber(item.requested_weight_grams)
+      ?? positiveNumber(item.planned_weight_grams)
+      ?? positiveNumber(item.finished_weight_grams);
     if (fallback) return fallback;
   }
   return sumPositiveLineWeight(item.ingredients_used, field);
 }
 
 function partialReversalManifestItemHasFilledProduction(item = {}) {
-  if (positiveNumber(item.production_covers) || positiveNumber(item.expected_servings)) return true;
+  if (
+    positiveNumber(item.production_covers)
+    || positiveNumber(item.expected_servings)
+    || positiveNumber(item.produced_servings)
+    || positiveNumber(item.requested_servings)
+    || positiveNumber(item.planned_servings)
+    || positiveNumber(item.target_servings)
+  ) return true;
   if (getPartialReversalManifestWeight(item, 'raw_weight_grams')) return true;
   if (getPartialReversalManifestWeight(item, 'yielded_weight_grams')) return true;
   return (Array.isArray(item.ingredients_used) ? item.ingredients_used : [])
@@ -3686,10 +3702,12 @@ function indexManifestItemsByKey(items = []) {
   (Array.isArray(items) ? items : []).forEach((item, itemIndex) => {
     [
       getPartialReversalManifestKey(item, itemIndex),
+      item.production_line_id,
       item.key,
       item.original_source_menu_plan_item_key,
       item.source_menu_plan_item_key,
-      item.menu_plan_item_key
+      item.menu_plan_item_key,
+      item.menu_plan_line_id
     ].map(normalizeText).filter(Boolean).forEach((key) => {
       if (!index.has(key)) index.set(key, item);
     });
@@ -3697,11 +3715,36 @@ function indexManifestItemsByKey(items = []) {
   return index;
 }
 
+function rankPartialReversalManifestList(items = []) {
+  const sourceItems = Array.isArray(items) ? items : [];
+  return {
+    items: sourceItems,
+    filledCount: sourceItems.filter(partialReversalManifestItemHasFilledProduction).length,
+    length: sourceItems.length,
+    ingredientLineCount: sourceItems.reduce((sum, item) => (
+      sum + (Array.isArray(item?.ingredients_used) ? item.ingredients_used.length : 0)
+    ), 0)
+  };
+}
+
 function getProductionPartialReversalManifestItems(production = {}, report = {}) {
-  const productionItems = Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [];
-  const reportItems = Array.isArray(report?.menu_issue_items) ? report.menu_issue_items : [];
-  const primaryItems = productionItems.length > 0 ? productionItems : reportItems;
-  const fallbackByKey = indexManifestItemsByKey(productionItems.length > 0 ? reportItems : productionItems);
+  const candidateLists = [
+    production.manifest_lines,
+    production.menu_issue_items,
+    report?.manifest_lines,
+    report?.menu_issue_items
+  ]
+    .filter((items) => Array.isArray(items) && items.length > 0)
+    .map(rankPartialReversalManifestList)
+    .sort((left, right) => (
+      right.filledCount - left.filledCount
+      || right.length - left.length
+      || right.ingredientLineCount - left.ingredientLineCount
+    ));
+
+  const primaryItems = candidateLists[0]?.items || [];
+  const fallbackItems = candidateLists.slice(1).flatMap((candidate) => candidate.items);
+  const fallbackByKey = indexManifestItemsByKey(fallbackItems);
 
   return primaryItems
     .map((item, index) => {

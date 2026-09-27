@@ -222,8 +222,22 @@ function getBatchManifestItems(batch = {}, production = {}) {
     batch.manifest_lines,
     production?.menu_issue_items,
     production?.manifest_lines
-  ];
-  const sourceItems = candidateLists.find((items) => Array.isArray(items) && items.length > 0);
+  ]
+    .filter((items) => Array.isArray(items) && items.length > 0)
+    .map((items) => ({
+      items,
+      filledCount: items.filter((item) => isFilledBatchManifestItem(item, batch)).length,
+      length: items.length,
+      ingredientLineCount: items.reduce((sum, item) => (
+        sum + (Array.isArray(item?.ingredients_used) ? item.ingredients_used.length : 0)
+      ), 0)
+    }))
+    .sort((left, right) => (
+      right.filledCount - left.filledCount
+      || right.length - left.length
+      || right.ingredientLineCount - left.ingredientLineCount
+    ));
+  const sourceItems = candidateLists[0]?.items || [];
   if (!Array.isArray(sourceItems) || sourceItems.length === 0) {
     return [{
       key: batch.production_line_id

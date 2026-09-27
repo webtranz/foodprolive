@@ -365,6 +365,68 @@ const cases = [
     }
   },
   {
+    name: 'prefers the full normalized production manifest over short legacy snapshots',
+    run() {
+      const summary = buildBatchOverproductionDishSummary([
+        {
+          id: 'batch-menu-full',
+          batch_number: 'PIB-003',
+          production_id: 'production-full',
+          production_date: '2026-09-05',
+          meal_type: 'breakfast',
+          status: 'available',
+          recipe_id: 'breakfast-menu',
+          recipe_name: 'Breakfast / General / Junior',
+          menu_type: 'general',
+          menu_category: 'junior',
+          produced_weight_grams: 7000,
+          served_weight_grams: 0,
+          wasted_weight_grams: 0,
+          remaining_weight_grams: 7000,
+          menu_issue_items: [
+            {
+              key: 'line-eggs',
+              recipe_id: 'eggs',
+              recipe_name: 'Boiled Eggs',
+              produced_weight_grams: 4000,
+              estimated_batch_cost: 40
+            }
+          ]
+        }
+      ], [
+        {
+          id: 'production-full',
+          manifest_lines: [
+            {
+              production_line_id: 'line-eggs',
+              recipe_id: 'eggs',
+              recipe_name: 'Boiled Eggs',
+              produced_weight_grams: 4000,
+              estimated_batch_cost: 40
+            },
+            {
+              production_line_id: 'line-bread',
+              ingredient_id: 'arabic-bread',
+              item_name: 'Arabic Bread',
+              produced_weight_grams: 2000,
+              estimated_batch_cost: 10
+            },
+            {
+              production_line_id: 'line-tea',
+              ingredient_id: 'tea',
+              item_name: 'Tea',
+              produced_weight_grams: 1000,
+              estimated_batch_cost: 5
+            }
+          ]
+        }
+      ]);
+
+      assert.deepEqual(summary.map((row) => row.recipe_name), ['Arabic Bread', 'Boiled Eggs', 'Tea']);
+      assert.equal(summary.reduce((sum, row) => sum + row.produced_weight_grams, 0), 7000);
+    }
+  },
+  {
     name: 'allocates batch overproduction waste against produced item balances',
     run() {
       const allocation = allocateBatchOverproductionWaste({
@@ -566,6 +628,20 @@ const cases = [
       assert.match(server, /reverseFoodWasteRecord/);
       assert.match(server, /FOOD_WASTE_REVERSED/);
       assert.match(server, /food-waste-reversal/);
+    }
+  },
+  {
+    name: 'preserves ingredient links when editing batch overproduction waste',
+    run() {
+      const server = read('server/index.js');
+      const editStart = server.indexOf('async function updateBatchOverproductionFoodWasteRecord');
+      const editEnd = server.indexOf('function buildPlateWasteAdjustmentReversalRow', editStart);
+      assert.ok(editStart >= 0 && editEnd > editStart, 'batch overproduction edit helper should exist');
+      const helper = server.slice(editStart, editEnd);
+
+      assert.match(helper, /resolveExistingDocumentId\(\s*'Ingredient'/);
+      assert.match(helper, /existing\.ingredient_id \|\| payload\.ingredient_id \|\| firstAllocation\?\.ingredient_id/);
+      assert.match(helper, /ingredient_id:\s*linkedIngredientId/);
     }
   },
   {

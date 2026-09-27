@@ -196,13 +196,19 @@ function sumManifestItemWeight(item = {}, field) {
   if (field === 'raw_weight_grams') {
     const rawTotal = positiveOptionalNumber(item.recipe_raw_weight_grams)
       ?? positiveOptionalNumber(item.total_raw_weight_grams)
-      ?? positiveOptionalNumber(item.total_raw_consumption_weight_grams);
+      ?? positiveOptionalNumber(item.total_raw_consumption_weight_grams)
+      ?? positiveOptionalNumber(item.requested_weight_grams)
+      ?? positiveOptionalNumber(item.planned_weight_grams);
     if (rawTotal !== null) return rawTotal;
   }
   if (field === 'yielded_weight_grams') {
     const yieldedTotal = positiveOptionalNumber(item.expected_finished_weight_grams)
       ?? positiveOptionalNumber(item.actual_finished_weight_grams)
-      ?? positiveOptionalNumber(item.total_yielded_weight_grams);
+      ?? positiveOptionalNumber(item.total_yielded_weight_grams)
+      ?? positiveOptionalNumber(item.produced_weight_grams)
+      ?? positiveOptionalNumber(item.requested_weight_grams)
+      ?? positiveOptionalNumber(item.planned_weight_grams)
+      ?? positiveOptionalNumber(item.finished_weight_grams);
     if (yieldedTotal !== null) return yieldedTotal;
   }
   return sumReportWeights(item.ingredients_used, field);
@@ -227,11 +233,14 @@ function getManifestItemMatchKeys(item = {}, index = 0) {
   const recipeName = normalizedReportText(item.recipe_name || item.name);
   const recipeId = String(item.recipe_id || '').trim();
   return [
+    item.production_line_id,
     item.key,
     item.original_source_menu_plan_item_key,
     item.source_menu_plan_item_key,
     item.menu_plan_item_key,
+    item.menu_plan_line_id,
     recipeId ? `recipe:${recipeId}` : '',
+    item.ingredient_id ? `ingredient:${item.ingredient_id}` : '',
     recipeName ? `name:${recipeName}` : '',
     `${recipeId || recipeName || 'manifest'}:${index}`
   ].map((value) => String(value || '').trim()).filter(Boolean);
@@ -244,7 +253,14 @@ function getManifestItemActionKey(item = {}, index = 0) {
 function manifestItemHasFilledProduction(item = {}) {
   const rawWeight = sumManifestItemWeight(item, 'raw_weight_grams');
   const yieldedWeight = sumManifestItemWeight(item, 'yielded_weight_grams');
-  if (positiveOptionalNumber(item.production_covers) !== null || positiveOptionalNumber(item.expected_servings) !== null) return true;
+  if (
+    positiveOptionalNumber(item.production_covers) !== null
+    || positiveOptionalNumber(item.expected_servings) !== null
+    || positiveOptionalNumber(item.produced_servings) !== null
+    || positiveOptionalNumber(item.requested_servings) !== null
+    || positiveOptionalNumber(item.planned_servings) !== null
+    || positiveOptionalNumber(item.target_servings) !== null
+  ) return true;
   if (positiveOptionalNumber(rawWeight) !== null || positiveOptionalNumber(yieldedWeight) !== null) return true;
   return arrayValue(item.ingredients_used).some((line) => (
     firstPositivePresent(
@@ -260,7 +276,27 @@ function manifestItemHasFilledProduction(item = {}) {
 }
 
 function getPartialReversalManifestItems(production = {}) {
-  return arrayValue(production?.menu_issue_items)
+  const candidateLists = [
+    production?.manifest_lines,
+    production?.menu_issue_items
+  ]
+    .filter((items) => Array.isArray(items) && items.length > 0)
+    .map((items) => ({
+      items,
+      filledCount: items.filter(manifestItemHasFilledProduction).length,
+      length: items.length,
+      ingredientLineCount: items.reduce((sum, item) => (
+        sum + (Array.isArray(item?.ingredients_used) ? item.ingredients_used.length : 0)
+      ), 0)
+    }))
+    .sort((left, right) => (
+      right.filledCount - left.filledCount
+      || right.length - left.length
+      || right.ingredientLineCount - left.ingredientLineCount
+    ));
+  const primaryItems = candidateLists[0]?.items || [];
+  const fallbackItems = candidateLists.slice(1).flatMap((candidate) => candidate.items);
+  return mergeManifestItems(primaryItems, fallbackItems)
     .map((item, index) => ({
       ...item,
       key: getManifestItemActionKey(item, index),
@@ -2919,10 +2955,15 @@ export default function Production() {
     production?.production_issue_grouped
     || production?.source_menu_plan_id
     || (Array.isArray(production?.menu_issue_items) && production.menu_issue_items.length > 0)
+    || (Array.isArray(production?.manifest_lines) && production.manifest_lines.length > 0)
   );
 
   const openMenuIssueEditDialog = (production) => {
-    const savedItems = Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [];
+    const savedItems = Array.isArray(production.menu_issue_items) && production.menu_issue_items.length > 0
+      ? production.menu_issue_items
+      : Array.isArray(production.manifest_lines)
+        ? production.manifest_lines
+        : [];
     const itemKeys = Array.isArray(production.source_menu_plan_item_keys)
       ? production.source_menu_plan_item_keys
       : [];
@@ -4605,15 +4646,15 @@ export default function Production() {
                 </div>
               </div>
 
-              {Array.isArray(selectedProduction?.menu_issue_items) && selectedProduction.menu_issue_items.length > 0 ? (
+              {getPartialReversalManifestItems(selectedProduction).length > 0 ? (
                 <div className="rounded-lg border border-indigo-100 bg-indigo-50/70 p-4">
                   <p className="text-sm font-medium text-indigo-950">Production manifest items in this meal review</p>
                   <div className="mt-3 grid gap-2 md:grid-cols-2">
-                    {selectedProduction.menu_issue_items.map((item, index) => (
+                    {getPartialReversalManifestItems(selectedProduction).map((item, index) => (
                       <div key={item.key || `${item.recipe_id || 'item'}-${index}`} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-sm">
-                        <p className="font-medium text-slate-900">{item.recipe_name || 'Planned item'}</p>
+                        <p className="font-medium text-slate-900">{item.recipe_name || item.item_name || 'Planned item'}</p>
                         <p className="mt-1 text-xs text-slate-500">
-                          Covers {formatRecipeQuantity(item.production_covers ?? item.expected_servings, 'servings')} · Est. cost {formatCurrency(item.estimated_batch_cost || 0)}
+                          Covers {formatRecipeQuantity(item.production_covers ?? item.expected_servings ?? item.produced_servings ?? item.requested_servings, 'servings')} · Est. cost {formatCurrency(item.estimated_batch_cost || item.estimated_cost || 0)}
                         </p>
                       </div>
                     ))}
