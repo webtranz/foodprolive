@@ -1184,6 +1184,7 @@ export default function FoodWaste() {
 
   const handleWasteSubmit = (event) => {
     event.preventDefault();
+    setMessage('');
     const site = siteMap.get(formData.site_id);
     const ingredient = formData.ingredient_id !== 'none' ? ingredientMap.get(formData.ingredient_id) : null;
     const recipe = formData.recipe_id !== 'none' ? recipeMap.get(formData.recipe_id) : null;
@@ -1192,6 +1193,22 @@ export default function FoodWaste() {
     const selectedBatchWasteRows = batchWasteRows.filter((row) => row.waste_grams > 0);
     if (!formData.site_id) {
       setMessage('Select the location for this waste record.');
+      return;
+    }
+    if (!formData.waste_date || !formData.meal_type) {
+      setMessage('Select the waste date and meal type before saving this waste record.');
+      return;
+    }
+    if (wasteContextLoading) {
+      setMessage('Waste recording window is still loading. Wait a moment and try again.');
+      return;
+    }
+    if (wasteContextError) {
+      setMessage(wasteContextError.message || 'Unable to verify the waste recording window. Refresh and try again.');
+      return;
+    }
+    if (!wasteContextAllowsSave) {
+      setMessage(wasteContext?.message || 'Waste recording is closed for this date and meal type.');
       return;
     }
     if (isBatchOverproductionEntryMode) {
@@ -1294,7 +1311,7 @@ export default function FoodWaste() {
       };
 
       if (isBatchOverproductionEntryMode) {
-        createWasteMutation.mutate(selectedBatchWasteRows.map((row) => (
+        await createWasteMutation.mutateAsync(selectedBatchWasteRows.map((row) => (
           buildPayload({
             row,
             estimatedCost: Number((row.waste_grams * safeNumber(row.estimated_cost_per_gram)).toFixed(2))
@@ -1306,11 +1323,11 @@ export default function FoodWaste() {
       const payload = buildPayload();
 
       if (editingWasteId) {
-        updateWasteMutation.mutate({ id: editingWasteId, payload });
+        await updateWasteMutation.mutateAsync({ id: editingWasteId, payload });
         return;
       }
 
-      createWasteMutation.mutate(payload);
+      await createWasteMutation.mutateAsync(payload);
     };
 
     saveWasteRecord().catch((error) => {
@@ -1320,6 +1337,7 @@ export default function FoodWaste() {
   };
 
   const handleOpenCreateDialog = () => {
+    setMessage('');
     setEditingWasteId(null);
     setFormData(createDefaultWasteForm());
     setDishWasteGramsByRecipe({});
@@ -1336,6 +1354,7 @@ export default function FoodWaste() {
       setMessage('Meal Service Leftover records are system managed. Correct them by reversing the related Meal Service request.');
       return;
     }
+    setMessage('');
     setEditingWasteId(record.id);
     setFormData({
       site_id: record.site_id || '',
@@ -2244,6 +2263,11 @@ export default function FoodWaste() {
               </DialogTitle>
             </DialogHeader>
             <form onSubmit={handleWasteSubmit} className="space-y-4">
+              {message ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {message}
+                </div>
+              ) : null}
               {wasteContext ? (
                 <div className={`rounded-xl border px-4 py-3 text-sm ${
                   wasteContextAllowsSave
@@ -2656,11 +2680,6 @@ export default function FoodWaste() {
                     || updateWasteMutation.isPending
                     || wasteImageProcessing
                     || wasteImageUploading
-                    || !formData.site_id
-                    || !formData.quantity
-                    || !hasWasteEvidenceImages
-                    || !formData.meal_type
-                    || !wasteContextAllowsSave
                   }
                 >
                   {wasteImageProcessing

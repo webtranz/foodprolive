@@ -584,6 +584,21 @@ const cases = [
     }
   },
   {
+    name: 'shows food waste save errors inside the dialog instead of silently disabling save',
+    run() {
+      const page = read('src/pages/FoodWaste.jsx');
+      assert.match(page, /Waste recording window is still loading\. Wait a moment and try again\./);
+      assert.match(page, /wasteContextError\.message \|\| 'Unable to verify the waste recording window/);
+      assert.match(page, /wasteContext\?\.message \|\| 'Waste recording is closed/);
+      assert.match(page, /createWasteMutation\.mutateAsync/);
+      assert.match(page, /updateWasteMutation\.mutateAsync/);
+      assert.match(page, /border-red-200 bg-red-50/);
+      assert.doesNotMatch(page, /\|\| !formData\.quantity/);
+      assert.doesNotMatch(page, /\|\| !hasWasteEvidenceImages/);
+      assert.doesNotMatch(page, /\|\| !wasteContextAllowsSave/);
+    }
+  },
+  {
     name: 'limits food waste edit controls to administrators',
     run() {
       const page = read('src/pages/FoodWaste.jsx');
