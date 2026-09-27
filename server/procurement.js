@@ -212,7 +212,9 @@ async function clientQuery(client, text, params = []) {
 function toSupplier(row) {
   return {
     ...row,
-    categories: row.categories || []
+    categories: Array.isArray(row.categories)
+      ? row.categories.map((category) => String(category || '').trim()).filter(Boolean)
+      : []
   };
 }
 
@@ -232,7 +234,7 @@ async function createSupplier(payload) {
     `INSERT INTO suppliers (
       id, name, supplier_code, contact_person, email, phone, address, city, country, payment_terms,
       lead_time_days, status, rating, categories, notes, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,NOW(),NOW())
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::text[],$15,NOW(),NOW())
     RETURNING *`,
     [
       id,
@@ -248,7 +250,7 @@ async function createSupplier(payload) {
       Math.max(0, Math.round(toNumber(payload.lead_time_days, 0))),
       normalizeText(payload.status || 'active') || 'active',
       toNumber(payload.rating, 0),
-      JSON.stringify(Array.isArray(payload.categories) ? payload.categories : []),
+      Array.isArray(payload.categories) ? payload.categories.map(String).filter(Boolean) : [],
       normalizeText(payload.notes) || null
     ]
   );
@@ -272,7 +274,7 @@ async function updateSupplier(id, payload) {
          lead_time_days = $11,
          status = $12,
          rating = $13,
-         categories = $14::jsonb,
+         categories = $14::text[],
          notes = $15,
          updated_at = NOW()
      WHERE id = $1
@@ -291,7 +293,9 @@ async function updateSupplier(id, payload) {
       Math.max(0, Math.round(toNumber(payload.lead_time_days ?? existing.lead_time_days, 0))),
       normalizeText(payload.status ?? existing.status) || 'active',
       toNumber(payload.rating ?? existing.rating, 0),
-      JSON.stringify(Array.isArray(payload.categories) ? payload.categories : existing.categories || []),
+      Array.isArray(payload.categories)
+        ? payload.categories.map(String).filter(Boolean)
+        : existing.categories || [],
       normalizeText(payload.notes ?? existing.notes) || null
     ]
   );

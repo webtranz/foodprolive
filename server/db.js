@@ -1072,10 +1072,12 @@ function rowToInventoryTransaction(row = {}) {
 }
 
 function rowToRecipe(row = {}) {
-  return withPayload(row, {
+  return hydrateDerivedFields('Recipe', {
     __entity: 'Recipe',
     id: row.recipe_version_id,
     recipe_master_id: row.recipe_id,
+    canonical_name: row.canonical_name || null,
+    description: row.description || null,
     name: row.display_name,
     recipe_code: row.recipe_code || null,
     cuisine_type: row.cuisine_type || null,
@@ -1090,12 +1092,14 @@ function rowToRecipe(row = {}) {
     site_ids: [row.warehouse_id, row.project_id, row.area_id].filter(Boolean),
     status: row.status || 'active',
     is_active: row.status !== 'inactive',
-    source_name: row.source_name || null
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
 function rowToMenuPlan(row = {}) {
-  return withPayload(row, {
+  return hydrateDerivedFields('MenuPlan', {
     __entity: 'MenuPlan',
     id: row.menu_plan_id,
     site_id: row.warehouse_id,
@@ -1106,7 +1110,9 @@ function rowToMenuPlan(row = {}) {
     meal_type: row.meal_period,
     status: row.status || 'planned',
     source_name: row.source_name || null,
-    created_by: row.created_by || null
+    created_by: row.created_by || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
@@ -1606,6 +1612,9 @@ function rowToFoodWaste(row = {}) {
 }
 
 function rowToSupplier(row = {}) {
+  const categories = Array.isArray(row.categories)
+    ? row.categories.map((category) => String(category || '').trim()).filter(Boolean)
+    : [];
   return hydrateDerivedFields('Supplier', {
     __entity: 'Supplier',
     id: row.id,
@@ -1621,7 +1630,7 @@ function rowToSupplier(row = {}) {
     lead_time_days: Number(row.lead_time_days || 0),
     status: row.status || 'active',
     rating: Number(row.rating || 0),
-    categories: Array.isArray(row.categories) ? row.categories : [],
+    categories,
     notes: row.notes || null,
     source_name: row.source_name || null,
     created_date: rowTimestamp(row.created_at),
@@ -1639,7 +1648,7 @@ const normalizedSimpleConfigs = {
       id, name, supplier_code, contact_person, email, phone, address, city, country,
       payment_terms, lead_time_days, status, rating, categories, notes,
       source_name, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18)`,
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::text[],$15,$16,$17,$18)`,
     values(record) {
       return [
         record.id,
@@ -1655,7 +1664,7 @@ const normalizedSimpleConfigs = {
         Math.max(0, Math.trunc(toNumberOrZero(record.lead_time_days))),
         record.status || (record.is_active === false ? 'inactive' : 'active'),
         toNumberOrZero(record.rating),
-        JSON.stringify(Array.isArray(record.categories) ? record.categories : []),
+        Array.isArray(record.categories) ? record.categories.map(String).filter(Boolean) : [],
         record.notes || null,
         record.source_name || null,
         record.created_date || nowIso(),
@@ -1665,7 +1674,7 @@ const normalizedSimpleConfigs = {
     updateSql: `UPDATE suppliers SET
       name = $2, supplier_code = $3, contact_person = $4, email = $5, phone = $6, address = $7,
       city = $8, country = $9, payment_terms = $10, lead_time_days = $11,
-      status = $12, rating = $13, categories = $14::jsonb, notes = $15,
+      status = $12, rating = $13, categories = $14::text[], notes = $15,
       source_name = $16, updated_at = $17
       WHERE id = $1`,
     updateValues(record) {
@@ -1955,7 +1964,7 @@ function normalizedSelectForEntity(entity) {
             FROM warehouses`;
   }
   if (entity === 'Recipe') {
-    return `SELECT version.*, recipe.canonical_name
+    return `SELECT version.*, recipe.canonical_name, recipe.description
             FROM recipe_versions version
             JOIN recipes recipe ON recipe.recipe_id = version.recipe_id`;
   }
@@ -2970,6 +2979,39 @@ function normalizedSqlColumnForField(entity, field) {
       rating: 'rating',
       is_active: 'status',
       source_name: 'source_name'
+    },
+    Recipe: {
+      recipe_master_id: 'recipe_id',
+      recipe_id: 'recipe_version_id',
+      recipe_version_id: 'recipe_version_id',
+      name: 'display_name',
+      display_name: 'display_name',
+      canonical_name: 'canonical_name',
+      description: 'description',
+      recipe_code: 'recipe_code',
+      cuisine_type: 'cuisine_type',
+      category: 'menu_category',
+      menu_category: 'menu_category',
+      portion_size_grams: 'serving_size_grams',
+      serving_size_grams: 'serving_size_grams',
+      batch_yield: 'batch_yield',
+      total_recipe_weight_grams: 'total_recipe_weight_grams',
+      total_cost: 'total_cost',
+      cost_per_serving: 'cost_per_serving',
+      source_name: 'source_name'
+    },
+    MenuPlan: {
+      site_id: 'warehouse_id',
+      warehouse_id: 'warehouse_id',
+      plan_date: 'plan_date',
+      date: 'plan_date',
+      meal_type: 'meal_period',
+      meal_period: 'meal_period',
+      cuisine_type: 'menu_type',
+      menu_type: 'menu_type',
+      menu_category: 'menu_category',
+      created_by: 'created_by',
+      source_name: 'source_name'
     }
   };
   const column = {
@@ -2982,10 +3024,6 @@ function normalizedSqlColumnForField(entity, field) {
       && (
         usesRelationalDocumentTable(entity)
         || normalizedSimpleConfigs[entity]?.select?.includes('payload')
-        || [
-          'Recipe',
-          'MenuPlan'
-        ].includes(entity)
       )
     ) {
       return `normalized_record.payload->>'${field}'`;
@@ -3401,19 +3439,18 @@ async function insertOrUpdateNormalizedRecipe(record, existing = null, executor 
   const createdAt = record.created_date || existing?.created_date || nowIso();
   const updatedAt = record.updated_date || nowIso();
   await query(
-    `INSERT INTO recipes (recipe_id, canonical_name, description, status, source_name, payload, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)
+    `INSERT INTO recipes (recipe_id, canonical_name, description, status, source_name, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
      ON CONFLICT (recipe_id) DO UPDATE SET
        canonical_name = EXCLUDED.canonical_name, description = EXCLUDED.description,
        status = EXCLUDED.status, source_name = EXCLUDED.source_name,
-       payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+       updated_at = EXCLUDED.updated_at`,
     [
       masterId,
       record.canonical_name || record.name,
       record.description || null,
       record.status || (record.is_active === false ? 'inactive' : 'active'),
       record.source_name || null,
-      jsonPayload(record),
       createdAt,
       updatedAt
     ],
@@ -3429,8 +3466,8 @@ async function insertOrUpdateNormalizedRecipe(record, existing = null, executor 
       recipe_version_id, recipe_id, area_id, project_id, warehouse_id, recipe_code,
       display_name, version_label, cuisine_type, menu_category, serving_size_grams,
       batch_yield, total_recipe_weight_grams, total_cost, cost_per_serving,
-      status, source_name, payload, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)
+      status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
     ON CONFLICT (recipe_version_id) DO UPDATE SET
       recipe_id = EXCLUDED.recipe_id, area_id = EXCLUDED.area_id, project_id = EXCLUDED.project_id,
       warehouse_id = EXCLUDED.warehouse_id, recipe_code = EXCLUDED.recipe_code,
@@ -3439,7 +3476,7 @@ async function insertOrUpdateNormalizedRecipe(record, existing = null, executor 
       serving_size_grams = EXCLUDED.serving_size_grams, batch_yield = EXCLUDED.batch_yield,
       total_recipe_weight_grams = EXCLUDED.total_recipe_weight_grams, total_cost = EXCLUDED.total_cost,
       cost_per_serving = EXCLUDED.cost_per_serving, status = EXCLUDED.status,
-      source_name = EXCLUDED.source_name, payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      source_name = EXCLUDED.source_name, updated_at = EXCLUDED.updated_at`,
     [
       record.id,
       masterId,
@@ -3458,7 +3495,6 @@ async function insertOrUpdateNormalizedRecipe(record, existing = null, executor 
       toNumberOrZero(record.cost_per_serving),
       record.status || (record.is_active === false ? 'inactive' : 'active'),
       record.source_name || null,
-      jsonPayload(record),
       createdAt,
       updatedAt
     ],
@@ -3771,15 +3807,15 @@ async function replaceMenuPlanLines(record, executor = pool) {
       `INSERT INTO menu_plan_lines (
         menu_plan_line_id, menu_plan_id, line_number, line_type, recipe_version_id,
         ingredient_id, item_name, planned_servings, planned_weight_grams, planned_unit,
-        estimated_cost, status, source_name, payload, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16)
+        estimated_cost, status, source_name, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
       ON CONFLICT (menu_plan_line_id) DO UPDATE SET
         line_number = EXCLUDED.line_number, line_type = EXCLUDED.line_type,
         recipe_version_id = EXCLUDED.recipe_version_id, ingredient_id = EXCLUDED.ingredient_id,
         item_name = EXCLUDED.item_name, planned_servings = EXCLUDED.planned_servings,
         planned_weight_grams = EXCLUDED.planned_weight_grams, planned_unit = EXCLUDED.planned_unit,
         estimated_cost = EXCLUDED.estimated_cost, status = EXCLUDED.status,
-        source_name = EXCLUDED.source_name, payload = EXCLUDED.payload,
+        source_name = EXCLUDED.source_name,
         updated_at = EXCLUDED.updated_at`,
       [
         sourceLine?.menu_plan_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber),
@@ -3795,7 +3831,6 @@ async function replaceMenuPlanLines(record, executor = pool) {
         toNumberOrZero(sourceLine?.estimated_cost ?? sourceLine?.total_cost),
         sourceLine?.status || record.status || 'planned',
         sourceLine?.source_name || record.source_name || null,
-        jsonPayload(sourceLine),
         createdAt,
         updatedAt
       ],
@@ -4970,14 +5005,14 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
     await query(
       `INSERT INTO menu_plans (
         menu_plan_id, warehouse_id, plan_date, meal_period, menu_type, menu_category,
-        status, source_name, created_by, payload, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+        status, source_name, created_by, created_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       ON CONFLICT (menu_plan_id) DO UPDATE SET
         warehouse_id = EXCLUDED.warehouse_id, plan_date = EXCLUDED.plan_date,
         meal_period = EXCLUDED.meal_period, menu_type = EXCLUDED.menu_type,
         menu_category = EXCLUDED.menu_category, status = EXCLUDED.status,
         source_name = EXCLUDED.source_name, created_by = EXCLUDED.created_by,
-        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+        updated_at = EXCLUDED.updated_at`,
       [
         record.id,
         record.site_id || record.warehouse_id,
@@ -4988,7 +5023,6 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
         record.status || 'planned',
         record.source_name || null,
         record.created_by || null,
-        jsonPayload(record),
         createdAt,
         updatedAt
       ],
