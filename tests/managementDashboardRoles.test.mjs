@@ -31,6 +31,67 @@ function createRoleProfileExecutor(initialRecords = []) {
       if (sql.includes('pg_advisory_xact_lock')) {
         return { rows: [], rowCount: 1 };
       }
+      if (sql.includes('FROM role_profiles role_profile')) {
+        let rows = Array.from(records.values(), (record) => ({
+          ...record,
+          created_at: record.created_date || new Date().toISOString(),
+          updated_at: record.updated_date || new Date().toISOString(),
+          permissions: Array.isArray(record.permissions) ? record.permissions : []
+        }));
+        if (sql.includes('WHERE id = $1')) {
+          rows = rows.filter((record) => record.id === parameters[0]);
+        }
+        if (sql.includes('LOWER(COALESCE(role_profile.role_key')) {
+          rows = rows.filter((record) => String(record.role_key || '').toLowerCase() === parameters[0]);
+        }
+        return { rows, rowCount: rows.length };
+      }
+      if (sql.includes('INSERT INTO role_profiles')) {
+        const [
+          id,
+          roleKey,
+          name,
+          description,
+          accessLevel,
+          dashboardVariant,
+          isActive,
+          isSystem,
+          status,
+          sourceName,
+          createdAt,
+          updatedAt
+        ] = parameters;
+        const existing = records.get(id) || {};
+        records.set(id, {
+          ...existing,
+          id,
+          role_key: roleKey,
+          name,
+          description,
+          access_level: accessLevel,
+          dashboard_variant: dashboardVariant,
+          is_active: isActive,
+          is_system: isSystem,
+          status,
+          source_name: sourceName,
+          created_date: createdAt,
+          updated_date: updatedAt,
+          permissions: Array.isArray(existing.permissions) ? existing.permissions : []
+        });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('DELETE FROM role_profile_permissions')) {
+        const existing = records.get(parameters[0]);
+        if (existing) existing.permissions = [];
+        return { rows: [], rowCount: existing ? 1 : 0 };
+      }
+      if (sql.includes('INSERT INTO role_profile_permissions')) {
+        const existing = records.get(parameters[0]);
+        if (existing) {
+          existing.permissions = Array.from(new Set([...(existing.permissions || []), parameters[1]]));
+        }
+        return { rows: [], rowCount: 1 };
+      }
       if (sql.includes('SELECT data') && sql.includes('id = $2')) {
         const record = records.get(parameters[1]);
         return { rows: record ? [{ data: record }] : [], rowCount: record ? 1 : 0 };

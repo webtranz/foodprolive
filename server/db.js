@@ -141,6 +141,19 @@ function sanitizeUser(user) {
   return publicUser;
 }
 
+const USER_SELECT_SQL = `
+SELECT app_user.*,
+       COALESCE(site_access.allowed_site_ids, ARRAY[]::text[]) AS allowed_site_ids,
+       COALESCE(site_access.allowed_site_names, ARRAY[]::text[]) AS allowed_site_names
+  FROM users app_user
+  LEFT JOIN (
+    SELECT user_id,
+           ARRAY_AGG(site_id ORDER BY site_id) AS allowed_site_ids,
+           ARRAY_AGG(site_name ORDER BY site_id) FILTER (WHERE site_name IS NOT NULL) AS allowed_site_names
+      FROM user_site_access
+     GROUP BY user_id
+  ) site_access ON site_access.user_id = app_user.id`;
+
 function resolvePasswordFields(data = {}, existing = null) {
   const nextPassword = typeof data.password === 'string' ? data.password.trim() : '';
   const nextTemporaryPassword = typeof data.temporary_password === 'string'
@@ -169,7 +182,6 @@ function resolvePasswordFields(data = {}, existing = null) {
 
 function toUserRecord(row) {
   if (!row) return null;
-  const profile = row.profile || {};
   return {
     id: row.id,
     email: row.email,
@@ -180,9 +192,17 @@ function toUserRecord(row) {
     site_name: row.site_name,
     password_hash: row.password_hash,
     temporary_password: row.temporary_password,
+    allowed_site_ids: Array.isArray(row.allowed_site_ids) ? row.allowed_site_ids : [],
+    allowed_site_names: Array.isArray(row.allowed_site_names) ? row.allowed_site_names : [],
+    visibility_scope: row.visibility_scope || null,
+    phone: row.phone || null,
+    language: row.language || null,
+    avatar_url: row.avatar_url || null,
+    deactivated_at: row.deactivated_at?.toISOString?.() || row.deactivated_at || null,
+    deactivated_by: row.deactivated_by || null,
+    deactivation_reason: row.deactivation_reason || null,
     created_date: row.created_at?.toISOString?.() || row.created_at,
-    updated_date: row.updated_at?.toISOString?.() || row.updated_at,
-    ...profile
+    updated_date: row.updated_at?.toISOString?.() || row.updated_at
   };
 }
 
@@ -263,10 +283,18 @@ async function findRoleProfileByKey(roleKey, executor = pool) {
 
   const result = usesNormalizedCore('RoleProfile')
     ? await query(
-      `SELECT payload AS data
-       FROM role_profiles
-       WHERE LOWER(COALESCE(payload->>'role_key', '')) = $1
-       LIMIT 1`,
+      `SELECT role_profile.*,
+              COALESCE(
+                ARRAY_AGG(permission.permission_key ORDER BY permission.permission_key)
+                  FILTER (WHERE permission.permission_key IS NOT NULL),
+                ARRAY[]::text[]
+              ) AS permissions
+         FROM role_profiles role_profile
+         LEFT JOIN role_profile_permissions permission
+           ON permission.role_profile_id = role_profile.id
+        WHERE LOWER(COALESCE(role_profile.role_key, '')) = $1
+        GROUP BY role_profile.id
+        LIMIT 1`,
       [normalized],
       executor
     )
@@ -280,7 +308,13 @@ async function findRoleProfileByKey(roleKey, executor = pool) {
       executor
     );
 
-  let value = result.rowCount ? normalizeManagementRoleProfile(result.rows[0].data) : null;
+  let value = result.rowCount
+    ? normalizeManagementRoleProfile(
+      usesNormalizedCore('RoleProfile')
+        ? rowToRoleProfile(result.rows[0])
+        : result.rows[0].data
+    )
+    : null;
   if (!value) {
     const builtIn = getEntitySystemRoleDefinition(normalized);
     value = builtIn ? normalizeManagementRoleProfile({
@@ -406,6 +440,40 @@ async function validateManagementUserAssignment(user, executor = pool) {
     }
   }
   return user;
+}
+
+function normalizeUserAllowedSiteIds(user = {}) {
+  const explicitIds = Array.isArray(user.allowed_site_ids)
+    ? user.allowed_site_ids
+    : [];
+  const ids = explicitIds
+    .map((siteId) => String(siteId || '').trim())
+    .filter(Boolean);
+  if (ids.length === 0 && user.site_id) {
+    ids.push(String(user.site_id).trim());
+  }
+  return [...new Set(ids.filter(Boolean))];
+}
+
+async function replaceUserSiteAccess(userId, user = {}, executor = pool) {
+  await query('DELETE FROM user_site_access WHERE user_id = $1', [userId], executor);
+  const allowedSiteIds = normalizeUserAllowedSiteIds(user);
+  if (allowedSiteIds.length === 0) return;
+  const allowedNames = Array.isArray(user.allowed_site_names) ? user.allowed_site_names : [];
+  for (const [index, siteId] of allowedSiteIds.entries()) {
+    const siteName = allowedNames[index]
+      || (siteId === String(user.site_id || '').trim() ? user.site_name : null)
+      || null;
+    await query(
+      `INSERT INTO user_site_access (user_id, site_id, site_name, access_scope, assigned_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (user_id, site_id) DO UPDATE SET
+         site_name = EXCLUDED.site_name,
+         access_scope = EXCLUDED.access_scope`,
+      [userId, siteId, siteName, user.visibility_scope || 'assigned'],
+      executor
+    );
+  }
 }
 
 function normalizeUniqueValue(value) {
@@ -540,7 +608,6 @@ const relationalDocumentTables = Object.freeze({
   ProductionTransfer: 'production_transfers',
   PurchaseOrder: 'purchase_order_documents',
   QRCode: 'qr_codes',
-  RoleProfile: 'role_profiles',
   QRDelivery: 'qr_deliveries',
   QualityControl: 'quality_controls',
   RFQ: 'rfqs',
@@ -564,6 +631,7 @@ const normalizedCoreEntities = new Set([
   'MealServiceAttendance',
   'MealServiceConsumption',
   'FoodWaste',
+  'RoleProfile',
   'Supplier',
   ...Object.keys(relationalDocumentTables)
 ]);
@@ -609,6 +677,44 @@ function jsonPayload(record = {}) {
   return JSON.stringify(record || {});
 }
 
+function appendStringValues(target, value) {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => appendStringValues(target, entry));
+    return;
+  }
+  if (value && typeof value === 'object') {
+    if (typeof value.image_url === 'string') appendStringValues(target, value.image_url);
+    if (typeof value.url === 'string') appendStringValues(target, value.url);
+    return;
+  }
+  const text = String(value || '').trim();
+  if (!text) return;
+  if ((text.startsWith('[') && text.endsWith(']')) || (text.startsWith('{') && text.endsWith('}'))) {
+    try {
+      appendStringValues(target, JSON.parse(text));
+      return;
+    } catch {
+      // Keep the original string below when it is not parseable JSON.
+    }
+  }
+  target.push(text);
+}
+
+function uniqueStringList(...values) {
+  const entries = [];
+  values.forEach((value) => appendStringValues(entries, value));
+  return [...new Set(entries)];
+}
+
+function normalizeFoodWasteImageUrls(record = {}) {
+  return uniqueStringList(
+    record.evidence_image_urls,
+    record.image_urls,
+    record.evidence_image_url,
+    record.image_url
+  );
+}
+
 function userReferenceSql(parameterNumber) {
   return `(SELECT app_user.id FROM users app_user WHERE app_user.id = NULLIF($${parameterNumber}::text, '') OR LOWER(app_user.email) = LOWER(NULLIF($${parameterNumber}::text, '')) LIMIT 1)`;
 }
@@ -644,6 +750,27 @@ function rowToRelationalDocument(entity, row = {}) {
     status: row.status || null,
     source_name: row.source_name || null,
     record_date: row.record_date ? String(row.record_date).slice(0, 10) : null
+  });
+}
+
+function rowToRoleProfile(row = {}) {
+  const permissions = Array.isArray(row.permissions)
+    ? row.permissions.filter(Boolean)
+    : [];
+  return hydrateDerivedFields('RoleProfile', {
+    id: row.id,
+    role_key: row.role_key || null,
+    name: row.name || row.role_key || 'Role',
+    description: row.description || null,
+    access_level: row.access_level || 'user',
+    permissions,
+    dashboard_variant: row.dashboard_variant || null,
+    is_active: row.is_active !== false,
+    is_system: row.is_system === true,
+    status: row.status || (row.is_active === false ? 'inactive' : 'active'),
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
@@ -1026,6 +1153,31 @@ function rowToMealServiceConsumption(row = {}) {
 }
 
 function rowToFoodWaste(row = {}) {
+  const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+  const evidenceImageUrls = normalizeFoodWasteImageUrls({
+    ...payload,
+    evidence_image_urls: row.evidence_image_urls || payload.evidence_image_urls,
+    image_urls: row.image_urls || payload.image_urls,
+    evidence_image_url: row.evidence_image_url || payload.evidence_image_url,
+    image_url: row.image_url || payload.image_url
+  });
+  const outputAllocations = Array.isArray(row.output_allocations)
+    ? row.output_allocations
+    : Array.isArray(payload.output_allocations)
+      ? payload.output_allocations
+      : [];
+  const storedWasteWeightGrams = toNumberOrZero(
+    row.total_waste_weight_grams
+    ?? payload.waste_weight_grams
+    ?? payload.quantity_grams
+  );
+  const totalWasteWeightGrams = storedWasteWeightGrams || foodWasteQuantityToGrams(payload.quantity, payload.unit);
+  const totalWasteCost = toNumberOrZero(
+    row.total_waste_cost
+    ?? payload.estimated_cost
+    ?? payload.waste_cost
+    ?? payload.cost
+  );
   return withPayload(row, {
     __entity: 'FoodWaste',
     id: row.food_waste_id,
@@ -1044,7 +1196,19 @@ function rowToFoodWaste(row = {}) {
     reversed_by: row.reversed_by || null,
     reversed_at: rowTimestamp(row.reversed_at),
     reversal_reason: row.reversal_reason || null,
-    source_name: row.source_name || null
+    source_name: row.source_name || null,
+    quantity: totalWasteWeightGrams,
+    quantity_grams: totalWasteWeightGrams,
+    waste_weight_grams: totalWasteWeightGrams,
+    unit: 'g',
+    estimated_cost: totalWasteCost,
+    waste_cost: totalWasteCost,
+    cost: totalWasteCost,
+    output_allocations: outputAllocations,
+    evidence_image_url: evidenceImageUrls[0] || null,
+    image_url: evidenceImageUrls[0] || null,
+    evidence_image_urls: evidenceImageUrls,
+    image_urls: evidenceImageUrls
   });
 }
 
@@ -1346,7 +1510,88 @@ function normalizedSelectForEntity(entity) {
             FROM meal_service_consumptions consumption
             JOIN meal_service_headers header ON header.meal_service_id = consumption.meal_service_id`;
   }
-  if (entity === 'FoodWaste') return 'SELECT * FROM food_waste_records';
+  if (entity === 'FoodWaste') {
+    return `SELECT waste.*,
+                   COALESCE((
+                     SELECT ARRAY_AGG(image.image_url ORDER BY image.image_order, image.created_at, image.food_waste_image_id)
+                     FROM food_waste_images image
+                     WHERE image.food_waste_id = waste.food_waste_id
+                   ), ARRAY[]::text[]) AS evidence_image_urls,
+                   COALESCE((
+                     SELECT ARRAY_AGG(image.image_url ORDER BY image.image_order, image.created_at, image.food_waste_image_id)
+                     FROM food_waste_images image
+                     WHERE image.food_waste_id = waste.food_waste_id
+                   ), ARRAY[]::text[]) AS image_urls,
+                   (
+                     SELECT image.image_url
+                     FROM food_waste_images image
+                     WHERE image.food_waste_id = waste.food_waste_id
+                     ORDER BY image.image_order, image.created_at, image.food_waste_image_id
+                     LIMIT 1
+                   ) AS evidence_image_url,
+                   (
+                     SELECT image.image_url
+                     FROM food_waste_images image
+                     WHERE image.food_waste_id = waste.food_waste_id
+                     ORDER BY image.image_order, image.created_at, image.food_waste_image_id
+                     LIMIT 1
+                   ) AS image_url,
+                   COALESCE((
+                     SELECT SUM(line.waste_weight_grams)
+                     FROM food_waste_lines line
+                     WHERE line.food_waste_id = waste.food_waste_id
+                       AND COALESCE(line.status, 'posted') <> 'reversed'
+                   ), 0) AS total_waste_weight_grams,
+                   COALESCE((
+                     SELECT SUM(line.cost)
+                     FROM food_waste_lines line
+                     WHERE line.food_waste_id = waste.food_waste_id
+                       AND COALESCE(line.status, 'posted') <> 'reversed'
+                   ), 0) AS total_waste_cost,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       COALESCE(line.payload, '{}'::jsonb) || jsonb_build_object(
+                         'id', line.food_waste_line_id,
+                         'food_waste_line_id', line.food_waste_line_id,
+                         'produced_item_batch_id', line.output_batch_id,
+                         'output_batch_id', line.output_batch_id,
+                         'production_line_id', line.production_line_id,
+                         'ingredient_id', line.ingredient_id,
+                         'waste_weight_grams', line.waste_weight_grams,
+                         'quantity_grams', line.waste_weight_grams,
+                         'cost', line.cost,
+                         'status', line.status
+                       )
+                       ORDER BY line.created_at, line.food_waste_line_id
+                     )
+                     FROM food_waste_lines line
+                     WHERE line.food_waste_id = waste.food_waste_id
+                   ), '[]'::jsonb) AS output_allocations
+            FROM food_waste_records waste`;
+  }
+  if (entity === 'RoleProfile') {
+    return `SELECT role_profile.id,
+                   role_profile.role_key,
+                   role_profile.name,
+                   role_profile.description,
+                   role_profile.access_level,
+                   role_profile.dashboard_variant,
+                   role_profile.is_active,
+                   role_profile.is_system,
+                   role_profile.status,
+                   role_profile.source_name,
+                   role_profile.created_at,
+                   role_profile.updated_at,
+                   COALESCE(
+                     ARRAY_AGG(permission.permission_key ORDER BY permission.permission_key)
+                       FILTER (WHERE permission.permission_key IS NOT NULL),
+                     ARRAY[]::text[]
+                   ) AS permissions
+              FROM role_profiles role_profile
+              LEFT JOIN role_profile_permissions permission
+                ON permission.role_profile_id = role_profile.id
+             GROUP BY role_profile.id`;
+  }
   if (usesRelationalDocumentTable(entity)) {
     return `SELECT id, $q$${entity}$q$::text AS entity_name, site_id, site_name,
                    from_site_id, to_site_id, site_ids, status, record_date,
@@ -1367,11 +1612,13 @@ function normalizedIdColumn(entity) {
     ProducedItemBatch: 'output_batch_id',
     MealServiceAttendance: 'meal_service_id',
     MealServiceConsumption: 'meal_consumption_id',
-    FoodWaste: 'food_waste_id'
+    FoodWaste: 'food_waste_id',
+    RoleProfile: 'id'
   })[entity] || normalizedSimpleConfigs[entity]?.idColumn;
 }
 
 function normalizedMapper(entity) {
+  if (entity === 'RoleProfile') return rowToRoleProfile;
   if (usesRelationalDocumentTable(entity)) {
     return (row) => rowToRelationalDocument(entity, row);
   }
@@ -1627,6 +1874,14 @@ function normalizedSqlColumnForField(entity, field) {
       waste_scope: "payload->>'waste_scope'",
       meal_service_attendance_id: "payload->>'meal_service_attendance_id'",
       auto_generated: "payload->>'auto_generated'"
+    },
+    RoleProfile: {
+      role_key: 'role_key',
+      name: 'name',
+      access_level: 'access_level',
+      dashboard_variant: 'dashboard_variant',
+      is_active: 'is_active',
+      is_system: 'is_system'
     },
     Supplier: {
       name: 'name',
@@ -2469,9 +2724,102 @@ async function replaceFoodWasteLines(record, executor = pool) {
   }
 }
 
+async function replaceFoodWasteImages(record, executor = pool) {
+  await query('DELETE FROM food_waste_images WHERE food_waste_id = $1', [record.id], executor);
+  const imageUrls = normalizeFoodWasteImageUrls(record).slice(0, 8);
+  if (!imageUrls.length) return;
+
+  for (const [index, imageUrl] of imageUrls.entries()) {
+    await query(
+      `INSERT INTO food_waste_images (
+        food_waste_image_id, food_waste_id, image_url, image_order, original_name,
+        content_type, byte_size, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      ON CONFLICT (food_waste_id, image_url) DO UPDATE SET
+        image_order = EXCLUDED.image_order,
+        original_name = COALESCE(EXCLUDED.original_name, food_waste_images.original_name),
+        content_type = COALESCE(EXCLUDED.content_type, food_waste_images.content_type),
+        byte_size = COALESCE(EXCLUDED.byte_size, food_waste_images.byte_size)`,
+      [
+        lineNumberedId('image', record.id, index + 1),
+        record.id,
+        imageUrl,
+        index + 1,
+        record.original_file_names?.[index] || record.image_original_names?.[index] || null,
+        record.image_content_types?.[index] || null,
+        toNumberOrNull(record.image_byte_sizes?.[index]),
+        record.created_date || nowIso()
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceRoleProfilePermissions(roleProfileId, permissions = [], executor = pool) {
+  await query('DELETE FROM role_profile_permissions WHERE role_profile_id = $1', [roleProfileId], executor);
+  const uniquePermissions = [...new Set((Array.isArray(permissions) ? permissions : [])
+    .map((permission) => String(permission || '').trim())
+    .filter(Boolean))];
+  for (const permission of uniquePermissions) {
+    await query(
+      `INSERT INTO role_profile_permissions (role_profile_id, permission_key, created_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (role_profile_id, permission_key) DO NOTHING`,
+      [roleProfileId, permission],
+      executor
+    );
+  }
+}
+
+async function insertOrUpdateRoleProfile(record, existing = null, executor = pool) {
+  const createdAt = record.created_date || existing?.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  const isActive = record.is_active !== false;
+  await query(
+    `INSERT INTO role_profiles (
+       id, entity_name, role_key, name, description, access_level,
+       dashboard_variant, is_active, is_system, status, source_name,
+       created_at, updated_at
+     ) VALUES (
+       $1, 'RoleProfile', $2, $3, $4, $5,
+       $6, $7, $8, $9, $10, $11, $12
+     )
+     ON CONFLICT (id) DO UPDATE SET
+       role_key = EXCLUDED.role_key,
+       name = EXCLUDED.name,
+       description = EXCLUDED.description,
+       access_level = EXCLUDED.access_level,
+       dashboard_variant = EXCLUDED.dashboard_variant,
+       is_active = EXCLUDED.is_active,
+       is_system = EXCLUDED.is_system,
+       status = EXCLUDED.status,
+       source_name = EXCLUDED.source_name,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      record.role_key,
+      record.name,
+      record.description || null,
+      record.access_level || 'user',
+      record.dashboard_variant || null,
+      isActive,
+      record.is_system === true,
+      record.status || (isActive ? 'active' : 'inactive'),
+      record.source_name || null,
+      createdAt,
+      updatedAt
+    ],
+    executor
+  );
+  await replaceRoleProfilePermissions(record.id, record.permissions, executor);
+  invalidateRoleProfileCache(record.role_key);
+  return findNormalizedDocument('RoleProfile', record.id, executor);
+}
+
 async function insertOrUpdateNormalizedDocument(entity, record, existing = null, executor = pool) {
   if (entity === 'Site') return insertOrUpdateNormalizedSite(record, existing, executor);
   if (entity === 'Recipe') return insertOrUpdateNormalizedRecipe(record, existing, executor);
+  if (entity === 'RoleProfile') return insertOrUpdateRoleProfile(record, existing, executor);
 
   if (usesRelationalDocumentTable(entity)) {
     const table = quoteIdentifier(relationalDocumentTables[entity]);
@@ -2812,6 +3160,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
       executor
     );
     await replaceFoodWasteLines(record, executor);
+    await replaceFoodWasteImages(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   return null;
@@ -3112,7 +3461,12 @@ const normalizedReferenceChecks = {
       label: 'user location assignment',
       sql: `SELECT id FROM users
             WHERE site_id = $1
-               OR COALESCE(profile->'allowed_site_ids', '[]'::jsonb) ? $1
+               OR EXISTS (
+                 SELECT 1
+                   FROM user_site_access access
+                  WHERE access.user_id = users.id
+                    AND access.site_id = $1
+               )
             LIMIT 1`
     },
     { label: 'POS source', sql: 'SELECT id FROM pos_sources WHERE default_site_id = $1 LIMIT 1' },
@@ -3164,7 +3518,12 @@ const siteSubtreeReferenceChecks = Object.freeze([
     table: 'users',
     sql: `SELECT id FROM users
            WHERE site_id = ANY($1::text[])
-              OR COALESCE(profile->'allowed_site_ids', '[]'::jsonb) ?| $1::text[]
+              OR EXISTS (
+                SELECT 1
+                  FROM user_site_access access
+                 WHERE access.user_id = users.id
+                   AND access.site_id = ANY($1::text[])
+              )
            FOR SHARE`
   },
   {
@@ -3610,8 +3969,16 @@ async function initDatabase() {
 async function normalizeStoredManagementRoleProfiles(executor = pool) {
   const result = usesNormalizedCore('RoleProfile')
     ? await query(
-      `SELECT id, payload AS data
-         FROM role_profiles`,
+      `SELECT role_profile.*,
+              COALESCE(
+                ARRAY_AGG(permission.permission_key ORDER BY permission.permission_key)
+                  FILTER (WHERE permission.permission_key IS NOT NULL),
+                ARRAY[]::text[]
+              ) AS permissions
+         FROM role_profiles role_profile
+         LEFT JOIN role_profile_permissions permission
+           ON permission.role_profile_id = role_profile.id
+        GROUP BY role_profile.id`,
       [],
       executor
     )
@@ -3623,18 +3990,12 @@ async function normalizeStoredManagementRoleProfiles(executor = pool) {
       executor
     );
   for (const row of result.rows) {
-    const normalized = normalizeManagementRoleProfile(row.data);
-    if (normalized === row.data || JSON.stringify(normalized) === JSON.stringify(row.data)) continue;
+    const current = usesNormalizedCore('RoleProfile') ? rowToRoleProfile(row) : row.data;
+    const normalized = normalizeManagementRoleProfile(current);
+    if (normalized === current || JSON.stringify(normalized) === JSON.stringify(current)) continue;
     const next = { ...normalized, updated_date: nowIso() };
     if (usesNormalizedCore('RoleProfile')) {
-      await query(
-        `UPDATE role_profiles
-            SET payload = $2::jsonb,
-                updated_at = $3
-          WHERE id = $1`,
-        [row.id, JSON.stringify(next), next.updated_date],
-        executor
-      );
+      await insertOrUpdateRoleProfile(next, current, executor);
     } else {
       await query(
         `UPDATE entity_records
@@ -3726,17 +4087,17 @@ async function ensureAdminAccounts(executor = pool) {
 }
 
 async function listUsers(executor = pool) {
-  const result = await query('SELECT * FROM users ORDER BY updated_at DESC', [], executor);
+  const result = await query(`${USER_SELECT_SQL} ORDER BY app_user.updated_at DESC`, [], executor);
   return Promise.all(result.rows.map(async (row) => sanitizeUser(await hydrateUserRole(toUserRecord(row), executor))));
 }
 
 async function findUserById(id, executor = pool) {
-  const result = await query('SELECT * FROM users WHERE id = $1 LIMIT 1', [id], executor);
+  const result = await query(`${USER_SELECT_SQL} WHERE app_user.id = $1 LIMIT 1`, [id], executor);
   return result.rowCount ? hydrateUserRole(toUserRecord(result.rows[0]), executor) : null;
 }
 
 async function findUserByEmail(email, executor = pool) {
-  const result = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [email], executor);
+  const result = await query(`${USER_SELECT_SQL} WHERE LOWER(app_user.email) = LOWER($1) LIMIT 1`, [email], executor);
   return result.rowCount ? hydrateUserRole(toUserRecord(result.rows[0]), executor) : null;
 }
 
@@ -3758,29 +4119,13 @@ async function createUser(data, executor = pool) {
     error.status = 400;
     throw error;
   }
-  const profile = { ...data };
-  delete profile.id;
-  delete profile.email;
-  delete profile.full_name;
-  delete profile.role;
-  delete profile.status;
-  delete profile.site_id;
-  delete profile.site_name;
-  delete profile.password;
-  delete profile.password_hash;
-  delete profile.temporary_password;
-  delete profile.created_date;
-  delete profile.updated_date;
-  delete profile.role_name;
-  delete profile.role_access_level;
-  delete profile.role_permissions;
-  delete profile.role_is_active;
-  delete profile.dashboard_variant;
-  delete profile.is_custom_role;
-
   await query(
-    `INSERT INTO users (id, email, full_name, role, status, site_id, site_name, password_hash, temporary_password, profile, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $11)`,
+    `INSERT INTO users (
+       id, email, full_name, role, status, site_id, site_name,
+       phone, language, avatar_url, visibility_scope,
+       password_hash, temporary_password, created_at, updated_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)`,
     [
       id,
       data.email,
@@ -3789,13 +4134,17 @@ async function createUser(data, executor = pool) {
       data.status || 'active',
       data.site_id || null,
       data.site_name || null,
+      data.phone || null,
+      data.language || null,
+      data.avatar_url || null,
+      data.visibility_scope || null,
       credentials.password_hash,
       credentials.temporary_password,
-      JSON.stringify(profile),
       timestamp
     ],
     executor
   );
+  await replaceUserSiteAccess(id, data, executor);
 
   return sanitizeUser(await findUserById(id, executor));
 }
@@ -3823,26 +4172,6 @@ async function updateUser(id, patch, executor = pool) {
   };
   merged = await validateManagementUserAssignment(merged, executor);
   await validateDocumentRelationships('User', merged, id, executor);
-  const profile = { ...merged };
-  delete profile.id;
-  delete profile.email;
-  delete profile.full_name;
-  delete profile.role;
-  delete profile.status;
-  delete profile.site_id;
-  delete profile.site_name;
-  delete profile.password;
-  delete profile.password_hash;
-  delete profile.temporary_password;
-  delete profile.created_date;
-  delete profile.updated_date;
-  delete profile.role_name;
-  delete profile.role_access_level;
-  delete profile.role_permissions;
-  delete profile.role_is_active;
-  delete profile.dashboard_variant;
-  delete profile.is_custom_role;
-
   await query(
     `UPDATE users
      SET email = $2,
@@ -3851,10 +4180,13 @@ async function updateUser(id, patch, executor = pool) {
          status = $5,
          site_id = $6,
          site_name = $7,
-         password_hash = $8,
-         temporary_password = $9,
-         profile = $10::jsonb,
-         updated_at = $11
+         phone = $8,
+         language = $9,
+         avatar_url = $10,
+         visibility_scope = $11,
+         password_hash = $12,
+         temporary_password = $13,
+         updated_at = $14
      WHERE id = $1`,
     [
       id,
@@ -3864,13 +4196,17 @@ async function updateUser(id, patch, executor = pool) {
       merged.status || 'active',
       merged.site_id || null,
       merged.site_name || null,
+      merged.phone || null,
+      merged.language || null,
+      merged.avatar_url || null,
+      merged.visibility_scope || null,
       merged.password_hash,
       merged.temporary_password || null,
-      JSON.stringify(profile),
       merged.updated_date
     ],
     executor
   );
+  await replaceUserSiteAccess(id, merged, executor);
 
   return sanitizeUser(await findUserById(id, executor));
 }
@@ -3909,10 +4245,17 @@ async function deactivateUserAccount({ actor, targetId, confirmation, reason }, 
   await query(
     `UPDATE users
      SET status = 'deactivated',
-         profile = COALESCE(profile, '{}'::jsonb) || $2::jsonb,
-         updated_at = $3
+         deactivated_at = $2,
+         deactivated_by = $3,
+         deactivation_reason = $4,
+         updated_at = $2
      WHERE id = $1`,
-    [target.id, JSON.stringify(deactivationMetadata), deactivatedAt],
+    [
+      target.id,
+      deactivatedAt,
+      deactivationMetadata.deactivated_by,
+      deactivationMetadata.deactivation_reason
+    ],
     executor
   );
   const deactivated = sanitizeUser(await findUserById(target.id, executor));

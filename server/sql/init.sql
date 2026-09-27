@@ -9,12 +9,77 @@ CREATE TABLE IF NOT EXISTS users (
   status TEXT NOT NULL DEFAULT 'active',
   site_id TEXT,
   site_name TEXT,
+  phone TEXT,
+  language TEXT,
+  avatar_url TEXT,
+  visibility_scope TEXT,
+  deactivated_at TIMESTAMPTZ,
+  deactivated_by TEXT,
+  deactivation_reason TEXT,
   password_hash TEXT NOT NULL,
   temporary_password TEXT,
-  profile JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS visibility_scope TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_by TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivation_reason TEXT;
+
+CREATE TABLE IF NOT EXISTS user_site_access (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  site_id TEXT NOT NULL,
+  site_name TEXT,
+  access_scope TEXT NOT NULL DEFAULT 'assigned',
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, site_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_site_access_site
+  ON user_site_access(site_id, user_id);
+
+DO $user_profile_cutover$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND column_name = 'profile'
+  ) THEN
+    UPDATE users
+       SET phone = COALESCE(phone, NULLIF(profile->>'phone', '')),
+           language = COALESCE(language, NULLIF(profile->>'language', '')),
+           avatar_url = COALESCE(avatar_url, NULLIF(profile->>'avatar_url', '')),
+           visibility_scope = COALESCE(visibility_scope, NULLIF(profile->>'visibility_scope', '')),
+           deactivated_at = COALESCE(deactivated_at, CASE
+             WHEN COALESCE(profile->>'deactivated_at', '') ~ '^\d{4}-\d{2}-\d{2}'
+               THEN NULLIF(profile->>'deactivated_at', '')::timestamptz
+             ELSE NULL
+           END),
+           deactivated_by = COALESCE(deactivated_by, NULLIF(profile->>'deactivated_by', '')),
+           deactivation_reason = COALESCE(deactivation_reason, NULLIF(profile->>'deactivation_reason', ''));
+
+    INSERT INTO user_site_access (user_id, site_id, access_scope)
+    SELECT user_row.id, allowed_site_id, 'assigned'
+      FROM users user_row
+      CROSS JOIN LATERAL jsonb_array_elements_text(
+        CASE
+          WHEN jsonb_typeof(user_row.profile->'allowed_site_ids') = 'array'
+            THEN user_row.profile->'allowed_site_ids'
+          ELSE '[]'::jsonb
+        END
+      ) AS allowed_site(allowed_site_id)
+     WHERE COALESCE(BTRIM(allowed_site_id), '') <> ''
+    ON CONFLICT (user_id, site_id) DO NOTHING;
+
+    ALTER TABLE users DROP COLUMN profile;
+  END IF;
+END;
+$user_profile_cutover$;
 
 CREATE TABLE IF NOT EXISTS auth_tokens (
   token TEXT PRIMARY KEY,
@@ -315,6 +380,93 @@ BEGIN
   END LOOP;
 END;
 $document_tables$;
+
+ALTER TABLE role_profiles ADD COLUMN IF NOT EXISTS role_key TEXT;
+ALTER TABLE role_profiles ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE role_profiles ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE role_profiles ADD COLUMN IF NOT EXISTS access_level TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE role_profiles ADD COLUMN IF NOT EXISTS dashboard_variant TEXT;
+ALTER TABLE role_profiles ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE role_profiles ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_role_profiles_role_key_unique
+  ON role_profiles(LOWER(BTRIM(role_key)))
+  WHERE COALESCE(BTRIM(role_key), '') <> '';
+
+CREATE TABLE IF NOT EXISTS role_profile_permissions (
+  role_profile_id TEXT NOT NULL REFERENCES role_profiles(id) ON DELETE CASCADE,
+  permission_key TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (role_profile_id, permission_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_profile_permissions_permission
+  ON role_profile_permissions(permission_key, role_profile_id);
+
+UPDATE role_profiles
+   SET role_key = COALESCE(role_key, NULLIF(payload->>'role_key', '')),
+       name = COALESCE(name, NULLIF(payload->>'name', '')),
+       description = COALESCE(description, NULLIF(payload->>'description', '')),
+       access_level = COALESCE(NULLIF(access_level, ''), NULLIF(payload->>'access_level', ''), 'user'),
+       dashboard_variant = COALESCE(dashboard_variant, NULLIF(payload->>'dashboard_variant', '')),
+       is_active = CASE
+         WHEN payload ? 'is_active' THEN COALESCE((payload->>'is_active')::boolean, TRUE)
+         ELSE is_active
+       END,
+       is_system = CASE
+         WHEN payload ? 'is_system' THEN COALESCE((payload->>'is_system')::boolean, FALSE)
+         ELSE is_system
+       END
+ WHERE payload IS NOT NULL;
+
+INSERT INTO role_profile_permissions (role_profile_id, permission_key)
+SELECT role_profile.id, permission.permission_key
+  FROM role_profiles role_profile
+  CROSS JOIN LATERAL jsonb_array_elements_text(
+    CASE
+      WHEN jsonb_typeof(role_profile.payload->'permissions') = 'array'
+        THEN role_profile.payload->'permissions'
+      ELSE '[]'::jsonb
+    END
+  ) AS permission(permission_key)
+     WHERE COALESCE(BTRIM(permission.permission_key), '') <> ''
+ON CONFLICT (role_profile_id, permission_key) DO NOTHING;
+
+DROP TRIGGER IF EXISTS role_profiles_realtime_change ON role_profiles;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_role_profile_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  role_row role_profiles%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    role_row := OLD;
+  ELSE
+    role_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'RoleProfile',
+      'action', LOWER(TG_OP),
+      'id', role_row.id,
+      'site_id', NULL,
+      'site_ids', '[]'::jsonb,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER role_profiles_realtime_change
+  AFTER INSERT OR UPDATE OR DELETE ON role_profiles
+  FOR EACH ROW EXECUTE FUNCTION notify_foodpro_role_profile_change();
+
+ALTER TABLE role_profiles DROP COLUMN IF EXISTS payload;
 
 -- ---------------------------------------------------------------------------
 -- Phase 1 normalized operational schema
@@ -833,6 +985,21 @@ CREATE INDEX IF NOT EXISTS idx_food_waste_lines_output_batch
 
 CREATE INDEX IF NOT EXISTS idx_food_waste_lines_audit
   ON food_waste_lines(food_waste_id, output_batch_id, production_line_id, ingredient_id, status);
+
+CREATE TABLE IF NOT EXISTS food_waste_images (
+  food_waste_image_id TEXT PRIMARY KEY,
+  food_waste_id TEXT NOT NULL REFERENCES food_waste_records(food_waste_id) ON DELETE CASCADE,
+  image_url TEXT NOT NULL,
+  image_order INTEGER NOT NULL DEFAULT 1,
+  original_name TEXT,
+  content_type TEXT,
+  byte_size INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(food_waste_id, image_url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_food_waste_images_record
+  ON food_waste_images(food_waste_id, image_order);
 
 CREATE TABLE IF NOT EXISTS inventory_transactions (
   inventory_transaction_id TEXT PRIMARY KEY,
@@ -1646,6 +1813,59 @@ WHERE record.entity_name = 'FoodWaste'
     0
   ) > 0
 ON CONFLICT (food_waste_line_id) DO NOTHING;
+
+WITH food_waste_image_source AS (
+  SELECT
+    waste.food_waste_id,
+    btrim(raw.image_url) AS image_url,
+    MIN(raw.image_order) AS image_order
+  FROM food_waste_records waste
+  CROSS JOIN LATERAL (
+    SELECT image_value AS image_url, image_ordinal::integer AS image_order
+    FROM jsonb_array_elements_text(
+      CASE
+        WHEN jsonb_typeof(waste.payload->'evidence_image_urls') = 'array'
+          THEN waste.payload->'evidence_image_urls'
+        ELSE '[]'::jsonb
+      END
+    ) WITH ORDINALITY AS image_values(image_value, image_ordinal)
+    UNION ALL
+    SELECT image_value AS image_url, (100 + image_ordinal)::integer AS image_order
+    FROM jsonb_array_elements_text(
+      CASE
+        WHEN jsonb_typeof(waste.payload->'image_urls') = 'array'
+          THEN waste.payload->'image_urls'
+        ELSE '[]'::jsonb
+      END
+    ) WITH ORDINALITY AS image_values(image_value, image_ordinal)
+    UNION ALL
+    SELECT waste.payload->>'evidence_image_url' AS image_url, 1 AS image_order
+    WHERE COALESCE(waste.payload->>'evidence_image_url', '') <> ''
+    UNION ALL
+    SELECT waste.payload->>'image_url' AS image_url, 2 AS image_order
+    WHERE COALESCE(waste.payload->>'image_url', '') <> ''
+  ) raw
+  WHERE COALESCE(btrim(raw.image_url), '') <> ''
+  GROUP BY waste.food_waste_id, btrim(raw.image_url)
+)
+INSERT INTO food_waste_images (
+  food_waste_image_id, food_waste_id, image_url, image_order, created_at
+)
+SELECT
+  food_waste_id || ':image:' || ROW_NUMBER() OVER (
+    PARTITION BY food_waste_id
+    ORDER BY image_order, image_url
+  ),
+  food_waste_id,
+  image_url,
+  ROW_NUMBER() OVER (
+    PARTITION BY food_waste_id
+    ORDER BY image_order, image_url
+  ),
+  NOW()
+FROM food_waste_image_source
+ON CONFLICT (food_waste_id, image_url) DO UPDATE SET
+  image_order = LEAST(food_waste_images.image_order, EXCLUDED.image_order);
 
 -- Backfill location ownership for legacy production-quality records whenever a
 -- trustworthy production or batch link is available. Records without such a
