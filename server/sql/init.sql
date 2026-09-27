@@ -1255,13 +1255,50 @@ CREATE INDEX IF NOT EXISTS idx_inventory_transactions_scope
 CREATE TABLE IF NOT EXISTS production_consumption_reports (
   report_id TEXT PRIMARY KEY,
   report_number TEXT NOT NULL,
+  report_name TEXT,
   production_id TEXT NOT NULL REFERENCES production_events(production_id) ON DELETE RESTRICT,
   warehouse_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  warehouse_name TEXT,
+  requesting_warehouse_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE SET NULL,
+  requesting_warehouse_name TEXT,
+  fulfillment_store_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE SET NULL,
+  fulfillment_store_name TEXT,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE SET NULL,
+  recipe_name TEXT,
+  original_recipe_name TEXT,
+  production_name TEXT,
+  original_production_name TEXT,
   production_date DATE,
+  meal_period TEXT,
+  menu_type TEXT,
+  menu_category TEXT,
+  menu_scope_label TEXT,
+  production_issue_grouped BOOLEAN NOT NULL DEFAULT FALSE,
+  production_issue_item_count INTEGER,
+  production_issue_dish_count INTEGER,
+  kitchen_station TEXT,
+  target_servings NUMERIC(18, 6),
+  completed_by TEXT,
+  completed_by_name TEXT,
+  completed_at TIMESTAMPTZ,
+  quantity_basis TEXT,
+  reconciliation_mode TEXT,
+  output_calculation_source TEXT,
+  recipe_raw_weight_grams NUMERIC(18, 6),
+  expected_finished_weight_grams NUMERIC(18, 6),
+  total_raw_consumption_weight_grams NUMERIC(18, 6),
+  total_yielded_weight_grams NUMERIC(18, 6),
+  portion_size_grams NUMERIC(18, 6),
+  expected_yield_servings NUMERIC(18, 6),
   total_consumption_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   total_shortage_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  shortage_line_count INTEGER NOT NULL DEFAULT 0,
+  ingredient_line_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'posted',
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  reversed_at TIMESTAMPTZ,
+  reversed_by TEXT,
+  reversed_by_name TEXT,
+  reversal_reason TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1275,6 +1312,227 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_production_consumption_reports_number_uniq
 
 CREATE INDEX IF NOT EXISTS idx_production_consumption_reports_scope
   ON production_consumption_reports(warehouse_id, production_date, status);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_lines (
+  report_line_id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  line_number INTEGER NOT NULL,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE SET NULL,
+  item_code TEXT,
+  ingredient_name TEXT,
+  unit TEXT,
+  recipe_quantity NUMERIC(18, 6),
+  recipe_unit TEXT,
+  inventory_unit TEXT,
+  planned_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  actual_requested_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  issued_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  shortage_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  posted_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  estimated_shortage_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  quantity_basis TEXT,
+  yield_percent NUMERIC(18, 6),
+  raw_weight_grams NUMERIC(18, 6),
+  yielded_weight_grams NUMERIC(18, 6),
+  weight_calculation_source TEXT,
+  yield_calculation_source TEXT,
+  unit_status TEXT,
+  conversion_note TEXT,
+  inventory_transaction_id TEXT,
+  status TEXT NOT NULL DEFAULT 'posted',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(report_id, line_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pcr_lines_report
+  ON production_consumption_report_lines(report_id, line_number);
+CREATE INDEX IF NOT EXISTS idx_pcr_lines_ingredient
+  ON production_consumption_report_lines(ingredient_id, report_id);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_line_sources (
+  report_line_source_id TEXT PRIMARY KEY,
+  report_line_id TEXT NOT NULL REFERENCES production_consumption_report_lines(report_line_id) ON DELETE CASCADE,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  source_order INTEGER NOT NULL,
+  recipe_name TEXT NOT NULL,
+  UNIQUE(report_line_id, source_order)
+);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_line_transactions (
+  report_line_transaction_id TEXT PRIMARY KEY,
+  report_line_id TEXT NOT NULL REFERENCES production_consumption_report_lines(report_line_id) ON DELETE CASCADE,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  transaction_order INTEGER NOT NULL,
+  inventory_transaction_id TEXT NOT NULL,
+  UNIQUE(report_line_id, inventory_transaction_id)
+);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_line_layers (
+  report_line_layer_id TEXT PRIMARY KEY,
+  report_line_id TEXT NOT NULL REFERENCES production_consumption_report_lines(report_line_id) ON DELETE CASCADE,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  layer_order INTEGER NOT NULL,
+  inventory_lot_id TEXT REFERENCES inventory_lots(lot_id) ON DELETE SET NULL,
+  batch_number TEXT,
+  stock_date DATE,
+  received_date DATE,
+  expiry_date DATE,
+  quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  quantity_before NUMERIC(18, 6),
+  quantity_after NUMERIC(18, 6),
+  reserved_quantity_before NUMERIC(18, 6),
+  reserved_quantity_after NUMERIC(18, 6),
+  available_quantity_before NUMERIC(18, 6),
+  available_quantity_after NUMERIC(18, 6),
+  unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  accounting_unit_cost NUMERIC(18, 6),
+  accounting_total_cost NUMERIC(18, 6),
+  production_id TEXT REFERENCES production_events(production_id) ON DELETE SET NULL,
+  commitment_revision INTEGER,
+  operation_id TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(report_line_id, layer_order)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pcr_line_layers_report
+  ON production_consumption_report_line_layers(report_id, layer_order);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_menu_items (
+  report_menu_item_id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  item_order INTEGER NOT NULL,
+  production_line_id TEXT REFERENCES production_manifest_lines(production_line_id) ON DELETE SET NULL,
+  recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE SET NULL,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE SET NULL,
+  item_name TEXT NOT NULL,
+  recipe_name TEXT,
+  line_type TEXT,
+  item_key TEXT,
+  source_menu_plan_item_key TEXT,
+  original_source_menu_plan_item_key TEXT,
+  recipe_code TEXT,
+  ingredient_name TEXT,
+  meal_period TEXT,
+  requested_servings NUMERIC(18, 6),
+  requested_weight_grams NUMERIC(18, 6),
+  produced_servings NUMERIC(18, 6),
+  produced_weight_grams NUMERIC(18, 6),
+  production_covers NUMERIC(18, 6),
+  raw_weight_grams NUMERIC(18, 6),
+  yielded_weight_grams NUMERIC(18, 6),
+  expected_finished_weight_grams NUMERIC(18, 6),
+  portion_size_grams NUMERIC(18, 6),
+  expected_yield_servings NUMERIC(18, 6),
+  output_calculation_source TEXT,
+  weight_calculation_source TEXT,
+  yield_calculation_source TEXT,
+  weight_snapshot_version INTEGER,
+  estimated_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  actual_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(report_id, item_order)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pcr_menu_items_report
+  ON production_consumption_report_menu_items(report_id, item_order);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_unit_totals (
+  report_unit_total_id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  unit TEXT NOT NULL,
+  shortage_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  UNIQUE(report_id, unit)
+);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_events (
+  report_event_id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  event_order INTEGER NOT NULL,
+  event_timestamp TIMESTAMPTZ,
+  actor_id TEXT,
+  actor_email TEXT,
+  actor_name TEXT,
+  reason TEXT,
+  returned_line_count INTEGER NOT NULL DEFAULT 0,
+  returned_total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  served_weight_grams NUMERIC(18, 6),
+  wasted_weight_grams NUMERIC(18, 6),
+  served_servings NUMERIC(18, 6),
+  wasted_servings NUMERIC(18, 6),
+  status TEXT NOT NULL DEFAULT 'posted',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(report_id, event_type, event_order)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pcr_events_report
+  ON production_consumption_report_events(report_id, event_order);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_event_manifest_items (
+  report_event_manifest_item_id TEXT PRIMARY KEY,
+  report_event_id TEXT NOT NULL REFERENCES production_consumption_report_events(report_event_id) ON DELETE CASCADE,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  item_order INTEGER NOT NULL,
+  item_key TEXT,
+  item_name TEXT,
+  reversed_weight_grams NUMERIC(18, 6),
+  reversal_ratio NUMERIC(18, 6),
+  UNIQUE(report_event_id, item_order)
+);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_event_lines (
+  report_event_line_id TEXT PRIMARY KEY,
+  report_event_id TEXT NOT NULL REFERENCES production_consumption_report_events(report_event_id) ON DELETE CASCADE,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  line_order INTEGER NOT NULL,
+  source_line_index INTEGER,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE SET NULL,
+  item_code TEXT,
+  ingredient_name TEXT,
+  unit TEXT,
+  requested_quantity NUMERIC(18, 6),
+  returned_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  inventory_transaction_id TEXT,
+  UNIQUE(report_event_id, line_order)
+);
+
+CREATE TABLE IF NOT EXISTS production_consumption_report_event_line_layers (
+  report_event_line_layer_id TEXT PRIMARY KEY,
+  report_event_line_id TEXT NOT NULL REFERENCES production_consumption_report_event_lines(report_event_line_id) ON DELETE CASCADE,
+  report_event_id TEXT NOT NULL REFERENCES production_consumption_report_events(report_event_id) ON DELETE CASCADE,
+  report_id TEXT NOT NULL REFERENCES production_consumption_reports(report_id) ON DELETE CASCADE,
+  layer_order INTEGER NOT NULL,
+  inventory_lot_id TEXT REFERENCES inventory_lots(lot_id) ON DELETE SET NULL,
+  batch_number TEXT,
+  stock_date DATE,
+  received_date DATE,
+  expiry_date DATE,
+  quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  quantity_before NUMERIC(18, 6),
+  quantity_after NUMERIC(18, 6),
+  reserved_quantity_before NUMERIC(18, 6),
+  reserved_quantity_after NUMERIC(18, 6),
+  available_quantity_before NUMERIC(18, 6),
+  available_quantity_after NUMERIC(18, 6),
+  unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  accounting_unit_cost NUMERIC(18, 6),
+  accounting_total_cost NUMERIC(18, 6),
+  production_id TEXT REFERENCES production_events(production_id) ON DELETE SET NULL,
+  commitment_revision INTEGER,
+  operation_id TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(report_event_line_id, layer_order)
+);
 
 CREATE TABLE IF NOT EXISTS meal_service_consumptions (
   meal_consumption_id TEXT PRIMARY KEY,
@@ -1647,6 +1905,44 @@ ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS completed_by_name T
 ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS reconciliation_mode TEXT;
 ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS output_calculation_source TEXT;
 ALTER TABLE produced_output_batches ADD COLUMN IF NOT EXISTS cutover_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS report_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS warehouse_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS requesting_warehouse_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE SET NULL;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS requesting_warehouse_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS fulfillment_store_id TEXT REFERENCES warehouses(warehouse_id) ON DELETE SET NULL;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS fulfillment_store_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE SET NULL;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS recipe_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS original_recipe_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS production_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS original_production_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS meal_period TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS menu_type TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS menu_category TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS menu_scope_label TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS production_issue_grouped BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS production_issue_item_count INTEGER;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS production_issue_dish_count INTEGER;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS kitchen_station TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS target_servings NUMERIC(18, 6);
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS completed_by TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS completed_by_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS quantity_basis TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS reconciliation_mode TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS output_calculation_source TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS recipe_raw_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS expected_finished_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS total_raw_consumption_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS total_yielded_weight_grams NUMERIC(18, 6);
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS portion_size_grams NUMERIC(18, 6);
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS expected_yield_servings NUMERIC(18, 6);
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS shortage_line_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS ingredient_line_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS reversed_at TIMESTAMPTZ;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS reversed_by TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS reversed_by_name TEXT;
+ALTER TABLE production_consumption_reports ADD COLUMN IF NOT EXISTS reversal_reason TEXT;
 ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS request_fingerprint TEXT;
 ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS reversal_idempotency_key TEXT;
 ALTER TABLE meal_service_headers ADD COLUMN IF NOT EXISTS reversal_request_fingerprint TEXT;
@@ -2195,25 +2491,613 @@ WHERE record.entity_name = 'ProducedItemBatch'
 ON CONFLICT (output_batch_id) DO NOTHING;
 
 INSERT INTO production_consumption_reports (
-  report_id, report_number, production_id, warehouse_id, production_date,
-  total_consumption_cost, total_shortage_cost, status, payload, created_at, updated_at
+  report_id, report_number, report_name, production_id, warehouse_id, warehouse_name,
+  requesting_warehouse_id, requesting_warehouse_name, fulfillment_store_id, fulfillment_store_name,
+  recipe_version_id, recipe_name, original_recipe_name, production_name, original_production_name,
+  production_date, meal_period, menu_type, menu_category, menu_scope_label,
+  production_issue_grouped, production_issue_item_count, production_issue_dish_count,
+  kitchen_station, target_servings, completed_by, completed_by_name, completed_at,
+  quantity_basis, reconciliation_mode, output_calculation_source,
+  recipe_raw_weight_grams, expected_finished_weight_grams,
+  total_raw_consumption_weight_grams, total_yielded_weight_grams,
+  portion_size_grams, expected_yield_servings,
+  total_consumption_cost, total_shortage_cost, shortage_line_count,
+  ingredient_line_count, status, reversed_at, reversed_by, reversed_by_name,
+  reversal_reason, created_at, updated_at
 )
 SELECT
   record.id,
   COALESCE(NULLIF(record.data->>'report_number', ''), record.id),
+  NULLIF(record.data->>'report_name', ''),
   record.data->>'production_id',
   NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  NULLIF(record.data->>'requesting_site_id', ''),
+  NULLIF(record.data->>'requesting_site_name', ''),
+  NULLIF(record.data->>'fulfillment_store_id', ''),
+  NULLIF(record.data->>'fulfillment_store_name', ''),
+  (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(record.data->>'recipe_id', '') LIMIT 1),
+  NULLIF(record.data->>'recipe_name', ''),
+  NULLIF(record.data->>'original_recipe_name', ''),
+  NULLIF(record.data->>'production_name', ''),
+  NULLIF(record.data->>'original_production_name', ''),
   NULLIF(record.data->>'production_date', '')::date,
+  NULLIF(record.data->>'meal_type', ''),
+  NULLIF(COALESCE(record.data->>'menu_type', record.data->>'cuisine_type'), ''),
+  NULLIF(record.data->>'menu_category', ''),
+  NULLIF(record.data->>'menu_scope_label', ''),
+  COALESCE(NULLIF(record.data->>'production_issue_grouped', '')::boolean, FALSE),
+  NULLIF(record.data->>'production_issue_item_count', '')::integer,
+  NULLIF(record.data->>'production_issue_dish_count', '')::integer,
+  NULLIF(record.data->>'kitchen_station', ''),
+  NULLIF(record.data->>'target_servings', '')::numeric,
+  NULLIF(record.data->>'completed_by', ''),
+  NULLIF(record.data->>'completed_by_name', ''),
+  NULLIF(record.data->>'completed_at', '')::timestamptz,
+  NULLIF(record.data->>'quantity_basis', ''),
+  NULLIF(record.data->>'reconciliation_mode', ''),
+  NULLIF(record.data->>'output_calculation_source', ''),
+  NULLIF(record.data->>'recipe_raw_weight_grams', '')::numeric,
+  NULLIF(record.data->>'expected_finished_weight_grams', '')::numeric,
+  NULLIF(record.data->>'total_raw_consumption_weight_grams', '')::numeric,
+  NULLIF(record.data->>'total_yielded_weight_grams', '')::numeric,
+  NULLIF(record.data->>'portion_size_grams', '')::numeric,
+  NULLIF(record.data->>'expected_yield_servings', '')::numeric,
   COALESCE(NULLIF(record.data->>'total_consumption_cost', '')::numeric, 0),
   COALESCE(NULLIF(record.data->>'total_shortage_cost', '')::numeric, 0),
+  COALESCE(NULLIF(record.data->>'shortage_line_count', '')::integer, 0),
+  COALESCE(NULLIF(record.data->>'ingredient_line_count', '')::integer, 0),
   COALESCE(NULLIF(record.data->>'status', ''), 'posted'),
-  record.data || jsonb_build_object('id', record.id),
+  NULLIF(record.data->>'reversed_at', '')::timestamptz,
+  NULLIF(record.data->>'reversed_by', ''),
+  NULLIF(record.data->>'reversed_by_name', ''),
+  NULLIF(record.data->>'reversal_reason', ''),
   record.created_at,
   record.updated_at
 FROM entity_records record
 JOIN production_events production ON production.production_id = record.data->>'production_id'
 WHERE record.entity_name = 'ProductionConsumptionReport'
 ON CONFLICT (report_id) DO NOTHING;
+
+WITH report_data AS (
+  SELECT record.id AS report_id, record.data, record.created_at, record.updated_at
+  FROM entity_records record
+  JOIN production_consumption_reports report ON report.report_id = record.id
+  WHERE record.entity_name = 'ProductionConsumptionReport'
+), line_rows AS (
+  SELECT report_data.report_id, report_data.created_at, report_data.updated_at,
+         line.value AS line_data, line.ordinality::integer AS line_number
+  FROM report_data
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(report_data.data->'ingredient_lines') = 'array'
+      THEN report_data.data->'ingredient_lines'
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS line(value, ordinality)
+)
+INSERT INTO production_consumption_report_lines (
+  report_line_id, report_id, line_number, ingredient_id, item_code, ingredient_name,
+  unit, recipe_quantity, recipe_unit, inventory_unit, planned_quantity,
+  actual_requested_quantity, issued_quantity, shortage_quantity, posted_cost,
+  estimated_shortage_cost, quantity_basis, yield_percent, raw_weight_grams,
+  yielded_weight_grams, weight_calculation_source, yield_calculation_source,
+  unit_status, conversion_note, inventory_transaction_id, status, source_name,
+  created_at, updated_at
+)
+SELECT
+  line_rows.report_id || ':line:' || line_rows.line_number,
+  line_rows.report_id,
+  line_rows.line_number,
+  (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF(line_rows.line_data->>'ingredient_id', '') LIMIT 1),
+  NULLIF(line_rows.line_data->>'item_code', ''),
+  NULLIF(line_rows.line_data->>'ingredient_name', ''),
+  NULLIF(line_rows.line_data->>'unit', ''),
+  NULLIF(line_rows.line_data->>'recipe_quantity', '')::numeric,
+  NULLIF(line_rows.line_data->>'recipe_unit', ''),
+  NULLIF(line_rows.line_data->>'inventory_unit', ''),
+  COALESCE(NULLIF(line_rows.line_data->>'planned_quantity', '')::numeric, 0),
+  COALESCE(NULLIF(line_rows.line_data->>'actual_requested_quantity', '')::numeric, 0),
+  COALESCE(NULLIF(line_rows.line_data->>'issued_quantity', '')::numeric, 0),
+  COALESCE(NULLIF(line_rows.line_data->>'shortage_quantity', '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(line_rows.line_data->>'posted_cost', line_rows.line_data->>'total_cost'), '')::numeric, 0),
+  COALESCE(NULLIF(line_rows.line_data->>'estimated_shortage_cost', '')::numeric, 0),
+  NULLIF(line_rows.line_data->>'quantity_basis', ''),
+  NULLIF(line_rows.line_data->>'yield_percent', '')::numeric,
+  NULLIF(line_rows.line_data->>'raw_weight_grams', '')::numeric,
+  NULLIF(line_rows.line_data->>'yielded_weight_grams', '')::numeric,
+  NULLIF(line_rows.line_data->>'weight_calculation_source', ''),
+  NULLIF(COALESCE(line_rows.line_data->>'yield_calculation_source', line_rows.line_data->>'yield_source'), ''),
+  NULLIF(line_rows.line_data->>'unit_status', ''),
+  NULLIF(line_rows.line_data->>'conversion_note', ''),
+  NULLIF(line_rows.line_data->>'inventory_transaction_id', ''),
+  COALESCE(NULLIF(line_rows.line_data->>'status', ''), 'posted'),
+  NULLIF(line_rows.line_data->>'source_name', ''),
+  line_rows.created_at,
+  line_rows.updated_at
+FROM line_rows
+ON CONFLICT (report_line_id) DO NOTHING;
+
+WITH report_data AS (
+  SELECT record.id AS report_id, record.data
+  FROM entity_records record
+  JOIN production_consumption_reports report ON report.report_id = record.id
+  WHERE record.entity_name = 'ProductionConsumptionReport'
+), line_rows AS (
+  SELECT report_data.report_id, line.value AS line_data, line.ordinality::integer AS line_number
+  FROM report_data
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(report_data.data->'ingredient_lines') = 'array'
+      THEN report_data.data->'ingredient_lines'
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS line(value, ordinality)
+), source_rows AS (
+  SELECT line_rows.report_id, line_rows.line_number,
+         source.value AS recipe_name, source.ordinality::integer AS source_order
+  FROM line_rows
+  CROSS JOIN LATERAL jsonb_array_elements_text(
+    CASE WHEN jsonb_typeof(line_rows.line_data->'source_recipe_names') = 'array'
+      THEN line_rows.line_data->'source_recipe_names'
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS source(value, ordinality)
+)
+INSERT INTO production_consumption_report_line_sources (
+  report_line_source_id, report_line_id, report_id, source_order, recipe_name
+)
+SELECT
+  source_rows.report_id || ':line:' || source_rows.line_number || ':source:' || source_rows.source_order,
+  source_rows.report_id || ':line:' || source_rows.line_number,
+  source_rows.report_id,
+  source_rows.source_order,
+  source_rows.recipe_name
+FROM source_rows
+WHERE COALESCE(BTRIM(source_rows.recipe_name), '') <> ''
+ON CONFLICT (report_line_source_id) DO NOTHING;
+
+WITH report_data AS (
+  SELECT record.id AS report_id, record.data
+  FROM entity_records record
+  JOIN production_consumption_reports report ON report.report_id = record.id
+  WHERE record.entity_name = 'ProductionConsumptionReport'
+), line_rows AS (
+  SELECT report_data.report_id, line.value AS line_data, line.ordinality::integer AS line_number
+  FROM report_data
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(report_data.data->'ingredient_lines') = 'array'
+      THEN report_data.data->'ingredient_lines'
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS line(value, ordinality)
+), transaction_rows AS (
+  SELECT line_rows.report_id, line_rows.line_number,
+         transaction_id.value AS inventory_transaction_id,
+         transaction_id.ordinality::integer AS transaction_order
+  FROM line_rows
+  CROSS JOIN LATERAL jsonb_array_elements_text(
+    CASE WHEN jsonb_typeof(line_rows.line_data->'inventory_transaction_ids') = 'array'
+      THEN line_rows.line_data->'inventory_transaction_ids'
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS transaction_id(value, ordinality)
+)
+INSERT INTO production_consumption_report_line_transactions (
+  report_line_transaction_id, report_line_id, report_id, transaction_order, inventory_transaction_id
+)
+SELECT
+  transaction_rows.report_id || ':line:' || transaction_rows.line_number || ':txn:' || transaction_rows.transaction_order,
+  transaction_rows.report_id || ':line:' || transaction_rows.line_number,
+  transaction_rows.report_id,
+  transaction_rows.transaction_order,
+  transaction_rows.inventory_transaction_id
+FROM transaction_rows
+WHERE COALESCE(BTRIM(transaction_rows.inventory_transaction_id), '') <> ''
+ON CONFLICT (report_line_transaction_id) DO NOTHING;
+
+WITH report_data AS (
+  SELECT record.id AS report_id, record.data
+  FROM entity_records record
+  JOIN production_consumption_reports report ON report.report_id = record.id
+  WHERE record.entity_name = 'ProductionConsumptionReport'
+), line_rows AS (
+  SELECT report_data.report_id, line.value AS line_data, line.ordinality::integer AS line_number
+  FROM report_data
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(report_data.data->'ingredient_lines') = 'array'
+      THEN report_data.data->'ingredient_lines'
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS line(value, ordinality)
+), layer_rows AS (
+  SELECT line_rows.report_id, line_rows.line_number,
+         layer.value AS layer_data, layer.ordinality::integer AS layer_order
+  FROM line_rows
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(line_rows.line_data->'movement_layers') = 'array'
+      THEN line_rows.line_data->'movement_layers'
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS layer(value, ordinality)
+)
+INSERT INTO production_consumption_report_line_layers (
+  report_line_layer_id, report_line_id, report_id, layer_order, inventory_lot_id,
+  batch_number, stock_date, received_date, expiry_date, quantity, quantity_before,
+  quantity_after, reserved_quantity_before, reserved_quantity_after,
+  available_quantity_before, available_quantity_after, unit_cost, total_cost,
+  accounting_unit_cost, accounting_total_cost, production_id, commitment_revision,
+  operation_id, source_name
+)
+SELECT
+  layer_rows.report_id || ':line:' || layer_rows.line_number || ':layer:' || layer_rows.layer_order,
+  layer_rows.report_id || ':line:' || layer_rows.line_number,
+  layer_rows.report_id,
+  layer_rows.layer_order,
+  (SELECT lot_id FROM inventory_lots WHERE lot_id = NULLIF(layer_rows.layer_data->>'inventory_lot_id', '') LIMIT 1),
+  NULLIF(layer_rows.layer_data->>'batch_number', ''),
+  NULLIF(layer_rows.layer_data->>'stock_date', '')::date,
+  NULLIF(layer_rows.layer_data->>'received_date', '')::date,
+  NULLIF(layer_rows.layer_data->>'expiry_date', '')::date,
+  COALESCE(NULLIF(layer_rows.layer_data->>'quantity', '')::numeric, 0),
+  NULLIF(layer_rows.layer_data->>'quantity_before', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'quantity_after', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'reserved_quantity_before', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'reserved_quantity_after', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'available_quantity_before', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'available_quantity_after', '')::numeric,
+  COALESCE(NULLIF(layer_rows.layer_data->>'unit_cost', '')::numeric, 0),
+  COALESCE(NULLIF(layer_rows.layer_data->>'total_cost', '')::numeric, 0),
+  NULLIF(layer_rows.layer_data->>'accounting_unit_cost', '')::numeric,
+  NULLIF(layer_rows.layer_data->>'accounting_total_cost', '')::numeric,
+  (SELECT production_id FROM production_events WHERE production_id = NULLIF(layer_rows.layer_data->>'production_id', '') LIMIT 1),
+  NULLIF(layer_rows.layer_data->>'commitment_revision', '')::integer,
+  NULLIF(layer_rows.layer_data->>'operation_id', ''),
+  NULLIF(layer_rows.layer_data->>'source_name', '')
+FROM layer_rows
+ON CONFLICT (report_line_layer_id) DO NOTHING;
+
+WITH report_data AS (
+  SELECT record.id AS report_id, record.data, record.created_at, record.updated_at
+  FROM entity_records record
+  JOIN production_consumption_reports report ON report.report_id = record.id
+  WHERE record.entity_name = 'ProductionConsumptionReport'
+), menu_rows AS (
+  SELECT report_data.report_id, report_data.created_at, report_data.updated_at,
+         item.value AS item_data, item.ordinality::integer AS item_order
+  FROM report_data
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(report_data.data->'menu_issue_items') = 'array'
+      THEN report_data.data->'menu_issue_items'
+      ELSE '[]'::jsonb
+    END
+  ) WITH ORDINALITY AS item(value, ordinality)
+)
+INSERT INTO production_consumption_report_menu_items (
+  report_menu_item_id, report_id, item_order, production_line_id, recipe_version_id,
+  ingredient_id, item_name, recipe_name, line_type, item_key, source_menu_plan_item_key,
+  original_source_menu_plan_item_key, recipe_code, ingredient_name, meal_period,
+  requested_servings, requested_weight_grams, produced_servings, produced_weight_grams,
+  production_covers, raw_weight_grams, yielded_weight_grams, expected_finished_weight_grams,
+  portion_size_grams, expected_yield_servings, output_calculation_source,
+  weight_calculation_source, yield_calculation_source, weight_snapshot_version,
+  estimated_cost, actual_cost, status, source_name, created_at, updated_at
+)
+SELECT
+  menu_rows.report_id || ':menu-item:' || menu_rows.item_order,
+  menu_rows.report_id,
+  menu_rows.item_order,
+  (SELECT production_line_id FROM production_manifest_lines WHERE production_line_id = NULLIF(COALESCE(menu_rows.item_data->>'production_line_id', menu_rows.item_data->>'id'), '') LIMIT 1),
+  (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(COALESCE(menu_rows.item_data->>'recipe_id', menu_rows.item_data->>'recipe_version_id'), '') LIMIT 1),
+  (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF(menu_rows.item_data->>'ingredient_id', '') LIMIT 1),
+  COALESCE(NULLIF(menu_rows.item_data->>'item_name', ''), NULLIF(menu_rows.item_data->>'recipe_name', ''), NULLIF(menu_rows.item_data->>'name', ''), 'Production menu item'),
+  NULLIF(COALESCE(menu_rows.item_data->>'recipe_name', menu_rows.item_data->>'name'), ''),
+  NULLIF(menu_rows.item_data->>'line_type', ''),
+  NULLIF(COALESCE(menu_rows.item_data->>'key', menu_rows.item_data->>'manifest_item_key'), ''),
+  NULLIF(menu_rows.item_data->>'source_menu_plan_item_key', ''),
+  NULLIF(menu_rows.item_data->>'original_source_menu_plan_item_key', ''),
+  NULLIF(menu_rows.item_data->>'recipe_code', ''),
+  NULLIF(menu_rows.item_data->>'ingredient_name', ''),
+  NULLIF(menu_rows.item_data->>'meal_type', ''),
+  NULLIF(menu_rows.item_data->>'requested_servings', '')::numeric,
+  NULLIF(menu_rows.item_data->>'requested_weight_grams', '')::numeric,
+  NULLIF(menu_rows.item_data->>'produced_servings', '')::numeric,
+  NULLIF(menu_rows.item_data->>'produced_weight_grams', '')::numeric,
+  NULLIF(COALESCE(menu_rows.item_data->>'production_covers', menu_rows.item_data->>'expected_servings'), '')::numeric,
+  NULLIF(menu_rows.item_data->>'raw_weight_grams', '')::numeric,
+  NULLIF(menu_rows.item_data->>'yielded_weight_grams', '')::numeric,
+  NULLIF(menu_rows.item_data->>'expected_finished_weight_grams', '')::numeric,
+  NULLIF(menu_rows.item_data->>'portion_size_grams', '')::numeric,
+  NULLIF(menu_rows.item_data->>'expected_yield_servings', '')::numeric,
+  NULLIF(menu_rows.item_data->>'output_calculation_source', ''),
+  NULLIF(menu_rows.item_data->>'weight_calculation_source', ''),
+  NULLIF(COALESCE(menu_rows.item_data->>'yield_calculation_source', menu_rows.item_data->>'yield_source'), ''),
+  NULLIF(menu_rows.item_data->>'weight_snapshot_version', '')::integer,
+  COALESCE(NULLIF(COALESCE(menu_rows.item_data->>'estimated_cost', menu_rows.item_data->>'estimated_batch_cost'), '')::numeric, 0),
+  COALESCE(NULLIF(COALESCE(menu_rows.item_data->>'actual_cost', menu_rows.item_data->>'total_cost'), '')::numeric, 0),
+  COALESCE(NULLIF(menu_rows.item_data->>'status', ''), 'active'),
+  NULLIF(menu_rows.item_data->>'source_name', ''),
+  menu_rows.created_at,
+  menu_rows.updated_at
+FROM menu_rows
+ON CONFLICT (report_menu_item_id) DO NOTHING;
+
+WITH report_data AS (
+  SELECT record.id AS report_id, record.data
+  FROM entity_records record
+  JOIN production_consumption_reports report ON report.report_id = record.id
+  WHERE record.entity_name = 'ProductionConsumptionReport'
+), unit_rows AS (
+  SELECT report_data.report_id, totals.key AS unit, totals.value AS quantity
+  FROM report_data
+  CROSS JOIN LATERAL jsonb_each_text(
+    CASE WHEN jsonb_typeof(report_data.data->'shortage_totals_by_unit') = 'object'
+      THEN report_data.data->'shortage_totals_by_unit'
+      ELSE '{}'::jsonb
+    END
+  ) AS totals(key, value)
+)
+INSERT INTO production_consumption_report_unit_totals (
+  report_unit_total_id, report_id, unit, shortage_quantity
+)
+SELECT
+  unit_rows.report_id || ':unit-total:' || unit_rows.unit,
+  unit_rows.report_id,
+  unit_rows.unit,
+  COALESCE(NULLIF(unit_rows.quantity, '')::numeric, 0)
+FROM unit_rows
+WHERE COALESCE(BTRIM(unit_rows.unit), '') <> ''
+ON CONFLICT (report_unit_total_id) DO NOTHING;
+
+DO $production_consumption_report_payload_cutover$
+DECLARE
+  has_payload_column BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'production_consumption_reports'
+      AND column_name = 'payload'
+  ) INTO has_payload_column;
+
+  IF has_payload_column THEN
+    UPDATE production_consumption_reports report
+       SET report_name = COALESCE(report.report_name, NULLIF(report.payload->>'report_name', '')),
+           warehouse_name = COALESCE(report.warehouse_name, NULLIF(report.payload->>'site_name', '')),
+           requesting_warehouse_id = COALESCE(report.requesting_warehouse_id, NULLIF(report.payload->>'requesting_site_id', '')),
+           requesting_warehouse_name = COALESCE(report.requesting_warehouse_name, NULLIF(report.payload->>'requesting_site_name', '')),
+           fulfillment_store_id = COALESCE(report.fulfillment_store_id, NULLIF(report.payload->>'fulfillment_store_id', '')),
+           fulfillment_store_name = COALESCE(report.fulfillment_store_name, NULLIF(report.payload->>'fulfillment_store_name', '')),
+           recipe_version_id = COALESCE(
+             report.recipe_version_id,
+             (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(report.payload->>'recipe_id', '') LIMIT 1)
+           ),
+           recipe_name = COALESCE(report.recipe_name, NULLIF(report.payload->>'recipe_name', '')),
+           original_recipe_name = COALESCE(report.original_recipe_name, NULLIF(report.payload->>'original_recipe_name', '')),
+           production_name = COALESCE(report.production_name, NULLIF(report.payload->>'production_name', '')),
+           original_production_name = COALESCE(report.original_production_name, NULLIF(report.payload->>'original_production_name', '')),
+           meal_period = COALESCE(report.meal_period, NULLIF(report.payload->>'meal_type', '')),
+           menu_type = COALESCE(report.menu_type, NULLIF(COALESCE(report.payload->>'menu_type', report.payload->>'cuisine_type'), '')),
+           menu_category = COALESCE(report.menu_category, NULLIF(report.payload->>'menu_category', '')),
+           menu_scope_label = COALESCE(report.menu_scope_label, NULLIF(report.payload->>'menu_scope_label', '')),
+           production_issue_grouped = COALESCE(NULLIF(report.payload->>'production_issue_grouped', '')::boolean, report.production_issue_grouped, FALSE),
+           production_issue_item_count = COALESCE(report.production_issue_item_count, NULLIF(report.payload->>'production_issue_item_count', '')::integer),
+           production_issue_dish_count = COALESCE(report.production_issue_dish_count, NULLIF(report.payload->>'production_issue_dish_count', '')::integer),
+           kitchen_station = COALESCE(report.kitchen_station, NULLIF(report.payload->>'kitchen_station', '')),
+           target_servings = COALESCE(report.target_servings, NULLIF(report.payload->>'target_servings', '')::numeric),
+           completed_by = COALESCE(report.completed_by, NULLIF(report.payload->>'completed_by', '')),
+           completed_by_name = COALESCE(report.completed_by_name, NULLIF(report.payload->>'completed_by_name', '')),
+           completed_at = COALESCE(report.completed_at, NULLIF(report.payload->>'completed_at', '')::timestamptz),
+           quantity_basis = COALESCE(report.quantity_basis, NULLIF(report.payload->>'quantity_basis', '')),
+           reconciliation_mode = COALESCE(report.reconciliation_mode, NULLIF(report.payload->>'reconciliation_mode', '')),
+           output_calculation_source = COALESCE(report.output_calculation_source, NULLIF(report.payload->>'output_calculation_source', '')),
+           recipe_raw_weight_grams = COALESCE(report.recipe_raw_weight_grams, NULLIF(report.payload->>'recipe_raw_weight_grams', '')::numeric),
+           expected_finished_weight_grams = COALESCE(report.expected_finished_weight_grams, NULLIF(report.payload->>'expected_finished_weight_grams', '')::numeric),
+           total_raw_consumption_weight_grams = COALESCE(report.total_raw_consumption_weight_grams, NULLIF(report.payload->>'total_raw_consumption_weight_grams', '')::numeric),
+           total_yielded_weight_grams = COALESCE(report.total_yielded_weight_grams, NULLIF(report.payload->>'total_yielded_weight_grams', '')::numeric),
+           portion_size_grams = COALESCE(report.portion_size_grams, NULLIF(report.payload->>'portion_size_grams', '')::numeric),
+           expected_yield_servings = COALESCE(report.expected_yield_servings, NULLIF(report.payload->>'expected_yield_servings', '')::numeric),
+           shortage_line_count = COALESCE(NULLIF(report.payload->>'shortage_line_count', '')::integer, report.shortage_line_count, 0),
+           ingredient_line_count = COALESCE(NULLIF(report.payload->>'ingredient_line_count', '')::integer, report.ingredient_line_count, 0),
+           reversed_at = COALESCE(report.reversed_at, NULLIF(report.payload->>'reversed_at', '')::timestamptz),
+           reversed_by = COALESCE(report.reversed_by, NULLIF(report.payload->>'reversed_by', '')),
+           reversed_by_name = COALESCE(report.reversed_by_name, NULLIF(report.payload->>'reversed_by_name', '')),
+           reversal_reason = COALESCE(report.reversal_reason, NULLIF(report.payload->>'reversal_reason', ''))
+     WHERE report.payload IS NOT NULL;
+
+    WITH line_rows AS (
+      SELECT report.report_id, report.created_at, report.updated_at,
+             line.value AS line_data, line.ordinality::integer AS line_number
+      FROM production_consumption_reports report
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(report.payload->'ingredient_lines') = 'array'
+          THEN report.payload->'ingredient_lines'
+          ELSE '[]'::jsonb
+        END
+      ) WITH ORDINALITY AS line(value, ordinality)
+    )
+    INSERT INTO production_consumption_report_lines (
+      report_line_id, report_id, line_number, ingredient_id, item_code, ingredient_name,
+      unit, recipe_quantity, recipe_unit, inventory_unit, planned_quantity,
+      actual_requested_quantity, issued_quantity, shortage_quantity, posted_cost,
+      estimated_shortage_cost, quantity_basis, yield_percent, raw_weight_grams,
+      yielded_weight_grams, weight_calculation_source, yield_calculation_source,
+      unit_status, conversion_note, inventory_transaction_id, status, source_name,
+      created_at, updated_at
+    )
+    SELECT
+      line_rows.report_id || ':line:' || line_rows.line_number,
+      line_rows.report_id,
+      line_rows.line_number,
+      (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF(line_rows.line_data->>'ingredient_id', '') LIMIT 1),
+      NULLIF(line_rows.line_data->>'item_code', ''),
+      NULLIF(line_rows.line_data->>'ingredient_name', ''),
+      NULLIF(line_rows.line_data->>'unit', ''),
+      NULLIF(line_rows.line_data->>'recipe_quantity', '')::numeric,
+      NULLIF(line_rows.line_data->>'recipe_unit', ''),
+      NULLIF(line_rows.line_data->>'inventory_unit', ''),
+      COALESCE(NULLIF(line_rows.line_data->>'planned_quantity', '')::numeric, 0),
+      COALESCE(NULLIF(line_rows.line_data->>'actual_requested_quantity', '')::numeric, 0),
+      COALESCE(NULLIF(line_rows.line_data->>'issued_quantity', '')::numeric, 0),
+      COALESCE(NULLIF(line_rows.line_data->>'shortage_quantity', '')::numeric, 0),
+      COALESCE(NULLIF(COALESCE(line_rows.line_data->>'posted_cost', line_rows.line_data->>'total_cost'), '')::numeric, 0),
+      COALESCE(NULLIF(line_rows.line_data->>'estimated_shortage_cost', '')::numeric, 0),
+      NULLIF(line_rows.line_data->>'quantity_basis', ''),
+      NULLIF(line_rows.line_data->>'yield_percent', '')::numeric,
+      NULLIF(line_rows.line_data->>'raw_weight_grams', '')::numeric,
+      NULLIF(line_rows.line_data->>'yielded_weight_grams', '')::numeric,
+      NULLIF(line_rows.line_data->>'weight_calculation_source', ''),
+      NULLIF(COALESCE(line_rows.line_data->>'yield_calculation_source', line_rows.line_data->>'yield_source'), ''),
+      NULLIF(line_rows.line_data->>'unit_status', ''),
+      NULLIF(line_rows.line_data->>'conversion_note', ''),
+      NULLIF(line_rows.line_data->>'inventory_transaction_id', ''),
+      COALESCE(NULLIF(line_rows.line_data->>'status', ''), 'posted'),
+      NULLIF(line_rows.line_data->>'source_name', ''),
+      line_rows.created_at,
+      line_rows.updated_at
+    FROM line_rows
+    ON CONFLICT (report_line_id) DO NOTHING;
+
+    WITH line_rows AS (
+      SELECT report.report_id, line.value AS line_data, line.ordinality::integer AS line_number
+      FROM production_consumption_reports report
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(report.payload->'ingredient_lines') = 'array'
+          THEN report.payload->'ingredient_lines'
+          ELSE '[]'::jsonb
+        END
+      ) WITH ORDINALITY AS line(value, ordinality)
+    ), layer_rows AS (
+      SELECT line_rows.report_id, line_rows.line_number,
+             layer.value AS layer_data, layer.ordinality::integer AS layer_order
+      FROM line_rows
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(line_rows.line_data->'movement_layers') = 'array'
+          THEN line_rows.line_data->'movement_layers'
+          ELSE '[]'::jsonb
+        END
+      ) WITH ORDINALITY AS layer(value, ordinality)
+    )
+    INSERT INTO production_consumption_report_line_layers (
+      report_line_layer_id, report_line_id, report_id, layer_order, inventory_lot_id,
+      batch_number, stock_date, received_date, expiry_date, quantity, quantity_before,
+      quantity_after, reserved_quantity_before, reserved_quantity_after,
+      available_quantity_before, available_quantity_after, unit_cost, total_cost,
+      accounting_unit_cost, accounting_total_cost, production_id, commitment_revision,
+      operation_id, source_name
+    )
+    SELECT
+      layer_rows.report_id || ':line:' || layer_rows.line_number || ':layer:' || layer_rows.layer_order,
+      layer_rows.report_id || ':line:' || layer_rows.line_number,
+      layer_rows.report_id,
+      layer_rows.layer_order,
+      (SELECT lot_id FROM inventory_lots WHERE lot_id = NULLIF(layer_rows.layer_data->>'inventory_lot_id', '') LIMIT 1),
+      NULLIF(layer_rows.layer_data->>'batch_number', ''),
+      NULLIF(layer_rows.layer_data->>'stock_date', '')::date,
+      NULLIF(layer_rows.layer_data->>'received_date', '')::date,
+      NULLIF(layer_rows.layer_data->>'expiry_date', '')::date,
+      COALESCE(NULLIF(layer_rows.layer_data->>'quantity', '')::numeric, 0),
+      NULLIF(layer_rows.layer_data->>'quantity_before', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'quantity_after', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'reserved_quantity_before', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'reserved_quantity_after', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'available_quantity_before', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'available_quantity_after', '')::numeric,
+      COALESCE(NULLIF(layer_rows.layer_data->>'unit_cost', '')::numeric, 0),
+      COALESCE(NULLIF(layer_rows.layer_data->>'total_cost', '')::numeric, 0),
+      NULLIF(layer_rows.layer_data->>'accounting_unit_cost', '')::numeric,
+      NULLIF(layer_rows.layer_data->>'accounting_total_cost', '')::numeric,
+      (SELECT production_id FROM production_events WHERE production_id = NULLIF(layer_rows.layer_data->>'production_id', '') LIMIT 1),
+      NULLIF(layer_rows.layer_data->>'commitment_revision', '')::integer,
+      NULLIF(layer_rows.layer_data->>'operation_id', ''),
+      NULLIF(layer_rows.layer_data->>'source_name', '')
+    FROM layer_rows
+    ON CONFLICT (report_line_layer_id) DO NOTHING;
+
+    WITH menu_rows AS (
+      SELECT report.report_id, report.created_at, report.updated_at,
+             item.value AS item_data, item.ordinality::integer AS item_order
+      FROM production_consumption_reports report
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(report.payload->'menu_issue_items') = 'array'
+          THEN report.payload->'menu_issue_items'
+          ELSE '[]'::jsonb
+        END
+      ) WITH ORDINALITY AS item(value, ordinality)
+    )
+    INSERT INTO production_consumption_report_menu_items (
+      report_menu_item_id, report_id, item_order, production_line_id, recipe_version_id,
+      ingredient_id, item_name, recipe_name, line_type, item_key, source_menu_plan_item_key,
+      original_source_menu_plan_item_key, recipe_code, ingredient_name, meal_period,
+      requested_servings, requested_weight_grams, produced_servings, produced_weight_grams,
+      production_covers, raw_weight_grams, yielded_weight_grams, expected_finished_weight_grams,
+      portion_size_grams, expected_yield_servings, output_calculation_source,
+      weight_calculation_source, yield_calculation_source, weight_snapshot_version,
+      estimated_cost, actual_cost, status, source_name, created_at, updated_at
+    )
+    SELECT
+      menu_rows.report_id || ':menu-item:' || menu_rows.item_order,
+      menu_rows.report_id,
+      menu_rows.item_order,
+      (SELECT production_line_id FROM production_manifest_lines WHERE production_line_id = NULLIF(COALESCE(menu_rows.item_data->>'production_line_id', menu_rows.item_data->>'id'), '') LIMIT 1),
+      (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF(COALESCE(menu_rows.item_data->>'recipe_id', menu_rows.item_data->>'recipe_version_id'), '') LIMIT 1),
+      (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF(menu_rows.item_data->>'ingredient_id', '') LIMIT 1),
+      COALESCE(NULLIF(menu_rows.item_data->>'item_name', ''), NULLIF(menu_rows.item_data->>'recipe_name', ''), NULLIF(menu_rows.item_data->>'name', ''), 'Production menu item'),
+      NULLIF(COALESCE(menu_rows.item_data->>'recipe_name', menu_rows.item_data->>'name'), ''),
+      NULLIF(menu_rows.item_data->>'line_type', ''),
+      NULLIF(COALESCE(menu_rows.item_data->>'key', menu_rows.item_data->>'manifest_item_key'), ''),
+      NULLIF(menu_rows.item_data->>'source_menu_plan_item_key', ''),
+      NULLIF(menu_rows.item_data->>'original_source_menu_plan_item_key', ''),
+      NULLIF(menu_rows.item_data->>'recipe_code', ''),
+      NULLIF(menu_rows.item_data->>'ingredient_name', ''),
+      NULLIF(menu_rows.item_data->>'meal_type', ''),
+      NULLIF(menu_rows.item_data->>'requested_servings', '')::numeric,
+      NULLIF(menu_rows.item_data->>'requested_weight_grams', '')::numeric,
+      NULLIF(menu_rows.item_data->>'produced_servings', '')::numeric,
+      NULLIF(menu_rows.item_data->>'produced_weight_grams', '')::numeric,
+      NULLIF(COALESCE(menu_rows.item_data->>'production_covers', menu_rows.item_data->>'expected_servings'), '')::numeric,
+      NULLIF(menu_rows.item_data->>'raw_weight_grams', '')::numeric,
+      NULLIF(menu_rows.item_data->>'yielded_weight_grams', '')::numeric,
+      NULLIF(menu_rows.item_data->>'expected_finished_weight_grams', '')::numeric,
+      NULLIF(menu_rows.item_data->>'portion_size_grams', '')::numeric,
+      NULLIF(menu_rows.item_data->>'expected_yield_servings', '')::numeric,
+      NULLIF(menu_rows.item_data->>'output_calculation_source', ''),
+      NULLIF(menu_rows.item_data->>'weight_calculation_source', ''),
+      NULLIF(COALESCE(menu_rows.item_data->>'yield_calculation_source', menu_rows.item_data->>'yield_source'), ''),
+      NULLIF(menu_rows.item_data->>'weight_snapshot_version', '')::integer,
+      COALESCE(NULLIF(COALESCE(menu_rows.item_data->>'estimated_cost', menu_rows.item_data->>'estimated_batch_cost'), '')::numeric, 0),
+      COALESCE(NULLIF(COALESCE(menu_rows.item_data->>'actual_cost', menu_rows.item_data->>'total_cost'), '')::numeric, 0),
+      COALESCE(NULLIF(menu_rows.item_data->>'status', ''), 'active'),
+      NULLIF(menu_rows.item_data->>'source_name', ''),
+      menu_rows.created_at,
+      menu_rows.updated_at
+    FROM menu_rows
+    ON CONFLICT (report_menu_item_id) DO NOTHING;
+
+    WITH unit_rows AS (
+      SELECT report.report_id, totals.key AS unit, totals.value AS quantity
+      FROM production_consumption_reports report
+      CROSS JOIN LATERAL jsonb_each_text(
+        CASE WHEN jsonb_typeof(report.payload->'shortage_totals_by_unit') = 'object'
+          THEN report.payload->'shortage_totals_by_unit'
+          ELSE '{}'::jsonb
+        END
+      ) AS totals(key, value)
+    )
+    INSERT INTO production_consumption_report_unit_totals (
+      report_unit_total_id, report_id, unit, shortage_quantity
+    )
+    SELECT
+      unit_rows.report_id || ':unit-total:' || unit_rows.unit,
+      unit_rows.report_id,
+      unit_rows.unit,
+      COALESCE(NULLIF(unit_rows.quantity, '')::numeric, 0)
+    FROM unit_rows
+    WHERE COALESCE(BTRIM(unit_rows.unit), '') <> ''
+    ON CONFLICT (report_unit_total_id) DO NOTHING;
+
+    ALTER TABLE production_consumption_reports DROP COLUMN payload;
+  END IF;
+END;
+$production_consumption_report_payload_cutover$;
 
 INSERT INTO meal_service_headers (
   meal_service_id, service_reference, idempotency_key, warehouse_id, service_date,

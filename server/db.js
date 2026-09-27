@@ -723,6 +723,45 @@ function rowTimestamp(value) {
   return value?.toISOString?.() || value || null;
 }
 
+function rowJsonArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function rowJsonObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function productionConsumptionReportSections(ingredientLines = []) {
+  const lines = rowJsonArray(ingredientLines);
+  const lotLines = lines.flatMap((line) => (
+    rowJsonArray(line?.movement_layers).map((layer) => ({
+      item_code: line.item_code || null,
+      ingredient_id: line.ingredient_id || null,
+      ingredient_name: line.ingredient_name || null,
+      unit: line.unit || line.inventory_unit || null,
+      ...layer
+    }))
+  ));
+  const shortageLines = lines.filter((line) => toNumberOrZero(line?.shortage_quantity) > 0);
+  return [
+    {
+      key: 'ingredient_consumption',
+      title: 'Ingredient Consumption',
+      lines
+    },
+    {
+      key: 'inventory_lot_usage',
+      title: 'Inventory Lots Consumed',
+      lines: lotLines
+    },
+    {
+      key: 'shortages',
+      title: 'Shortages and Exceptions',
+      lines: shortageLines
+    }
+  ];
+}
+
 function withPayload(row = {}, explicit = {}) {
   const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
   const { __entity: entity, ...fields } = explicit;
@@ -1027,16 +1066,68 @@ function rowToProduction(row = {}) {
 }
 
 function rowToProductionConsumptionReport(row = {}) {
-  return withPayload(row, {
-    __entity: 'ProductionConsumptionReport',
+  const ingredientLines = rowJsonArray(row.ingredient_lines);
+  const menuIssueItems = rowJsonArray(row.menu_issue_items);
+  const partialReversalHistory = rowJsonArray(row.partial_reversal_history);
+  return hydrateDerivedFields('ProductionConsumptionReport', {
     id: row.report_id,
     report_number: row.report_number,
+    report_name: row.report_name || null,
     production_id: row.production_id,
+    production_name: row.production_name || null,
+    original_production_name: row.original_production_name || null,
     site_id: row.warehouse_id || null,
+    warehouse_id: row.warehouse_id || null,
+    site_name: row.warehouse_name || null,
+    requesting_site_id: row.requesting_warehouse_id || null,
+    requesting_site_name: row.requesting_warehouse_name || null,
+    fulfillment_store_id: row.fulfillment_store_id || row.warehouse_id || null,
+    fulfillment_store_name: row.fulfillment_store_name || null,
+    recipe_id: row.recipe_version_id || null,
+    recipe_name: row.recipe_name || null,
+    original_recipe_name: row.original_recipe_name || null,
     production_date: toDateOnlyOrNull(row.production_date),
+    meal_type: row.meal_period || null,
+    menu_type: row.menu_type || null,
+    cuisine_type: row.menu_type || null,
+    menu_category: row.menu_category || null,
+    menu_scope_label: row.menu_scope_label || null,
+    production_issue_grouped: row.production_issue_grouped === true,
+    production_issue_item_count: toNumberOrNull(row.production_issue_item_count),
+    production_issue_dish_count: toNumberOrNull(row.production_issue_dish_count),
+    menu_issue_items: menuIssueItems,
+    manifest_lines: menuIssueItems,
+    kitchen_station: row.kitchen_station || null,
+    target_servings: toNumberOrZero(row.target_servings),
+    completed_by: row.completed_by || null,
+    completed_by_name: row.completed_by_name || null,
+    completed_at: rowTimestamp(row.completed_at),
+    quantity_basis: row.quantity_basis || null,
+    reconciliation_mode: row.reconciliation_mode || null,
+    output_calculation_source: row.output_calculation_source || null,
+    recipe_raw_weight_grams: toNumberOrNull(row.recipe_raw_weight_grams),
+    expected_finished_weight_grams: toNumberOrNull(row.expected_finished_weight_grams),
+    total_raw_consumption_weight_grams: toNumberOrNull(row.total_raw_consumption_weight_grams),
+    total_yielded_weight_grams: toNumberOrNull(row.total_yielded_weight_grams),
+    portion_size_grams: toNumberOrNull(row.portion_size_grams),
+    expected_yield_servings: toNumberOrNull(row.expected_yield_servings),
     total_consumption_cost: Number(row.total_consumption_cost || 0),
     total_shortage_cost: Number(row.total_shortage_cost || 0),
-    status: row.status || 'posted'
+    shortage_line_count: Number(row.shortage_line_count || 0),
+    shortage_totals_by_unit: rowJsonObject(row.shortage_totals_by_unit),
+    ingredient_line_count: Number(row.ingredient_line_count || ingredientLines.length || 0),
+    ingredient_lines: ingredientLines,
+    sections: productionConsumptionReportSections(ingredientLines),
+    partial_reversal_summary: rowJsonObject(row.partial_reversal_summary),
+    partial_reversal_history: partialReversalHistory,
+    reversal_summary: rowJsonObject(row.reversal_summary),
+    reversed_at: rowTimestamp(row.reversed_at),
+    reversed_by: row.reversed_by || null,
+    reversed_by_name: row.reversed_by_name || null,
+    reversal_reason: row.reversal_reason || null,
+    status: row.status || 'posted',
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
   });
 }
 
@@ -1695,7 +1786,300 @@ function normalizedSelectForEntity(entity) {
                    ), '[]'::jsonb) AS manifest_lines
             FROM production_events event`;
   }
-  if (entity === 'ProductionConsumptionReport') return 'SELECT * FROM production_consumption_reports';
+  if (entity === 'ProductionConsumptionReport') {
+    return `SELECT report.*,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'ingredient_id', line.ingredient_id,
+                         'item_code', line.item_code,
+                         'ingredient_name', line.ingredient_name,
+                         'unit', line.unit,
+                         'recipe_quantity', line.recipe_quantity,
+                         'recipe_unit', line.recipe_unit,
+                         'inventory_unit', line.inventory_unit,
+                         'planned_quantity', line.planned_quantity,
+                         'actual_requested_quantity', line.actual_requested_quantity,
+                         'issued_quantity', line.issued_quantity,
+                         'shortage_quantity', line.shortage_quantity,
+                         'posted_cost', line.posted_cost,
+                         'estimated_shortage_cost', line.estimated_shortage_cost,
+                         'quantity_basis', line.quantity_basis,
+                         'source_recipe_names', COALESCE((
+                           SELECT jsonb_agg(source.recipe_name ORDER BY source.source_order)
+                           FROM production_consumption_report_line_sources source
+                           WHERE source.report_line_id = line.report_line_id
+                         ), '[]'::jsonb),
+                         'yield_percent', line.yield_percent,
+                         'raw_weight_grams', line.raw_weight_grams,
+                         'yielded_weight_grams', line.yielded_weight_grams,
+                         'weight_calculation_source', line.weight_calculation_source,
+                         'yield_calculation_source', line.yield_calculation_source,
+                         'unit_status', line.unit_status,
+                         'conversion_note', line.conversion_note,
+                         'inventory_transaction_id', line.inventory_transaction_id,
+                         'inventory_transaction_ids', COALESCE((
+                           SELECT jsonb_agg(txn.inventory_transaction_id ORDER BY txn.transaction_order)
+                           FROM production_consumption_report_line_transactions txn
+                           WHERE txn.report_line_id = line.report_line_id
+                         ), CASE WHEN COALESCE(line.inventory_transaction_id, '') <> ''
+                           THEN jsonb_build_array(line.inventory_transaction_id)
+                           ELSE '[]'::jsonb
+                         END),
+                         'movement_layers', COALESCE((
+                           SELECT jsonb_agg(
+                             jsonb_build_object(
+                               'inventory_lot_id', layer.inventory_lot_id,
+                               'batch_number', layer.batch_number,
+                               'stock_date', layer.stock_date,
+                               'received_date', layer.received_date,
+                               'expiry_date', layer.expiry_date,
+                               'quantity', layer.quantity,
+                               'quantity_before', layer.quantity_before,
+                               'quantity_after', layer.quantity_after,
+                               'reserved_quantity_before', layer.reserved_quantity_before,
+                               'reserved_quantity_after', layer.reserved_quantity_after,
+                               'available_quantity_before', layer.available_quantity_before,
+                               'available_quantity_after', layer.available_quantity_after,
+                               'unit_cost', layer.unit_cost,
+                               'total_cost', layer.total_cost,
+                               'accounting_unit_cost', layer.accounting_unit_cost,
+                               'accounting_total_cost', layer.accounting_total_cost,
+                               'production_id', layer.production_id,
+                               'commitment_revision', layer.commitment_revision,
+                               'operation_id', layer.operation_id,
+                               'source_name', layer.source_name
+                             )
+                             ORDER BY layer.layer_order
+                           )
+                           FROM production_consumption_report_line_layers layer
+                           WHERE layer.report_line_id = line.report_line_id
+                         ), '[]'::jsonb),
+                         'status', line.status,
+                         'source_name', line.source_name
+                       )
+                       ORDER BY line.line_number
+                     )
+                     FROM production_consumption_report_lines line
+                     WHERE line.report_id = report.report_id
+                   ), '[]'::jsonb) AS ingredient_lines,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'id', item.production_line_id,
+                         'production_line_id', item.production_line_id,
+                         'recipe_id', item.recipe_version_id,
+                         'recipe_version_id', item.recipe_version_id,
+                         'ingredient_id', item.ingredient_id,
+                         'item_name', item.item_name,
+                         'recipe_name', item.recipe_name,
+                         'name', COALESCE(item.recipe_name, item.item_name),
+                         'line_type', item.line_type,
+                         'key', item.item_key,
+                         'manifest_item_key', item.item_key,
+                         'source_menu_plan_item_key', item.source_menu_plan_item_key,
+                         'original_source_menu_plan_item_key', item.original_source_menu_plan_item_key,
+                         'recipe_code', item.recipe_code,
+                         'ingredient_name', item.ingredient_name,
+                         'meal_type', item.meal_period,
+                         'requested_servings', item.requested_servings,
+                         'requested_weight_grams', item.requested_weight_grams,
+                         'produced_servings', item.produced_servings,
+                         'produced_weight_grams', item.produced_weight_grams,
+                         'production_covers', item.production_covers,
+                         'expected_servings', item.production_covers,
+                         'raw_weight_grams', item.raw_weight_grams,
+                         'yielded_weight_grams', item.yielded_weight_grams,
+                         'expected_finished_weight_grams', item.expected_finished_weight_grams,
+                         'portion_size_grams', item.portion_size_grams,
+                         'expected_yield_servings', item.expected_yield_servings,
+                         'output_calculation_source', item.output_calculation_source,
+                         'weight_calculation_source', item.weight_calculation_source,
+                         'yield_calculation_source', item.yield_calculation_source,
+                         'weight_snapshot_version', item.weight_snapshot_version,
+                         'estimated_cost', item.estimated_cost,
+                         'estimated_batch_cost', item.estimated_cost,
+                         'actual_cost', item.actual_cost,
+                         'status', item.status,
+                         'source_name', item.source_name
+                       )
+                       ORDER BY item.item_order
+                     )
+                     FROM production_consumption_report_menu_items item
+                     WHERE item.report_id = report.report_id
+                   ), '[]'::jsonb) AS menu_issue_items,
+                   COALESCE((
+                     SELECT jsonb_object_agg(unit_total.unit, unit_total.shortage_quantity)
+                     FROM production_consumption_report_unit_totals unit_total
+                     WHERE unit_total.report_id = report.report_id
+                   ), '{}'::jsonb) AS shortage_totals_by_unit,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'partially_reversed_at', event.event_timestamp,
+                         'partially_reversed_by', COALESCE(event.actor_email, event.actor_id),
+                         'partially_reversed_by_name', event.actor_name,
+                         'reason', event.reason,
+                         'returned_line_count', event.returned_line_count,
+                         'returned_total_cost', event.returned_total_cost,
+                         'reversed_manifest_items', COALESCE((
+                           SELECT jsonb_agg(
+                             jsonb_build_object(
+                               'key', manifest.item_key,
+                               'name', manifest.item_name,
+                               'reversed_weight_grams', manifest.reversed_weight_grams,
+                               'reversal_ratio', manifest.reversal_ratio
+                             )
+                             ORDER BY manifest.item_order
+                           )
+                           FROM production_consumption_report_event_manifest_items manifest
+                           WHERE manifest.report_event_id = event.report_event_id
+                         ), '[]'::jsonb),
+                         'returned_lines', COALESCE((
+                           SELECT jsonb_agg(
+                             jsonb_build_object(
+                               'source_line_index', event_line.source_line_index,
+                               'ingredient_id', event_line.ingredient_id,
+                               'ingredient_name', event_line.ingredient_name,
+                               'item_code', event_line.item_code,
+                               'unit', event_line.unit,
+                               'requested_quantity', event_line.requested_quantity,
+                               'returned_quantity', event_line.returned_quantity,
+                               'total_cost', event_line.total_cost,
+                               'transaction_id', event_line.inventory_transaction_id,
+                               'movement_layers', COALESCE((
+                                 SELECT jsonb_agg(
+                                   jsonb_build_object(
+                                     'inventory_lot_id', event_layer.inventory_lot_id,
+                                     'batch_number', event_layer.batch_number,
+                                     'stock_date', event_layer.stock_date,
+                                     'received_date', event_layer.received_date,
+                                     'expiry_date', event_layer.expiry_date,
+                                     'quantity', event_layer.quantity,
+                                     'quantity_before', event_layer.quantity_before,
+                                     'quantity_after', event_layer.quantity_after,
+                                     'reserved_quantity_before', event_layer.reserved_quantity_before,
+                                     'reserved_quantity_after', event_layer.reserved_quantity_after,
+                                     'available_quantity_before', event_layer.available_quantity_before,
+                                     'available_quantity_after', event_layer.available_quantity_after,
+                                     'unit_cost', event_layer.unit_cost,
+                                     'total_cost', event_layer.total_cost,
+                                     'accounting_unit_cost', event_layer.accounting_unit_cost,
+                                     'accounting_total_cost', event_layer.accounting_total_cost,
+                                     'production_id', event_layer.production_id,
+                                     'commitment_revision', event_layer.commitment_revision,
+                                     'operation_id', event_layer.operation_id,
+                                     'source_name', event_layer.source_name
+                                   )
+                                   ORDER BY event_layer.layer_order
+                                 )
+                                 FROM production_consumption_report_event_line_layers event_layer
+                                 WHERE event_layer.report_event_line_id = event_line.report_event_line_id
+                               ), '[]'::jsonb)
+                             )
+                             ORDER BY event_line.line_order
+                           )
+                           FROM production_consumption_report_event_lines event_line
+                           WHERE event_line.report_event_id = event.report_event_id
+                         ), '[]'::jsonb),
+                         'preserved_active_output_usage', jsonb_build_object(
+                           'served_weight_grams', event.served_weight_grams,
+                           'wasted_weight_grams', event.wasted_weight_grams,
+                           'served_servings', event.served_servings,
+                           'wasted_servings', event.wasted_servings
+                         )
+                       )
+                       ORDER BY event.event_order
+                     )
+                     FROM production_consumption_report_events event
+                     WHERE event.report_id = report.report_id
+                       AND event.event_type = 'partial_reversal'
+                   ), '[]'::jsonb) AS partial_reversal_history,
+                   COALESCE((
+                     SELECT jsonb_build_object(
+                       'partially_reversed_at', event.event_timestamp,
+                       'partially_reversed_by', COALESCE(event.actor_email, event.actor_id),
+                       'partially_reversed_by_name', event.actor_name,
+                       'reason', event.reason,
+                       'returned_line_count', event.returned_line_count,
+                       'returned_total_cost', event.returned_total_cost,
+                       'reversed_manifest_items', COALESCE((
+                         SELECT jsonb_agg(
+                           jsonb_build_object(
+                             'key', manifest.item_key,
+                             'name', manifest.item_name,
+                             'reversed_weight_grams', manifest.reversed_weight_grams,
+                             'reversal_ratio', manifest.reversal_ratio
+                           )
+                           ORDER BY manifest.item_order
+                         )
+                         FROM production_consumption_report_event_manifest_items manifest
+                         WHERE manifest.report_event_id = event.report_event_id
+                       ), '[]'::jsonb),
+                       'returned_lines', COALESCE((
+                         SELECT jsonb_agg(
+                           jsonb_build_object(
+                             'source_line_index', event_line.source_line_index,
+                             'ingredient_id', event_line.ingredient_id,
+                             'ingredient_name', event_line.ingredient_name,
+                             'item_code', event_line.item_code,
+                             'unit', event_line.unit,
+                             'requested_quantity', event_line.requested_quantity,
+                             'returned_quantity', event_line.returned_quantity,
+                             'total_cost', event_line.total_cost,
+                             'transaction_id', event_line.inventory_transaction_id
+                           )
+                           ORDER BY event_line.line_order
+                         )
+                         FROM production_consumption_report_event_lines event_line
+                         WHERE event_line.report_event_id = event.report_event_id
+                       ), '[]'::jsonb),
+                       'preserved_active_output_usage', jsonb_build_object(
+                         'served_weight_grams', event.served_weight_grams,
+                         'wasted_weight_grams', event.wasted_weight_grams,
+                         'served_servings', event.served_servings,
+                         'wasted_servings', event.wasted_servings
+                       )
+                     )
+                     FROM production_consumption_report_events event
+                     WHERE event.report_id = report.report_id
+                       AND event.event_type = 'partial_reversal'
+                     ORDER BY event.event_order DESC
+                     LIMIT 1
+                   ), '{}'::jsonb) AS partial_reversal_summary,
+                   COALESCE((
+                     SELECT jsonb_build_object(
+                       'reversed_at', event.event_timestamp,
+                       'reversed_by', COALESCE(event.actor_email, event.actor_id),
+                       'reversed_by_name', event.actor_name,
+                       'reason', event.reason,
+                       'returned_line_count', event.returned_line_count,
+                       'returned_total_cost', event.returned_total_cost,
+                       'returned_lines', COALESCE((
+                         SELECT jsonb_agg(
+                           jsonb_build_object(
+                             'ingredient_id', event_line.ingredient_id,
+                             'ingredient_name', event_line.ingredient_name,
+                             'item_code', event_line.item_code,
+                             'unit', event_line.unit,
+                             'returned_quantity', event_line.returned_quantity,
+                             'total_cost', event_line.total_cost,
+                             'transaction_id', event_line.inventory_transaction_id
+                           )
+                           ORDER BY event_line.line_order
+                         )
+                         FROM production_consumption_report_event_lines event_line
+                         WHERE event_line.report_event_id = event.report_event_id
+                       ), '[]'::jsonb)
+                     )
+                     FROM production_consumption_report_events event
+                     WHERE event.report_id = report.report_id
+                       AND event.event_type = 'full_reversal'
+                     ORDER BY event.event_order DESC
+                     LIMIT 1
+                   ), '{}'::jsonb) AS reversal_summary
+            FROM production_consumption_reports report`;
+  }
   if (entity === 'ProducedItemBatch') {
     return `SELECT batch.*, event.production_date, event.meal_period, event.menu_type,
                    event.menu_category, event.completed_at, line.item_name
@@ -2098,12 +2482,41 @@ function normalizedSqlColumnForField(entity, field) {
     ProductionConsumptionReport: {
       report_id: 'report_id',
       report_number: 'report_number',
+      report_name: 'report_name',
       production_id: 'production_id',
       site_id: 'warehouse_id',
       warehouse_id: 'warehouse_id',
+      requesting_site_id: 'requesting_warehouse_id',
+      fulfillment_store_id: 'fulfillment_store_id',
+      recipe_id: 'recipe_version_id',
+      recipe_version_id: 'recipe_version_id',
       production_date: 'production_date',
+      meal_type: 'meal_period',
+      meal_period: 'meal_period',
+      menu_type: 'menu_type',
+      cuisine_type: 'menu_type',
+      menu_category: 'menu_category',
+      production_issue_grouped: 'production_issue_grouped',
+      production_issue_item_count: 'production_issue_item_count',
+      production_issue_dish_count: 'production_issue_dish_count',
+      target_servings: 'target_servings',
+      completed_by: 'completed_by',
+      completed_at: 'completed_at',
+      quantity_basis: 'quantity_basis',
+      reconciliation_mode: 'reconciliation_mode',
+      output_calculation_source: 'output_calculation_source',
+      recipe_raw_weight_grams: 'recipe_raw_weight_grams',
+      expected_finished_weight_grams: 'expected_finished_weight_grams',
+      total_raw_consumption_weight_grams: 'total_raw_consumption_weight_grams',
+      total_yielded_weight_grams: 'total_yielded_weight_grams',
+      portion_size_grams: 'portion_size_grams',
+      expected_yield_servings: 'expected_yield_servings',
       total_consumption_cost: 'total_consumption_cost',
-      total_shortage_cost: 'total_shortage_cost'
+      total_shortage_cost: 'total_shortage_cost',
+      shortage_line_count: 'shortage_line_count',
+      ingredient_line_count: 'ingredient_line_count',
+      reversed_by: 'reversed_by',
+      reversed_at: 'reversed_at'
     },
     ProducedItemBatch: {
       output_batch_id: 'output_batch_id',
@@ -2327,8 +2740,7 @@ function normalizedSqlColumnForField(entity, field) {
         || normalizedSimpleConfigs[entity]?.select?.includes('payload')
         || [
           'Recipe',
-          'MenuPlan',
-          'ProductionConsumptionReport'
+          'MenuPlan'
         ].includes(entity)
       )
     ) {
@@ -3089,6 +3501,542 @@ async function replaceProductionManifestLines(record, executor = pool) {
   }
 }
 
+async function replaceProductionConsumptionReportLines(record, executor = pool) {
+  await query('DELETE FROM production_consumption_report_lines WHERE report_id = $1', [record.id], executor);
+  const sourceLines = Array.isArray(record.ingredient_lines) ? record.ingredient_lines : [];
+  if (!sourceLines.length) return;
+
+  const createdAt = record.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  for (const [index, sourceLine] of sourceLines.entries()) {
+    const lineNumber = safeLineNumber(sourceLine?.line_number, index + 1);
+    const reportLineId = sourceLine?.report_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber);
+    await query(
+      `INSERT INTO production_consumption_report_lines (
+        report_line_id, report_id, line_number, ingredient_id, item_code, ingredient_name,
+        unit, recipe_quantity, recipe_unit, inventory_unit, planned_quantity,
+        actual_requested_quantity, issued_quantity, shortage_quantity, posted_cost,
+        estimated_shortage_cost, quantity_basis, yield_percent, raw_weight_grams,
+        yielded_weight_grams, weight_calculation_source, yield_calculation_source,
+        unit_status, conversion_note, inventory_transaction_id, status, source_name,
+        created_at, updated_at
+      ) VALUES (
+        $1,$2,$3,
+        (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($4::text, '') LIMIT 1),
+        $5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+        $21,$22,$23,$24,$25,$26,$27,$28,$29
+      )
+      ON CONFLICT (report_line_id) DO UPDATE SET
+        line_number = EXCLUDED.line_number,
+        ingredient_id = EXCLUDED.ingredient_id,
+        item_code = EXCLUDED.item_code,
+        ingredient_name = EXCLUDED.ingredient_name,
+        unit = EXCLUDED.unit,
+        recipe_quantity = EXCLUDED.recipe_quantity,
+        recipe_unit = EXCLUDED.recipe_unit,
+        inventory_unit = EXCLUDED.inventory_unit,
+        planned_quantity = EXCLUDED.planned_quantity,
+        actual_requested_quantity = EXCLUDED.actual_requested_quantity,
+        issued_quantity = EXCLUDED.issued_quantity,
+        shortage_quantity = EXCLUDED.shortage_quantity,
+        posted_cost = EXCLUDED.posted_cost,
+        estimated_shortage_cost = EXCLUDED.estimated_shortage_cost,
+        quantity_basis = EXCLUDED.quantity_basis,
+        yield_percent = EXCLUDED.yield_percent,
+        raw_weight_grams = EXCLUDED.raw_weight_grams,
+        yielded_weight_grams = EXCLUDED.yielded_weight_grams,
+        weight_calculation_source = EXCLUDED.weight_calculation_source,
+        yield_calculation_source = EXCLUDED.yield_calculation_source,
+        unit_status = EXCLUDED.unit_status,
+        conversion_note = EXCLUDED.conversion_note,
+        inventory_transaction_id = EXCLUDED.inventory_transaction_id,
+        status = EXCLUDED.status,
+        source_name = EXCLUDED.source_name,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        reportLineId,
+        record.id,
+        lineNumber,
+        sourceLine?.ingredient_id || null,
+        sourceLine?.item_code || null,
+        sourceLine?.ingredient_name || null,
+        sourceLine?.unit || sourceLine?.inventory_unit || null,
+        toNumberOrNull(sourceLine?.recipe_quantity),
+        sourceLine?.recipe_unit || null,
+        sourceLine?.inventory_unit || sourceLine?.unit || null,
+        toNumberOrZero(sourceLine?.planned_quantity),
+        toNumberOrZero(sourceLine?.actual_requested_quantity),
+        toNumberOrZero(sourceLine?.issued_quantity),
+        toNumberOrZero(sourceLine?.shortage_quantity),
+        toNumberOrZero(sourceLine?.posted_cost ?? sourceLine?.total_cost),
+        toNumberOrZero(sourceLine?.estimated_shortage_cost),
+        sourceLine?.quantity_basis || record.quantity_basis || null,
+        toNumberOrNull(sourceLine?.yield_percent),
+        toNumberOrNull(sourceLine?.raw_weight_grams),
+        toNumberOrNull(sourceLine?.yielded_weight_grams),
+        sourceLine?.weight_calculation_source || null,
+        sourceLine?.yield_calculation_source || sourceLine?.yield_source || null,
+        sourceLine?.unit_status || null,
+        sourceLine?.conversion_note || null,
+        sourceLine?.inventory_transaction_id || null,
+        sourceLine?.status || record.status || 'posted',
+        sourceLine?.source_name || record.source_name || null,
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+
+    const sourceRecipeNames = Array.isArray(sourceLine?.source_recipe_names)
+      ? sourceLine.source_recipe_names.filter(Boolean)
+      : [];
+    for (const [sourceIndex, recipeName] of sourceRecipeNames.entries()) {
+      await query(
+        `INSERT INTO production_consumption_report_line_sources (
+          report_line_source_id, report_line_id, report_id, source_order, recipe_name
+        ) VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT (report_line_source_id) DO UPDATE SET
+          source_order = EXCLUDED.source_order,
+          recipe_name = EXCLUDED.recipe_name`,
+        [
+          lineNumberedId(`line:${lineNumber}:source`, record.id, sourceIndex + 1),
+          reportLineId,
+          record.id,
+          sourceIndex + 1,
+          String(recipeName)
+        ],
+        executor
+      );
+    }
+
+    const transactionIds = uniqueStringList(sourceLine?.inventory_transaction_ids, sourceLine?.inventory_transaction_id);
+    for (const [transactionIndex, transactionId] of transactionIds.entries()) {
+      await query(
+        `INSERT INTO production_consumption_report_line_transactions (
+          report_line_transaction_id, report_line_id, report_id, transaction_order, inventory_transaction_id
+        ) VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT (report_line_transaction_id) DO UPDATE SET
+          transaction_order = EXCLUDED.transaction_order,
+          inventory_transaction_id = EXCLUDED.inventory_transaction_id`,
+        [
+          lineNumberedId(`line:${lineNumber}:txn`, record.id, transactionIndex + 1),
+          reportLineId,
+          record.id,
+          transactionIndex + 1,
+          transactionId
+        ],
+        executor
+      );
+    }
+
+    const movementLayers = Array.isArray(sourceLine?.movement_layers) ? sourceLine.movement_layers : [];
+    for (const [layerIndex, layer] of movementLayers.entries()) {
+      await query(
+        `INSERT INTO production_consumption_report_line_layers (
+          report_line_layer_id, report_line_id, report_id, layer_order, inventory_lot_id,
+          batch_number, stock_date, received_date, expiry_date, quantity, quantity_before,
+          quantity_after, reserved_quantity_before, reserved_quantity_after,
+          available_quantity_before, available_quantity_after, unit_cost, total_cost,
+          accounting_unit_cost, accounting_total_cost, production_id, commitment_revision,
+          operation_id, source_name, created_at
+        ) VALUES (
+          $1,$2,$3,$4,
+          (SELECT lot_id FROM inventory_lots WHERE lot_id = NULLIF($5::text, '') LIMIT 1),
+          $6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+          (SELECT production_id FROM production_events WHERE production_id = NULLIF($21::text, '') LIMIT 1),
+          $22,$23,$24,$25
+        )
+        ON CONFLICT (report_line_layer_id) DO UPDATE SET
+          layer_order = EXCLUDED.layer_order,
+          inventory_lot_id = EXCLUDED.inventory_lot_id,
+          batch_number = EXCLUDED.batch_number,
+          stock_date = EXCLUDED.stock_date,
+          received_date = EXCLUDED.received_date,
+          expiry_date = EXCLUDED.expiry_date,
+          quantity = EXCLUDED.quantity,
+          quantity_before = EXCLUDED.quantity_before,
+          quantity_after = EXCLUDED.quantity_after,
+          reserved_quantity_before = EXCLUDED.reserved_quantity_before,
+          reserved_quantity_after = EXCLUDED.reserved_quantity_after,
+          available_quantity_before = EXCLUDED.available_quantity_before,
+          available_quantity_after = EXCLUDED.available_quantity_after,
+          unit_cost = EXCLUDED.unit_cost,
+          total_cost = EXCLUDED.total_cost,
+          accounting_unit_cost = EXCLUDED.accounting_unit_cost,
+          accounting_total_cost = EXCLUDED.accounting_total_cost,
+          production_id = EXCLUDED.production_id,
+          commitment_revision = EXCLUDED.commitment_revision,
+          operation_id = EXCLUDED.operation_id,
+          source_name = EXCLUDED.source_name`,
+        [
+          lineNumberedId(`line:${lineNumber}:layer`, record.id, layerIndex + 1),
+          reportLineId,
+          record.id,
+          layerIndex + 1,
+          layer?.inventory_lot_id || layer?.lot_id || null,
+          layer?.batch_number || null,
+          toDateOnlyOrNull(layer?.stock_date),
+          toDateOnlyOrNull(layer?.received_date),
+          toDateOnlyOrNull(layer?.expiry_date),
+          toNumberOrZero(layer?.quantity),
+          toNumberOrNull(layer?.quantity_before),
+          toNumberOrNull(layer?.quantity_after),
+          toNumberOrNull(layer?.reserved_quantity_before),
+          toNumberOrNull(layer?.reserved_quantity_after),
+          toNumberOrNull(layer?.available_quantity_before),
+          toNumberOrNull(layer?.available_quantity_after),
+          toNumberOrZero(layer?.unit_cost),
+          toNumberOrZero(layer?.total_cost),
+          toNumberOrNull(layer?.accounting_unit_cost),
+          toNumberOrNull(layer?.accounting_total_cost),
+          layer?.production_id || record.production_id || null,
+          toNumberOrNull(layer?.commitment_revision),
+          layer?.operation_id || null,
+          layer?.source_name || null,
+          createdAt
+        ],
+        executor
+      );
+    }
+  }
+}
+
+async function replaceProductionConsumptionReportMenuItems(record, executor = pool) {
+  await query('DELETE FROM production_consumption_report_menu_items WHERE report_id = $1', [record.id], executor);
+  const sourceItems = Array.isArray(record.menu_issue_items) ? record.menu_issue_items : [];
+  if (!sourceItems.length) return;
+
+  const createdAt = record.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  for (const [index, item] of sourceItems.entries()) {
+    const itemOrder = safeLineNumber(item?.item_order ?? item?.line_number, index + 1);
+    await query(
+      `INSERT INTO production_consumption_report_menu_items (
+        report_menu_item_id, report_id, item_order, production_line_id, recipe_version_id,
+        ingredient_id, item_name, recipe_name, line_type, item_key, source_menu_plan_item_key,
+        original_source_menu_plan_item_key, recipe_code, ingredient_name, meal_period,
+        requested_servings, requested_weight_grams, produced_servings, produced_weight_grams,
+        production_covers, raw_weight_grams, yielded_weight_grams, expected_finished_weight_grams,
+        portion_size_grams, expected_yield_servings, output_calculation_source,
+        weight_calculation_source, yield_calculation_source, weight_snapshot_version,
+        estimated_cost, actual_cost, status, source_name, created_at, updated_at
+      ) VALUES (
+        $1,$2,$3,
+        (SELECT production_line_id FROM production_manifest_lines WHERE production_line_id = NULLIF($4::text, '') LIMIT 1),
+        (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF($5::text, '') LIMIT 1),
+        (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($6::text, '') LIMIT 1),
+        $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+        $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35
+      )
+      ON CONFLICT (report_menu_item_id) DO UPDATE SET
+        item_order = EXCLUDED.item_order,
+        production_line_id = EXCLUDED.production_line_id,
+        recipe_version_id = EXCLUDED.recipe_version_id,
+        ingredient_id = EXCLUDED.ingredient_id,
+        item_name = EXCLUDED.item_name,
+        recipe_name = EXCLUDED.recipe_name,
+        line_type = EXCLUDED.line_type,
+        item_key = EXCLUDED.item_key,
+        source_menu_plan_item_key = EXCLUDED.source_menu_plan_item_key,
+        original_source_menu_plan_item_key = EXCLUDED.original_source_menu_plan_item_key,
+        recipe_code = EXCLUDED.recipe_code,
+        ingredient_name = EXCLUDED.ingredient_name,
+        meal_period = EXCLUDED.meal_period,
+        requested_servings = EXCLUDED.requested_servings,
+        requested_weight_grams = EXCLUDED.requested_weight_grams,
+        produced_servings = EXCLUDED.produced_servings,
+        produced_weight_grams = EXCLUDED.produced_weight_grams,
+        production_covers = EXCLUDED.production_covers,
+        raw_weight_grams = EXCLUDED.raw_weight_grams,
+        yielded_weight_grams = EXCLUDED.yielded_weight_grams,
+        expected_finished_weight_grams = EXCLUDED.expected_finished_weight_grams,
+        portion_size_grams = EXCLUDED.portion_size_grams,
+        expected_yield_servings = EXCLUDED.expected_yield_servings,
+        output_calculation_source = EXCLUDED.output_calculation_source,
+        weight_calculation_source = EXCLUDED.weight_calculation_source,
+        yield_calculation_source = EXCLUDED.yield_calculation_source,
+        weight_snapshot_version = EXCLUDED.weight_snapshot_version,
+        estimated_cost = EXCLUDED.estimated_cost,
+        actual_cost = EXCLUDED.actual_cost,
+        status = EXCLUDED.status,
+        source_name = EXCLUDED.source_name,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        item?.report_menu_item_id || item?.id || lineNumberedId('menu-item', record.id, itemOrder),
+        record.id,
+        itemOrder,
+        item?.production_line_id || item?.id || null,
+        item?.recipe_id || item?.recipe_version_id || null,
+        item?.ingredient_id || null,
+        item?.item_name || item?.recipe_name || item?.name || `Production menu item ${itemOrder}`,
+        item?.recipe_name || item?.name || item?.item_name || null,
+        item?.line_type || (item?.ingredient_id && !item?.recipe_id ? 'ingredient' : 'recipe'),
+        item?.key || item?.manifest_item_key || null,
+        item?.source_menu_plan_item_key || null,
+        item?.original_source_menu_plan_item_key || null,
+        item?.recipe_code || null,
+        item?.ingredient_name || null,
+        item?.meal_type || record.meal_type || null,
+        toNumberOrNull(item?.requested_servings),
+        toNumberOrNull(item?.requested_weight_grams),
+        toNumberOrNull(item?.produced_servings),
+        toNumberOrNull(item?.produced_weight_grams),
+        toNumberOrNull(item?.production_covers ?? item?.expected_servings),
+        toNumberOrNull(item?.raw_weight_grams),
+        toNumberOrNull(item?.yielded_weight_grams),
+        toNumberOrNull(item?.expected_finished_weight_grams),
+        toNumberOrNull(item?.portion_size_grams),
+        toNumberOrNull(item?.expected_yield_servings),
+        item?.output_calculation_source || null,
+        item?.weight_calculation_source || null,
+        item?.yield_calculation_source || item?.yield_source || null,
+        toNumberOrNull(item?.weight_snapshot_version),
+        toNumberOrZero(item?.estimated_cost ?? item?.estimated_batch_cost),
+        toNumberOrZero(item?.actual_cost ?? item?.total_cost),
+        item?.status || 'active',
+        item?.source_name || record.source_name || null,
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceProductionConsumptionReportUnitTotals(record, executor = pool) {
+  await query('DELETE FROM production_consumption_report_unit_totals WHERE report_id = $1', [record.id], executor);
+  const totals = rowJsonObject(record.shortage_totals_by_unit);
+  for (const [unit, quantity] of Object.entries(totals)) {
+    if (!String(unit || '').trim()) continue;
+    await query(
+      `INSERT INTO production_consumption_report_unit_totals (
+        report_unit_total_id, report_id, unit, shortage_quantity
+      ) VALUES ($1,$2,$3,$4)
+      ON CONFLICT (report_unit_total_id) DO UPDATE SET
+        unit = EXCLUDED.unit,
+        shortage_quantity = EXCLUDED.shortage_quantity`,
+      [
+        `${record.id}:unit-total:${unit}`,
+        record.id,
+        unit,
+        toNumberOrZero(quantity)
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceProductionConsumptionReportEvents(record, executor = pool) {
+  await query('DELETE FROM production_consumption_report_events WHERE report_id = $1', [record.id], executor);
+
+  const createdAt = record.created_date || nowIso();
+  const partialEvents = Array.isArray(record.partial_reversal_history)
+    ? record.partial_reversal_history
+    : [];
+  const latestPartial = record.partial_reversal_summary && Object.keys(record.partial_reversal_summary).length
+    ? record.partial_reversal_summary
+    : null;
+  const partialSummaries = latestPartial && !partialEvents.includes(latestPartial)
+    ? [...partialEvents, latestPartial]
+    : partialEvents;
+  const eventInputs = partialSummaries.map((summary) => ({ type: 'partial_reversal', summary }));
+  if (record.reversal_summary && Object.keys(record.reversal_summary).length) {
+    eventInputs.push({ type: 'full_reversal', summary: record.reversal_summary });
+  }
+
+  for (const [eventIndex, { type, summary }] of eventInputs.entries()) {
+    const eventOrder = eventIndex + 1;
+    const reportEventId = `${record.id}:event:${type}:${eventOrder}`;
+    const preservedUsage = summary?.preserved_active_output_usage || {};
+    await query(
+      `INSERT INTO production_consumption_report_events (
+        report_event_id, report_id, event_type, event_order, event_timestamp,
+        actor_id, actor_email, actor_name, reason, returned_line_count,
+        returned_total_cost, served_weight_grams, wasted_weight_grams,
+        served_servings, wasted_servings, status, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      ON CONFLICT (report_event_id) DO UPDATE SET
+        event_type = EXCLUDED.event_type,
+        event_order = EXCLUDED.event_order,
+        event_timestamp = EXCLUDED.event_timestamp,
+        actor_id = EXCLUDED.actor_id,
+        actor_email = EXCLUDED.actor_email,
+        actor_name = EXCLUDED.actor_name,
+        reason = EXCLUDED.reason,
+        returned_line_count = EXCLUDED.returned_line_count,
+        returned_total_cost = EXCLUDED.returned_total_cost,
+        served_weight_grams = EXCLUDED.served_weight_grams,
+        wasted_weight_grams = EXCLUDED.wasted_weight_grams,
+        served_servings = EXCLUDED.served_servings,
+        wasted_servings = EXCLUDED.wasted_servings,
+        status = EXCLUDED.status`,
+      [
+        reportEventId,
+        record.id,
+        type,
+        eventOrder,
+        summary?.partially_reversed_at || summary?.reversed_at || summary?.timestamp || record.updated_date || nowIso(),
+        summary?.actor_id || null,
+        summary?.actor_email || summary?.partially_reversed_by || summary?.reversed_by || null,
+        summary?.actor_name || summary?.partially_reversed_by_name || summary?.reversed_by_name || null,
+        summary?.reason || record.reversal_reason || null,
+        toNumberOrZero(summary?.returned_line_count),
+        toNumberOrZero(summary?.returned_total_cost),
+        toNumberOrNull(preservedUsage.served_weight_grams),
+        toNumberOrNull(preservedUsage.wasted_weight_grams),
+        toNumberOrNull(preservedUsage.served_servings),
+        toNumberOrNull(preservedUsage.wasted_servings),
+        summary?.status || 'posted',
+        createdAt
+      ],
+      executor
+    );
+
+    const manifestItems = Array.isArray(summary?.reversed_manifest_items) ? summary.reversed_manifest_items : [];
+    for (const [manifestIndex, item] of manifestItems.entries()) {
+      await query(
+        `INSERT INTO production_consumption_report_event_manifest_items (
+          report_event_manifest_item_id, report_event_id, report_id, item_order,
+          item_key, item_name, reversed_weight_grams, reversal_ratio
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT (report_event_manifest_item_id) DO UPDATE SET
+          item_order = EXCLUDED.item_order,
+          item_key = EXCLUDED.item_key,
+          item_name = EXCLUDED.item_name,
+          reversed_weight_grams = EXCLUDED.reversed_weight_grams,
+          reversal_ratio = EXCLUDED.reversal_ratio`,
+        [
+          `${reportEventId}:manifest:${manifestIndex + 1}`,
+          reportEventId,
+          record.id,
+          manifestIndex + 1,
+          item?.key || null,
+          item?.name || item?.item_name || null,
+          toNumberOrNull(item?.reversed_weight_grams),
+          toNumberOrNull(item?.reversal_ratio)
+        ],
+        executor
+      );
+    }
+
+    const returnedLines = Array.isArray(summary?.returned_lines) ? summary.returned_lines : [];
+    for (const [lineIndex, line] of returnedLines.entries()) {
+      const eventLineId = `${reportEventId}:line:${lineIndex + 1}`;
+      await query(
+        `INSERT INTO production_consumption_report_event_lines (
+          report_event_line_id, report_event_id, report_id, line_order, source_line_index,
+          ingredient_id, item_code, ingredient_name, unit, requested_quantity,
+          returned_quantity, total_cost, inventory_transaction_id
+        ) VALUES (
+          $1,$2,$3,$4,$5,
+          (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($6::text, '') LIMIT 1),
+          $7,$8,$9,$10,$11,$12,$13
+        )
+        ON CONFLICT (report_event_line_id) DO UPDATE SET
+          line_order = EXCLUDED.line_order,
+          source_line_index = EXCLUDED.source_line_index,
+          ingredient_id = EXCLUDED.ingredient_id,
+          item_code = EXCLUDED.item_code,
+          ingredient_name = EXCLUDED.ingredient_name,
+          unit = EXCLUDED.unit,
+          requested_quantity = EXCLUDED.requested_quantity,
+          returned_quantity = EXCLUDED.returned_quantity,
+          total_cost = EXCLUDED.total_cost,
+          inventory_transaction_id = EXCLUDED.inventory_transaction_id`,
+        [
+          eventLineId,
+          reportEventId,
+          record.id,
+          lineIndex + 1,
+          toNumberOrNull(line?.source_line_index),
+          line?.ingredient_id || null,
+          line?.item_code || null,
+          line?.ingredient_name || null,
+          line?.unit || null,
+          toNumberOrNull(line?.requested_quantity),
+          toNumberOrZero(line?.returned_quantity),
+          toNumberOrZero(line?.total_cost),
+          line?.transaction_id || line?.inventory_transaction_id || null
+        ],
+        executor
+      );
+
+      const movementLayers = Array.isArray(line?.movement_layers) ? line.movement_layers : [];
+      for (const [layerIndex, layer] of movementLayers.entries()) {
+        await query(
+          `INSERT INTO production_consumption_report_event_line_layers (
+            report_event_line_layer_id, report_event_line_id, report_event_id, report_id,
+            layer_order, inventory_lot_id, batch_number, stock_date, received_date,
+            expiry_date, quantity, quantity_before, quantity_after,
+            reserved_quantity_before, reserved_quantity_after,
+            available_quantity_before, available_quantity_after, unit_cost, total_cost,
+            accounting_unit_cost, accounting_total_cost, production_id, commitment_revision,
+            operation_id, source_name, created_at
+          ) VALUES (
+            $1,$2,$3,$4,$5,
+            (SELECT lot_id FROM inventory_lots WHERE lot_id = NULLIF($6::text, '') LIMIT 1),
+            $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+            $21,
+            (SELECT production_id FROM production_events WHERE production_id = NULLIF($22::text, '') LIMIT 1),
+            $23,$24,$25,$26
+          )
+          ON CONFLICT (report_event_line_layer_id) DO UPDATE SET
+            layer_order = EXCLUDED.layer_order,
+            inventory_lot_id = EXCLUDED.inventory_lot_id,
+            batch_number = EXCLUDED.batch_number,
+            stock_date = EXCLUDED.stock_date,
+            received_date = EXCLUDED.received_date,
+            expiry_date = EXCLUDED.expiry_date,
+            quantity = EXCLUDED.quantity,
+            quantity_before = EXCLUDED.quantity_before,
+            quantity_after = EXCLUDED.quantity_after,
+            reserved_quantity_before = EXCLUDED.reserved_quantity_before,
+            reserved_quantity_after = EXCLUDED.reserved_quantity_after,
+            available_quantity_before = EXCLUDED.available_quantity_before,
+            available_quantity_after = EXCLUDED.available_quantity_after,
+            unit_cost = EXCLUDED.unit_cost,
+            total_cost = EXCLUDED.total_cost,
+            accounting_unit_cost = EXCLUDED.accounting_unit_cost,
+            accounting_total_cost = EXCLUDED.accounting_total_cost,
+            production_id = EXCLUDED.production_id,
+            commitment_revision = EXCLUDED.commitment_revision,
+            operation_id = EXCLUDED.operation_id,
+            source_name = EXCLUDED.source_name`,
+          [
+            `${eventLineId}:layer:${layerIndex + 1}`,
+            eventLineId,
+            reportEventId,
+            record.id,
+            layerIndex + 1,
+            layer?.inventory_lot_id || layer?.lot_id || null,
+            layer?.batch_number || null,
+            toDateOnlyOrNull(layer?.stock_date),
+            toDateOnlyOrNull(layer?.received_date),
+            toDateOnlyOrNull(layer?.expiry_date),
+            toNumberOrZero(layer?.quantity),
+            toNumberOrNull(layer?.quantity_before),
+            toNumberOrNull(layer?.quantity_after),
+            toNumberOrNull(layer?.reserved_quantity_before),
+            toNumberOrNull(layer?.reserved_quantity_after),
+            toNumberOrNull(layer?.available_quantity_before),
+            toNumberOrNull(layer?.available_quantity_after),
+            toNumberOrZero(layer?.unit_cost),
+            toNumberOrZero(layer?.total_cost),
+            toNumberOrNull(layer?.accounting_unit_cost),
+            toNumberOrNull(layer?.accounting_total_cost),
+            layer?.production_id || record.production_id || null,
+            toNumberOrNull(layer?.commitment_revision),
+            layer?.operation_id || null,
+            layer?.source_name || null,
+            createdAt
+          ],
+          executor
+        );
+      }
+    }
+  }
+}
+
 async function replaceMealServiceItems(record, executor = pool) {
   if (!Array.isArray(record.items)) return;
 
@@ -3731,30 +4679,128 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
   if (entity === 'ProductionConsumptionReport') {
     await query(
       `INSERT INTO production_consumption_reports (
-        report_id, report_number, production_id, warehouse_id, production_date,
-        total_consumption_cost, total_shortage_cost, status, payload, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)
+        report_id, report_number, report_name, production_id, warehouse_id, warehouse_name,
+        requesting_warehouse_id, requesting_warehouse_name, fulfillment_store_id, fulfillment_store_name,
+        recipe_version_id, recipe_name, original_recipe_name, production_name, original_production_name,
+        production_date, meal_period, menu_type, menu_category, menu_scope_label,
+        production_issue_grouped, production_issue_item_count, production_issue_dish_count,
+        kitchen_station, target_servings, completed_by, completed_by_name, completed_at,
+        quantity_basis, reconciliation_mode, output_calculation_source,
+        recipe_raw_weight_grams, expected_finished_weight_grams,
+        total_raw_consumption_weight_grams, total_yielded_weight_grams,
+        portion_size_grams, expected_yield_servings,
+        total_consumption_cost, total_shortage_cost, shortage_line_count,
+        ingredient_line_count, status, reversed_at, reversed_by, reversed_by_name,
+        reversal_reason, created_at, updated_at
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF($11::text, '') LIMIT 1),
+        $12,$13,$14,$15,$16,$17,$18,$19,$20,
+        $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
+        $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,
+        $41,$42,$43,$44,$45,$46,$47,$48
+      )
       ON CONFLICT (report_id) DO UPDATE SET
-        report_number = EXCLUDED.report_number, production_id = EXCLUDED.production_id,
-        warehouse_id = EXCLUDED.warehouse_id, production_date = EXCLUDED.production_date,
+        report_number = EXCLUDED.report_number, report_name = EXCLUDED.report_name,
+        production_id = EXCLUDED.production_id,
+        warehouse_id = EXCLUDED.warehouse_id, warehouse_name = EXCLUDED.warehouse_name,
+        requesting_warehouse_id = EXCLUDED.requesting_warehouse_id,
+        requesting_warehouse_name = EXCLUDED.requesting_warehouse_name,
+        fulfillment_store_id = EXCLUDED.fulfillment_store_id,
+        fulfillment_store_name = EXCLUDED.fulfillment_store_name,
+        recipe_version_id = EXCLUDED.recipe_version_id,
+        recipe_name = EXCLUDED.recipe_name,
+        original_recipe_name = EXCLUDED.original_recipe_name,
+        production_name = EXCLUDED.production_name,
+        original_production_name = EXCLUDED.original_production_name,
+        production_date = EXCLUDED.production_date,
+        meal_period = EXCLUDED.meal_period,
+        menu_type = EXCLUDED.menu_type,
+        menu_category = EXCLUDED.menu_category,
+        menu_scope_label = EXCLUDED.menu_scope_label,
+        production_issue_grouped = EXCLUDED.production_issue_grouped,
+        production_issue_item_count = EXCLUDED.production_issue_item_count,
+        production_issue_dish_count = EXCLUDED.production_issue_dish_count,
+        kitchen_station = EXCLUDED.kitchen_station,
+        target_servings = EXCLUDED.target_servings,
+        completed_by = EXCLUDED.completed_by,
+        completed_by_name = EXCLUDED.completed_by_name,
+        completed_at = EXCLUDED.completed_at,
+        quantity_basis = EXCLUDED.quantity_basis,
+        reconciliation_mode = EXCLUDED.reconciliation_mode,
+        output_calculation_source = EXCLUDED.output_calculation_source,
+        recipe_raw_weight_grams = EXCLUDED.recipe_raw_weight_grams,
+        expected_finished_weight_grams = EXCLUDED.expected_finished_weight_grams,
+        total_raw_consumption_weight_grams = EXCLUDED.total_raw_consumption_weight_grams,
+        total_yielded_weight_grams = EXCLUDED.total_yielded_weight_grams,
+        portion_size_grams = EXCLUDED.portion_size_grams,
+        expected_yield_servings = EXCLUDED.expected_yield_servings,
         total_consumption_cost = EXCLUDED.total_consumption_cost,
-        total_shortage_cost = EXCLUDED.total_shortage_cost, status = EXCLUDED.status,
-        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+        total_shortage_cost = EXCLUDED.total_shortage_cost,
+        shortage_line_count = EXCLUDED.shortage_line_count,
+        ingredient_line_count = EXCLUDED.ingredient_line_count,
+        status = EXCLUDED.status,
+        reversed_at = EXCLUDED.reversed_at,
+        reversed_by = EXCLUDED.reversed_by,
+        reversed_by_name = EXCLUDED.reversed_by_name,
+        reversal_reason = EXCLUDED.reversal_reason,
+        updated_at = EXCLUDED.updated_at`,
       [
         record.id,
         record.report_number,
+        record.report_name || null,
         record.production_id,
         record.site_id || record.warehouse_id || null,
+        record.site_name || record.warehouse_name || null,
+        record.requesting_site_id || record.requesting_warehouse_id || null,
+        record.requesting_site_name || record.requesting_warehouse_name || null,
+        record.fulfillment_store_id || null,
+        record.fulfillment_store_name || null,
+        record.recipe_id || record.recipe_version_id || null,
+        record.recipe_name || null,
+        record.original_recipe_name || null,
+        record.production_name || null,
+        record.original_production_name || null,
         toDateOnlyOrNull(record.production_date),
+        record.meal_type || record.meal_period || null,
+        record.menu_type || record.cuisine_type || null,
+        record.menu_category || null,
+        record.menu_scope_label || null,
+        Boolean(record.production_issue_grouped),
+        toNumberOrNull(record.production_issue_item_count),
+        toNumberOrNull(record.production_issue_dish_count),
+        record.kitchen_station || null,
+        toNumberOrNull(record.target_servings),
+        record.completed_by || null,
+        record.completed_by_name || null,
+        record.completed_at || null,
+        record.quantity_basis || null,
+        record.reconciliation_mode || null,
+        record.output_calculation_source || null,
+        toNumberOrNull(record.recipe_raw_weight_grams),
+        toNumberOrNull(record.expected_finished_weight_grams),
+        toNumberOrNull(record.total_raw_consumption_weight_grams),
+        toNumberOrNull(record.total_yielded_weight_grams),
+        toNumberOrNull(record.portion_size_grams),
+        toNumberOrNull(record.expected_yield_servings),
         toNumberOrZero(record.total_consumption_cost),
         toNumberOrZero(record.total_shortage_cost),
+        toNumberOrZero(record.shortage_line_count),
+        toNumberOrZero(record.ingredient_line_count ?? (Array.isArray(record.ingredient_lines) ? record.ingredient_lines.length : 0)),
         record.status || 'posted',
-        jsonPayload(record),
+        record.reversed_at || null,
+        record.reversed_by || null,
+        record.reversed_by_name || null,
+        record.reversal_reason || null,
         createdAt,
         updatedAt
       ],
       executor
     );
+    await replaceProductionConsumptionReportLines(record, executor);
+    await replaceProductionConsumptionReportMenuItems(record, executor);
+    await replaceProductionConsumptionReportUnitTotals(record, executor);
+    await replaceProductionConsumptionReportEvents(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'ProducedItemBatch') {
