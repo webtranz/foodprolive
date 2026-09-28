@@ -2034,6 +2034,10 @@ function buildMenuPlanWritePayload(body = {}, existing = null) {
   return {
     ...body,
     meals,
+    // Normalized Menu Planning persists menu rows from menu_plan_lines. On update,
+    // existing records already contain the old normalized lines, so the current
+    // editor meals must explicitly replace them or the save rewrites stale rows.
+    menu_plan_lines: meals,
     cuisine_type: normalizeMenuCuisine(body.cuisine_type ?? existing?.cuisine_type, 'general'),
     menu_category: normalizeMenuCategory(body.menu_category ?? existing?.menu_category, 'senior'),
     status: body.status || existing?.status || 'draft',

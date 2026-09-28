@@ -496,6 +496,8 @@ const cases = [
       assert.match(indexSource, /const preparedPayload = await prepareEntityPayload\(request\.user, 'MenuPlan', payload\)/);
       assert.match(indexSource, /findScopedOperationalMenuPlan\(request\.user, preparedPayload\.site_id, preparedPayload\.plan_date/);
       assert.match(indexSource, /A menu plan already exists for this store, date, and category/);
+      assert.match(indexSource, /menu_plan_lines:\s*meals/);
+      assert.match(indexSource, /current[\s\S]*editor meals[\s\S]*replace them|rewrites stale rows/);
     }
   }
 ];
