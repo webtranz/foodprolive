@@ -107,13 +107,12 @@ test('uses a debounced backend endpoint and PostgreSQL search indexes', () => {
   assert.match(componentSource, /shouldFilter=\{false\}/);
   assert.match(apiSource, /\/api\/ingredients\/search/);
   assert.match(sqlSource, /pg_trgm/);
-  assert.match(sqlSource, /idx_entity_records_ingredient_search_document/);
+  assert.match(sqlSource, /idx_ingredients_name_search/);
 });
 
 test('uses the indexed picker in every ingredient-selection workflow', () => {
   const pickerConsumers = [
     '../src/components/recipes/RecipeForm.jsx',
-    '../src/pages/FoodWaste.jsx',
     '../src/pages/Ingredients.jsx',
     '../src/pages/Inventory.jsx',
     '../src/pages/ProcurementModule.jsx',

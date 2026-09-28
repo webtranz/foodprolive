@@ -92,24 +92,6 @@ function createRoleProfileExecutor(initialRecords = []) {
         }
         return { rows: [], rowCount: 1 };
       }
-      if (sql.includes('SELECT data') && sql.includes('id = $2')) {
-        const record = records.get(parameters[1]);
-        return { rows: record ? [{ data: record }] : [], rowCount: record ? 1 : 0 };
-      }
-      if (sql.includes('FROM entity_records')) {
-        const rows = Array.from(records.values(), (data) => ({ data }));
-        return { rows, rowCount: rows.length };
-      }
-      if (sql.includes('INSERT INTO entity_records')) {
-        const data = JSON.parse(parameters[2]);
-        records.set(parameters[0], data);
-        return { rows: [], rowCount: 1 };
-      }
-      if (sql.includes('UPDATE entity_records')) {
-        const data = JSON.parse(parameters[2]);
-        records.set(parameters[1], data);
-        return { rows: [], rowCount: 1 };
-      }
       throw new Error(`Unexpected role-profile query: ${sql}`);
     }
   };

@@ -8,7 +8,6 @@ const outputPath = path.join(outputDir, 'FoodPro_Database_Workflow_Schema.pdf');
 const sqlTables = [
   ['users', 'Application users, roles, site assignment, password hash, profile metadata'],
   ['auth_tokens', 'Login session tokens'],
-  ['entity_records', 'Hybrid JSONB-backed business entities'],
   ['app_logs', 'Application activity log'],
   ['email_logs', 'Email dispatch log'],
   ['pos_sources', 'POS providers and sync settings'],
@@ -61,7 +60,7 @@ const entityModels = [
 ];
 
 const relationshipNotes = [
-  'The platform uses a hybrid schema: PostgreSQL relational tables for auth, POS, and procurement; JSONB entity_records for flexible business modules.',
+  'The platform uses normalized PostgreSQL relational tables for auth, POS, procurement, inventory, production, meal service, food waste, menu planning, ERP, QR/POS, and reporting modules.',
   'Inventory uniqueness is enforced at business level by site_id + ingredient_id. Inventory lots extend stock with batch_number and expiry_date.',
   'Production links to recipe, site, meal_type, target_servings, ingredients_used, costing, and linked material request lifecycle.',
   'FoodWaste can link to ingredient, recipe, production batch, or location-level waste and stores estimated_cost, approval_status, avoidable_type, and batch_reference.',
@@ -208,7 +207,7 @@ function buildPdf() {
   doc.setFontSize(10);
   y = addWrappedText(
     doc,
-    'FoodPro uses a hybrid database strategy to support rapid module growth while preserving strong workflow control. Auth, POS, and procurement use dedicated relational tables; the main operational modules use entity_records with server-side validation, uniqueness rules, permission enforcement, and location scoping.',
+    'FoodPro uses a normalized relational database strategy to support rapid module growth while preserving strong workflow control. Operational modules use dedicated tables with server-side validation, uniqueness rules, permission enforcement, and location scoping.',
     14,
     y,
     182

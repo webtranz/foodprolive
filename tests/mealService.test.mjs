@@ -883,9 +883,8 @@ test('confirmation moves every unserved gram to waste and reversal restores serv
 
 test('scope index permits multiple Meal Service requests for the same production scope', () => {
   const sql = source('server/sql/init.sql');
-  assert.match(sql, /DROP INDEX IF EXISTS idx_entity_records_meal_attendance_scope_unique/);
-  assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_scope/);
-  assert.doesNotMatch(sql, /CREATE UNIQUE INDEX idx_entity_records_meal_attendance_scope_unique/);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_meal_service_headers_scope/);
+  assert.doesNotMatch(sql, /CREATE UNIQUE INDEX(?: IF NOT EXISTS)? idx_meal_service_headers_scope/);
   const service = source('server/mealService.js');
   assert.doesNotMatch(service, /existingScopeConfirmation/);
   assert.match(service, /const wasteRecords = \[\]/);
@@ -1112,10 +1111,10 @@ test('report retrieval applies indexed server-side date ranges and pages every e
   }
 
   const sqlSource = source('server/sql/init.sql');
-  assert.match(sqlSource, /idx_entity_records_meal_attendance_report_date/);
-  assert.match(sqlSource, /idx_entity_records_meal_consumption_report_date/);
-  assert.match(sqlSource, /idx_entity_records_produced_item_report_date/);
-  assert.match(sqlSource, /idx_entity_records_produced_item_menu_plan_report/);
+  assert.match(sqlSource, /idx_meal_service_headers_scope/);
+  assert.match(sqlSource, /idx_meal_service_consumptions_report/);
+  assert.match(sqlSource, /idx_produced_output_batches_report/);
+  assert.match(sqlSource, /idx_produced_output_batches_fifo/);
 });
 
 test('meal-service entities are scoped/read-permission protected and cannot bypass service mutations', () => {
@@ -1176,8 +1175,8 @@ test('automatic meal-service leftover waste is server-owned and immutable throug
   const database = source('server/db.js');
   assert.match(server, /authorizeEntityAction\(request\.user, 'FoodWaste', 'create'/);
   assert.match(server, /authorizeEntityAction\(request\.user, 'FoodWaste', 'update'/);
-  assert.match(database, /clearDocumentsForBulk[\s\S]*preserveServerMealServiceWaste/);
-  assert.match(database, /data->>'auto_generated'[\s\S]*meal_service_leftover[\s\S]*meal_service_attendance_id/);
+  assert.match(database, /clearDocumentsForBulk[\s\S]*listNormalizedDocuments\(entity/);
+  assert.match(database, /entity === 'FoodWaste'[\s\S]*record\.auto_generated === true[\s\S]*meal_service_leftover[\s\S]*batch_overproduction[\s\S]*record\.meal_service_attendance_id/);
 });
 
 test('food waste request edits are admin-only while approval-only patches stay scoped', () => {
@@ -1242,9 +1241,9 @@ test('staff meal service is transactional, admin-correctable, and cannot mutate 
     serviceSource,
     /status: 'reversed'[\s\S]*?waste_reversals: wasteReversals, replayed: true/
   );
-  assert.match(sqlSource, /idx_entity_records_meal_attendance_idempotency_unique/);
-  assert.match(sqlSource, /idx_entity_records_produced_item_fifo/);
-  assert.match(sqlSource, /idx_entity_records_meal_consumption_history/);
+  assert.match(sqlSource, /idx_meal_service_headers_scope/);
+  assert.match(sqlSource, /idx_produced_output_batches_fifo/);
+  assert.match(sqlSource, /idx_meal_service_consumptions_reversal/);
   for (const entity of ['ProducedItemBatch', 'MealServiceAttendance', 'MealServiceConsumption']) {
     assert.match(scopeSource, new RegExp(`'${entity}'`));
   }

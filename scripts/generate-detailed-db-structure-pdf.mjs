@@ -18,9 +18,15 @@ const relationalTables = [
       'status TEXT',
       'site_id TEXT',
       'site_name TEXT',
+      'phone TEXT',
+      'language TEXT',
+      'avatar_url TEXT',
+      'visibility_scope TEXT',
+      'deactivated_at TIMESTAMPTZ',
+      'deactivated_by TEXT',
+      'deactivation_reason TEXT',
       'password_hash TEXT',
       'temporary_password TEXT',
-      'profile JSONB',
       'created_at TIMESTAMPTZ',
       'updated_at TIMESTAMPTZ'
     ],
@@ -44,23 +50,6 @@ const relationalTables = [
     relationships: ['Many auth tokens can belong to one user']
   },
   {
-    name: 'entity_records',
-    purpose: 'Hybrid JSONB entity store for flexible business modules such as Inventory, Production, FoodWaste, Site, Recipe, and MaterialRequest.',
-    primaryKey: 'id',
-    columns: [
-      'id TEXT PK',
-      'entity_name TEXT',
-      'data JSONB',
-      'created_at TIMESTAMPTZ',
-      'updated_at TIMESTAMPTZ'
-    ],
-    foreignKeys: [],
-    relationships: [
-      'Acts as the main backing store for operational entities defined in server/entities.js',
-      'Indexed by entity_name and selected JSONB paths for Inventory and InventoryLot'
-    ]
-  },
-  {
     name: 'app_logs',
     purpose: 'Application activity and page visit log.',
     primaryKey: 'id',
@@ -69,7 +58,10 @@ const relationalTables = [
       'user_id TEXT FK',
       'user_email TEXT',
       'page_name TEXT',
-      'payload JSONB',
+      'action TEXT',
+      'site_id TEXT',
+      'reference_id TEXT',
+      'details_text TEXT',
       'visited_at TIMESTAMPTZ'
     ],
     foreignKeys: ['user_id -> users.id ON DELETE SET NULL'],
@@ -83,7 +75,8 @@ const relationalTables = [
       'id TEXT PK',
       'recipient TEXT',
       'subject TEXT',
-      'payload JSONB',
+      'body_html TEXT',
+      'body_text TEXT',
       'status TEXT',
       'created_at TIMESTAMPTZ'
     ],
@@ -105,7 +98,6 @@ const relationalTables = [
       'is_active BOOLEAN',
       'default_site_id TEXT',
       'default_site_name TEXT',
-      'settings JSONB',
       'created_at TIMESTAMPTZ',
       'updated_at TIMESTAMPTZ'
     ],
@@ -134,7 +126,6 @@ const relationalTables = [
       'total_amount NUMERIC(14,2)',
       'sync_method TEXT',
       'inventory_applied BOOLEAN',
-      'raw_payload JSONB',
       'created_at TIMESTAMPTZ',
       'updated_at TIMESTAMPTZ'
     ],
@@ -162,7 +153,6 @@ const relationalTables = [
       'site_id TEXT',
       'site_name TEXT',
       'deduction_status TEXT',
-      'raw_payload JSONB',
       'created_at TIMESTAMPTZ'
     ],
     foreignKeys: ['order_id -> pos_sales_orders.id ON DELETE CASCADE'],
@@ -205,8 +195,9 @@ const relationalTables = [
       'records_imported INTEGER',
       'records_skipped INTEGER',
       'message TEXT',
-      'request_payload JSONB',
-      'response_payload JSONB',
+      'request_url TEXT',
+      'request_summary TEXT',
+      'response_summary TEXT',
       'created_at TIMESTAMPTZ'
     ],
     foreignKeys: ['source_id -> pos_sources.id ON DELETE SET NULL'],
@@ -229,8 +220,9 @@ const relationalTables = [
       'lead_time_days INTEGER',
       'status TEXT',
       'rating NUMERIC(6,2)',
-      'categories JSONB',
+      'categories TEXT[]',
       'notes TEXT',
+      'source_name TEXT',
       'created_at TIMESTAMPTZ',
       'updated_at TIMESTAMPTZ'
     ],
@@ -502,21 +494,23 @@ const entityBackedModels = [
   ['ForecastScenario', 'Demand forecasting scenario definition.'],
   ['ForecastSnapshot', 'Calculated forecast output snapshot.'],
   ['AttendanceSession / AttendanceRecord / StaffShift', 'Labor scheduling and attendance entities.'],
-  ['CustomerMealPlan / BranchOrder / QualityControl / QRCode / QRDelivery / RFQ', 'Supporting operational modules built on the hybrid entity model.']
+  ['CustomerMealPlan / BranchOrder / QualityControl / QRCode / QRDelivery / RFQ', 'Supporting operational modules backed by normalized relational tables.']
 ];
 
 const keyIndexes = [
-  'idx_entity_records_entity_name on entity_records(entity_name)',
-  'idx_entity_records_entity_updated_at on entity_records(entity_name, updated_at DESC)',
+  'idx_ingredients_name_search on ingredients using trigram search',
+  'idx_warehouse_inventory_ingredient on warehouse_inventory(ingredient_id, warehouse_id)',
+  'idx_inventory_lots_fifo on inventory_lots(warehouse_id, ingredient_id, status, expiry_date, received_date)',
+  'idx_production_events_scope on production_events(warehouse_id, production_date, meal_period, menu_type, menu_category, status)',
+  'idx_food_waste_records_scope on food_waste_records(warehouse_id, waste_date, meal_period, status)',
+  'idx_meal_service_headers_scope on meal_service_headers(warehouse_id, service_date, meal_period, menu_type, menu_category, status)',
   'idx_pos_sales_orders_source_external UNIQUE on pos_sales_orders(source_id, external_order_id) when external_order_id is not null',
   'idx_pos_recipe_mapping_lookup on pos_recipe_mapping(source_id, pos_item_code, pos_item_name)',
   'idx_purchase_requests_status on purchase_requests(status, request_date DESC)',
   'idx_purchase_orders_status on purchase_orders(status, order_date DESC)',
   'idx_goods_receipts_order on goods_receipts(purchase_order_id, receipt_date DESC)',
   'idx_supplier_invoices_supplier on supplier_invoices(supplier_id, invoice_date DESC)',
-  'idx_supplier_price_history_lookup on supplier_price_history(ingredient_id, supplier_id, effective_date DESC)',
-  "idx_entity_records_inventory_lookup on entity_records((data->>'site_id'), (data->>'ingredient_id')) for Inventory",
-  "idx_entity_records_inventory_lot_lookup on entity_records((data->>'site_id'), (data->>'ingredient_id'), (data->>'batch_number')) for InventoryLot"
+  'idx_supplier_price_history_lookup on supplier_price_history(ingredient_id, supplier_id, effective_date DESC)'
 ];
 
 const relationshipMap = [
@@ -538,7 +532,7 @@ const relationshipMap = [
   'goods_receipts (1) -> supplier_invoices (many/optional) by supplier_invoices.goods_receipt_id',
   'suppliers (1) -> supplier_price_history (many) by supplier_price_history.supplier_id',
   'purchase_order_items (1) -> supplier_price_history (many/optional) by supplier_price_history.purchase_order_item_id',
-  'entity_records is the parent store for JSONB-backed business entities such as Site, User, Ingredient, Recipe, Inventory, Production, MaterialRequest, and FoodWaste'
+  'Core operational modules use normalized tables such as areas/projects/warehouses, ingredients, warehouse_inventory, recipes/recipe_versions, menu_plans, production_events, material_requests, and food_waste_records'
 ];
 
 const locationScopingNotes = [
@@ -638,19 +632,19 @@ function buildPdf() {
   doc.setFontSize(10);
   y = addWrappedText(
     doc,
-    'This document summarizes the current FoodPro database design, including relational tables from server/sql/init.sql and the JSONB-backed operational schema from server/entities.js. It highlights primary keys, important foreign keys, entity uniqueness rules, and project/location scoping behavior.',
+    'This document summarizes the current FoodPro database design, including normalized relational tables from server/sql/init.sql. It highlights primary keys, important foreign keys, entity uniqueness rules, and project/location scoping behavior.',
     14,
     y,
     182
   );
   y += 8;
 
-  y = addSectionTitle(doc, y, '1. Hybrid Database Architecture');
+  y = addSectionTitle(doc, y, '1. Normalized Relational Database Architecture');
   y = addBulletList(doc, y, [
-    'FoodPro uses a hybrid PostgreSQL model.',
-    'Relational tables store authentication, POS integration, procurement, goods receipt, and invoice flows.',
-    'entity_records stores many operational modules as JSONB documents with server-side validation, uniqueness rules, and permission enforcement.',
-    'The primary relational tables are ideal for multi-table transactional workflows, while entity_records provides flexibility for fast-changing business modules.'
+    'FoodPro uses normalized PostgreSQL tables for operational modules.',
+    'Relational tables store authentication, POS integration, procurement, goods receipt, invoice, inventory, production, meal service, food waste, menu planning, forecasting, ERP, QR/POS, and supporting flows.',
+    'Flexible arrays and objects are represented through child tables such as document_object_fields, not JSON document storage.',
+    'Any legacy entity_records bridge is used only during startup cutover and is dropped before the schema is ready for normal use.'
   ]);
 
   y += 3;
@@ -663,7 +657,7 @@ function buildPdf() {
   y = addBulletList(doc, y, relationshipMap);
 
   y += 2;
-  y = addSectionTitle(doc, y, '4. entity_records Schema Layer');
+  y = addSectionTitle(doc, y, '4. Normalized Operational Entity Tables');
   y = addBulletList(doc, y, entityBackedModels, ([name, desc]) => `${name}: ${desc}`);
 
   y += 2;
@@ -692,7 +686,7 @@ function buildPdf() {
     'If you need raw auth/session structure, start with users and auth_tokens.',
     'If you need procurement chain tracing, follow purchase_requests -> purchase_request_items -> purchase_orders -> purchase_order_items -> goods_receipts -> goods_receipt_items -> supplier_invoices.',
     'If you need POS chain tracing, follow pos_sources -> pos_sales_orders -> pos_sales_items, with pos_recipe_mapping used during recipe linkage.',
-    'If you need operational module data such as Production, MaterialRequest, FoodWaste, Inventory, or Site, read entity_records together with entityRegistry in server/entities.js.',
+    'If you need operational module data such as Production, MaterialRequest, FoodWaste, Inventory, or Site, read the typed relational tables and their child-line tables.',
     'If you need to understand why a user sees or does not see project data, inspect locationScope.js and the fields site_id, allowed_site_ids, and visibility_scope on the User entity.'
   ]);
 

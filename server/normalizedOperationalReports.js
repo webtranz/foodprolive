@@ -360,30 +360,6 @@ export async function getNormalizedDatabaseAudit({ includeOk = false, executor =
             LEFT JOIN ingredients ingredient ON ingredient.ingredient_id = wi.ingredient_id
             WHERE ingredient.ingredient_id IS NULL
             LIMIT 25`
-    },
-    {
-      key: 'legacy_core_documents_remaining',
-      severity: 'warning',
-      description: 'Core entities still present in the legacy JSON document table',
-      sql: `SELECT id
-            FROM entity_records
-            WHERE entity_name = ANY($1::text[])
-            LIMIT 25`,
-      params: [[
-        'Site',
-        'Ingredient',
-        'Inventory',
-        'InventoryLot',
-        'InventoryTransaction',
-        'Recipe',
-        'MenuPlan',
-        'Production',
-        'ProductionConsumptionReport',
-        'ProducedItemBatch',
-        'MealServiceAttendance',
-        'MealServiceConsumption',
-        'FoodWaste'
-      ]]
     }
   ];
 
@@ -400,12 +376,6 @@ export async function getNormalizedDatabaseAudit({ includeOk = false, executor =
     });
   }
 
-  const legacyBreakdownResult = await executor.query(
-    `SELECT entity_name, COUNT(*)::int AS count
-     FROM entity_records
-     GROUP BY entity_name
-     ORDER BY entity_name`
-  );
   return {
     generated_at: new Date().toISOString(),
     status: results.some((check) => check.severity === 'error')
@@ -414,6 +384,6 @@ export async function getNormalizedDatabaseAudit({ includeOk = false, executor =
         ? 'warnings'
         : 'ok',
     checks: results,
-    legacy_entity_counts: legacyBreakdownResult.rows
+    storage_model: 'normalized_relational'
   };
 }

@@ -79,10 +79,8 @@ test('voided and reversed records do not block clean re-completion', () => {
   assert.match(database, /entity === 'ProductionConsumptionReport'[\s\S]*status \|\| ''\)\.trim\(\)\.toLowerCase\(\) === 'reversed'[\s\S]*return false/);
   assert.match(mealService, /find\(\(batch\) => String\(batch\.status \|\| ''\)\.toLowerCase\(\) !== 'voided'\)/);
   assert.match(inventory, /find\(\(batch\) => String\(batch\.status \|\| ''\)\.toLowerCase\(\) !== 'voided'\) \|\| null/);
-  assert.match(sql, /DROP INDEX IF EXISTS idx_entity_records_produced_item_production_unique;/);
-  assert.match(sql, /idx_entity_records_produced_item_production_unique[\s\S]*COALESCE\(data->>'status', ''\) <> 'voided'/);
-  assert.match(sql, /DROP INDEX IF EXISTS idx_entity_records_produced_item_batch_number_unique;/);
-  assert.match(sql, /idx_entity_records_produced_item_batch_number_unique[\s\S]*COALESCE\(data->>'status', ''\) <> 'voided'/);
+  assert.match(sql, /idx_produced_output_batches_line_unique[\s\S]*status NOT IN \('voided', 'reversed'\)/);
+  assert.match(sql, /idx_produced_output_batches_number_unique[\s\S]*status NOT IN \('voided', 'reversed'\)/);
 });
 
 test('voided produced-item batches keep audit identity but cannot keep active balances', () => {

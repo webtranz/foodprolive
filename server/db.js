@@ -9,7 +9,6 @@ import {
   validateEntityPayload,
   getSystemRoleDefinition as getEntitySystemRoleDefinition
 } from './entities.js';
-import { buildEntityListQuery } from './entityQuery.js';
 import { deriveInventoryRecord } from '../shared/inventoryStatus.js';
 import {
   getSystemRoleDefinition as getSharedSystemRoleDefinition,
@@ -286,39 +285,25 @@ async function findRoleProfileByKey(roleKey, executor = pool) {
     return cached.value;
   }
 
-  const result = usesNormalizedCore('RoleProfile')
-    ? await query(
-      `SELECT role_profile.*,
-              COALESCE(
-                ARRAY_AGG(permission.permission_key ORDER BY permission.permission_key)
-                  FILTER (WHERE permission.permission_key IS NOT NULL),
-                ARRAY[]::text[]
-              ) AS permissions
-         FROM role_profiles role_profile
-         LEFT JOIN role_profile_permissions permission
-           ON permission.role_profile_id = role_profile.id
-        WHERE LOWER(COALESCE(role_profile.role_key, '')) = $1
-        GROUP BY role_profile.id
-        LIMIT 1`,
-      [normalized],
-      executor
-    )
-    : await query(
-      `SELECT data
-       FROM entity_records
-       WHERE entity_name = 'RoleProfile'
-         AND LOWER(COALESCE(data->>'role_key', '')) = $1
-       LIMIT 1`,
-      [normalized],
-      executor
-    );
+  const result = await query(
+    `SELECT role_profile.*,
+            COALESCE(
+              ARRAY_AGG(permission.permission_key ORDER BY permission.permission_key)
+                FILTER (WHERE permission.permission_key IS NOT NULL),
+              ARRAY[]::text[]
+            ) AS permissions
+       FROM role_profiles role_profile
+       LEFT JOIN role_profile_permissions permission
+         ON permission.role_profile_id = role_profile.id
+      WHERE LOWER(COALESCE(role_profile.role_key, '')) = $1
+      GROUP BY role_profile.id
+      LIMIT 1`,
+    [normalized],
+    executor
+  );
 
   let value = result.rowCount
-    ? normalizeManagementRoleProfile(
-      usesNormalizedCore('RoleProfile')
-        ? rowToRoleProfile(result.rows[0])
-        : result.rows[0].data
-    )
+    ? normalizeManagementRoleProfile(rowToRoleProfile(result.rows[0]))
     : null;
   if (!value) {
     const builtIn = getEntitySystemRoleDefinition(normalized);
@@ -588,10 +573,6 @@ function sortRecords(records, sort) {
   });
 }
 
-const SAFE_RELATIONAL_PAYLOAD_FIELD_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-const relationalDocumentTables = Object.freeze({});
-
 const normalizedAuxiliaryEntities = [
   'ERPIntegrationConfig',
   'ERPIntegrationLog',
@@ -623,7 +604,6 @@ const normalizedAuxiliaryEntities = [
   'FoodCategory'
 ];
 
-const normalizedCoreEnabled = process.env.FOODPRO_NORMALIZED_CORE !== 'false';
 const normalizedCoreEntities = new Set([
   'Site',
   'Ingredient',
@@ -640,12 +620,21 @@ const normalizedCoreEntities = new Set([
   'FoodWaste',
   'RoleProfile',
   'Supplier',
-  ...normalizedAuxiliaryEntities,
-  ...Object.keys(relationalDocumentTables)
+  ...normalizedAuxiliaryEntities
 ]);
 
 function usesNormalizedCore(entity) {
-  return normalizedCoreEnabled && normalizedCoreEntities.has(entity);
+  return normalizedCoreEntities.has(entity);
+}
+
+function normalizedStorageError(entity) {
+  const error = new Error(`${entity} is not backed by normalized relational storage`);
+  error.status = 501;
+  error.code = 'NORMALIZED_STORAGE_REQUIRED';
+  error.details = {
+    entity
+  };
+  return error;
 }
 
 function toNumberOrNull(value) {
@@ -679,10 +668,6 @@ function toDateOnlyOrNull(value) {
   if (!text) return null;
   const match = text.match(/^\d{4}-\d{2}-\d{2}/);
   return match ? match[0] : null;
-}
-
-function jsonPayload(record = {}) {
-  return JSON.stringify(record || {});
 }
 
 function appendStringValues(target, value) {
@@ -862,25 +847,6 @@ function withPayload(row = {}, explicit = {}) {
   });
 }
 
-function usesRelationalDocumentTable(entity) {
-  return Object.prototype.hasOwnProperty.call(relationalDocumentTables, entity);
-}
-
-function rowToRelationalDocument(entity, row = {}) {
-  return withPayload(row, {
-    __entity: entity,
-    id: row.id,
-    site_id: row.site_id || null,
-    site_name: row.site_name || null,
-    from_site_id: row.from_site_id || null,
-    to_site_id: row.to_site_id || null,
-    site_ids: Array.isArray(row.site_ids) ? row.site_ids : [],
-    status: row.status || null,
-    source_name: row.source_name || null,
-    record_date: row.record_date ? String(row.record_date).slice(0, 10) : null
-  });
-}
-
 function rowToRoleProfile(row = {}) {
   const permissions = Array.isArray(row.permissions)
     ? row.permissions.filter(Boolean)
@@ -900,47 +866,6 @@ function rowToRoleProfile(row = {}) {
     created_date: rowTimestamp(row.created_at),
     updated_date: rowTimestamp(row.updated_at)
   });
-}
-
-function relationalDocumentSiteId(record = {}) {
-  return record.site_id
-    || record.warehouse_id
-    || record.fulfillment_store_id
-    || record.requesting_site_id
-    || record.source_site_id
-    || null;
-}
-
-function relationalDocumentRecordDate(record = {}) {
-  return toDateOnlyOrNull(
-    record.record_date
-    || record.date
-    || record.service_date
-    || record.waste_date
-    || record.plan_date
-    || record.production_date
-    || record.request_date
-    || record.order_date
-    || record.event_date
-    || record.shift_date
-    || record.scan_date
-    || record.created_date
-  );
-}
-
-async function listRelationalDocumentReferenceRows(executor = pool) {
-  const rows = [];
-  for (const [entity, table] of Object.entries(relationalDocumentTables)) {
-    const result = await query(
-      `SELECT id, $1::text AS entity_name, payload AS data
-         FROM ${quoteIdentifier(table)}
-        FOR SHARE`,
-      [entity],
-      executor
-    );
-    rows.push(...result.rows);
-  }
-  return rows;
 }
 
 function rowToSite(row = {}) {
@@ -5076,17 +5001,10 @@ function normalizedSelectForEntity(entity) {
                 ON permission.role_profile_id = role_profile.id
              GROUP BY role_profile.id`;
   }
-  if (usesRelationalDocumentTable(entity)) {
-    return `SELECT id, $q$${entity}$q$::text AS entity_name, site_id, site_name,
-                   from_site_id, to_site_id, site_ids, status, record_date,
-                   source_name, payload, created_at, updated_at
-            FROM ${quoteIdentifier(relationalDocumentTables[entity])}`;
-  }
   return normalizedSimpleConfigs[entity]?.select || null;
 }
 
 function normalizedIdColumn(entity) {
-  if (usesRelationalDocumentTable(entity)) return 'id';
   return ({
     Site: 'id',
     Recipe: 'recipe_version_id',
@@ -5103,9 +5021,6 @@ function normalizedIdColumn(entity) {
 
 function normalizedMapper(entity) {
   if (entity === 'RoleProfile') return rowToRoleProfile;
-  if (usesRelationalDocumentTable(entity)) {
-    return (row) => rowToRelationalDocument(entity, row);
-  }
   return ({
     Site: rowToSite,
     Recipe: rowToRecipe,
@@ -6031,15 +5946,6 @@ function normalizedSqlColumnForField(entity, field) {
     ...(columns[entity] || {})
   }[field];
   if (!column) {
-    if (
-      SAFE_RELATIONAL_PAYLOAD_FIELD_PATTERN.test(String(field || ''))
-      && (
-        usesRelationalDocumentTable(entity)
-        || normalizedSimpleConfigs[entity]?.select?.includes('payload')
-      )
-    ) {
-      return `normalized_record.payload->>'${field}'`;
-    }
     return null;
   }
   return column.includes('->') || column.includes('(')
@@ -7920,11 +7826,11 @@ async function insertOrUpdateRoleProfile(record, existing = null, executor = poo
   const isActive = record.is_active !== false;
   await query(
     `INSERT INTO role_profiles (
-       id, entity_name, role_key, name, description, access_level,
+       id, role_key, name, description, access_level,
        dashboard_variant, is_active, is_system, status, source_name,
        created_at, updated_at
      ) VALUES (
-       $1, 'RoleProfile', $2, $3, $4, $5,
+       $1, $2, $3, $4, $5,
        $6, $7, $8, $9, $10, $11, $12
      )
      ON CONFLICT (id) DO UPDATE SET
@@ -7963,42 +7869,6 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
   if (entity === 'Site') return insertOrUpdateNormalizedSite(record, existing, executor);
   if (entity === 'Recipe') return insertOrUpdateNormalizedRecipe(record, existing, executor);
   if (entity === 'RoleProfile') return insertOrUpdateRoleProfile(record, existing, executor);
-
-  if (usesRelationalDocumentTable(entity)) {
-    const table = quoteIdentifier(relationalDocumentTables[entity]);
-    const createdAt = record.created_date || existing?.created_date || nowIso();
-    const updatedAt = record.updated_date || nowIso();
-    await query(
-      `INSERT INTO ${table} (
-        id, entity_name, site_id, site_name, from_site_id, to_site_id,
-        site_ids, status, record_date, source_name, payload, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11::jsonb,$12,$13)
-      ON CONFLICT (id) DO UPDATE SET
-        site_id = EXCLUDED.site_id, site_name = EXCLUDED.site_name,
-        from_site_id = EXCLUDED.from_site_id, to_site_id = EXCLUDED.to_site_id,
-        site_ids = EXCLUDED.site_ids, status = EXCLUDED.status,
-        record_date = EXCLUDED.record_date, source_name = EXCLUDED.source_name,
-        payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
-      [
-        record.id,
-        entity,
-        relationalDocumentSiteId(record),
-        record.site_name || record.warehouse_name || null,
-        record.from_site_id || null,
-        record.to_site_id || null,
-        Array.isArray(record.site_ids) ? record.site_ids.map(String) : [],
-        record.status || entityRegistry[entity]?.defaults?.status || 'active',
-        relationalDocumentRecordDate(record),
-        record.source_name || null,
-        jsonPayload(record),
-        createdAt,
-        updatedAt
-      ],
-      executor
-    );
-    await replaceMenuPlanLines(record, executor);
-    return findNormalizedDocument(entity, record.id, executor);
-  }
 
   const config = normalizedSimpleConfigs[entity];
   if (config) {
@@ -8656,14 +8526,6 @@ async function deleteNormalizedDocument(entity, id, executor = pool) {
     const result = await query('DELETE FROM recipe_versions WHERE recipe_version_id = $1', [id], executor);
     return result.rowCount > 0;
   }
-  if (usesRelationalDocumentTable(entity)) {
-    const result = await query(
-      `DELETE FROM ${quoteIdentifier(relationalDocumentTables[entity])} WHERE id = $1`,
-      [id],
-      executor
-    );
-    return result.rowCount > 0;
-  }
   const config = normalizedSimpleConfigs[entity];
   if (config) {
     const result = await query(`DELETE FROM ${config.table} WHERE ${config.idColumn} = $1`, [id], executor);
@@ -8887,31 +8749,12 @@ async function validateSiteChildrenAfterStructureChange(existing, record, execut
   const parentChanged = String(existing.parent_site_id || '') !== String(record.parent_site_id || '');
   if (!typeChanged && !parentChanged) return;
 
-  if (usesNormalizedCore('Site')) {
-    const children = (await listNormalizedDocuments('Site', {
-      filters: { parent_site_id: String(record.id) }
-    }, executor)) || [];
-    const hierarchyError = validateSiteChildrenForParent(record, children);
-    if (hierarchyError) {
-      const error = new Error(hierarchyError);
-      error.status = 409;
-      throw error;
-    }
-    return;
-  }
-
-  const result = await query(
-    `SELECT data
-       FROM entity_records
-      WHERE entity_name = 'Site'
-        AND data->>'parent_site_id' = $1
-      FOR SHARE`,
-    [String(record.id)],
-    executor
-  );
+  const children = (await listNormalizedDocuments('Site', {
+    filters: { parent_site_id: String(record.id) }
+  }, executor)) || [];
   const hierarchyError = validateSiteChildrenForParent(
     record,
-    result.rows.map((row) => row.data)
+    children
   );
   if (hierarchyError) {
     const error = new Error(hierarchyError);
@@ -9123,50 +8966,6 @@ const siteSubtreeReferenceChecks = Object.freeze([
 
 async function getExternalSiteSubtreeDependencies(siteIds, executor) {
   const subtreeIds = [...new Set((siteIds || []).map(String))].sort();
-  const subtreeIdSet = new Set(subtreeIds);
-  const groupedDocumentDependencies = new Map();
-  const legacyDocumentRows = await query(
-    `SELECT id, entity_name, data
-       FROM entity_records
-      WHERE NOT (entity_name = 'Site' AND id = ANY($1::text[]))
-      FOR SHARE`,
-    [subtreeIds],
-    executor
-  );
-  const relationalDocumentRows = await listRelationalDocumentReferenceRows(executor);
-  const documentRows = [
-    ...legacyDocumentRows.rows,
-    ...relationalDocumentRows
-  ];
-
-  for (const row of documentRows) {
-    if (row.entity_name === 'Site' && subtreeIdSet.has(String(row.id))) continue;
-    const matchingReferences = collectDocumentReferences(row.data).filter((reference) => (
-      reference.targetEntity === 'Site' && subtreeIdSet.has(String(reference.id))
-    ));
-    if (!matchingReferences.length) continue;
-
-    const key = `entity_records:${row.entity_name}`;
-    const dependency = groupedDocumentDependencies.get(key) || {
-      key,
-      label: `${row.entity_name} records`,
-      source: 'entity_records',
-      entity_name: row.entity_name,
-      count: 0,
-      reference_count: 0,
-      sample_ids: [],
-      referenced_site_ids: []
-    };
-    dependency.count += 1;
-    dependency.reference_count += matchingReferences.length;
-    if (dependency.sample_ids.length < 5) dependency.sample_ids.push(String(row.id));
-    dependency.referenced_site_ids = [...new Set([
-      ...dependency.referenced_site_ids,
-      ...matchingReferences.map((reference) => String(reference.id))
-    ])].sort();
-    groupedDocumentDependencies.set(key, dependency);
-  }
-
   const normalizedDependencies = [];
   for (const check of siteSubtreeReferenceChecks) {
     const result = await query(check.sql, [subtreeIds], executor);
@@ -9189,10 +8988,7 @@ async function getExternalSiteSubtreeDependencies(siteIds, executor) {
     });
   }
 
-  return [
-    ...groupedDocumentDependencies.values(),
-    ...normalizedDependencies
-  ].sort((left, right) => left.key.localeCompare(right.key));
+  return normalizedDependencies.sort((left, right) => left.key.localeCompare(right.key));
 }
 
 async function deleteSiteSubtreeWithExecutor(rootId, executor) {
@@ -9209,19 +9005,8 @@ async function deleteSiteSubtreeWithExecutor(rootId, executor) {
     ['site-hierarchy'],
     executor
   );
-  const sites = usesNormalizedCore('Site')
-    ? (await listNormalizedDocuments('Site', {}, executor)).map((site) => ({ ...site, id: String(site.id) }))
-    : (await query(
-      `SELECT id, data
-         FROM entity_records
-        WHERE entity_name = 'Site'
-        FOR UPDATE`,
-      [],
-      executor
-    )).rows.map((row) => ({
-      ...(row.data && typeof row.data === 'object' ? row.data : {}),
-      id: String(row.data?.id || row.id)
-    }));
+  const sites = (await listNormalizedDocuments('Site', {}, executor))
+    .map((site) => ({ ...site, id: String(site.id) }));
   const siteById = new Map(sites.map((site) => [String(site.id), site]));
   if (!siteById.has(normalizedRootId)) {
     const error = new Error('Site not found');
@@ -9260,9 +9045,8 @@ async function deleteSiteSubtreeWithExecutor(rootId, executor) {
     );
   }
 
-  // The normalized operational tables do not use entity_records relationship
-  // validation. A brief SHARE lock prevents a new Site reference from being
-  // inserted between the dependency check and subtree deletion.
+  // A brief SHARE lock prevents a new Site reference from being inserted
+  // between the dependency check and subtree deletion.
   const normalizedTables = [...new Set(siteSubtreeReferenceChecks.map((check) => check.table))];
   await query(
     `LOCK TABLE ${normalizedTables.join(', ')} IN SHARE MODE`,
@@ -9290,47 +9074,35 @@ async function deleteSiteSubtreeWithExecutor(rootId, executor) {
   }
 
   let deletedCount = 0;
-  if (usesNormalizedCore('Site')) {
-    const storeIds = subtree
-      .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE)
-      .map((site) => String(site.id));
-    const projectIds = subtree
-      .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT)
-      .map((site) => String(site.id));
-    const areaIds = subtree
-      .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.AREA)
-      .map((site) => String(site.id));
-    if (storeIds.length) {
-      deletedCount += (await query(
-        'DELETE FROM warehouses WHERE warehouse_id = ANY($1::text[])',
-        [storeIds],
-        executor
-      )).rowCount;
-    }
-    if (projectIds.length) {
-      deletedCount += (await query(
-        'DELETE FROM projects WHERE project_id = ANY($1::text[])',
-        [projectIds],
-        executor
-      )).rowCount;
-    }
-    if (areaIds.length) {
-      deletedCount += (await query(
-        'DELETE FROM areas WHERE area_id = ANY($1::text[])',
-        [areaIds],
-        executor
-      )).rowCount;
-    }
-  } else {
-    const deleteResult = await query(
-      `DELETE FROM entity_records
-        WHERE entity_name = 'Site'
-          AND id = ANY($1::text[])
-        RETURNING id`,
-      [subtreeIds],
+  const storeIds = subtree
+    .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.STORE)
+    .map((site) => String(site.id));
+  const projectIds = subtree
+    .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.PROJECT)
+    .map((site) => String(site.id));
+  const areaIds = subtree
+    .filter((site) => normalizeSiteType(site.type) === SITE_HIERARCHY_TYPES.AREA)
+    .map((site) => String(site.id));
+  if (storeIds.length) {
+    deletedCount += (await query(
+      'DELETE FROM warehouses WHERE warehouse_id = ANY($1::text[])',
+      [storeIds],
       executor
-    );
-    deletedCount = deleteResult.rowCount;
+    )).rowCount;
+  }
+  if (projectIds.length) {
+    deletedCount += (await query(
+      'DELETE FROM projects WHERE project_id = ANY($1::text[])',
+      [projectIds],
+      executor
+    )).rowCount;
+  }
+  if (areaIds.length) {
+    deletedCount += (await query(
+      'DELETE FROM areas WHERE area_id = ANY($1::text[])',
+      [areaIds],
+      executor
+    )).rowCount;
   }
   if (deletedCount !== subtree.length) {
     const error = new Error('Site hierarchy changed while it was being deleted. Retry the operation.');
@@ -9372,34 +9144,6 @@ async function ensureDocumentNotReferenced(entity, id, executor = pool) {
     executor
   );
 
-  const legacyDocumentRows = await query(
-    `SELECT id, entity_name, data
-     FROM entity_records
-     WHERE NOT (entity_name = $1 AND id = $2)
-     FOR SHARE`,
-    [entity, id],
-    executor
-  );
-  const relationalDocumentRows = await listRelationalDocumentReferenceRows(executor);
-  const documentRows = [
-    ...legacyDocumentRows.rows,
-    ...relationalDocumentRows.filter((row) => !(row.entity_name === entity && row.id === id))
-  ];
-
-  const documentReference = documentRows.find((row) =>
-    collectDocumentReferences(row.data).some((reference) =>
-      reference.targetEntity === entity && reference.id === String(id)
-    )
-  );
-
-  if (documentReference) {
-    const error = new Error(
-      `${entity} ${id} is still referenced by ${documentReference.entity_name} ${documentReference.id}`
-    );
-    error.status = 409;
-    throw error;
-  }
-
   for (const check of normalizedReferenceChecks[entity] || []) {
     const result = await query(check.sql, [id], executor);
     if (result.rowCount > 0) {
@@ -9432,45 +9176,26 @@ async function initDatabase() {
 }
 
 async function normalizeStoredManagementRoleProfiles(executor = pool) {
-  const result = usesNormalizedCore('RoleProfile')
-    ? await query(
-      `SELECT role_profile.*,
-              COALESCE(
-                ARRAY_AGG(permission.permission_key ORDER BY permission.permission_key)
-                  FILTER (WHERE permission.permission_key IS NOT NULL),
-                ARRAY[]::text[]
-              ) AS permissions
-         FROM role_profiles role_profile
-         LEFT JOIN role_profile_permissions permission
-           ON permission.role_profile_id = role_profile.id
-        GROUP BY role_profile.id`,
-      [],
-      executor
-    )
-    : await query(
-      `SELECT id, data
-         FROM entity_records
-        WHERE entity_name = 'RoleProfile'`,
-      [],
-      executor
-    );
+  const result = await query(
+    `SELECT role_profile.*,
+            COALESCE(
+              ARRAY_AGG(permission.permission_key ORDER BY permission.permission_key)
+                FILTER (WHERE permission.permission_key IS NOT NULL),
+              ARRAY[]::text[]
+            ) AS permissions
+       FROM role_profiles role_profile
+       LEFT JOIN role_profile_permissions permission
+         ON permission.role_profile_id = role_profile.id
+      GROUP BY role_profile.id`,
+    [],
+    executor
+  );
   for (const row of result.rows) {
-    const current = usesNormalizedCore('RoleProfile') ? rowToRoleProfile(row) : row.data;
+    const current = rowToRoleProfile(row);
     const normalized = normalizeManagementRoleProfile(current);
     if (normalized === current || JSON.stringify(normalized) === JSON.stringify(current)) continue;
     const next = { ...normalized, updated_date: nowIso() };
-    if (usesNormalizedCore('RoleProfile')) {
-      await insertOrUpdateRoleProfile(next, current, executor);
-    } else {
-      await query(
-        `UPDATE entity_records
-            SET data = $2::jsonb,
-                updated_at = $3
-          WHERE id = $1 AND entity_name = 'RoleProfile'`,
-        [row.id, JSON.stringify(next), next.updated_date],
-        executor
-      );
-    }
+    await insertOrUpdateRoleProfile(next, current, executor);
   }
 }
 
@@ -9776,9 +9501,7 @@ async function listDocuments(
     return listNormalizedDocuments(entity, { filters, rangeFilters, sort, limit, offset, lock, location }, executor);
   }
 
-  const built = buildEntityListQuery({ entity, filters, rangeFilters, sort, limit, offset, lock, location });
-  const result = await query(built.text, built.parameters, executor);
-  return result.rows.map((row) => hydrateDerivedFields(entity, row.data));
+  throw normalizedStorageError(entity);
 }
 
 async function listDocumentsPage(
@@ -9812,40 +9535,7 @@ async function listDocumentsPage(
     }, executor);
   }
 
-  const built = buildEntityListQuery({
-    entity,
-    filters,
-    rangeFilters,
-    sort,
-    limit: safeLimit,
-    offset: safeOffset,
-    location,
-    includeTotal: true
-  });
-  const result = await query(built.text, built.parameters, executor);
-  let totalCount = result.rowCount ? Number(result.rows[0].total_count) : 0;
-
-  if (!result.rowCount && safeOffset > 0) {
-    const countProbe = buildEntityListQuery({
-      entity,
-      filters,
-      rangeFilters,
-      sort,
-      limit: 1,
-      offset: 0,
-      location,
-      includeTotal: true
-    });
-    const probeResult = await query(countProbe.text, countProbe.parameters, executor);
-    totalCount = probeResult.rowCount ? Number(probeResult.rows[0].total_count) : 0;
-  }
-
-  return {
-    items: result.rows.map((row) => hydrateDerivedFields(entity, row.data)),
-    total_count: totalCount,
-    limit: safeLimit,
-    offset: safeOffset
-  };
+  throw normalizedStorageError(entity);
 }
 
 async function findDocument(entity, id, executor = pool, lock = false) {
@@ -9858,16 +9548,7 @@ async function findDocument(entity, id, executor = pool, lock = false) {
     return findNormalizedDocument(entity, id, executor, lock);
   }
 
-  const result = await query(
-    `SELECT data
-     FROM entity_records
-     WHERE entity_name = $1 AND id = $2
-     LIMIT 1
-     ${lock ? 'FOR UPDATE' : ''}`,
-    [entity, id],
-    executor
-  );
-  return result.rowCount ? hydrateDerivedFields(entity, result.rows[0].data) : null;
+  throw normalizedStorageError(entity);
 }
 
 async function createDocument(entity, payload, executor = null) {
@@ -9897,14 +9578,7 @@ async function createDocument(entity, payload, executor = null) {
     return createNormalizedDocument(entity, record, executor);
   }
 
-  await query(
-    `INSERT INTO entity_records (id, entity_name, data, created_at, updated_at)
-     VALUES ($1, $2, $3::jsonb, $4, $5)`,
-    [record.id, entity, JSON.stringify(record), record.created_date, record.updated_date],
-    executor
-  );
-
-  return record;
+  throw normalizedStorageError(entity);
 }
 
 async function updateDocument(entity, id, patch, executor = null) {
@@ -9959,15 +9633,7 @@ async function updateDocument(entity, id, patch, executor = null) {
     return updateNormalizedDocument(entity, id, record, existing, executor);
   }
 
-  await query(
-    `UPDATE entity_records
-     SET data = $3::jsonb, updated_at = $4
-     WHERE entity_name = $1 AND id = $2`,
-    [entity, id, JSON.stringify(record), record.updated_date],
-    executor
-  );
-
-  return record;
+  throw normalizedStorageError(entity);
 }
 
 async function deleteDocument(entity, id, executor = null) {
@@ -9985,12 +9651,7 @@ async function deleteDocument(entity, id, executor = null) {
   if (usesNormalizedCore(entity)) {
     return deleteNormalizedDocument(entity, id, executor);
   }
-  const result = await query(
-    'DELETE FROM entity_records WHERE entity_name = $1 AND id = $2',
-    [entity, id],
-    executor
-  );
-  return result.rowCount > 0;
+  throw normalizedStorageError(entity);
 }
 
 async function deleteDocumentRecordOnly(entity, id, executor = null) {
@@ -10007,12 +9668,7 @@ async function deleteDocumentRecordOnly(entity, id, executor = null) {
     return deleteNormalizedDocument(entity, id, executor);
   }
 
-  const result = await query(
-    'DELETE FROM entity_records WHERE entity_name = $1 AND id = $2',
-    [entity, id],
-    executor
-  );
-  return result.rowCount > 0;
+  throw normalizedStorageError(entity);
 }
 
 async function createToken(userId) {
@@ -10694,13 +10350,6 @@ async function clearDocumentsForBulk(entity, siteIds = null, executor = pool, op
     error.status = 400;
     throw error;
   }
-  const preserveServerMealServiceWaste = entity === 'FoodWaste'
-    ? `AND NOT (
-         COALESCE(data->>'auto_generated', '') = 'true'
-         OR LOWER(COALESCE(data->>'source_type', '')) IN ('meal_service_leftover', 'batch_overproduction')
-         OR COALESCE(data->>'meal_service_attendance_id', '') <> ''
-       )`
-    : '';
   if (usesNormalizedCore(entity)) {
     const siteFilter = Array.isArray(siteIds)
       ? new Set(siteIds.map(String))
@@ -10736,43 +10385,7 @@ async function clearDocumentsForBulk(entity, siteIds = null, executor = pool, op
     }
     return deletedCount;
   }
-  const menuPlanScope = entity === 'MenuPlan' ? bulkMenuPlanScopeOptions(options) : { cuisine_type: '', menu_category: '' };
-  const menuPlanScopeFilter = entity === 'MenuPlan'
-    ? `AND ($3::text = '' OR LOWER(REPLACE(COALESCE(data->>'cuisine_type', data->>'menu_type', 'general'), ' ', '_')) = $3)
-       AND ($4::text = '' OR LOWER(REPLACE(COALESCE(data->>'menu_category', 'senior'), ' ', '_')) = $4)
-       AND (COALESCE(array_length($5::text[], 1), 0) = 0 OR data->>'plan_date' = ANY($5::text[]))`
-    : '';
-  const globalMenuPlanScopeFilter = entity === 'MenuPlan'
-    ? `AND ($2::text = '' OR LOWER(REPLACE(COALESCE(data->>'cuisine_type', data->>'menu_type', 'general'), ' ', '_')) = $2)
-       AND ($3::text = '' OR LOWER(REPLACE(COALESCE(data->>'menu_category', 'senior'), ' ', '_')) = $3)
-       AND (COALESCE(array_length($4::text[], 1), 0) = 0 OR data->>'plan_date' = ANY($4::text[]))`
-    : '';
-  if (Array.isArray(siteIds)) {
-    if (!siteIds.length) return 0;
-    const result = await query(
-      `DELETE FROM entity_records
-       WHERE entity_name = $1
-         AND (
-           data->>'site_id' = ANY($2::text[])
-           OR COALESCE(data->'site_ids', '[]'::jsonb) ?| $2::text[]
-         )
-       ${menuPlanScopeFilter}
-      ${preserveServerMealServiceWaste}`,
-      entity === 'MenuPlan'
-        ? [entity, siteIds, menuPlanScope.cuisine_type, menuPlanScope.menu_category, menuPlanScope.plan_dates]
-        : [entity, siteIds],
-      executor
-    );
-    return result.rowCount;
-  }
-  const result = await query(
-    `DELETE FROM entity_records WHERE entity_name = $1 ${globalMenuPlanScopeFilter} ${preserveServerMealServiceWaste}`,
-    entity === 'MenuPlan'
-      ? [entity, menuPlanScope.cuisine_type, menuPlanScope.menu_category, menuPlanScope.plan_dates]
-      : [entity],
-    executor
-  );
-  return result.rowCount;
+  throw normalizedStorageError(entity);
 }
 
 async function acquireMealServiceScopeLock(scopeKey, executor = pool) {

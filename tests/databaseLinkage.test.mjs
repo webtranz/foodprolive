@@ -13,12 +13,8 @@ import {
 } from '../server/inventory.js';
 import { buildSiteHierarchy } from '../server/locationScope.js';
 
-function createSiteDeletionExecutor({ sites = [], documents = [], users = [] } = {}) {
+function createSiteDeletionExecutor({ sites = [], users = [], normalizedDependencyCount = 0 } = {}) {
   const deleteCalls = [];
-  const allDocuments = [
-    ...sites.map((site) => ({ id: site.id, entity_name: 'Site', data: site })),
-    ...documents
-  ];
 
   return {
     deleteCalls,
@@ -31,19 +27,6 @@ function createSiteDeletionExecutor({ sites = [], documents = [], users = [] } =
 
       if (/^LOCK TABLE /i.test(normalizedSql)) {
         return { rowCount: 0, rows: [] };
-      }
-
-      if (/SELECT .* FROM entity_records/i.test(normalizedSql)) {
-        if (/WHERE NOT \(entity_name = 'Site'/i.test(normalizedSql)) {
-          return { rowCount: documents.length, rows: documents };
-        }
-        if (/entity_name\s*=\s*'Site'/i.test(normalizedSql)) {
-          return {
-            rowCount: sites.length,
-            rows: sites.map((site) => ({ id: site.id, entity_name: 'Site', data: site }))
-          };
-        }
-        return { rowCount: allDocuments.length, rows: allDocuments };
       }
 
       if (/FROM areas/i.test(normalizedSql) && /UNION ALL/i.test(normalizedSql)) {
@@ -116,17 +99,12 @@ function createSiteDeletionExecutor({ sites = [], documents = [], users = [] } =
       }
 
       if (/FROM (pos_|purchase_|goods_|supplier_|warehouse_inventory|inventory_lots|inventory_transactions|menu_plans|production_events|produced_output_batches|meal_service_headers|food_waste_records)/i.test(normalizedSql)) {
-        return { rowCount: 1, rows: [{ dependency_count: 0, sample_ids: [] }] };
-      }
-
-      if (/^DELETE FROM entity_records/i.test(normalizedSql)) {
-        deleteCalls.push({ sql: normalizedSql, params });
-        const ids = (Array.isArray(params[1]) ? params[1] : params).flat().filter((value) => (
-          sites.some((site) => String(site.id) === String(value))
-        ));
         return {
-          rowCount: ids.length,
-          rows: ids.map((id) => ({ id, data: sites.find((site) => String(site.id) === String(id)) }))
+          rowCount: 1,
+          rows: [{
+            dependency_count: normalizedDependencyCount,
+            sample_ids: normalizedDependencyCount > 0 ? ['dependency-1'] : []
+          }]
         };
       }
 
@@ -186,11 +164,44 @@ const cases = [
           if (sql.includes('pg_advisory_xact_lock_shared')) {
             return { rowCount: 1, rows: [{}] };
           }
-          if (sql.includes('FROM entity_records')) {
-            const record = records.get(`${params[0]}:${params[1]}`);
+          if (sql.includes('FROM areas') && sql.includes('UNION ALL')) {
+            const record = records.get(`Site:${params[0]}`);
             return {
               rowCount: record ? 1 : 0,
-              rows: record ? [{ data: record }] : []
+              rows: record ? [{
+                id: record.id,
+                name: record.name,
+                type: record.type || 'area',
+                parent_site_id: record.parent_site_id || null,
+                area_code: record.project_code || null,
+                project_code: null,
+                warehouse_code: null,
+                d365_warehouse_id: null,
+                status: record.status || 'active',
+                source_name: record.source_name || null,
+                created_at: record.created_date || new Date().toISOString(),
+                updated_at: record.updated_date || new Date().toISOString()
+              }] : []
+            };
+          }
+          if (sql.includes('FROM ingredients')) {
+            const record = records.get(`Ingredient:${params[0]}`);
+            return {
+              rowCount: record ? 1 : 0,
+              rows: record ? [{
+                ingredient_id: record.id,
+                name: record.name,
+                item_code: record.item_code || record.id,
+                ingredient_code: record.ingredient_code || null,
+                sku: record.sku || null,
+                d365_item_id: record.d365_item_id || null,
+                base_unit: record.unit || 'EA',
+                category_id: record.category || null,
+                status: record.status || 'active',
+                source_name: record.source_name || null,
+                created_at: record.created_date || new Date().toISOString(),
+                updated_at: record.updated_date || new Date().toISOString()
+              }] : []
             };
           }
           throw new Error(`Unexpected query: ${sql}`);
@@ -245,16 +256,11 @@ const cases = [
   {
     name: 'rejects site structure changes that would invalidate existing children',
     async run() {
-      const executor = {
-        async query(sql, params) {
-          assert.match(sql, /data->>'parent_site_id'/);
-          assert.deepEqual(params, ['area-west']);
-          return {
-            rowCount: 1,
-            rows: [{ data: { id: 'project-jeddah', name: 'Jeddah Project', type: 'project', parent_site_id: 'area-west' } }]
-          };
-        }
-      };
+      const executor = createSiteDeletionExecutor({
+        sites: [
+          { id: 'project-jeddah', name: 'Jeddah Project', type: 'project', parent_site_id: 'area-west' }
+        ]
+      });
 
       await assert.rejects(
         validateSiteChildrenAfterStructureChange(
@@ -289,7 +295,7 @@ const cases = [
         executor.deleteCalls.flatMap((call) => call.params.flatMap((value) => Array.isArray(value) ? value : [value]))
       );
 
-      assert.equal(executor.deleteCalls.length, 1, 'the unused subtree must be deleted atomically');
+      assert.equal(executor.deleteCalls.length, 2, 'the unused subtree must be deleted from typed hierarchy tables');
       assert.deepEqual(
         [...deletedIds].filter((id) => [project.id, ...stores.map((store) => store.id)].includes(id)).sort(),
         [project.id, ...stores.map((store) => store.id)].sort()
@@ -306,12 +312,12 @@ const cases = [
         {
           label: 'user assignment',
           users: [{ id: 'user-1', site_id: store.id, allowed_site_ids: [store.id] }],
-          documents: []
+          normalizedDependencyCount: 0
         },
         {
-          label: 'operational document',
+          label: 'operational dependency',
           users: [],
-          documents: [{ id: 'production-1', entity_name: 'Production', data: { id: 'production-1', site_id: project.id } }]
+          normalizedDependencyCount: 1
         }
       ];
 
@@ -319,7 +325,7 @@ const cases = [
         const executor = createSiteDeletionExecutor({
           sites: [project, store],
           users: scenario.users,
-          documents: scenario.documents
+          normalizedDependencyCount: scenario.normalizedDependencyCount
         });
         let caught = null;
         try {
@@ -371,10 +377,9 @@ const cases = [
       assert.match(d365Source, /selectedLogDetails\?\.total_pages/);
       assert.match(d365Source, /setLogDetailPage\(\(page\) => Math\.min\(selectedLogTotalPages, page \+ 1\)\)/);
 
-      assert.match(inventorySource, /stock_dates_by_batch:\s*describeMovementLayerDates\(movement, 'stock_date'\)/);
-      assert.match(inventorySource, /expiry_dates_by_batch:\s*describeMovementLayerDates\(movement, 'expiry_date'\)/);
-      assert.match(inventorySource, /<MovementLayerDates movement=\{movement\} field="stock_date" \/>/);
-      assert.match(inventorySource, /<MovementLayerDates movement=\{movement\} field="expiry_date" \/>/);
+      assert.match(inventorySource, /stock_date:\s*stockDate/);
+      assert.match(inventorySource, /expiry_date:\s*expiryDate \|\| null/);
+      assert.match(inventorySource, /Supported columns: item_code or ingredient_name, project_code or site_name, quantity, unit_cost, batch_number, stock_date, expiry_date/);
       [
         'opening_value',
         'addition_value',
@@ -423,7 +428,10 @@ const cases = [
         'idx_produced_output_batches_number_unique',
         'idx_meal_service_headers_scope',
         'idx_food_waste_records_scope',
-        'idx_entity_records_inventory_site_ingredient_unique',
+        'idx_warehouse_inventory_ingredient',
+        'idx_ingredients_d365_unique',
+        'idx_warehouses_d365_unique',
+        'idx_inventory_transactions_idempotency_unique',
         'idx_pos_sales_items_order',
         'idx_purchase_request_items_request',
         'idx_purchase_requests_special_event_source_unique',
@@ -433,35 +441,9 @@ const cases = [
         assert.match(sql, new RegExp(requiredDefinition));
       });
 
-      [
-        'ambiguous_ingredient_mappings',
-        'ambiguous_site_mappings',
-        "'d365_mapping_status', 'needs_remap'",
-        "'resolution', 'explicit_remap_required'",
-        'conflicting_record_ids',
-        'ranked_transaction_keys',
-        'duplicate_transaction_keys',
-        'canonical_transaction_id',
-        "'status', 'legacy_duplicate_quarantined'",
-        "record.data - 'idempotency_key'"
-      ].forEach((preflightControl) => {
-        assert.match(sql, new RegExp(preflightControl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-      });
-      assert.ok(
-        sql.indexOf('WITH ambiguous_ingredient_mappings')
-          < sql.indexOf('idx_entity_records_ingredient_d365_item_unique'),
-        'ambiguous ingredient mappings must be quarantined before the unique index is created'
-      );
-      assert.ok(
-        sql.indexOf('WITH ambiguous_site_mappings')
-          < sql.indexOf('idx_entity_records_site_d365_warehouse_unique'),
-        'ambiguous Store mappings must be quarantined before the unique index is created'
-      );
-      assert.ok(
-        sql.indexOf('WITH ranked_transaction_keys')
-          < sql.indexOf('idx_entity_records_inventory_transaction_idempotency'),
-        'duplicate idempotency keys must be quarantined before the unique index is created'
-      );
+      assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredients_d365_unique/);
+      assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouses_d365_unique/);
+      assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_transactions_idempotency_unique/);
 
       [
         'getPurchaseRequestById\\(id, client\\)',

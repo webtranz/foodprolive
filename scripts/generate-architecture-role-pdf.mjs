@@ -220,7 +220,7 @@ function buildPdf() {
   y += 2;
   y = addTitle(doc, y, '5. Key Design Notes');
   y = addBullets(doc, y, [
-    'Relational tables are used for auth, procurement, and POS integration; entity_records provides extensible JSON-backed models for many operational modules.',
+    'Normalized relational tables are used for auth, procurement, POS integration, inventory, production, meal service, food waste, menu planning, reporting, and supporting operational modules.',
     'Server-side location scoping protects project-level visibility and prevents users from seeing unassigned project names and data.',
     'Custom roles are supported through RoleProfile while still inheriting the core access_level model of admin / manager / user.',
     'Production and material request approval flow is enforced by permission checks and workflow status transitions in the backend.'

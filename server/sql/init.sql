@@ -207,151 +207,20 @@ BEGIN
 END;
 $trigger$;
 
--- ---------------------------------------------------------------------------
--- Relational document tables for modules that previously shared entity_records
--- ---------------------------------------------------------------------------
--- These tables keep typed, indexed operational fields out of one large JSONB
--- bucket while preserving the full payload for screen compatibility during the
--- cutover. The API routes each module to its own physical table.
-CREATE OR REPLACE FUNCTION notify_foodpro_document_table_change()
-RETURNS TRIGGER AS $$
-DECLARE
-  record_data JSONB;
-  entity_value TEXT;
-BEGIN
-  IF TG_OP = 'DELETE' THEN
-    record_data := OLD.payload;
-  ELSE
-    record_data := NEW.payload;
-  END IF;
-  entity_value := TG_ARGV[0];
-  PERFORM pg_notify(
-    'foodpro_entity_events',
-    jsonb_build_object(
-      'entity', entity_value,
-      'action', LOWER(TG_OP),
-      'id', NULL,
-      'site_id', COALESCE(record_data->>'site_id', record_data->>'warehouse_id'),
-      'site_ids', COALESCE(record_data->'site_ids', '[]'::jsonb),
-      'occurred_at', NOW()
-    )::text
-  );
-  IF TG_OP = 'DELETE' THEN
-    RETURN OLD;
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DO $document_tables$
-DECLARE
-  document_table TEXT;
-  entity_value TEXT;
-BEGIN
-  FOR document_table, entity_value IN
-    SELECT *
-    FROM (VALUES
-      ('role_profiles', 'RoleProfile')
-    ) AS mapped(document_table, entity_value)
-  LOOP
-    EXECUTE format($sql$
-      CREATE TABLE IF NOT EXISTS %I (
-        id TEXT PRIMARY KEY,
-        entity_name TEXT NOT NULL DEFAULT %L,
-        site_id TEXT,
-        site_name TEXT,
-        from_site_id TEXT,
-        to_site_id TEXT,
-        site_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
-        status TEXT NOT NULL DEFAULT 'active',
-        record_date DATE,
-        source_name TEXT,
-        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    $sql$, document_table, entity_value);
-    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (site_id, status, updated_at DESC)', 'idx_' || document_table || '_site_status', document_table);
-    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (record_date, status, updated_at DESC)', 'idx_' || document_table || '_record_date', document_table);
-    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (site_ids)', 'idx_' || document_table || '_site_ids', document_table);
-    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (payload)', 'idx_' || document_table || '_payload', document_table);
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_trigger
-      WHERE tgname = document_table || '_realtime_change'
-        AND tgrelid = to_regclass(document_table)
-    ) THEN
-      EXECUTE format(
-        'CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION notify_foodpro_document_table_change(%L)',
-        document_table || '_realtime_change',
-        document_table,
-        entity_value
-      );
-    END IF;
-    EXECUTE format($sql$
-      INSERT INTO %I (
-        id, entity_name, site_id, site_name, from_site_id, to_site_id,
-        site_ids, status, record_date, source_name, payload, created_at, updated_at
-      )
-      SELECT
-        record.id,
-        %L,
-        COALESCE(
-          NULLIF(record.data->>'site_id', ''),
-          NULLIF(record.data->>'warehouse_id', ''),
-          NULLIF(record.data->>'fulfillment_store_id', ''),
-          NULLIF(record.data->>'requesting_site_id', '')
-        ),
-        NULLIF(record.data->>'site_name', ''),
-        NULLIF(record.data->>'from_site_id', ''),
-        NULLIF(record.data->>'to_site_id', ''),
-        CASE
-          WHEN jsonb_typeof(record.data->'site_ids') = 'array'
-            THEN ARRAY(SELECT jsonb_array_elements_text(record.data->'site_ids'))
-          ELSE ARRAY[]::text[]
-        END,
-        COALESCE(NULLIF(record.data->>'status', ''), 'active'),
-        CASE
-          WHEN COALESCE(
-            record.data->>'record_date',
-            record.data->>'date',
-            record.data->>'service_date',
-            record.data->>'waste_date',
-            record.data->>'plan_date',
-            record.data->>'production_date',
-            record.data->>'request_date',
-            record.data->>'order_date',
-            record.data->>'event_date',
-            record.data->>'shift_date',
-            record.data->>'scan_date',
-            record.data->>'created_date'
-          ) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-            THEN LEFT(COALESCE(
-              record.data->>'record_date',
-              record.data->>'date',
-              record.data->>'service_date',
-              record.data->>'waste_date',
-              record.data->>'plan_date',
-              record.data->>'production_date',
-              record.data->>'request_date',
-              record.data->>'order_date',
-              record.data->>'event_date',
-              record.data->>'shift_date',
-              record.data->>'scan_date',
-              record.data->>'created_date'
-            ), 10)::date
-          ELSE NULL
-        END,
-        NULLIF(record.data->>'source_name', ''),
-        record.data || jsonb_build_object('id', record.id),
-        record.created_at,
-        record.updated_at
-      FROM entity_records record
-      WHERE record.entity_name = %L
-      ON CONFLICT (id) DO NOTHING
-    $sql$, document_table, entity_value, entity_value);
-  END LOOP;
-END;
-$document_tables$;
+CREATE TABLE IF NOT EXISTS role_profiles (
+  id TEXT PRIMARY KEY,
+  role_key TEXT,
+  name TEXT,
+  description TEXT,
+  access_level TEXT NOT NULL DEFAULT 'user',
+  dashboard_variant TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  is_system BOOLEAN NOT NULL DEFAULT FALSE,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 CREATE TABLE IF NOT EXISTS budgets (
   id TEXT PRIMARY KEY,
@@ -3980,33 +3849,56 @@ CREATE TABLE IF NOT EXISTS role_profile_permissions (
 CREATE INDEX IF NOT EXISTS idx_role_profile_permissions_permission
   ON role_profile_permissions(permission_key, role_profile_id);
 
-UPDATE role_profiles
-   SET role_key = COALESCE(role_key, NULLIF(payload->>'role_key', '')),
-       name = COALESCE(name, NULLIF(payload->>'name', '')),
-       description = COALESCE(description, NULLIF(payload->>'description', '')),
-       access_level = COALESCE(NULLIF(access_level, ''), NULLIF(payload->>'access_level', ''), 'user'),
-       dashboard_variant = COALESCE(dashboard_variant, NULLIF(payload->>'dashboard_variant', '')),
-       is_active = CASE
-         WHEN payload ? 'is_active' THEN COALESCE((payload->>'is_active')::boolean, TRUE)
-         ELSE is_active
-       END,
-       is_system = CASE
-         WHEN payload ? 'is_system' THEN COALESCE((payload->>'is_system')::boolean, FALSE)
-         ELSE is_system
-       END
- WHERE payload IS NOT NULL;
+INSERT INTO role_profiles (
+  id, role_key, name, description, access_level, dashboard_variant,
+  is_active, is_system, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(record.data->>'role_key', ''),
+  NULLIF(record.data->>'name', ''),
+  NULLIF(record.data->>'description', ''),
+  COALESCE(NULLIF(record.data->>'access_level', ''), 'user'),
+  NULLIF(record.data->>'dashboard_variant', ''),
+  CASE
+    WHEN record.data ? 'is_active' THEN COALESCE((record.data->>'is_active')::boolean, TRUE)
+    ELSE TRUE
+  END,
+  CASE
+    WHEN record.data ? 'is_system' THEN COALESCE((record.data->>'is_system')::boolean, FALSE)
+    ELSE FALSE
+  END,
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'RoleProfile'
+ON CONFLICT (id) DO UPDATE SET
+  role_key = COALESCE(EXCLUDED.role_key, role_profiles.role_key),
+  name = COALESCE(EXCLUDED.name, role_profiles.name),
+  description = COALESCE(EXCLUDED.description, role_profiles.description),
+  access_level = COALESCE(NULLIF(EXCLUDED.access_level, ''), role_profiles.access_level, 'user'),
+  dashboard_variant = COALESCE(EXCLUDED.dashboard_variant, role_profiles.dashboard_variant),
+  is_active = EXCLUDED.is_active,
+  is_system = EXCLUDED.is_system,
+  status = COALESCE(EXCLUDED.status, role_profiles.status, 'active'),
+  source_name = COALESCE(EXCLUDED.source_name, role_profiles.source_name),
+  updated_at = EXCLUDED.updated_at;
 
 INSERT INTO role_profile_permissions (role_profile_id, permission_key)
 SELECT role_profile.id, permission.permission_key
-  FROM role_profiles role_profile
+  FROM entity_records record
+  JOIN role_profiles role_profile ON role_profile.id = record.id
   CROSS JOIN LATERAL jsonb_array_elements_text(
     CASE
-      WHEN jsonb_typeof(role_profile.payload->'permissions') = 'array'
-        THEN role_profile.payload->'permissions'
+      WHEN jsonb_typeof(record.data->'permissions') = 'array'
+        THEN record.data->'permissions'
       ELSE '[]'::jsonb
     END
   ) AS permission(permission_key)
-     WHERE COALESCE(BTRIM(permission.permission_key), '') <> ''
+ WHERE record.entity_name = 'RoleProfile'
+   AND COALESCE(BTRIM(permission.permission_key), '') <> ''
 ON CONFLICT (role_profile_id, permission_key) DO NOTHING;
 
 DROP TRIGGER IF EXISTS role_profiles_realtime_change ON role_profiles;
@@ -4044,6 +3936,13 @@ CREATE TRIGGER role_profiles_realtime_change
   FOR EACH ROW EXECUTE FUNCTION notify_foodpro_role_profile_change();
 
 ALTER TABLE role_profiles DROP COLUMN IF EXISTS payload;
+ALTER TABLE role_profiles DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE role_profiles DROP COLUMN IF EXISTS site_id;
+ALTER TABLE role_profiles DROP COLUMN IF EXISTS site_name;
+ALTER TABLE role_profiles DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE role_profiles DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE role_profiles DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE role_profiles DROP COLUMN IF EXISTS record_date;
 
 -- ---------------------------------------------------------------------------
 -- Phase 1 normalized operational schema
@@ -9579,545 +9478,11 @@ BEGIN
 END;
 $trigger$;
 
-CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lookup
-  ON entity_records ((data->>'site_id'), (data->>'ingredient_id'))
-  WHERE entity_name = 'Inventory';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_name_search
-  ON entity_records USING GIN (LOWER(COALESCE(data->>'name', '')) gin_trgm_ops)
-  WHERE entity_name = 'Ingredient';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_sku_search
-  ON entity_records USING GIN ((
-    LOWER(COALESCE(data->>'sku', '') || ' ' || COALESCE(data->>'ingredient_code', '') || ' ' || COALESCE(data->>'item_code', ''))
-  ) gin_trgm_ops)
-  WHERE entity_name = 'Ingredient';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_category_search
-  ON entity_records USING GIN (LOWER(COALESCE(data->>'category', '')) gin_trgm_ops)
-  WHERE entity_name = 'Ingredient';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_alias_search
-  ON entity_records USING GIN ((
-    LOWER(COALESCE(data->>'alias', '') || ' ' || COALESCE(data->>'aliases', '') || ' ' ||
-      COALESCE(data->>'alternative_name', '') || ' ' || COALESCE(data->>'alternative_names', ''))
-  ) gin_trgm_ops)
-  WHERE entity_name = 'Ingredient';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_supplier_name_search
-  ON entity_records USING GIN ((
-    LOWER(COALESCE(data->>'supplier_item_name', '') || ' ' || COALESCE(data->>'supplier_item_names', ''))
-  ) gin_trgm_ops)
-  WHERE entity_name = 'Ingredient';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_ingredient_search_document
-  ON entity_records USING GIN ((
-    LOWER(
-      COALESCE(data->>'name', '') || ' ' || COALESCE(data->>'sku', '') || ' ' ||
-      COALESCE(data->>'ingredient_code', '') || ' ' || COALESCE(data->>'item_code', '') || ' ' ||
-      COALESCE(data->>'category', '') || ' ' || COALESCE(data->>'alias', '') || ' ' ||
-      COALESCE(data->>'aliases', '') || ' ' || COALESCE(data->>'alternative_name', '') || ' ' ||
-      COALESCE(data->>'alternative_names', '') || ' ' || COALESCE(data->>'supplier_item_name', '') || ' ' ||
-      COALESCE(data->>'supplier_item_names', '')
-    )
-  ) gin_trgm_ops)
-  WHERE entity_name = 'Ingredient'
-    AND COALESCE(LOWER(NULLIF(BTRIM(data->>'is_active'), '')), 'true') NOT IN ('false', '0', 'no', 'inactive');
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_inventory_site_ingredient_unique
-  ON entity_records ((data->>'site_id'), (data->>'ingredient_id'))
-  WHERE entity_name = 'Inventory'
-    AND COALESCE(data->>'site_id', '') <> ''
-    AND COALESCE(data->>'ingredient_id', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_lookup
-  ON entity_records ((data->>'site_id'), (data->>'ingredient_id'), (data->>'batch_number'))
-  WHERE entity_name = 'InventoryLot';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_rotation
-  ON entity_records (
-    (data->>'site_id'),
-    (data->>'ingredient_id'),
-    (data->>'expiry_date'),
-    (COALESCE(data->>'stock_date', data->>'received_date')),
-    id
-  )
-  WHERE entity_name = 'InventoryLot';
-
--- New D365 mapping and idempotency constraints must be safe on databases that
--- predate those constraints. Ambiguous mappings are never resolved by picking
--- an arbitrary winner: every conflicting active mapping is cleared and marked
--- for an explicit remap, while its original value and conflict set remain in
--- legacy_metadata. Duplicate transaction keys retain the oldest deterministic
--- canonical row and quarantine only later conflicting active keys.
-WITH ambiguous_ingredient_mappings AS (
-  SELECT
-    LOWER(BTRIM(data->>'d365_item_id')) AS normalized_value,
-    jsonb_agg(id ORDER BY id) AS conflicting_record_ids
-  FROM entity_records
-  WHERE entity_name = 'Ingredient'
-    AND COALESCE(BTRIM(data->>'d365_item_id'), '') <> ''
-  GROUP BY LOWER(BTRIM(data->>'d365_item_id'))
-  HAVING COUNT(*) > 1
-)
-UPDATE entity_records AS record
-SET data = jsonb_set(
-      (record.data - 'd365_item_id') || jsonb_build_object(
-        'd365_mapping_status', 'needs_remap'
-      ),
-      '{legacy_metadata}',
-      (CASE
-        WHEN jsonb_typeof(record.data->'legacy_metadata') = 'object'
-          THEN record.data->'legacy_metadata'
-        WHEN record.data ? 'legacy_metadata'
-          THEN jsonb_build_object('prior_legacy_metadata', record.data->'legacy_metadata')
-        ELSE '{}'::jsonb
-      END) || jsonb_build_object(
-        'd365_item_id_conflict', jsonb_build_object(
-          'original_value', record.data->>'d365_item_id',
-          'normalized_value', ambiguous.normalized_value,
-          'conflicting_record_ids', ambiguous.conflicting_record_ids,
-          'resolution', 'explicit_remap_required'
-        )
-      ),
-      true
-    ),
-    updated_at = NOW()
-FROM ambiguous_ingredient_mappings AS ambiguous
-WHERE record.entity_name = 'Ingredient'
-  AND LOWER(BTRIM(record.data->>'d365_item_id')) = ambiguous.normalized_value;
-
-WITH ambiguous_site_mappings AS (
-  SELECT
-    LOWER(BTRIM(data->>'d365_warehouse_id')) AS normalized_value,
-    jsonb_agg(id ORDER BY id) AS conflicting_record_ids
-  FROM entity_records
-  WHERE entity_name = 'Site'
-    AND COALESCE(BTRIM(data->>'d365_warehouse_id'), '') <> ''
-  GROUP BY LOWER(BTRIM(data->>'d365_warehouse_id'))
-  HAVING COUNT(*) > 1
-)
-UPDATE entity_records AS record
-SET data = jsonb_set(
-      (record.data - 'd365_warehouse_id') || jsonb_build_object(
-        'd365_mapping_status', 'needs_remap'
-      ),
-      '{legacy_metadata}',
-      (CASE
-        WHEN jsonb_typeof(record.data->'legacy_metadata') = 'object'
-          THEN record.data->'legacy_metadata'
-        WHEN record.data ? 'legacy_metadata'
-          THEN jsonb_build_object('prior_legacy_metadata', record.data->'legacy_metadata')
-        ELSE '{}'::jsonb
-      END) || jsonb_build_object(
-        'd365_warehouse_id_conflict', jsonb_build_object(
-          'original_value', record.data->>'d365_warehouse_id',
-          'normalized_value', ambiguous.normalized_value,
-          'conflicting_record_ids', ambiguous.conflicting_record_ids,
-          'resolution', 'explicit_remap_required'
-        )
-      ),
-      true
-    ),
-    updated_at = NOW()
-FROM ambiguous_site_mappings AS ambiguous
-WHERE record.entity_name = 'Site'
-  AND LOWER(BTRIM(record.data->>'d365_warehouse_id')) = ambiguous.normalized_value;
-
-WITH ranked_transaction_keys AS (
-  SELECT
-    id,
-    data->>'idempotency_key' AS original_key,
-    FIRST_VALUE(id) OVER (
-      PARTITION BY BTRIM(data->>'idempotency_key')
-      ORDER BY created_at ASC, id ASC
-    ) AS canonical_transaction_id,
-    ROW_NUMBER() OVER (
-      PARTITION BY BTRIM(data->>'idempotency_key')
-      ORDER BY created_at ASC, id ASC
-    ) AS duplicate_rank
-  FROM entity_records
-  WHERE entity_name = 'InventoryTransaction'
-    AND COALESCE(BTRIM(data->>'idempotency_key'), '') <> ''
-), duplicate_transaction_keys AS (
-  SELECT id, original_key, canonical_transaction_id
-  FROM ranked_transaction_keys
-  WHERE duplicate_rank > 1
-)
-UPDATE entity_records AS record
-SET data = jsonb_set(
-      record.data - 'idempotency_key',
-      '{legacy_metadata}',
-      (CASE
-        WHEN jsonb_typeof(record.data->'legacy_metadata') = 'object'
-          THEN record.data->'legacy_metadata'
-        WHEN record.data ? 'legacy_metadata'
-          THEN jsonb_build_object('prior_legacy_metadata', record.data->'legacy_metadata')
-        ELSE '{}'::jsonb
-      END) || jsonb_build_object(
-        'duplicate_idempotency_key', jsonb_build_object(
-          'original_value', duplicate.original_key,
-          'canonical_transaction_id', duplicate.canonical_transaction_id,
-          'status', 'legacy_duplicate_quarantined'
-        )
-      ),
-      true
-    ),
-    updated_at = NOW()
-FROM duplicate_transaction_keys AS duplicate
-WHERE record.id = duplicate.id
-  AND record.entity_name = 'InventoryTransaction';
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_inventory_transaction_idempotency
-  ON entity_records ((data->>'idempotency_key'))
-  WHERE entity_name = 'InventoryTransaction'
-    AND COALESCE(data->>'idempotency_key', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_transaction_reference
-  ON entity_records ((data->>'reference_type'), (data->>'reference_id'), (data->>'reason_code'))
-  WHERE entity_name = 'InventoryTransaction';
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_ingredient_d365_item_unique
-  ON entity_records ((LOWER(BTRIM(data->>'d365_item_id'))))
-  WHERE entity_name = 'Ingredient' AND COALESCE(BTRIM(data->>'d365_item_id'), '') <> '';
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_site_d365_warehouse_unique
-  ON entity_records ((LOWER(BTRIM(data->>'d365_warehouse_id'))))
-  WHERE entity_name = 'Site' AND COALESCE(BTRIM(data->>'d365_warehouse_id'), '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_erp_log_sync_lookup
-  ON entity_records ((data->>'direction'), (data->>'module_key'), (data->>'sync_id'), updated_at DESC)
-  WHERE entity_name = 'ERPIntegrationLog';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_site_date_status_ci
-  ON entity_records (
-    (data->>'site_id'),
-    LOWER(COALESCE(data->>'plan_date', '')),
-    LOWER(COALESCE(data->>'status', ''))
-  )
-  WHERE entity_name = 'MenuPlan';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_event_lookup
-  ON entity_records ((data->>'site_id'), (data->>'event_date'), (data->>'status'))
-  WHERE entity_name = 'MenuPlan' AND COALESCE(data->>'event_name', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_production_event_recipe
-  ON entity_records ((data->>'source_event_id'), (data->>'source_event_recipe_id'))
-  WHERE entity_name = 'Production' AND COALESCE(data->>'source_event_id', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_production_site_date_status_ci
-  ON entity_records (
-    (data->>'site_id'),
-    LOWER(COALESCE(data->>'production_date', '')),
-    LOWER(COALESCE(data->>'status', ''))
-  )
-  WHERE entity_name = 'Production';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_production_status_date_ci
-  ON entity_records (
-    LOWER(COALESCE(data->>'status', '')),
-    LOWER(COALESCE(data->>'production_date', ''))
-  )
-  WHERE entity_name = 'Production';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_production_site_date_meal_scope
-  ON entity_records (
-    (data->>'site_id'),
-    (data->>'fulfillment_store_id'),
-    (data->>'production_date'),
-    (data->>'meal_type'),
-    (data->>'menu_type'),
-    (data->>'menu_category'),
-    (data->>'status')
-  )
-  WHERE entity_name = 'Production';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_material_request_site_date_status_ci
-  ON entity_records (
-    (data->>'site_id'),
-    LOWER(COALESCE(data->>'request_date', '')),
-    LOWER(COALESCE(data->>'status', ''))
-  )
-  WHERE entity_name = 'MaterialRequest';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_transaction_site_date_ci
-  ON entity_records (
-    (data->>'site_id'),
-    LOWER(COALESCE(data->>'transaction_date', '')),
-    LOWER(COALESCE(data->>'transaction_type', ''))
-  )
-  WHERE entity_name = 'InventoryTransaction';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_site_expiry
-  ON entity_records ((data->>'site_id'), (data->>'expiry_date'), (data->>'status'))
-  WHERE entity_name = 'InventoryLot';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_inventory_lot_site_ingredient_status
-  ON entity_records ((data->>'site_id'), (data->>'ingredient_id'), (data->>'status'))
-  WHERE entity_name = 'InventoryLot';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_attendance_site_date_status_ci
-  ON entity_records (
-    (data->>'site_id'),
-    LOWER(COALESCE(data->>'attendance_date', '')),
-    LOWER(COALESCE(data->>'attendance_status', ''))
-  )
-  WHERE entity_name = 'AttendanceRecord';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_recipe_scope_name
-  ON entity_records ((data->>'site_scope'), LOWER(COALESCE(data->>'name', '')))
-  WHERE entity_name = 'Recipe';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_recipe_site_ids
-  ON entity_records USING GIN ((data->'site_ids'))
-  WHERE entity_name = 'Recipe';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_event_handoffs
-  ON entity_records ((data->>'procurement_pr_id'), (data->>'production_plan_status'))
-  WHERE entity_name = 'MenuPlan' AND COALESCE(data->>'event_name', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_budget_lookup
-  ON entity_records ((data->>'budget_id'), (data->>'site_id'), (data->>'plan_date'))
-  WHERE entity_name = 'MenuPlan' AND COALESCE(data->>'budget_id', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_budget_site_period_status
-  ON entity_records ((data->>'site_id'), (data->>'start_date'), (data->>'end_date'), (data->>'status'))
-  WHERE entity_name = 'Budget';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_budget_scope_lookup
-  ON entity_records ((data->>'scope_type'), (data->>'meal_type'), (data->>'event_name'))
-  WHERE entity_name = 'Budget';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_food_waste_site_date_meal
-  ON entity_records ((data->>'site_id'), (data->>'waste_date'), (data->>'meal_type'))
-  WHERE entity_name = 'FoodWaste';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_food_waste_status_lookup
-  ON entity_records ((data->>'approval_status'), (data->>'status'), (data->>'production_id'))
-  WHERE entity_name = 'FoodWaste';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_food_waste_report_filters
-  ON entity_records (
-    (data->>'waste_date'),
-    (data->>'site_id'),
-    (data->>'meal_type'),
-    (data->>'waste_category'),
-    (data->>'reason_code'),
-    (data->>'waste_scope'),
-    (data->>'status')
-  )
-  WHERE entity_name = 'FoodWaste';
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_menu_plan_pr_schedule_site_unique
-  ON entity_records ((data->>'site_id'))
-  WHERE entity_name = 'MenuPlanPRSchedule';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_pr_run_cycle
-  ON entity_records ((data->>'site_id'), (data->>'cycle_start'), (data->>'cycle_end'), (data->>'status'))
-  WHERE entity_name = 'MenuPlanPRRun';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_pr_run_generated_pr
-  ON entity_records ((data->>'generated_pr_id'))
-  WHERE entity_name = 'MenuPlanPRRun' AND COALESCE(data->>'generated_pr_id', '') <> '';
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_qrcode_token_unique
-  ON entity_records ((data->>'token'))
-  WHERE entity_name = 'QRCode' AND COALESCE(data->>'token', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_qrcode_site_category_status
-  ON entity_records ((data->>'site_id'), (data->>'category'), (data->>'status'))
-  WHERE entity_name = 'QRCode';
-
--- Finished-food output is intentionally separate from raw Inventory and
--- InventoryLot. Production completion creates one immutable-identity output
--- batch, while meal service changes only its served/remaining balance.
-DROP INDEX IF EXISTS idx_entity_records_produced_item_production_unique;
-CREATE UNIQUE INDEX idx_entity_records_produced_item_production_unique
-  ON entity_records ((data->>'production_id'))
-  WHERE entity_name = 'ProducedItemBatch'
-    AND COALESCE(data->>'production_id', '') <> ''
-    AND COALESCE(data->>'status', '') <> 'voided';
-
-DROP INDEX IF EXISTS idx_entity_records_produced_item_batch_number_unique;
-CREATE UNIQUE INDEX idx_entity_records_produced_item_batch_number_unique
-  ON entity_records ((data->>'batch_number'))
-  WHERE entity_name = 'ProducedItemBatch'
-    AND COALESCE(data->>'batch_number', '') <> ''
-    AND COALESCE(data->>'status', '') <> 'voided';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_fifo
-  ON entity_records (
-    (data->>'site_id'),
-    (data->>'production_date'),
-    (data->>'meal_type'),
-    (data->>'recipe_id'),
-    (data->>'completed_at'),
-    id
-  )
-  WHERE entity_name = 'ProducedItemBatch'
-    AND COALESCE(data->>'status', '') IN ('available', 'partial');
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_menu_fifo
-  ON entity_records (
-    (data->>'site_id'),
-    (data->>'production_date'),
-    (data->>'meal_type'),
-    (data->>'menu_type'),
-    (data->>'menu_category'),
-    (data->>'recipe_id'),
-    (data->>'completed_at'),
-    id
-  )
-  WHERE entity_name = 'ProducedItemBatch'
-    AND COALESCE(data->>'status', '') IN ('available', 'partial');
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_menu_plan_report
-  ON entity_records (
-    (data->>'menu_plan_id'),
-    (data->>'production_date'),
-    (data->>'site_id'),
-    (data->>'meal_type'),
-    (data->>'recipe_id'),
-    id
-  )
-  WHERE entity_name = 'ProducedItemBatch'
-    AND COALESCE(data->>'menu_plan_id', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_menu_plan_meal_service_lookup
-  ON entity_records (
-    (data->>'site_id'),
-    (data->>'plan_date'),
-    (data->>'cuisine_type'),
-    (data->>'menu_category'),
-    (data->>'status'),
-    id
-  )
-  WHERE entity_name = 'MenuPlan'
-    AND COALESCE(data->>'event_name', '') = '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_report_date
-  ON entity_records (
-    (data->>'production_date'),
-    (data->>'site_id'),
-    (data->>'meal_type'),
-    (data->>'recipe_id'),
-    id
-  )
-  WHERE entity_name = 'ProducedItemBatch';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_produced_item_report_scope
-  ON entity_records (
-    (data->>'production_date'),
-    (data->>'site_id'),
-    (data->>'meal_type'),
-    (data->>'menu_type'),
-    (data->>'menu_category'),
-    (data->>'status'),
-    id
-  )
-  WHERE entity_name = 'ProducedItemBatch';
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_idempotency_unique
-  ON entity_records ((data->>'idempotency_key'))
-  WHERE entity_name = 'MealServiceAttendance'
-    AND COALESCE(data->>'idempotency_key', '') <> '';
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_reference_unique
-  ON entity_records ((data->>'service_reference'))
-  WHERE entity_name = 'MealServiceAttendance'
-    AND COALESCE(data->>'service_reference', '') <> '';
-
-DROP INDEX IF EXISTS idx_entity_records_meal_attendance_scope_unique;
-CREATE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_scope
-  ON entity_records ((data->>'scope_key'))
-  WHERE entity_name = 'MealServiceAttendance'
-    AND COALESCE(data->>'scope_key', '') <> '';
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_reversal_unique
-  ON entity_records ((data->>'reversal_idempotency_key'))
-  WHERE entity_name = 'MealServiceAttendance'
-    AND COALESCE(data->>'reversal_idempotency_key', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_report
-  ON entity_records (
-    (data->>'site_id'),
-    (data->>'service_date'),
-    (data->>'meal_type'),
-    (data->>'status')
-  )
-  WHERE entity_name = 'MealServiceAttendance';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_report_date
-  ON entity_records (
-    (data->>'service_date'),
-    (data->>'site_id'),
-    (data->>'meal_type'),
-    id
-  )
-  WHERE entity_name = 'MealServiceAttendance';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_meal_attendance_menu_report
-  ON entity_records (
-    (data->>'service_date'),
-    (data->>'site_id'),
-    (data->>'meal_type'),
-    (data->>'menu_type'),
-    (data->>'menu_category'),
-    id
-  )
-  WHERE entity_name = 'MealServiceAttendance';
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_idempotency_unique
-  ON entity_records ((data->>'idempotency_key'))
-  WHERE entity_name = 'MealServiceConsumption'
-    AND COALESCE(data->>'idempotency_key', '') <> '';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_attendance
-  ON entity_records (
-    (data->>'meal_service_attendance_id'),
-    (data->>'movement_type'),
-    (data->>'recipe_id')
-  )
-  WHERE entity_name = 'MealServiceConsumption';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_history
-  ON entity_records (
-    (data->>'meal_service_attendance_id'),
-    (data->>'movement_type'),
-    (data->>'performed_at')
-  )
-  WHERE entity_name = 'MealServiceConsumption';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_report_date
-  ON entity_records (
-    (data->>'service_date'),
-    (data->>'site_id'),
-    (data->>'meal_type'),
-    (data->>'recipe_id'),
-    id
-  )
-  WHERE entity_name = 'MealServiceConsumption';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_menu_report
-  ON entity_records (
-    (data->>'service_date'),
-    (data->>'site_id'),
-    (data->>'meal_type'),
-    (data->>'menu_type'),
-    (data->>'menu_category'),
-    id
-  )
-  WHERE entity_name = 'MealServiceConsumption';
-
-CREATE INDEX IF NOT EXISTS idx_entity_records_meal_consumption_report_status
-  ON entity_records (
-    (data->>'service_date'),
-    (data->>'site_id'),
-    (data->>'meal_type'),
-    (data->>'menu_type'),
-    (data->>'menu_category'),
-    (data->>'movement_type'),
-    (data->>'status'),
-    id
-  )
-  WHERE entity_name = 'MealServiceConsumption';
+-- Final JSON-store retirement.
+-- The migration blocks above can still read legacy entity_records data on older
+-- environments, but normal runtime storage is now fully normalized. Drop the
+-- legacy JSON document table at the end so fresh and upgraded databases finish
+-- without the old catch-all JSON store.
+DROP TRIGGER IF EXISTS entity_records_realtime_change ON entity_records;
+DROP FUNCTION IF EXISTS notify_foodpro_entity_change();
+DROP TABLE IF EXISTS entity_records CASCADE;
