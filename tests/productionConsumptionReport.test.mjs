@@ -21,8 +21,8 @@ function assertHttpError(run, { status, message }) {
 }
 
 function assertItemCodeBeforeItemName(contents, message) {
-  const codeIndex = contents.indexOf('<TableHead>Item Code</TableHead>');
-  const nameIndex = contents.indexOf('<TableHead>Item Name</TableHead>');
+  const codeIndex = contents.search(/<TableHead(?:\s+[^>]*)?>Item Code<\/TableHead>/);
+  const nameIndex = contents.search(/<TableHead(?:\s+[^>]*)?>Item Name<\/TableHead>/);
   assert.ok(codeIndex >= 0, `${message} should include Item Code`);
   assert.ok(nameIndex >= 0, `${message} should include Item Name`);
   assert.ok(codeIndex < nameIndex, `${message} should show Item Code before Item Name`);

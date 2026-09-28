@@ -2574,6 +2574,10 @@ export async function reconcileProductionInventoryCommitment({
   }
 
   const current = getProductionInventoryCommitment(production);
+  const currentStatus = normalizeText(current.status).toLowerCase();
+  const completionUsesReservedCommitment = operation === 'completion_reconciliation'
+    && isCurrentProductionReservation(current)
+    && ['reserved', 'partially_reserved'].includes(currentStatus);
   const reservationAccounting = operation !== 'completion_reconciliation'
     && (
       isCurrentProductionReservation(current)
@@ -2703,10 +2707,13 @@ export async function reconcileProductionInventoryCommitment({
   for (const change of changes) {
     const { previous_line: previousLine, desired_line: desiredLine, adjustment } = change;
     let allocationLayers = sanitizeProductionAllocationLayers(previousLine?.allocation_layers);
+    const previousPhysicalQuantity = completionUsesReservedCommitment
+      ? previousLine?.reserved_quantity ?? previousLine?.committed_quantity
+      : previousLine?.consumed_quantity ?? previousLine?.committed_quantity;
     let committedQuantity = Math.max(0, toNumber(
       reservationAccounting
         ? previousLine?.reserved_quantity ?? previousLine?.committed_quantity
-        : previousLine?.consumed_quantity ?? previousLine?.committed_quantity,
+        : previousPhysicalQuantity,
       0
     ));
     const transactionIds = Array.isArray(previousLine?.inventory_transaction_ids)
@@ -3288,15 +3295,36 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
   let completionCommitmentPatch = {};
   let completionCommitment = null;
   if (hasProductionInventoryCommitment(production)) {
+    let completionProductionForInventory = completionProduction;
+    const currentCompletionCommitment = getProductionInventoryCommitment(completionProductionForInventory);
+    const currentCompletionCommitmentStatus = normalizeText(currentCompletionCommitment.status).toLowerCase();
+    if (
+      isCurrentProductionReservation(currentCompletionCommitment)
+      && currentCompletionCommitmentStatus === 'reserved'
+    ) {
+      const consumptionResult = await consumeProductionInventoryReservation({
+        production: completionProductionForInventory,
+        actor,
+        reason: `Reserved inventory consumed while completing production: ${production.recipe_name || production.id}`
+      }, executor);
+      completionCommitmentPatch = {
+        ...completionCommitmentPatch,
+        ...consumptionResult.production_patch
+      };
+      completionProductionForInventory = {
+        ...completionProductionForInventory,
+        ...consumptionResult.production_patch
+      };
+    }
     const reconciliation = await reconcileProductionInventoryCommitment({
-      production: completionProduction,
+      production: completionProductionForInventory,
       actor,
       desiredIngredients: completionDemandLines,
       operation: 'completion_reconciliation',
       reason: `Production consumption automatically reconciled from the frozen raw plan for ${production.recipe_name || production.id}`,
       allowShortage: true,
-      expectedRevision: production.inventory_commitment_revision
-        ?? production.inventory_commitment?.revision
+      expectedRevision: completionProductionForInventory.inventory_commitment_revision
+        ?? completionProductionForInventory.inventory_commitment?.revision
         ?? null,
       asOfDate: toDateOnly(),
       siteCatalog,
@@ -3305,7 +3333,10 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
       fulfillmentStore,
       targetServings: production.target_servings
     }, executor);
-    completionCommitmentPatch = reconciliation.production_patch;
+    completionCommitmentPatch = {
+      ...completionCommitmentPatch,
+      ...reconciliation.production_patch
+    };
     completionCommitment = reconciliation.commitment;
   }
   const completionCommitmentLineMap = new Map(

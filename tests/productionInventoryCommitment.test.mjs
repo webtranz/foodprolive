@@ -12,6 +12,7 @@ import {
   hasProductionInventoryCommitment,
   isInventoryLotUsable,
   parseInventoryDate,
+  reconcileProductionInventoryCommitment,
   sortInventoryLotsForIssue,
   splitCommittedAllocationLayers,
   validateInventorySettings
@@ -168,6 +169,72 @@ test('deduction summaries preserve six-decimal quantities used by commitment ret
   );
   const source = fs.readFileSync(new URL('../server/inventory.js', import.meta.url), 'utf8');
   assert.match(source, /const QUANTITY_EPSILON = 0\.0000005/);
+});
+
+test('completion reconciliation consumes reserved quantities even when reservation rows have zero consumed quantity', async () => {
+  const result = await reconcileProductionInventoryCommitment({
+    production: {
+      id: 'prod-reserved',
+      recipe_name: 'Reserved Production',
+      production_date: '2026-09-01',
+      target_servings: 10,
+      fulfillment_store_id: 'store-one',
+      fulfillment_store_name: '384',
+      inventory_commitment: {
+        revision: 3,
+        status: 'reserved',
+        stock_model: 'reserve_then_consume_v1',
+        model_version: 'reserve_then_consume_v1',
+        site_id: 'store-one',
+        site_name: '384',
+        total_desired_quantity: 5,
+        total_reserved_quantity: 5,
+        total_committed_quantity: 5,
+        total_consumed_quantity: 0,
+        total_shortage_quantity: 0,
+        lines: [{
+          ingredient_id: 'rice',
+          ingredient_name: 'Rice',
+          unit: 'kg',
+          desired_quantity: 5,
+          committed_quantity: 5,
+          reserved_quantity: 5,
+          consumed_quantity: 0,
+          shortage_quantity: 0,
+          allocation_layers: [{
+            inventory_lot_id: 'lot-rice',
+            quantity: 5,
+            unit_cost: 2.5,
+            accounting_unit_cost: 2.5
+          }],
+          inventory_transaction_ids: ['txn-reserve']
+        }]
+      }
+    },
+    actor: { email: 'chef@example.com' },
+    desiredIngredients: [{
+      ingredient_id: 'rice',
+      ingredient_name: 'Rice',
+      unit: 'kg',
+      desired_quantity: 5
+    }],
+    operation: 'completion_reconciliation',
+    allowShortage: true,
+    expectedRevision: 3,
+    fulfillmentStore: { id: 'store-one', name: '384' },
+    ingredientCatalog: [{ id: 'rice', name: 'Rice', unit: 'kg' }],
+    inventoryCatalog: [{ ingredient_id: 'rice', unit: 'kg' }],
+    targetServings: 10
+  }, { query: async () => ({ rows: [] }) });
+
+  assert.equal(result.commitment.status, 'consumed');
+  assert.equal(result.commitment.total_committed_quantity, 5);
+  assert.equal(result.commitment.total_consumed_quantity, 5);
+  assert.equal(result.commitment.total_shortage_quantity, 0);
+  assert.equal(result.commitment.lines[0].committed_quantity, 5);
+  assert.equal(result.commitment.lines[0].consumed_quantity, 5);
+  assert.equal(result.commitment.lines[0].shortage_quantity, 0);
+  assert.equal(result.commitment.lines[0].total_cost, 12.5);
 });
 
 test('decrease and cancellation return the exact most-recent committed lot layers', () => {
@@ -459,6 +526,13 @@ test('completion reconciles current physical movements while preserving exact co
 
   assert.match(completionBlock, /operation: 'completion_reconciliation'/);
   assert.match(completionBlock, /asOfDate: toDateOnly\(\)/);
+  const consumeReservationIndex = completionBlock.indexOf('consumeProductionInventoryReservation({');
+  const reconciliationIndex = completionBlock.indexOf("operation: 'completion_reconciliation'");
+  assert.ok(consumeReservationIndex >= 0, 'completion should consume any still-reserved stock before reporting');
+  assert.ok(
+    consumeReservationIndex < reconciliationIndex,
+    'reserved stock consumption must happen before completion reconciliation builds report quantities'
+  );
   assert.doesNotMatch(
     completionBlock,
     /operation: 'completion_reconciliation'[\s\S]{0,800}asOfDate: production\.production_date/
