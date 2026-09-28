@@ -3478,6 +3478,8 @@ CREATE TABLE IF NOT EXISTS menu_plan_lines (
   ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
   item_name TEXT NOT NULL,
   planned_servings NUMERIC(18, 6),
+  planned_quantity NUMERIC(18, 6),
+  planned_quantity_unit TEXT,
   planned_weight_grams NUMERIC(18, 6),
   planned_unit TEXT,
   estimated_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
@@ -3497,6 +3499,10 @@ CREATE INDEX IF NOT EXISTS idx_menu_plan_lines_plan
 
 ALTER TABLE menu_plan_lines
   ADD COLUMN IF NOT EXISTS meal_period TEXT;
+ALTER TABLE menu_plan_lines
+  ADD COLUMN IF NOT EXISTS planned_quantity NUMERIC(18, 6);
+ALTER TABLE menu_plan_lines
+  ADD COLUMN IF NOT EXISTS planned_quantity_unit TEXT;
 
 CREATE TABLE IF NOT EXISTS production_events (
   production_id TEXT PRIMARY KEY,
@@ -3598,8 +3604,12 @@ CREATE TABLE IF NOT EXISTS production_manifest_lines (
   ingredient_name TEXT,
   meal_period TEXT,
   requested_servings NUMERIC(18, 6),
+  requested_quantity NUMERIC(18, 6),
+  requested_quantity_unit TEXT,
   requested_weight_grams NUMERIC(18, 6),
   produced_servings NUMERIC(18, 6),
+  produced_quantity NUMERIC(18, 6),
+  produced_quantity_unit TEXT,
   produced_weight_grams NUMERIC(18, 6),
   production_covers NUMERIC(18, 6),
   raw_weight_grams NUMERIC(18, 6),
@@ -4747,6 +4757,10 @@ ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS recipe_code TEXT;
 ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS ingredient_name TEXT;
 ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS meal_period TEXT;
 ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS production_covers NUMERIC(18, 6);
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS requested_quantity NUMERIC(18, 6);
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS requested_quantity_unit TEXT;
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS produced_quantity NUMERIC(18, 6);
+ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS produced_quantity_unit TEXT;
 ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS raw_weight_grams NUMERIC(18, 6);
 ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS yielded_weight_grams NUMERIC(18, 6);
 ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS expected_finished_weight_grams NUMERIC(18, 6);

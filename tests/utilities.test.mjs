@@ -28,6 +28,8 @@ assert.equal(menuPlanTemplateHeaders.includes('meals'), false, 'menu plan templa
 assert.equal(menuPlanTemplateHeaders.includes('line_number'), true);
 assert.equal(menuPlanTemplateHeaders.includes('recipe_id'), true);
 assert.equal(menuPlanTemplateHeaders.includes('expected_servings'), true);
+assert.equal(menuPlanTemplateHeaders.includes('planned_quantity'), true);
+assert.equal(menuPlanTemplateHeaders.includes('planned_quantity_unit'), true);
 assert.equal(menuPlanTemplateHeaders.includes('planned_weight_kg'), true);
 
 const productionTemplateHeaders = templateHeaders('production');
@@ -248,8 +250,8 @@ assert.deepEqual(relationalRecipeLine.ingredients, [
 
 const relationalMenuPlanLine = mapCsvRow(
   'menu-plans',
-  ['site_id', 'plan_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'line_type', 'recipe_code', 'recipe_name', 'expected_servings', 'planned_weight_kg', 'estimated_cost'],
-  ['store-1', '2026-09-01', 'Breakfast', 'General', 'Junior', '1', 'recipe', 'RCP-001', 'Boiled Eggs', '280', '39.159', '121.43']
+  ['site_id', 'plan_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'line_type', 'recipe_code', 'recipe_name', 'expected_servings', 'planned_quantity', 'planned_quantity_unit', 'planned_weight_kg', 'estimated_cost'],
+  ['store-1', '2026-09-01', 'Breakfast', 'General', 'Junior', '1', 'recipe', 'RCP-001', 'Boiled Eggs', '280', '40', 'pak', '39.159', '121.43']
 );
 assert.equal(relationalMenuPlanLine.cuisine_type, 'general');
 assert.equal(relationalMenuPlanLine.menu_category, 'junior');
@@ -263,6 +265,8 @@ assert.deepEqual(relationalMenuPlanLine.menu_plan_lines, [
     meal_type: 'Breakfast',
     expected_servings: 280,
     planned_servings: 280,
+    planned_quantity: 40,
+    planned_quantity_unit: 'pak',
     planned_weight_grams: 39159,
     estimated_cost: 121.43
   }
@@ -273,6 +277,9 @@ assert.deepEqual(relationalMenuPlanLine.meals, [
     recipe_code: 'RCP-001',
     recipe_name: 'Boiled Eggs',
     expected_servings: 280,
+    planned_quantity: 40,
+    planned_quantity_unit: 'pak',
+    planned_weight_grams: 39159,
     total_cost: 121.43
   }
 ]);

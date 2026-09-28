@@ -146,6 +146,8 @@ export const utilityModules = Object.freeze({
       'ingredient_name',
       'item_name',
       'expected_servings',
+      'planned_quantity',
+      'planned_quantity_unit',
       'planned_weight_kg',
       'planned_weight_grams',
       'planned_unit',
@@ -315,7 +317,7 @@ const NUMBER_FIELDS = new Set([
   'actual_cost', 'score', 'temperature', 'source_amount', 'source_quantity',
   'line_number', 'line_quantity', 'line_yield_percent', 'line_raw_weight_grams',
   'line_yielded_weight_grams', 'line_cost', 'expected_servings',
-  'planned_servings', 'planned_weight_kg', 'planned_weight_grams',
+  'planned_servings', 'planned_quantity', 'planned_weight_kg', 'planned_weight_grams',
   'requested_servings', 'requested_weight_kg', 'requested_weight_grams',
   'produced_servings', 'produced_weight_kg', 'produced_weight_grams',
   'required_quantity', 'current_stock', 'shortage_quantity', 'request_quantity',
@@ -406,6 +408,11 @@ const HEADER_ALIASES = Object.freeze({
     meal_period: 'meal_type',
     servings: 'expected_servings',
     planned_servings: 'expected_servings',
+    fixed_quantity: 'planned_quantity',
+    production_quantity: 'planned_quantity',
+    quantity: 'planned_quantity',
+    fixed_unit: 'planned_quantity_unit',
+    production_unit: 'planned_quantity_unit',
     recipe: 'recipe_name',
     weight_kg: 'planned_weight_kg',
     weight_g: 'planned_weight_grams'
@@ -636,6 +643,8 @@ const MENU_PLAN_LINE_FIELDS = new Set([
   'item_name',
   'expected_servings',
   'planned_servings',
+  'planned_quantity',
+  'planned_quantity_unit',
   'planned_weight_kg',
   'planned_weight_grams',
   'planned_unit',
@@ -743,6 +752,8 @@ function menuPlanLineFromUploadPayload(payload = {}) {
     payload.ingredient_name,
     payload.item_name,
     payload.expected_servings,
+    payload.planned_quantity,
+    payload.planned_quantity_unit,
     payload.planned_weight_kg,
     payload.planned_weight_grams
   ].some(hasText);
@@ -769,6 +780,8 @@ function menuPlanLineFromUploadPayload(payload = {}) {
     meal_type: payload.meal_type,
     expected_servings: payload.expected_servings,
     planned_servings: firstValue(payload.planned_servings, payload.expected_servings),
+    planned_quantity: payload.planned_quantity,
+    planned_quantity_unit: payload.planned_quantity_unit,
     planned_weight_grams: plannedWeightGrams,
     planned_unit: payload.planned_unit,
     estimated_cost: payload.estimated_cost
@@ -951,6 +964,10 @@ function normalizeMappedPayload(moduleKey, payload) {
             recipe_code: line.recipe_code,
             recipe_name: line.recipe_name,
             expected_servings: line.expected_servings,
+            planned_quantity: line.planned_quantity,
+            planned_quantity_unit: line.planned_quantity_unit,
+            planned_weight_grams: line.planned_weight_grams,
+            planned_unit: line.planned_unit,
             total_cost: line.estimated_cost
           })
         ];

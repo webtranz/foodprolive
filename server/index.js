@@ -1457,6 +1457,10 @@ function buildMenuPlanLinePayloads(meals = []) {
       recipe_version_id: meal.recipe_version_id || meal.recipe_id || null,
       item_name: meal.item_name || meal.recipe_name || meal.ingredient_name || meal.name || `Menu plan line ${index + 1}`,
       planned_servings: meal.planned_servings ?? meal.expected_servings,
+      planned_quantity: meal.planned_quantity ?? meal.production_quantity ?? meal.fixed_quantity,
+      planned_quantity_unit: meal.planned_quantity_unit ?? meal.production_unit ?? meal.fixed_quantity_unit,
+      planned_weight_grams: meal.planned_weight_grams,
+      planned_unit: meal.planned_unit,
       estimated_cost: meal.estimated_cost ?? meal.total_cost
     }));
 }
@@ -2033,6 +2037,10 @@ function buildMenuPlanWritePayload(body = {}, existing = null) {
       .map((meal) => ({
         ...meal,
         expected_servings: numericMatch(meal.expected_servings, 0),
+        planned_quantity: numericMatch(meal.planned_quantity ?? meal.production_quantity ?? meal.fixed_quantity, 0),
+        planned_quantity_unit: meal.planned_quantity_unit ?? meal.production_unit ?? meal.fixed_quantity_unit ?? '',
+        planned_weight_grams: numericMatch(meal.planned_weight_grams, 0),
+        planned_unit: meal.planned_unit ?? '',
         cost_per_serving: numericMatch(meal.cost_per_serving, 0),
         total_cost: numericMatch(meal.total_cost, 0),
         calories_per_serving: numericMatch(meal.calories_per_serving, 0),

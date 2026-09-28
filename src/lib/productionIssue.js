@@ -60,6 +60,17 @@ export function finiteProductionNumber(value, fallback = 0) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+export function getIssueItemProductionTarget(item = {}) {
+  const covers = finiteProductionNumber(item.production_covers, 0);
+  if (covers > 0) return covers;
+  return finiteProductionNumber(item.production_quantity ?? item.planned_quantity, 0);
+}
+
+export function isFixedProductionQuantityItem(item = {}) {
+  return finiteProductionNumber(item.production_quantity ?? item.planned_quantity, 0) > 0
+    && String(item.production_unit ?? item.planned_quantity_unit ?? '').trim() !== '';
+}
+
 export function normalizeIssueDateOnly(value) {
   if (value === null || typeof value === 'undefined' || value === '') return '';
   const isoValue = value instanceof Date && !Number.isNaN(value.getTime())
@@ -258,6 +269,19 @@ export function buildMenuPlanIssueItems(plan, { mealView = 'all', recipes = [] }
     const mealType = normalizeIssueMealType(meal?.meal_type);
     const recipeId = String(meal?.recipe_id || '').trim();
     const expectedServings = finiteProductionNumber(meal?.expected_servings, 0);
+    const plannedQuantity = finiteProductionNumber(
+      meal?.planned_quantity ?? meal?.production_quantity ?? meal?.fixed_quantity,
+      0
+    );
+    const plannedQuantityUnit = String(
+      meal?.planned_quantity_unit
+        ?? meal?.production_unit
+        ?? meal?.fixed_quantity_unit
+        ?? (plannedQuantity > 0 ? meal?.planned_unit : '')
+        ?? ''
+    ).trim();
+    const plannedWeightGrams = finiteProductionNumber(meal?.planned_weight_grams, 0);
+    const hasFixedProductionQuantity = plannedQuantity > 0 && plannedQuantityUnit;
     const recipe = recipes.find((entry) => sameId(entry.id, recipeId)) || null;
     const recipeLinkStatus = meal.recipe_link_status || (recipe ? 'linked' : recipeId ? 'missing' : '');
     const recipeName = String(meal?.recipe_name || recipe?.name || meal?.item_name || meal?.name || '').trim();
@@ -285,14 +309,20 @@ export function buildMenuPlanIssueItems(plan, { mealView = 'all', recipes = [] }
       recipe_link_status: recipeLinkStatus,
       recipe_name: recipeName || 'Planned item',
       expected_servings: expectedServings,
-      production_covers: 0,
+      planned_quantity: hasFixedProductionQuantity ? plannedQuantity : null,
+      planned_quantity_unit: hasFixedProductionQuantity ? plannedQuantityUnit : '',
+      planned_weight_grams: plannedWeightGrams > 0 ? plannedWeightGrams : null,
+      planned_unit: meal?.planned_unit || '',
+      production_covers: hasFixedProductionQuantity ? 0 : expectedServings,
+      production_quantity: hasFixedProductionQuantity ? plannedQuantity : 0,
+      production_unit: hasFixedProductionQuantity ? plannedQuantityUnit : '',
       planned_total_cost: finiteProductionNumber(meal?.total_cost, 0),
       cost_per_serving: finiteProductionNumber(meal?.cost_per_serving, 0),
-      production_blocked_reason: recipe && expectedServings > 0
+      production_blocked_reason: recipe && (expectedServings > 0 || hasFixedProductionQuantity || plannedWeightGrams > 0)
         ? ''
         : !recipe
           ? 'This menu-planning row is visible for manifest completeness, but it cannot be issued until it is linked to a recipe.'
-          : 'Enter production covers or Production Size (Kg) before issuing this menu-planning row.',
+          : 'Enter production covers, fixed production quantity, or Production Size (Kg) before issuing this menu-planning row.',
       selected: true
     }];
   });
@@ -622,7 +652,8 @@ export function buildMenuIssueMealGroups(items = [], {
   const groups = new Map();
 
   (Array.isArray(items) ? items : []).forEach((item) => {
-    if (!item?.selected || finiteProductionNumber(item.production_covers, 0) <= 0) {
+    const productionTarget = getIssueItemProductionTarget(item);
+    if (!item?.selected || productionTarget <= 0) {
       return;
     }
     const mealType = normalizeIssueMealType(item.meal_type);
@@ -640,6 +671,8 @@ export function buildMenuIssueMealGroups(items = [], {
       menu_category: item.menu_category || 'senior',
       items: [],
       production_covers: 0,
+      production_target_quantity: 0,
+      fixed_quantity_item_count: 0,
       expected_servings: 0,
       planned_total_cost: 0,
       snapshot_lines: [],
@@ -649,6 +682,8 @@ export function buildMenuIssueMealGroups(items = [], {
     };
     current.items.push(item);
     current.production_covers += finiteProductionNumber(item.production_covers, 0);
+    current.production_target_quantity += productionTarget;
+    if (isFixedProductionQuantityItem(item)) current.fixed_quantity_item_count += 1;
     current.expected_servings += finiteProductionNumber(item.expected_servings, 0);
     current.planned_total_cost += finiteProductionNumber(item.planned_total_cost, 0);
     groups.set(key, current);
@@ -674,7 +709,10 @@ export function buildMenuIssueMealGroups(items = [], {
       (sum, line) => sum + finiteProductionNumber(line.estimated_cost, 0),
       0
     );
-    const servingCount = Math.max(1, finiteProductionNumber(group.production_covers, 0));
+    const servingCount = Math.max(
+      1,
+      finiteProductionNumber(group.production_covers, 0) || finiteProductionNumber(group.production_target_quantity, 0)
+    );
 
     return {
       ...group,

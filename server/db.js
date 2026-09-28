@@ -1434,6 +1434,8 @@ function rowToMenuPlan(row = {}) {
     meal_type: line.meal_period || row.meal_period || null,
     expected_servings: rowNumberOrNull(line.planned_servings),
     planned_servings: rowNumberOrNull(line.planned_servings),
+    planned_quantity: rowNumberOrNull(line.planned_quantity),
+    planned_quantity_unit: line.planned_quantity_unit || null,
     planned_weight_grams: rowNumberOrNull(line.planned_weight_grams),
     planned_unit: line.planned_unit || null,
     estimated_cost: rowNumberOrNull(line.estimated_cost),
@@ -5007,6 +5009,8 @@ function normalizedSelectForEntity(entity) {
                          'item_name', line.item_name,
                          'meal_period', COALESCE(line.meal_period, plan.meal_period),
                          'planned_servings', line.planned_servings,
+                         'planned_quantity', line.planned_quantity,
+                         'planned_quantity_unit', line.planned_quantity_unit,
                          'planned_weight_grams', line.planned_weight_grams,
                          'planned_unit', line.planned_unit,
                          'estimated_cost', line.estimated_cost,
@@ -5047,8 +5051,12 @@ function normalizedSelectForEntity(entity) {
                          'name', line.item_name,
                          'meal_type', line.meal_period,
                          'requested_servings', line.requested_servings,
+                         'requested_quantity', line.requested_quantity,
+                         'requested_quantity_unit', line.requested_quantity_unit,
                          'requested_weight_grams', line.requested_weight_grams,
                          'produced_servings', line.produced_servings,
+                         'produced_quantity', line.produced_quantity,
+                         'produced_quantity_unit', line.produced_quantity_unit,
                          'produced_weight_grams', line.produced_weight_grams,
                          'production_covers', line.production_covers,
                          'expected_servings', COALESCE(line.production_covers, line.requested_servings, line.produced_servings),
@@ -7143,8 +7151,9 @@ async function ensureProductionManifestLine(record, executor = pool) {
     `INSERT INTO production_manifest_lines (
       production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
       ingredient_id, item_name, line_type, item_key, source_menu_plan_item_key,
-      recipe_code, ingredient_name, meal_period, requested_servings, requested_weight_grams,
-      produced_servings, produced_weight_grams, production_covers, raw_weight_grams,
+      recipe_code, ingredient_name, meal_period, requested_servings, requested_quantity,
+      requested_quantity_unit, requested_weight_grams, produced_servings, produced_quantity,
+      produced_quantity_unit, produced_weight_grams, production_covers, raw_weight_grams,
       yielded_weight_grams, expected_finished_weight_grams, portion_size_grams,
       expected_yield_servings, output_calculation_source, weight_calculation_source,
       yield_calculation_source, weight_snapshot_version, estimated_cost, actual_cost,
@@ -7154,7 +7163,7 @@ async function ensureProductionManifestLine(record, executor = pool) {
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
       $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
-      $31,$32,$33
+      $31,$32,$33,$34,$35,$36,$37
     )
     ON CONFLICT (production_line_id) DO NOTHING`,
     [
@@ -7172,8 +7181,12 @@ async function ensureProductionManifestLine(record, executor = pool) {
       record.ingredient_name || null,
       record.meal_type || null,
       toNumberOrNull(record.target_servings || record.production_covers || record.produced_servings),
+      toNumberOrNull(record.requested_quantity || record.production_quantity),
+      record.requested_quantity_unit || record.production_unit || null,
       toNumberOrNull(record.requested_weight_grams || record.production_size_grams),
       toNumberOrNull(record.produced_servings || record.production_covers),
+      toNumberOrNull(record.produced_quantity || record.production_quantity),
+      record.produced_quantity_unit || record.production_unit || null,
       toNumberOrNull(record.produced_weight_grams || record.finished_weight_grams || record.production_size_grams),
       toNumberOrNull(record.production_covers || record.target_servings),
       toNumberOrNull(record.raw_weight_grams),
@@ -7404,14 +7417,17 @@ async function replaceMenuPlanLines(record, executor = pool) {
     await query(
       `INSERT INTO menu_plan_lines (
         menu_plan_line_id, menu_plan_id, line_number, line_type, meal_period, recipe_version_id,
-        ingredient_id, item_name, planned_servings, planned_weight_grams, planned_unit,
+        ingredient_id, item_name, planned_servings, planned_quantity, planned_quantity_unit,
+        planned_weight_grams, planned_unit,
         estimated_cost, status, source_name, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
       ON CONFLICT (menu_plan_line_id) DO UPDATE SET
         line_number = EXCLUDED.line_number, line_type = EXCLUDED.line_type,
         meal_period = EXCLUDED.meal_period,
         recipe_version_id = EXCLUDED.recipe_version_id, ingredient_id = EXCLUDED.ingredient_id,
         item_name = EXCLUDED.item_name, planned_servings = EXCLUDED.planned_servings,
+        planned_quantity = EXCLUDED.planned_quantity,
+        planned_quantity_unit = EXCLUDED.planned_quantity_unit,
         planned_weight_grams = EXCLUDED.planned_weight_grams, planned_unit = EXCLUDED.planned_unit,
         estimated_cost = EXCLUDED.estimated_cost, status = EXCLUDED.status,
         source_name = EXCLUDED.source_name,
@@ -7426,6 +7442,8 @@ async function replaceMenuPlanLines(record, executor = pool) {
         sourceLine?.ingredient_id || null,
         itemName,
         toNumberOrNull(sourceLine?.planned_servings ?? sourceLine?.expected_servings),
+        toNumberOrNull(sourceLine?.planned_quantity ?? sourceLine?.production_quantity ?? sourceLine?.fixed_quantity),
+        sourceLine?.planned_quantity_unit || sourceLine?.production_unit || sourceLine?.fixed_quantity_unit || null,
         toNumberOrNull(sourceLine?.planned_weight_grams),
         sourceLine?.planned_unit || sourceLine?.unit || null,
         toNumberOrZero(sourceLine?.estimated_cost ?? sourceLine?.total_cost),
@@ -7452,13 +7470,17 @@ async function replaceProductionManifestLines(record, executor = pool) {
   for (const [index, sourceLine] of sourceLines.entries()) {
     const lineNumber = safeLineNumber(sourceLine?.line_number, index + 1);
     const requestedServings = toNumberOrNull(sourceLine?.requested_servings);
+    const requestedQuantity = toNumberOrNull(sourceLine?.requested_quantity ?? sourceLine?.production_quantity);
     const requestedWeightGrams = toNumberOrNull(sourceLine?.requested_weight_grams);
     const producedServings = toNumberOrNull(sourceLine?.produced_servings);
+    const producedQuantity = toNumberOrNull(sourceLine?.produced_quantity);
     const producedWeightGrams = toNumberOrNull(sourceLine?.produced_weight_grams);
     const hasQuantity = [
       requestedServings,
+      requestedQuantity,
       requestedWeightGrams,
       producedServings,
+      producedQuantity,
       producedWeightGrams
     ].some((value) => Number(value || 0) > 0);
     if (!hasQuantity) {
@@ -7470,8 +7492,9 @@ async function replaceProductionManifestLines(record, executor = pool) {
       `INSERT INTO production_manifest_lines (
         production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
         ingredient_id, item_name, line_type, item_key, source_menu_plan_item_key,
-        recipe_code, ingredient_name, meal_period, requested_servings, requested_weight_grams,
-        produced_servings, produced_weight_grams, production_covers, raw_weight_grams,
+        recipe_code, ingredient_name, meal_period, requested_servings, requested_quantity,
+        requested_quantity_unit, requested_weight_grams, produced_servings, produced_quantity,
+        produced_quantity_unit, produced_weight_grams, production_covers, raw_weight_grams,
         yielded_weight_grams, expected_finished_weight_grams, portion_size_grams,
         expected_yield_servings, output_calculation_source, weight_calculation_source,
         yield_calculation_source, weight_snapshot_version, estimated_cost, actual_cost,
@@ -7481,7 +7504,7 @@ async function replaceProductionManifestLines(record, executor = pool) {
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
         $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
         $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
-        $31,$32,$33
+        $31,$32,$33,$34,$35,$36,$37
       )
       ON CONFLICT (production_line_id) DO UPDATE SET
         menu_plan_line_id = EXCLUDED.menu_plan_line_id, line_number = EXCLUDED.line_number,
@@ -7490,8 +7513,12 @@ async function replaceProductionManifestLines(record, executor = pool) {
         item_key = EXCLUDED.item_key, source_menu_plan_item_key = EXCLUDED.source_menu_plan_item_key,
         recipe_code = EXCLUDED.recipe_code, ingredient_name = EXCLUDED.ingredient_name,
         meal_period = EXCLUDED.meal_period, requested_servings = EXCLUDED.requested_servings,
+        requested_quantity = EXCLUDED.requested_quantity,
+        requested_quantity_unit = EXCLUDED.requested_quantity_unit,
         requested_weight_grams = EXCLUDED.requested_weight_grams,
         produced_servings = EXCLUDED.produced_servings,
+        produced_quantity = EXCLUDED.produced_quantity,
+        produced_quantity_unit = EXCLUDED.produced_quantity_unit,
         produced_weight_grams = EXCLUDED.produced_weight_grams,
         production_covers = EXCLUDED.production_covers,
         raw_weight_grams = EXCLUDED.raw_weight_grams,
@@ -7521,8 +7548,12 @@ async function replaceProductionManifestLines(record, executor = pool) {
         sourceLine?.ingredient_name || null,
         sourceLine?.meal_type || record.meal_type || null,
         requestedServings,
+        requestedQuantity,
+        sourceLine?.requested_quantity_unit || sourceLine?.production_unit || null,
         requestedWeightGrams,
         producedServings,
+        producedQuantity,
+        sourceLine?.produced_quantity_unit || sourceLine?.production_unit || null,
         producedWeightGrams,
         toNumberOrNull(sourceLine?.production_covers ?? sourceLine?.expected_servings ?? requestedServings),
         toNumberOrNull(sourceLine?.raw_weight_grams),

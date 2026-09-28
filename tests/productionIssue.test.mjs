@@ -11,6 +11,8 @@ import {
   buildProductionIngredientSnapshot,
   buildProductionIngredientsForSubmit,
   buildProductionOverrideAudit,
+  getIssueItemProductionTarget,
+  isFixedProductionQuantityItem,
   isMenuPlanIssueItemAlreadyIssued,
   isMenuPlanIssueProductionBlocking,
   normalizeIssueDateOnly,
@@ -103,7 +105,7 @@ const breakfastItems = buildMenuPlanIssueItems(menuPlan, { mealView: 'breakfast'
 assert.equal(breakfastItems.length, 1);
 assert.equal(breakfastItems[0].meal_type, 'breakfast');
 assert.equal(breakfastItems[0].expected_servings, 30);
-assert.equal(breakfastItems[0].production_covers, 0);
+assert.equal(breakfastItems[0].production_covers, 30);
 assert.equal(normalizeIssueDateOnly('2026-09-01T00:00:00.000Z'), '2026-09-01');
 assert.equal(
   buildMenuPlanIssueItems(
@@ -170,6 +172,48 @@ assert.equal(isMenuPlanIssueItemAlreadyIssued(issuedItems[2], legacyLockState), 
 
 const allItems = buildMenuPlanIssueItems(menuPlan, { mealView: 'all', recipes });
 assert.deepEqual(allItems.map((item) => item.meal_type), ['breakfast', 'lunch']);
+
+const fixedQuantityPlan = {
+  ...menuPlan,
+  id: 'fixed-plan',
+  meals: [
+    {
+      meal_type: 'breakfast',
+      recipe_id: 'chana',
+      recipe_name: 'Arabic Bread',
+      expected_servings: 0,
+      planned_quantity: 40,
+      planned_quantity_unit: 'pak'
+    }
+  ]
+};
+const fixedQuantityItems = buildMenuPlanIssueItems(fixedQuantityPlan, { mealView: 'breakfast', recipes });
+assert.equal(fixedQuantityItems.length, 1);
+assert.equal(fixedQuantityItems[0].production_covers, 0);
+assert.equal(fixedQuantityItems[0].production_quantity, 40);
+assert.equal(fixedQuantityItems[0].production_unit, 'pak');
+assert.equal(isFixedProductionQuantityItem(fixedQuantityItems[0]), true);
+assert.equal(getIssueItemProductionTarget(fixedQuantityItems[0]), 40);
+const fixedQuantitySnapshots = {
+  [fixedQuantityItems[0].key]: buildProductionIngredientSnapshot({
+    recipe: recipes.find((recipe) => recipe.id === 'chana'),
+    recipes,
+    ingredients,
+    inventory,
+    siteId: 'store-1',
+    targetServings: getIssueItemProductionTarget(fixedQuantityItems[0])
+  }).lines
+};
+const fixedQuantityGroups = buildMenuIssueMealGroups(fixedQuantityItems, {
+  snapshotsByItemKey: fixedQuantitySnapshots,
+  ingredients,
+  inventory,
+  siteId: 'store-1'
+});
+assert.equal(fixedQuantityGroups.length, 1);
+assert.equal(fixedQuantityGroups[0].production_covers, 0);
+assert.equal(fixedQuantityGroups[0].production_target_quantity, 40);
+assert.equal(fixedQuantityGroups[0].fixed_quantity_item_count, 1);
 
 const groupedBreakfastPlan = {
   ...menuPlan,

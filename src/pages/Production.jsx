@@ -51,8 +51,10 @@ import {
   buildProductionIngredientsForSubmit,
   buildProductionOverrideAudit,
   finiteProductionNumber,
+  getIssueItemProductionTarget,
   getMenuIssueInventoryCheckState,
   getProductionIngredientLineKey,
+  isFixedProductionQuantityItem,
   isMenuPlanIssueItemAlreadyIssued,
   normalizeIssueDateOnly,
   normalizeIssueMealView,
@@ -1708,7 +1710,9 @@ export default function Production() {
         selected: isEditingIssueRequest
           ? editingItemKeys.has(item.key)
           : currentByKey.has(item.key) ? currentByKey.get(item.key).selected : true,
-        production_covers: currentByKey.get(item.key)?.production_covers ?? item.production_covers
+        production_covers: currentByKey.get(item.key)?.production_covers ?? item.production_covers,
+        production_quantity: currentByKey.get(item.key)?.production_quantity ?? item.production_quantity,
+        production_unit: currentByKey.get(item.key)?.production_unit ?? item.production_unit
       }));
     });
     setActiveIssueItemKey((current) => {
@@ -1748,7 +1752,7 @@ export default function Production() {
           ingredients,
           inventory,
           siteId: issueInventorySiteId,
-          targetServings: item.production_covers
+          targetServings: getIssueItemProductionTarget(item)
         }).lines;
       });
       return nextSnapshots;
@@ -2734,6 +2738,25 @@ export default function Production() {
     setIssueSuggestions((current) => ({ ...current, [itemKey]: {} }));
   };
 
+  const updateIssueFixedQuantity = (itemKey, value) => {
+    const productionQuantity = finiteProductionNumber(value, 0);
+    setIssueItems((currentItems) => currentItems.map((item) => (
+      item.key === itemKey ? { ...item, production_quantity: productionQuantity } : item
+    )));
+    const item = issueItems.find((entry) => entry.key === itemKey);
+    const recipe = recipes.find((entry) => String(entry.id) === String(item?.recipe_id || ''));
+    const snapshot = buildProductionIngredientSnapshot({
+      recipe,
+      recipes,
+      ingredients,
+      inventory,
+      siteId: issueInventorySiteId,
+      targetServings: productionQuantity
+    });
+    setIssueSnapshots((current) => ({ ...current, [itemKey]: snapshot.lines }));
+    setIssueSuggestions((current) => ({ ...current, [itemKey]: {} }));
+  };
+
   const updateIssueProductionSizeKg = (itemKey, value) => {
     const productionSizeKg = finiteProductionNumber(value, 0);
     const item = issueItems.find((entry) => entry.key === itemKey);
@@ -2771,7 +2794,9 @@ export default function Production() {
     const productionStore = issueInventoryContext.site || site;
     const lines = group.snapshot_lines || [];
     const estimatedBatchCost = Number((group.estimatedBatchCost || 0).toFixed(2));
-    const servingCount = Math.max(1, finiteProductionNumber(group.production_covers, 0));
+    const groupTargetQuantity = finiteProductionNumber(group.production_covers, 0)
+      || finiteProductionNumber(group.production_target_quantity, 0);
+    const servingCount = Math.max(1, groupTargetQuantity);
     const manifestItemCount = group.items.length;
     const manifestItemNames = group.items.map((item) => item.recipe_name).filter(Boolean);
     const adminReissuedItems = group.items.filter((item) => isIssueItemAlreadyIssued(item));
@@ -2782,7 +2807,8 @@ export default function Production() {
     const menuIssueItems = group.items.map((item) => {
       const itemLines = issueSnapshots[item.key] || [];
       const itemBatchCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
-      const itemServingCount = Math.max(1, finiteProductionNumber(item.production_covers, 0));
+      const itemProductionTarget = getIssueItemProductionTarget(item);
+      const itemServingCount = Math.max(1, itemProductionTarget);
       const itemRawWeightGrams = sumReportWeights(itemLines, 'raw_weight_grams');
       const itemYieldedWeightGrams = sumReportWeights(itemLines, 'yielded_weight_grams');
       const itemAlreadyIssued = isIssueItemAlreadyIssued(item);
@@ -2798,6 +2824,10 @@ export default function Production() {
         meal_type: item.meal_type,
         expected_servings: item.expected_servings,
         production_covers: finiteProductionNumber(item.production_covers, 0),
+        production_quantity: finiteProductionNumber(item.production_quantity, 0),
+        production_unit: item.production_unit || '',
+        planned_quantity: item.planned_quantity ?? null,
+        planned_quantity_unit: item.planned_quantity_unit || '',
         planned_total_cost: item.planned_total_cost,
         estimated_batch_cost: itemBatchCost,
         estimated_cost_per_serving: Number((itemBatchCost / itemServingCount).toFixed(2)),
@@ -2827,13 +2857,15 @@ export default function Production() {
       recipe_name: item.recipe_name,
       item_name: item.recipe_name,
       meal_type: item.meal_type,
-      requested_servings: finiteProductionNumber(item.production_covers || item.expected_servings, 0),
+      requested_servings: getIssueItemProductionTarget(item),
+      requested_quantity: finiteProductionNumber(item.production_quantity, 0) || null,
+      requested_quantity_unit: item.production_unit || null,
       produced_servings: null,
       production_covers: finiteProductionNumber(item.production_covers, 0),
       raw_weight_grams: item.raw_weight_grams,
       yielded_weight_grams: item.yielded_weight_grams,
       expected_finished_weight_grams: item.yielded_weight_grams,
-      expected_yield_servings: finiteProductionNumber(item.production_covers, 0),
+      expected_yield_servings: getIssueItemProductionTarget(item),
       estimated_cost: item.estimated_batch_cost,
       estimated_batch_cost: item.estimated_batch_cost,
       status: 'active'
@@ -2865,7 +2897,7 @@ export default function Production() {
       menu_category: menuCategory,
       recipe_id: firstItem.recipe_id,
       recipe_name: productionEventTitle,
-      target_servings: finiteProductionNumber(group.production_covers, 0),
+      target_servings: groupTargetQuantity,
       kitchen_station: recipe.kitchen_station || recipe.station || '',
       notes: [
         `Issued from menu plan ${normalizeIssueDateOnly(issuePlan?.plan_date || group.plan_date) || ''} ${group.meal_label}.`,
@@ -3406,7 +3438,7 @@ export default function Production() {
   const selectedIssueSubmitItems = visibleIssueItems.filter((item) => (
     item.selected
     && !isIssueItemSelectionLocked(item)
-    && Number(item.production_covers) > 0
+    && getIssueItemProductionTarget(item) > 0
   ));
   const issueInventoryCheckState = getMenuIssueInventoryCheckState({
     siteId: issueInventorySiteId,
@@ -3469,7 +3501,7 @@ export default function Production() {
   });
   const activeIssueBatchCost = activeIssueItem ? Number(getIssueItemSnapshotCost(activeIssueItem.key).toFixed(2)) : 0;
   const activeIssueCostPerServing = activeIssueItem
-    ? Number((activeIssueBatchCost / Math.max(1, finiteProductionNumber(activeIssueItem.production_covers, 0))).toFixed(2))
+    ? Number((activeIssueBatchCost / Math.max(1, getIssueItemProductionTarget(activeIssueItem))).toFixed(2))
     : 0;
   const issueSubmitDisabledReason = editingIssueProduction && !can('edit_production_request')
       ? 'You need production edit permission to update this menu production request.'
@@ -4109,6 +4141,9 @@ export default function Production() {
                               <p className="font-medium text-slate-950">{group.meal_label}</p>
                               <p className="mt-1 text-xs text-slate-500">
                                 {formatRecipeQuantity(group.production_covers, 'servings')} covers
+                                {group.fixed_quantity_item_count > 0
+                                  ? ` · ${group.fixed_quantity_item_count} fixed item${group.fixed_quantity_item_count === 1 ? '' : 's'}`
+                                  : ''}
                               </p>
                             </div>
                             <Badge className={!issueInventoryReady ? 'bg-amber-600' : group.shortageCount > 0 ? 'bg-red-600' : 'bg-emerald-600'}>
@@ -4154,6 +4189,8 @@ export default function Production() {
                       const itemCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
                       const isActive = activeIssueItem?.key === item.key;
                       const itemShortageCount = (selectedIssueShortagesByItemKey[item.key] || []).length;
+                      const fixedQuantityItem = isFixedProductionQuantityItem(item);
+                      const productionUnit = item.production_unit || item.planned_quantity_unit || 'unit';
                       return (
                         <div
                           key={item.key}
@@ -4198,7 +4235,10 @@ export default function Production() {
                               </div>
                               <p className="mt-2 break-words font-semibold text-slate-950">{item.recipe_name}</p>
                               <p className="mt-1 text-xs text-slate-500">
-                                Planned {formatRecipeQuantity(item.expected_servings, 'servings')} servings · Est. cost {formatCurrency(itemCost || item.planned_total_cost)}
+                                {fixedQuantityItem
+                                  ? `Planned ${formatReportQuantity(item.production_quantity || item.planned_quantity, productionUnit)}`
+                                  : `Planned ${formatRecipeQuantity(item.expected_servings, 'servings')} servings`}
+                                {' '}· Est. cost {formatCurrency(itemCost || item.planned_total_cost)}
                               </p>
                               {item.production_blocked_reason ? (
                                 <p className="mt-1 text-xs font-medium text-amber-700">
@@ -4208,21 +4248,39 @@ export default function Production() {
                             </button>
                           </div>
                           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            <div>
-                              <Label className="text-xs text-slate-500">Production covers</Label>
-                              <StandardDecimalInput
-                                value={item.production_covers}
-                                unit="servings"
-                                precision={0}
-                                min={0}
-                                allowZero
-                                allowEmpty={false}
-                                label={`${item.recipe_name} production covers`}
-                                disabled={selectionLocked}
-                                onValueChange={(value) => updateIssueCovers(item.key, value)}
-                                className="mt-1 bg-white"
-                              />
-                            </div>
+                            {fixedQuantityItem ? (
+                              <div>
+                                <Label className="text-xs text-slate-500">Production quantity</Label>
+                                <StandardDecimalInput
+                                  value={item.production_quantity}
+                                  unit={productionUnit}
+                                  precision={getRecipeQuantityPrecision(productionUnit)}
+                                  min={0}
+                                  allowZero
+                                  allowEmpty={false}
+                                  label={`${item.recipe_name} production quantity`}
+                                  disabled={selectionLocked}
+                                  onValueChange={(value) => updateIssueFixedQuantity(item.key, value)}
+                                  className="mt-1 bg-white"
+                                />
+                              </div>
+                            ) : (
+                              <div>
+                                <Label className="text-xs text-slate-500">Production covers</Label>
+                                <StandardDecimalInput
+                                  value={item.production_covers}
+                                  unit="servings"
+                                  precision={0}
+                                  min={0}
+                                  allowZero
+                                  allowEmpty={false}
+                                  label={`${item.recipe_name} production covers`}
+                                  disabled={selectionLocked}
+                                  onValueChange={(value) => updateIssueCovers(item.key, value)}
+                                  className="mt-1 bg-white"
+                                />
+                              </div>
+                            )}
                             <div>
                               <Label className="text-xs text-slate-500">Production Size (Kg)</Label>
                               <StandardDecimalInput
@@ -4233,7 +4291,7 @@ export default function Production() {
                                 allowZero
                                 allowEmpty={false}
                                 label={`${item.recipe_name} production size in kilograms`}
-                                disabled={selectionLocked || getIssueItemServingGrams(item) <= 0}
+                                disabled={selectionLocked || fixedQuantityItem || getIssueItemServingGrams(item) <= 0}
                                 onValueChange={(value) => updateIssueProductionSizeKg(item.key, value)}
                                 className="mt-1 bg-white"
                               />

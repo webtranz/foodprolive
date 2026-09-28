@@ -183,7 +183,9 @@ function getPlanLines(plan = {}) {
       meal_period: meal.meal_type || plan.meal_type || plan.meal_period,
       recipe_id: meal.recipe_id || meal.recipe_version_id || null,
       recipe_name: meal.recipe_name || meal.item_name || meal.name || '',
-      planned_covers: meal.expected_servings ?? meal.planned_servings ?? meal.servings ?? null
+      planned_covers: meal.expected_servings ?? meal.planned_servings ?? meal.servings ?? null,
+      planned_quantity: meal.planned_quantity ?? meal.production_quantity ?? null,
+      planned_quantity_unit: meal.planned_quantity_unit ?? meal.production_unit ?? null
     }));
   }
   if (Array.isArray(plan.menu_plan_lines) && plan.menu_plan_lines.length) {
@@ -193,7 +195,9 @@ function getPlanLines(plan = {}) {
       meal_period: line.meal_type || line.meal_period || plan.meal_type || plan.meal_period,
       recipe_id: line.recipe_id || line.recipe_version_id || null,
       recipe_name: line.recipe_name || line.item_name || line.name || '',
-      planned_covers: line.expected_servings ?? line.planned_servings ?? line.servings ?? null
+      planned_covers: line.expected_servings ?? line.planned_servings ?? line.servings ?? null,
+      planned_quantity: line.planned_quantity ?? line.production_quantity ?? null,
+      planned_quantity_unit: line.planned_quantity_unit ?? line.production_unit ?? null
     }));
   }
   return [{
@@ -202,7 +206,9 @@ function getPlanLines(plan = {}) {
     meal_period: plan.meal_type || plan.meal_period,
     recipe_id: plan.recipe_id || plan.recipe_version_id || null,
     recipe_name: plan.recipe_name || plan.item_name || '',
-    planned_covers: plan.expected_servings ?? plan.planned_servings ?? plan.total_expected_servings ?? null
+    planned_covers: plan.expected_servings ?? plan.planned_servings ?? plan.total_expected_servings ?? null,
+    planned_quantity: plan.planned_quantity ?? plan.production_quantity ?? null,
+    planned_quantity_unit: plan.planned_quantity_unit ?? plan.production_unit ?? null
   }];
 }
 
@@ -224,6 +230,9 @@ function buildSourceMenuLines(menuPlans = []) {
     const planDate = normalizeDateOnly(plan.plan_date);
     return getPlanLines(plan).map((line) => {
       const plannedCovers = toNumber(line.planned_covers, 0);
+      const plannedQuantity = toNumber(line.planned_quantity, 0);
+      const demandQuantity = plannedCovers > 0 ? plannedCovers : plannedQuantity;
+      const isFixedQuantityLine = plannedCovers <= 0 && plannedQuantity > 0;
       const recipeId = normalizeText(line.recipe_id);
       const sourceLineId = normalizeText(
         line.source?.menu_plan_line_id
@@ -231,8 +240,8 @@ function buildSourceMenuLines(menuPlans = []) {
         || `${plan.id}:line:${line.line_number}`
       );
       const warningCodes = [];
-      if (plannedCovers <= 0) warningCodes.push('zero_pax');
-      else if (plannedCovers <= 1) warningCodes.push('one_pax');
+      if (plannedCovers <= 0 && !isFixedQuantityLine) warningCodes.push('zero_pax');
+      else if (plannedCovers > 0 && plannedCovers <= 1) warningCodes.push('one_pax');
       if (!recipeId) warningCodes.push('missing_recipe');
       return {
         source_line_id: sourceLineId,
@@ -246,6 +255,10 @@ function buildSourceMenuLines(menuPlans = []) {
         recipe_id: recipeId || null,
         recipe_name: normalizeText(line.recipe_name) || 'Unlinked menu line',
         planned_covers: plannedCovers,
+        planned_quantity: plannedQuantity,
+        planned_quantity_unit: normalizeText(line.planned_quantity_unit),
+        demand_quantity: demandQuantity,
+        is_fixed_quantity_line: isFixedQuantityLine,
         warning_codes: warningCodes
       };
     });
@@ -317,7 +330,7 @@ function buildPurchaseLines({ sourceLines = [], recipes = [], ingredients = [], 
   const missingIngredientIds = new Set();
 
   sourceLines
-    .filter((line) => line.recipe_id && line.planned_covers > 0)
+    .filter((line) => line.recipe_id && toNumber(line.demand_quantity ?? line.planned_covers, 0) > 0)
     .forEach((line) => {
       const recipe = recipeMap.get(String(line.recipe_id));
       if (!recipe) {
@@ -326,7 +339,7 @@ function buildPurchaseLines({ sourceLines = [], recipes = [], ingredients = [], 
       }
 
       const recipeServings = Math.max(1, toNumber(recipe.servings ?? recipe.batch_yield, 1));
-      const multiplier = line.planned_covers / recipeServings;
+      const multiplier = toNumber(line.demand_quantity ?? line.planned_covers, 0) / recipeServings;
       const expanded = expandRecipeIngredients(
         recipe,
         recipes,

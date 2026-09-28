@@ -90,13 +90,21 @@ function normalizeMealRequirements(menuPlans = []) {
   return menuPlans.flatMap((plan) => {
     const planDate = normalizeDateOnly(plan.plan_date);
     return (Array.isArray(plan.meals) ? plan.meals : [])
-      .filter((meal) => meal?.recipe_id && toNumber(meal.expected_servings, 0) > 0)
+      .map((meal) => {
+        const expectedServings = toNumber(meal?.expected_servings, 0);
+        const fixedQuantity = toNumber(meal?.planned_quantity ?? meal?.production_quantity, 0);
+        return {
+          meal,
+          demandQuantity: expectedServings > 0 ? expectedServings : fixedQuantity
+        };
+      })
+      .filter(({ meal, demandQuantity }) => meal?.recipe_id && demandQuantity > 0)
       .map((meal) => ({
         plan_date: planDate,
-        meal_type: String(meal.meal_type || '').trim().toLowerCase(),
-        recipe_id: meal.recipe_id,
-        recipe_name: meal.recipe_name || '',
-        expected_servings: toNumber(meal.expected_servings, 0)
+        meal_type: String(meal.meal.meal_type || '').trim().toLowerCase(),
+        recipe_id: meal.meal.recipe_id,
+        recipe_name: meal.meal.recipe_name || '',
+        expected_servings: meal.demandQuantity
       }));
   });
 }
