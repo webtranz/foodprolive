@@ -189,6 +189,8 @@ test('normal recipe API saves persist definitions and reject non-admin changes',
 
 test('UI exposes an accessible weight field and grey read-only controls for non-admins', () => {
   const form = readFileSync(new URL('../src/components/recipes/RecipeForm.jsx', import.meta.url), 'utf8');
+  const sql = readFileSync(new URL('../server/sql/init.sql', import.meta.url), 'utf8');
+  const db = readFileSync(new URL('../server/db.js', import.meta.url), 'utf8');
   assert.match(form, /Weight per unit \(g\)/);
   assert.match(form, /disabled=\{!canEditLineWeights/);
   assert.match(form, /disabled:bg-slate-200/);
@@ -199,4 +201,11 @@ test('UI exposes an accessible weight field and grey read-only controls for non-
   assert.match(form, /max=\{99\.99\}/);
   assert.match(form, /exempt_processing_aid/);
   assert.match(form, /overflow-auto/);
+  assert.match(sql, /weight_per_unit_grams NUMERIC\(18, 6\)/);
+  assert.match(sql, /exempt_processing_aid BOOLEAN NOT NULL DEFAULT FALSE/);
+  assert.match(sql, /prep_exempt_percent NUMERIC\(8, 4\)/);
+  assert.match(sql, /ALTER TABLE recipe_ingredient_lines[\s\S]*ADD COLUMN IF NOT EXISTS exempt_processing_aid/);
+  assert.match(db, /'exempt_processing_aid', line\.exempt_processing_aid/);
+  assert.match(db, /exempt_processing_aid: line\.exempt_processing_aid === true/);
+  assert.match(db, /toNumberOrNull\(line\.prep_exempt_percent\)/);
 });

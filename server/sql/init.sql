@@ -3416,6 +3416,13 @@ CREATE TABLE IF NOT EXISTS recipe_ingredient_lines (
   converted_quantity NUMERIC(18, 6),
   converted_unit TEXT,
   raw_weight_grams NUMERIC(18, 6),
+  weight_per_unit_grams NUMERIC(18, 6),
+  weight_unit TEXT,
+  weight_ingredient_id TEXT,
+  weight_defined_by TEXT,
+  weight_defined_at TIMESTAMPTZ,
+  exempt_processing_aid BOOLEAN NOT NULL DEFAULT FALSE,
+  prep_exempt_percent NUMERIC(8, 4),
   yield_percent NUMERIC(8, 4) NOT NULL DEFAULT 100 CHECK (yield_percent >= 0),
   yielded_weight_grams NUMERIC(18, 6),
   cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
@@ -3427,6 +3434,15 @@ CREATE TABLE IF NOT EXISTS recipe_ingredient_lines (
 
 CREATE INDEX IF NOT EXISTS idx_recipe_ingredient_lines_ingredient
   ON recipe_ingredient_lines(ingredient_id);
+
+ALTER TABLE recipe_ingredient_lines
+  ADD COLUMN IF NOT EXISTS weight_per_unit_grams NUMERIC(18, 6),
+  ADD COLUMN IF NOT EXISTS weight_unit TEXT,
+  ADD COLUMN IF NOT EXISTS weight_ingredient_id TEXT,
+  ADD COLUMN IF NOT EXISTS weight_defined_by TEXT,
+  ADD COLUMN IF NOT EXISTS weight_defined_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS exempt_processing_aid BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS prep_exempt_percent NUMERIC(8, 4);
 
 CREATE TABLE IF NOT EXISTS menu_plans (
   menu_plan_id TEXT PRIMARY KEY,
