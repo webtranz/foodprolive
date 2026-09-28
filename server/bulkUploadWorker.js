@@ -10,6 +10,7 @@ import {
   updateDocument,
   listDocuments,
   deleteDocumentRecordOnly,
+  deleteOrphanRecipeMastersByCanonicalNames,
   getBulkUploadJob,
   updateBulkUploadJob,
   clearDocumentsForBulk
@@ -597,7 +598,23 @@ async function clearRecipeMatchesForBulkUpload(stagedPath, client) {
   for (const recipe of matches) {
     if (await deleteDocumentRecordOnly('Recipe', recipe.id, client)) deletedRows += 1;
   }
+  deletedRows += await deleteOrphanRecipeMastersByCanonicalNames([...recipeNames], client);
   return deletedRows;
+}
+
+async function clearOrphanRecipeMastersForBulkUpload(stagedPath, client) {
+  const recipeNames = new Set();
+  const input = fs.createReadStream(stagedPath, { encoding: 'utf8' });
+  const lines = readline.createInterface({ input, crlfDelay: Infinity });
+
+  for await (const line of lines) {
+    if (!line.trim()) continue;
+    const staged = JSON.parse(line);
+    const recipeName = normalizeLookup(staged.payload?.name);
+    if (recipeName) recipeNames.add(recipeName);
+  }
+
+  return deleteOrphanRecipeMastersByCanonicalNames([...recipeNames], client);
 }
 
 async function collectMenuPlanDatesForBulkClear(stagedPath) {
@@ -1132,7 +1149,12 @@ async function run() {
       }
       return applyRows({ executor: client, failFast: true });
     })
-    : await applyRows();
+    : job.entity_name === 'Recipe'
+      ? await withTransaction(async (client) => {
+        await clearOrphanRecipeMastersForBulkUpload(stagedPath, client);
+        return applyRows({ executor: client });
+      })
+      : await applyRows();
   const status = counters.applied > 0 || counters.skipped > 0 ? 'COMPLETED' : 'FAILED';
   const completedAt = new Date().toISOString();
   await updateBulkUploadJob(job.id, {

@@ -447,6 +447,8 @@ const cases = [
       assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_transactions_idempotency_unique/);
 
       assert.match(dbSource, /DELETE FROM recipes recipe[\s\S]*NOT EXISTS \([\s\S]*FROM recipe_versions version[\s\S]*version\.recipe_id = recipe\.recipe_id/);
+      assert.match(dbSource, /async function deleteOrphanRecipeMastersByCanonicalNames/);
+      assert.match(dbSource, /LOWER\(BTRIM\(recipe\.canonical_name\)\) = ANY\(\$1::text\[\]\)/);
 
       [
         'getPurchaseRequestById\\(id, client\\)',

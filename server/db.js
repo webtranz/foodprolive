@@ -9159,6 +9159,27 @@ async function deleteNormalizedDocument(entity, id, executor = pool) {
   return result.rowCount > 0;
 }
 
+async function deleteOrphanRecipeMastersByCanonicalNames(canonicalNames = [], executor = pool) {
+  const normalizedNames = [...new Set(
+    canonicalNames
+      .map((name) => String(name || '').trim().toLowerCase())
+      .filter(Boolean)
+  )];
+  if (!normalizedNames.length) return 0;
+  const result = await query(
+    `DELETE FROM recipes recipe
+      WHERE LOWER(BTRIM(recipe.canonical_name)) = ANY($1::text[])
+        AND NOT EXISTS (
+          SELECT 1
+            FROM recipe_versions version
+           WHERE version.recipe_id = recipe.recipe_id
+        )`,
+    [normalizedNames],
+    executor
+  );
+  return result.rowCount;
+}
+
 async function query(text, params = [], executor = pool) {
   return executor.query(text, params);
 }
@@ -11037,6 +11058,7 @@ export {
   updateDocument,
   deleteDocument,
   deleteDocumentRecordOnly,
+  deleteOrphanRecipeMastersByCanonicalNames,
   deleteSiteSubtree,
   sanitizeUser,
   getUserByToken,
