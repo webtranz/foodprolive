@@ -215,19 +215,23 @@ async function listDatedDocuments({
 
 async function listInventoryRiskCounts(siteIds) {
   if (!siteIds.size) return [];
-  const quantityExpression = `COALESCE(inventory.on_hand_quantity, inventory.available_quantity, 0)`;
-  const minimumExpression = `GREATEST(0::numeric, CASE
-    WHEN BTRIM(COALESCE(inventory.payload->>'min_stock_level', inventory.payload->>'reorder_level', '')) ~ '^-?[0-9]+([.][0-9]+)?$'
-    THEN BTRIM(COALESCE(inventory.payload->>'min_stock_level', inventory.payload->>'reorder_level'))::numeric
-    ELSE 0::numeric
-  END)`;
+  const quantityExpression = `LEAST(
+    COALESCE(inventory.on_hand_quantity, 0),
+    COALESCE(inventory.available_quantity, 0)
+  )`;
+  const statusExpression = `REGEXP_REPLACE(
+    LOWER(BTRIM(COALESCE(inventory.status, ''))),
+    '[\\s-]+',
+    '_',
+    'g'
+  )`;
   const result = await pool.query(
     `SELECT inventory.warehouse_id AS site_id, COUNT(*)::integer AS risk_count
        FROM warehouse_inventory inventory
       WHERE inventory.warehouse_id = ANY($1::text[])
         AND (
           (${quantityExpression}) <= 0
-          OR ((${minimumExpression}) > 0 AND (${quantityExpression}) <= (${minimumExpression}))
+          OR (${statusExpression}) IN ('out_of_stock', 'low_stock')
         )
       GROUP BY inventory.warehouse_id`,
     [[...siteIds]]
