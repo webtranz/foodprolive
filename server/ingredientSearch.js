@@ -21,10 +21,27 @@ export async function searchIngredients(options = {}) {
   const containsPattern = `%${escapeLikePattern(query)}%`;
 
   const result = await pool.query(
-    `WITH ingredient_catalog AS (
+    `WITH alias_rows AS (
+       SELECT
+         ingredient_id,
+         COALESCE(ARRAY_AGG(alias ORDER BY alias) FILTER (WHERE alias_type = 'alias'), ARRAY[]::text[]) AS aliases,
+         COALESCE(ARRAY_AGG(alias ORDER BY alias) FILTER (WHERE alias_type = 'alternative_name'), ARRAY[]::text[]) AS alternative_names,
+         COALESCE(ARRAY_AGG(alias ORDER BY alias) FILTER (WHERE alias_type = 'supplier_item_name'), ARRAY[]::text[]) AS supplier_item_names,
+         COALESCE(ARRAY_AGG(LOWER(BTRIM(alias)) ORDER BY LOWER(BTRIM(alias))) FILTER (WHERE COALESCE(BTRIM(alias), '') <> ''), ARRAY[]::text[]) AS search_aliases
+       FROM ingredient_aliases
+       GROUP BY ingredient_id
+     ),
+     allergen_rows AS (
+       SELECT
+         ingredient_id,
+         COALESCE(ARRAY_AGG(tag ORDER BY tag), ARRAY[]::text[]) AS allergens
+       FROM ingredient_allergen_tags
+       GROUP BY ingredient_id
+     ),
+     ingredient_catalog AS (
        SELECT
          ingredient.ingredient_id AS id,
-         ingredient.payload || jsonb_build_object(
+         jsonb_build_object(
            'id', ingredient.ingredient_id,
            'name', ingredient.name,
            'item_code', ingredient.item_code,
@@ -34,6 +51,15 @@ export async function searchIngredients(options = {}) {
            'category', ingredient.category_id,
            'unit', ingredient.base_unit,
            'source_name', ingredient.source_name,
+           'alias', COALESCE((alias_rows.aliases)[1], ''),
+           'aliases', COALESCE(alias_rows.aliases, ARRAY[]::text[]),
+           'alternative_name', COALESCE((alias_rows.alternative_names)[1], ''),
+           'alternative_names', COALESCE(alias_rows.alternative_names, ARRAY[]::text[]),
+           'supplier_item_name', COALESCE(detail.supplier_item_name, (alias_rows.supplier_item_names)[1], ''),
+           'supplier_item_names', COALESCE(alias_rows.supplier_item_names, ARRAY[]::text[]),
+           'supplier', detail.supplier_name,
+           'cost_per_unit', detail.cost_per_unit,
+           'allergens', COALESCE(allergen_rows.allergens, ARRAY[]::text[]),
            'is_active', LOWER(COALESCE(ingredient.status, 'active')) <> 'inactive'
          ) AS data,
          LOWER(BTRIM(COALESCE(ingredient.name, ''))) AS sort_name,
@@ -44,22 +70,10 @@ export async function searchIngredients(options = {}) {
            LOWER(BTRIM(COALESCE(ingredient.item_code, ''))),
            LOWER(BTRIM(COALESCE(ingredient.d365_item_id, ''))),
            LOWER(BTRIM(COALESCE(ingredient.category_id, ''))),
-           LOWER(BTRIM(COALESCE(ingredient.payload->>'alias', ''))),
-           LOWER(BTRIM(COALESCE(ingredient.payload->>'alternative_name', ''))),
-           LOWER(BTRIM(COALESCE(ingredient.payload->>'supplier_item_name', '')))
+           LOWER(BTRIM(COALESCE(detail.supplier_item_name, ''))),
+           LOWER(BTRIM(COALESCE(detail.supplier_name, '')))
          ], '')
-         || CASE WHEN jsonb_typeof(ingredient.payload->'aliases') = 'array'
-              THEN ARRAY(SELECT LOWER(BTRIM(value)) FROM jsonb_array_elements_text(ingredient.payload->'aliases'))
-              ELSE ARRAY_REMOVE(ARRAY[LOWER(BTRIM(COALESCE(ingredient.payload->>'aliases', '')))], '')
-            END
-         || CASE WHEN jsonb_typeof(ingredient.payload->'alternative_names') = 'array'
-              THEN ARRAY(SELECT LOWER(BTRIM(value)) FROM jsonb_array_elements_text(ingredient.payload->'alternative_names'))
-              ELSE ARRAY_REMOVE(ARRAY[LOWER(BTRIM(COALESCE(ingredient.payload->>'alternative_names', '')))], '')
-            END
-         || CASE WHEN jsonb_typeof(ingredient.payload->'supplier_item_names') = 'array'
-              THEN ARRAY(SELECT LOWER(BTRIM(value)) FROM jsonb_array_elements_text(ingredient.payload->'supplier_item_names'))
-              ELSE ARRAY_REMOVE(ARRAY[LOWER(BTRIM(COALESCE(ingredient.payload->>'supplier_item_names', '')))], '')
-            END AS search_fields,
+         || COALESCE(alias_rows.search_aliases, ARRAY[]::text[]) AS search_fields,
          LOWER(
            COALESCE(ingredient.name, '') || ' ' ||
            COALESCE(ingredient.sku, '') || ' ' ||
@@ -67,14 +81,19 @@ export async function searchIngredients(options = {}) {
            COALESCE(ingredient.item_code, '') || ' ' ||
            COALESCE(ingredient.d365_item_id, '') || ' ' ||
            COALESCE(ingredient.category_id, '') || ' ' ||
-           COALESCE(ingredient.payload->>'alias', '') || ' ' ||
-           COALESCE(ingredient.payload->>'aliases', '') || ' ' ||
-           COALESCE(ingredient.payload->>'alternative_name', '') || ' ' ||
-           COALESCE(ingredient.payload->>'alternative_names', '') || ' ' ||
-           COALESCE(ingredient.payload->>'supplier_item_name', '') || ' ' ||
-           COALESCE(ingredient.payload->>'supplier_item_names', '')
+           COALESCE(detail.supplier_item_name, '') || ' ' ||
+           COALESCE(detail.supplier_name, '') || ' ' ||
+           COALESCE(array_to_string(alias_rows.aliases, ' '), '') || ' ' ||
+           COALESCE(array_to_string(alias_rows.alternative_names, ' '), '') || ' ' ||
+           COALESCE(array_to_string(alias_rows.supplier_item_names, ' '), '')
          ) AS search_document
        FROM ingredients ingredient
+       LEFT JOIN ingredient_details detail
+         ON detail.ingredient_id = ingredient.ingredient_id
+       LEFT JOIN alias_rows
+         ON alias_rows.ingredient_id = ingredient.ingredient_id
+       LEFT JOIN allergen_rows
+         ON allergen_rows.ingredient_id = ingredient.ingredient_id
        WHERE LOWER(COALESCE(ingredient.status, 'active')) <> 'inactive'
      ),
      stock_totals AS (

@@ -3157,6 +3157,85 @@ CREATE TABLE IF NOT EXISTS ingredient_unit_conversions (
   UNIQUE (ingredient_id, from_unit, to_unit)
 );
 
+CREATE TABLE IF NOT EXISTS ingredient_details (
+  ingredient_id TEXT PRIMARY KEY REFERENCES ingredients(ingredient_id) ON DELETE CASCADE,
+  supplier_item_name TEXT,
+  supplier_name TEXT,
+  cost_per_unit NUMERIC(18, 8),
+  package_pack_count NUMERIC(18, 6),
+  package_inner_count NUMERIC(18, 6),
+  package_size_quantity NUMERIC(18, 6),
+  package_size_unit TEXT,
+  package_base_quantity NUMERIC(18, 8),
+  package_base_unit TEXT,
+  package_parse_source TEXT,
+  cooking_yield_percent NUMERIC(18, 6),
+  shrinkage_percent NUMERIC(18, 6),
+  raw_weight_per_unit NUMERIC(18, 6),
+  cooked_weight_per_unit NUMERIC(18, 6),
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ingredient_nutrition_profiles (
+  ingredient_id TEXT PRIMARY KEY REFERENCES ingredients(ingredient_id) ON DELETE CASCADE,
+  calories_per_100g NUMERIC(18, 6),
+  protein_per_100g NUMERIC(18, 6),
+  carbs_per_100g NUMERIC(18, 6),
+  fat_per_100g NUMERIC(18, 6),
+  fiber_per_100g NUMERIC(18, 6),
+  sodium_per_100g NUMERIC(18, 6),
+  sugar_per_100g NUMERIC(18, 6),
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ingredient_allergen_tags (
+  ingredient_allergen_id TEXT PRIMARY KEY,
+  ingredient_id TEXT NOT NULL REFERENCES ingredients(ingredient_id) ON DELETE CASCADE,
+  tag TEXT NOT NULL,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredient_allergen_tags_unique
+  ON ingredient_allergen_tags (ingredient_id, LOWER(BTRIM(tag)))
+  WHERE COALESCE(BTRIM(tag), '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_ingredient_allergen_tags_ingredient
+  ON ingredient_allergen_tags (ingredient_id);
+
+CREATE TABLE IF NOT EXISTS ingredient_aliases (
+  ingredient_alias_id TEXT PRIMARY KEY,
+  ingredient_id TEXT NOT NULL REFERENCES ingredients(ingredient_id) ON DELETE CASCADE,
+  alias TEXT NOT NULL,
+  alias_type TEXT NOT NULL DEFAULT 'alias',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredient_aliases_unique
+  ON ingredient_aliases (ingredient_id, alias_type, LOWER(BTRIM(alias)))
+  WHERE COALESCE(BTRIM(alias), '') <> '';
+
+CREATE INDEX IF NOT EXISTS idx_ingredient_aliases_search
+  ON ingredient_aliases USING gin (LOWER(alias) gin_trgm_ops);
+
+CREATE TABLE IF NOT EXISTS ingredient_stock_summaries (
+  ingredient_id TEXT PRIMARY KEY REFERENCES ingredients(ingredient_id) ON DELETE CASCADE,
+  on_hand_quantity NUMERIC(18, 6),
+  reserved_quantity NUMERIC(18, 6),
+  available_quantity NUMERIC(18, 6),
+  total_value NUMERIC(18, 6),
+  site_count INTEGER,
+  unit TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS warehouse_inventory (
   inventory_id TEXT PRIMARY KEY,
   warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,

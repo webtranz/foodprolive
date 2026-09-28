@@ -724,6 +724,59 @@ function rowJsonObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function rowNumberOrNull(value) {
+  return toNumberOrNull(value);
+}
+
+function nullableText(value) {
+  const text = String(value ?? '').trim();
+  return text || null;
+}
+
+function textList(value) {
+  if (Array.isArray(value)) return normalizeTextArray(value);
+  const text = String(value ?? '').trim();
+  if (!text) return [];
+  if ((text.startsWith('[') && text.endsWith(']')) || (text.startsWith('{') && text.endsWith('}'))) {
+    try {
+      const parsed = JSON.parse(text);
+      return Array.isArray(parsed) ? normalizeTextArray(parsed) : [];
+    } catch {
+      return [text];
+    }
+  }
+  return [text];
+}
+
+function numericStockSummaryValue(source, record, sourceField, recordField) {
+  return rowNumberOrNull(source[sourceField] ?? record?.[recordField]);
+}
+
+function ingredientStockSummaryFromRecord(record = {}) {
+  const source = rowJsonObject(record.stock_summary);
+  const summary = {
+    on_hand_quantity: numericStockSummaryValue(source, record, 'on_hand_quantity', 'stock_summary_on_hand_quantity'),
+    reserved_quantity: numericStockSummaryValue(source, record, 'reserved_quantity', 'stock_summary_reserved_quantity'),
+    available_quantity: numericStockSummaryValue(source, record, 'available_quantity', 'stock_summary_available_quantity'),
+    total_value: numericStockSummaryValue(source, record, 'total_value', 'stock_summary_total_value'),
+    site_count: rowNumberOrNull(source.site_count ?? record.stock_summary_site_count),
+    unit: nullableText(source.unit ?? record.stock_summary_unit)
+  };
+  const hasValue = Object.entries(summary).some(([key, value]) => (key === 'unit' ? Boolean(value) : value !== null));
+  return hasValue ? summary : null;
+}
+
+function ingredientStockSummaryFromRow(row = {}) {
+  return ingredientStockSummaryFromRecord({
+    stock_summary_on_hand_quantity: row.stock_summary_on_hand_quantity,
+    stock_summary_reserved_quantity: row.stock_summary_reserved_quantity,
+    stock_summary_available_quantity: row.stock_summary_available_quantity,
+    stock_summary_total_value: row.stock_summary_total_value,
+    stock_summary_site_count: row.stock_summary_site_count,
+    stock_summary_unit: row.stock_summary_unit
+  });
+}
+
 function isPlainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -886,6 +939,11 @@ function rowToSite(row = {}) {
 }
 
 function rowToIngredient(row = {}) {
+  const aliases = rowJsonArray(row.aliases);
+  const alternativeNames = rowJsonArray(row.alternative_names);
+  const supplierItemNames = rowJsonArray(row.supplier_item_names);
+  const allergens = rowJsonArray(row.allergens);
+  const stockSummary = ingredientStockSummaryFromRow(row);
   return hydrateDerivedFields('Ingredient', {
     __entity: 'Ingredient',
     id: row.ingredient_id,
@@ -898,6 +956,36 @@ function rowToIngredient(row = {}) {
     base_unit: row.base_unit,
     category: row.category_id || null,
     source_name: row.source_name || null,
+    alias: row.alias || aliases[0] || null,
+    aliases,
+    alternative_name: row.alternative_name || alternativeNames[0] || null,
+    alternative_names: alternativeNames,
+    supplier_item_name: row.supplier_item_name || supplierItemNames[0] || null,
+    supplier_item_names: supplierItemNames,
+    supplier: row.supplier || null,
+    cost_per_unit: rowNumberOrNull(row.cost_per_unit),
+    package_pack_count: rowNumberOrNull(row.package_pack_count),
+    package_inner_count: rowNumberOrNull(row.package_inner_count),
+    package_size_quantity: rowNumberOrNull(row.package_size_quantity),
+    package_size_unit: row.package_size_unit || null,
+    package_base_quantity: rowNumberOrNull(row.package_base_quantity),
+    package_base_unit: row.package_base_unit || null,
+    package_parse_source: row.package_parse_source || null,
+    calories_per_100g: rowNumberOrNull(row.calories_per_100g),
+    protein_per_100g: rowNumberOrNull(row.protein_per_100g),
+    carbs_per_100g: rowNumberOrNull(row.carbs_per_100g),
+    fat_per_100g: rowNumberOrNull(row.fat_per_100g),
+    fiber_per_100g: rowNumberOrNull(row.fiber_per_100g),
+    sodium_per_100g: rowNumberOrNull(row.sodium_per_100g),
+    sugar_per_100g: rowNumberOrNull(row.sugar_per_100g),
+    cooking_yield_percent: rowNumberOrNull(row.cooking_yield_percent),
+    shrinkage_percent: rowNumberOrNull(row.shrinkage_percent),
+    raw_weight_per_unit: rowNumberOrNull(row.raw_weight_per_unit),
+    cooked_weight_per_unit: rowNumberOrNull(row.cooked_weight_per_unit),
+    allergens,
+    conversion_unit: row.conversion_unit || null,
+    conversion_factor: rowNumberOrNull(row.conversion_factor),
+    ...(stockSummary ? { stock_summary: stockSummary } : {}),
     is_active: row.status !== 'inactive',
     status: row.status || 'active',
     created_date: rowTimestamp(row.created_at),
@@ -923,6 +1011,222 @@ function rowToInventory(row = {}) {
     created_date: rowTimestamp(row.created_at),
     updated_date: rowTimestamp(row.updated_at)
   });
+}
+
+function ingredientAliasRows(record = {}) {
+  const rows = [];
+  const pushRows = (aliasType, values) => {
+    textList(values).forEach((alias) => {
+      rows.push({ alias_type: aliasType, alias });
+    });
+  };
+  pushRows('alias', [record.alias, ...textList(record.aliases)]);
+  pushRows('alternative_name', [record.alternative_name, ...textList(record.alternative_names)]);
+  pushRows('supplier_item_name', [record.supplier_item_name, ...textList(record.supplier_item_names)]);
+  const unique = new Map();
+  rows.forEach((row) => {
+    const key = `${row.alias_type}:${row.alias.toLowerCase()}`;
+    if (!unique.has(key)) unique.set(key, row);
+  });
+  return [...unique.values()];
+}
+
+async function replaceIngredientAliases(record = {}, executor = pool) {
+  await query('DELETE FROM ingredient_aliases WHERE ingredient_id = $1', [record.id], executor);
+  const rows = ingredientAliasRows(record);
+  for (const row of rows) {
+    await query(
+      `INSERT INTO ingredient_aliases (
+        ingredient_alias_id, ingredient_id, alias, alias_type, source_name, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT DO NOTHING`,
+      [
+        randomId('ingredient_alias'),
+        record.id,
+        row.alias,
+        row.alias_type,
+        record.source_name || null,
+        record.updated_date || nowIso()
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceIngredientAllergens(record = {}, executor = pool) {
+  await query('DELETE FROM ingredient_allergen_tags WHERE ingredient_id = $1', [record.id], executor);
+  const rows = normalizeTextArray(record.allergens);
+  for (const tag of rows) {
+    await query(
+      `INSERT INTO ingredient_allergen_tags (
+        ingredient_allergen_id, ingredient_id, tag, source_name, created_at
+      ) VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT DO NOTHING`,
+      [
+        randomId('ingredient_allergen'),
+        record.id,
+        tag,
+        record.source_name || null,
+        record.updated_date || nowIso()
+      ],
+      executor
+    );
+  }
+}
+
+async function upsertIngredientDetails(record = {}, executor = pool) {
+  await query(
+    `INSERT INTO ingredient_details (
+      ingredient_id, supplier_item_name, supplier_name, cost_per_unit,
+      package_pack_count, package_inner_count, package_size_quantity, package_size_unit,
+      package_base_quantity, package_base_unit, package_parse_source,
+      cooking_yield_percent, shrinkage_percent, raw_weight_per_unit, cooked_weight_per_unit,
+      source_name, created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+    )
+    ON CONFLICT (ingredient_id) DO UPDATE SET
+      supplier_item_name = EXCLUDED.supplier_item_name,
+      supplier_name = EXCLUDED.supplier_name,
+      cost_per_unit = EXCLUDED.cost_per_unit,
+      package_pack_count = EXCLUDED.package_pack_count,
+      package_inner_count = EXCLUDED.package_inner_count,
+      package_size_quantity = EXCLUDED.package_size_quantity,
+      package_size_unit = EXCLUDED.package_size_unit,
+      package_base_quantity = EXCLUDED.package_base_quantity,
+      package_base_unit = EXCLUDED.package_base_unit,
+      package_parse_source = EXCLUDED.package_parse_source,
+      cooking_yield_percent = EXCLUDED.cooking_yield_percent,
+      shrinkage_percent = EXCLUDED.shrinkage_percent,
+      raw_weight_per_unit = EXCLUDED.raw_weight_per_unit,
+      cooked_weight_per_unit = EXCLUDED.cooked_weight_per_unit,
+      source_name = EXCLUDED.source_name,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      nullableText(record.supplier_item_name || textList(record.supplier_item_names)[0]),
+      nullableText(record.supplier ?? record.supplier_name),
+      rowNumberOrNull(record.cost_per_unit),
+      rowNumberOrNull(record.package_pack_count),
+      rowNumberOrNull(record.package_inner_count),
+      rowNumberOrNull(record.package_size_quantity),
+      nullableText(record.package_size_unit),
+      rowNumberOrNull(record.package_base_quantity),
+      nullableText(record.package_base_unit),
+      nullableText(record.package_parse_source),
+      rowNumberOrNull(record.cooking_yield_percent),
+      rowNumberOrNull(record.shrinkage_percent),
+      rowNumberOrNull(record.raw_weight_per_unit),
+      rowNumberOrNull(record.cooked_weight_per_unit),
+      record.source_name || null,
+      record.created_date || nowIso(),
+      record.updated_date || nowIso()
+    ],
+    executor
+  );
+}
+
+async function upsertIngredientNutritionProfile(record = {}, executor = pool) {
+  await query(
+    `INSERT INTO ingredient_nutrition_profiles (
+      ingredient_id, calories_per_100g, protein_per_100g, carbs_per_100g,
+      fat_per_100g, fiber_per_100g, sodium_per_100g, sugar_per_100g,
+      source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    ON CONFLICT (ingredient_id) DO UPDATE SET
+      calories_per_100g = EXCLUDED.calories_per_100g,
+      protein_per_100g = EXCLUDED.protein_per_100g,
+      carbs_per_100g = EXCLUDED.carbs_per_100g,
+      fat_per_100g = EXCLUDED.fat_per_100g,
+      fiber_per_100g = EXCLUDED.fiber_per_100g,
+      sodium_per_100g = EXCLUDED.sodium_per_100g,
+      sugar_per_100g = EXCLUDED.sugar_per_100g,
+      source_name = EXCLUDED.source_name,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      rowNumberOrNull(record.calories_per_100g),
+      rowNumberOrNull(record.protein_per_100g),
+      rowNumberOrNull(record.carbs_per_100g),
+      rowNumberOrNull(record.fat_per_100g),
+      rowNumberOrNull(record.fiber_per_100g),
+      rowNumberOrNull(record.sodium_per_100g),
+      rowNumberOrNull(record.sugar_per_100g),
+      record.source_name || null,
+      record.created_date || nowIso(),
+      record.updated_date || nowIso()
+    ],
+    executor
+  );
+}
+
+async function upsertIngredientUnitConversion(record = {}, executor = pool) {
+  const fromUnit = nullableText(record.base_unit || record.unit);
+  const toUnit = nullableText(record.conversion_unit);
+  const factor = rowNumberOrNull(record.conversion_factor);
+  if (!fromUnit || !toUnit || !factor || factor <= 0) return;
+  await query(
+    `INSERT INTO ingredient_unit_conversions (
+      conversion_id, ingredient_id, from_unit, to_unit, factor, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT (ingredient_id, from_unit, to_unit) DO UPDATE SET
+      factor = EXCLUDED.factor,
+      source_name = EXCLUDED.source_name,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      randomId('ingredient_conversion'),
+      record.id,
+      fromUnit,
+      toUnit,
+      factor,
+      record.source_name || null,
+      record.created_date || nowIso(),
+      record.updated_date || nowIso()
+    ],
+    executor
+  );
+}
+
+async function upsertIngredientStockSummary(record = {}, executor = pool) {
+  const stockSummary = ingredientStockSummaryFromRecord(record);
+  if (!stockSummary) return;
+  await query(
+    `INSERT INTO ingredient_stock_summaries (
+      ingredient_id, on_hand_quantity, reserved_quantity, available_quantity,
+      total_value, site_count, unit, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    ON CONFLICT (ingredient_id) DO UPDATE SET
+      on_hand_quantity = EXCLUDED.on_hand_quantity,
+      reserved_quantity = EXCLUDED.reserved_quantity,
+      available_quantity = EXCLUDED.available_quantity,
+      total_value = EXCLUDED.total_value,
+      site_count = EXCLUDED.site_count,
+      unit = EXCLUDED.unit,
+      source_name = EXCLUDED.source_name,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      stockSummary.on_hand_quantity,
+      stockSummary.reserved_quantity,
+      stockSummary.available_quantity,
+      stockSummary.total_value,
+      stockSummary.site_count === null ? null : Math.trunc(stockSummary.site_count),
+      stockSummary.unit,
+      record.source_name || null,
+      record.created_date || nowIso(),
+      record.updated_date || nowIso()
+    ],
+    executor
+  );
+}
+
+async function replaceIngredientRelationalDetails(record = {}, executor = pool) {
+  await upsertIngredientDetails(record, executor);
+  await upsertIngredientNutritionProfile(record, executor);
+  await replaceIngredientAliases(record, executor);
+  await replaceIngredientAllergens(record, executor);
+  await upsertIngredientUnitConversion(record, executor);
+  await upsertIngredientStockSummary(record, executor);
 }
 
 function rowToInventoryLot(row = {}) {
@@ -4176,7 +4480,78 @@ const normalizedSimpleConfigs = {
     table: 'ingredients',
     idColumn: 'ingredient_id',
     mapper: rowToIngredient,
-    select: 'SELECT * FROM ingredients',
+    select: `SELECT ingredient.*,
+                    detail.supplier_item_name,
+                    detail.supplier_name AS supplier,
+                    detail.cost_per_unit,
+                    detail.package_pack_count,
+                    detail.package_inner_count,
+                    detail.package_size_quantity,
+                    detail.package_size_unit,
+                    detail.package_base_quantity,
+                    detail.package_base_unit,
+                    detail.package_parse_source,
+                    detail.cooking_yield_percent,
+                    detail.shrinkage_percent,
+                    detail.raw_weight_per_unit,
+                    detail.cooked_weight_per_unit,
+                    nutrition.calories_per_100g,
+                    nutrition.protein_per_100g,
+                    nutrition.carbs_per_100g,
+                    nutrition.fat_per_100g,
+                    nutrition.fiber_per_100g,
+                    nutrition.sodium_per_100g,
+                    nutrition.sugar_per_100g,
+                    conversion.to_unit AS conversion_unit,
+                    conversion.factor AS conversion_factor,
+                    COALESCE(alias_rows.aliases, ARRAY[]::text[]) AS aliases,
+                    COALESCE(alternative_rows.alternative_names, ARRAY[]::text[]) AS alternative_names,
+                    COALESCE(supplier_rows.supplier_item_names, ARRAY[]::text[]) AS supplier_item_names,
+                    COALESCE(allergen_rows.allergens, ARRAY[]::text[]) AS allergens,
+                    stock.on_hand_quantity AS stock_summary_on_hand_quantity,
+                    stock.reserved_quantity AS stock_summary_reserved_quantity,
+                    stock.available_quantity AS stock_summary_available_quantity,
+                    stock.total_value AS stock_summary_total_value,
+                    stock.site_count AS stock_summary_site_count,
+                    stock.unit AS stock_summary_unit
+               FROM ingredients ingredient
+               LEFT JOIN ingredient_details detail
+                 ON detail.ingredient_id = ingredient.ingredient_id
+               LEFT JOIN ingredient_nutrition_profiles nutrition
+                 ON nutrition.ingredient_id = ingredient.ingredient_id
+               LEFT JOIN LATERAL (
+                 SELECT unit_conversion.to_unit, unit_conversion.factor
+                 FROM ingredient_unit_conversions unit_conversion
+                 WHERE unit_conversion.ingredient_id = ingredient.ingredient_id
+                   AND unit_conversion.from_unit = ingredient.base_unit
+                 ORDER BY unit_conversion.updated_at DESC, unit_conversion.conversion_id
+                 LIMIT 1
+               ) conversion ON TRUE
+               LEFT JOIN (
+                 SELECT ingredient_id, ARRAY_AGG(alias ORDER BY alias) AS aliases
+                 FROM ingredient_aliases
+                 WHERE alias_type = 'alias'
+                 GROUP BY ingredient_id
+               ) alias_rows ON alias_rows.ingredient_id = ingredient.ingredient_id
+               LEFT JOIN (
+                 SELECT ingredient_id, ARRAY_AGG(alias ORDER BY alias) AS alternative_names
+                 FROM ingredient_aliases
+                 WHERE alias_type = 'alternative_name'
+                 GROUP BY ingredient_id
+               ) alternative_rows ON alternative_rows.ingredient_id = ingredient.ingredient_id
+               LEFT JOIN (
+                 SELECT ingredient_id, ARRAY_AGG(alias ORDER BY alias) AS supplier_item_names
+                 FROM ingredient_aliases
+                 WHERE alias_type = 'supplier_item_name'
+                 GROUP BY ingredient_id
+               ) supplier_rows ON supplier_rows.ingredient_id = ingredient.ingredient_id
+               LEFT JOIN (
+                 SELECT ingredient_id, ARRAY_AGG(tag ORDER BY tag) AS allergens
+                 FROM ingredient_allergen_tags
+                 GROUP BY ingredient_id
+               ) allergen_rows ON allergen_rows.ingredient_id = ingredient.ingredient_id
+               LEFT JOIN ingredient_stock_summaries stock
+                 ON stock.ingredient_id = ingredient.ingredient_id`,
     insertSql: `INSERT INTO ingredients (
       ingredient_id, item_code, ingredient_code, sku, d365_item_id, name, base_unit,
       category_id, status, source_name, created_at, updated_at
@@ -4206,7 +4581,8 @@ const normalizedSimpleConfigs = {
     updateValues(record) {
       const values = this.values(record);
       return [values[0], ...values.slice(1, 10), record.updated_date || nowIso()];
-    }
+    },
+    afterSave: replaceIngredientRelationalDetails
   },
   Inventory: {
     table: 'warehouse_inventory',
@@ -5067,6 +5443,11 @@ function normalizedSqlColumnForField(entity, field) {
       base_unit: 'base_unit',
       category: 'category_id',
       category_id: 'category_id',
+      supplier_item_name: 'supplier_item_name',
+      supplier: 'supplier',
+      cost_per_unit: 'cost_per_unit',
+      cooking_yield_percent: 'cooking_yield_percent',
+      calories_per_100g: 'calories_per_100g',
       is_active: 'status'
     },
     Inventory: {

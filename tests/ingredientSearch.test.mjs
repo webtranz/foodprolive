@@ -101,13 +101,19 @@ test('supports highlight segments and keyboard selection', () => {
 test('uses a debounced backend endpoint and PostgreSQL search indexes', () => {
   const componentSource = fs.readFileSync(new URL('../src/components/ingredients/IngredientSearchCombobox.jsx', import.meta.url), 'utf8');
   const apiSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+  const searchSource = fs.readFileSync(new URL('../server/ingredientSearch.js', import.meta.url), 'utf8');
   const sqlSource = fs.readFileSync(new URL('../server/sql/init.sql', import.meta.url), 'utf8');
   assert.match(componentSource, /useDebouncedValue\(search, 250\)/);
   assert.match(componentSource, /base44\.ingredients\.search/);
   assert.match(componentSource, /shouldFilter=\{false\}/);
   assert.match(apiSource, /\/api\/ingredients\/search/);
+  assert.doesNotMatch(searchSource, /ingredient\.payload/);
+  assert.match(searchSource, /ingredient_aliases/);
+  assert.match(searchSource, /ingredient_details/);
   assert.match(sqlSource, /pg_trgm/);
   assert.match(sqlSource, /idx_ingredients_name_search/);
+  assert.match(sqlSource, /CREATE TABLE IF NOT EXISTS ingredient_aliases/);
+  assert.match(sqlSource, /CREATE TABLE IF NOT EXISTS ingredient_allergen_tags/);
 });
 
 test('uses the indexed picker in every ingredient-selection workflow', () => {

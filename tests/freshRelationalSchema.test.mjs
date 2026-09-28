@@ -24,4 +24,18 @@ assert.doesNotMatch(
   'persistent normalized tables should not define payload/data JSONB storage columns'
 );
 
+for (const tableName of [
+  'ingredient_details',
+  'ingredient_nutrition_profiles',
+  'ingredient_allergen_tags',
+  'ingredient_aliases',
+  'ingredient_stock_summaries'
+]) {
+  assert.match(
+    initSql,
+    new RegExp(`CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+${tableName}\\b`, 'i'),
+    `${tableName} should be part of the normalized ingredient schema`
+  );
+}
+
 console.log('Fresh relational schema tests passed.');

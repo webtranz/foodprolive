@@ -26,7 +26,46 @@ export const utilityModules = Object.freeze({
     label: 'Ingredients',
     entity: 'Ingredient',
     required: ['name'],
-    headers: ['item_code', 'name', 'source_name', 'ingredient_code', 'sku', 'alias', 'aliases', 'supplier_item_name', 'unit', 'conversion_unit', 'conversion_factor', 'category', 'cuisine_type', 'cost_per_unit', 'supplier', 'package_base_quantity', 'package_base_unit', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'fiber_per_100g', 'sodium_per_100g', 'sugar_per_100g', 'cooking_yield_percent', 'shrinkage_percent', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'allergens', 'is_active']
+    headers: [
+      'item_code',
+      'name',
+      'source_name',
+      'ingredient_code',
+      'sku',
+      'alias',
+      'aliases',
+      'supplier_item_name',
+      'unit',
+      'conversion_unit',
+      'conversion_factor',
+      'category',
+      'cuisine_type',
+      'cost_per_unit',
+      'supplier',
+      'package_pack_count',
+      'package_inner_count',
+      'package_size_quantity',
+      'package_size_unit',
+      'package_base_quantity',
+      'package_base_unit',
+      'package_parse_source',
+      'calories_per_100g',
+      'protein_per_100g',
+      'carbs_per_100g',
+      'fat_per_100g',
+      'fiber_per_100g',
+      'sodium_per_100g',
+      'sugar_per_100g',
+      'cooking_yield_percent',
+      'shrinkage_percent',
+      'raw_weight_per_unit',
+      'cooked_weight_per_unit',
+      'allergens',
+      'stock_summary',
+      'created_date',
+      'updated_date',
+      'is_active'
+    ]
   },
   recipes: {
     label: 'Recipes',
@@ -249,6 +288,9 @@ const LIST_FIELDS = new Set([
   'categories',
   'evidence_image_urls',
   'image_urls'
+]);
+const OBJECT_FIELDS = new Set([
+  'stock_summary'
 ]);
 const LEGACY_NESTED_UPLOAD_FIELDS = new Set([
   'ingredients',
@@ -484,6 +526,17 @@ function parseCell(field, value) {
       return JSON.parse(trimmed);
     } catch {
       return trimmed.split('|').map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  if (OBJECT_FIELDS.has(field)) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('not an object');
+      }
+      return parsed;
+    } catch {
+      throw new Error(`${field} must be a JSON object`);
     }
   }
   if (LEGACY_NESTED_UPLOAD_FIELDS.has(field)) {

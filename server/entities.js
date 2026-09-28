@@ -700,7 +700,8 @@ export const entityRegistry = {
       raw_weight_per_unit: numberOptional,
       cooked_weight_per_unit: numberOptional,
       is_active: booleanOptional,
-      allergens: arrayOptional
+      allergens: arrayOptional,
+      stock_summary: objectOptional
     }).passthrough()
   },
   Inventory: {

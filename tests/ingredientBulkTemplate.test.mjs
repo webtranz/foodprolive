@@ -7,9 +7,12 @@ import { ingredientWeightConversion } from '../shared/ingredientUnits.js';
 const headers = [
   'item_code', 'name', 'source_name', 'ingredient_code', 'sku', 'alias', 'aliases', 'supplier_item_name',
   'unit', 'conversion_unit', 'conversion_factor', 'category', 'cuisine_type', 'cost_per_unit', 'supplier',
-  'package_base_quantity', 'package_base_unit', 'calories_per_100g', 'protein_per_100g', 'carbs_per_100g',
+  'package_pack_count', 'package_inner_count', 'package_size_quantity', 'package_size_unit',
+  'package_base_quantity', 'package_base_unit', 'package_parse_source',
+  'calories_per_100g', 'protein_per_100g', 'carbs_per_100g',
   'fat_per_100g', 'fiber_per_100g', 'sodium_per_100g', 'sugar_per_100g', 'cooking_yield_percent',
-  'shrinkage_percent', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'allergens', 'is_active'
+  'shrinkage_percent', 'raw_weight_per_unit', 'cooked_weight_per_unit', 'allergens', 'stock_summary',
+  'created_date', 'updated_date', 'is_active'
 ];
 const legacyHeaders = [
   'item_code', 'name', 'ingredient_code', 'sku', 'alias', 'supplier_item_name', 'unit', 'category',
@@ -25,7 +28,7 @@ const mapIngredient = (row, fieldNames = headers) => mapCsvRow(
 
 test('ingredient CSV contains every form field and retains legacy column order', () => {
   assert.equal(createTemplateCsv('ingredients'), `${headers.join(',')}\n`);
-  assert.equal(headers.length, 30);
+  assert.equal(headers.length, 38);
   assert.deepEqual(headers.filter((header) => legacyHeaders.includes(header)), legacyHeaders);
   const form = readFileSync(new URL('../src/components/ingredients/IngredientForm.jsx', import.meta.url), 'utf8');
   const state = form.match(/const \[formData, setFormData\] = useState\(\{([\s\S]*?)\n  \}\);/)?.[1];
@@ -41,10 +44,23 @@ test('full template accepts form data, source, supplier, numeric conversion, fib
     sku: 'SKU-001', alias: 'Legacy oil', aliases: JSON.stringify([' Refined oil ', 'Oil, cooking']),
     supplier_item_name: 'Supplier oil', unit: 'Liters (l)', conversion_unit: 'Grams (g)', conversion_factor: '920',
     category: 'oils', cuisine_type: 'general', cost_per_unit: '12.5', supplier: 'Supplier, One',
-    package_base_quantity: '1', package_base_unit: 'Liters (l)', calories_per_100g: '884',
+    package_pack_count: '6', package_inner_count: '2', package_size_quantity: '1', package_size_unit: 'l',
+    package_base_quantity: '1', package_base_unit: 'Liters (l)', package_parse_source: 'file',
+    calories_per_100g: '884',
     protein_per_100g: '0', carbs_per_100g: '0', fat_per_100g: '100', fiber_per_100g: '0',
     sodium_per_100g: '0', sugar_per_100g: '0', cooking_yield_percent: '100', shrinkage_percent: '0',
-    raw_weight_per_unit: '920', cooked_weight_per_unit: '920', allergens: 'soy, sesame', is_active: 'true'
+    raw_weight_per_unit: '920', cooked_weight_per_unit: '920', allergens: 'soy, sesame',
+    stock_summary: JSON.stringify({
+      on_hand_quantity: 10,
+      reserved_quantity: 2,
+      available_quantity: 8,
+      total_value: 125,
+      site_count: 1,
+      unit: 'l'
+    }),
+    created_date: '2026-09-16T00:00:00.000Z',
+    updated_date: '2026-09-17T00:00:00.000Z',
+    is_active: 'true'
   };
   const payload = mapIngredient(row);
   assert.equal(payload.name, 'Oil, refined');
@@ -58,7 +74,22 @@ test('full template accepts form data, source, supplier, numeric conversion, fib
   assert.equal(payload.conversion_factor, 920);
   assert.equal(payload.fiber_per_100g, 0);
   assert.deepEqual(ingredientWeightConversion(1, payload.unit, payload), { grams: 920, source: 'ingredient_conversion' });
+  assert.equal(payload.package_pack_count, 6);
+  assert.equal(payload.package_inner_count, 2);
+  assert.equal(payload.package_size_quantity, 1);
+  assert.equal(payload.package_size_unit, 'l');
   assert.equal(payload.package_base_unit, 'l');
+  assert.equal(payload.package_parse_source, 'file');
+  assert.deepEqual(payload.stock_summary, {
+    on_hand_quantity: 10,
+    reserved_quantity: 2,
+    available_quantity: 8,
+    total_value: 125,
+    site_count: 1,
+    unit: 'l'
+  });
+  assert.equal(payload.created_date, '2026-09-16T00:00:00.000Z');
+  assert.equal(payload.updated_date, '2026-09-17T00:00:00.000Z');
   for (const key of ['protein', 'carbs', 'fiber', 'sodium', 'sugar']) assert.equal(payload[`${key}_per_100g`], 0);
 });
 
@@ -82,6 +113,22 @@ test('aliases accept empty JSON arrays and reject objects, non-string entries an
   for (const aliases of ['{"name":"wrong"}', '[{"name":"wrong"}]', '[1]', '[null]', '["unfinished"']) {
     assert.throws(() => mapIngredient({ name: 'Invalid aliases', aliases }), /aliases must be/);
   }
+});
+
+test('stock summary accepts only a relational JSON object source', () => {
+  const payload = mapIngredient({
+    name: 'With stock summary',
+    stock_summary: '{"on_hand_quantity":176.1952,"reserved_quantity":0,"available_quantity":176.1952,"total_value":1449.05,"site_count":1,"unit":"EA"}'
+  });
+  assert.deepEqual(payload.stock_summary, {
+    on_hand_quantity: 176.1952,
+    reserved_quantity: 0,
+    available_quantity: 176.1952,
+    total_value: 1449.05,
+    site_count: 1,
+    unit: 'EA'
+  });
+  assert.throws(() => mapIngredient({ name: 'Array stock', stock_summary: '[]' }), /stock_summary must be a JSON object/);
 });
 
 test('zero nutrition is retained, blank nutrition stays unspecified, and invalid factors are rejected', () => {
