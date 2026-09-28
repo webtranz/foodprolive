@@ -3040,19 +3040,64 @@ export default function Production() {
     const menuType = normalizeMenuCuisine(production.menu_type || production.cuisine_type, 'general');
     const menuCategory = normalizeMenuCategory(production.menu_category, 'senior');
     const productionDate = production.production_date || selectedDate || format(new Date(), 'yyyy-MM-dd');
-    const seededItems = savedItems.map((item, index) => ({
-      ...item,
-      key: item.key || itemKeys[index] || `${production.source_menu_plan_id || production.id}::${item.meal_type || production.meal_type || 'meal'}::${index}`,
-      site_id: production.site_id || item.site_id || '',
-      site_name: production.site_name || item.site_name || '',
-      plan_date: productionDate,
-      meal_type: item.meal_type || production.meal_type || mealView,
-      meal_label: PRODUCTION_ISSUE_MEAL_LABELS[item.meal_type || production.meal_type || mealView] || 'Meal',
-      menu_type: item.menu_type || menuType,
-      menu_category: item.menu_category || menuCategory,
-      selected: true,
-      production_covers: finiteProductionNumber(item.production_covers ?? item.expected_servings, 0)
-    }));
+    const seededItems = savedItems.map((item, index) => {
+      const productionQuantity = finiteProductionNumber(
+        item.production_quantity
+          ?? item.requested_quantity
+          ?? item.produced_quantity
+          ?? item.planned_quantity,
+        0
+      );
+      const productionUnit = String(
+        item.production_unit
+          || item.requested_quantity_unit
+          || item.produced_quantity_unit
+          || item.planned_quantity_unit
+          || ''
+      ).trim();
+      const hasFixedProductionQuantity = productionQuantity > 0 && productionUnit;
+      const productionCovers = hasFixedProductionQuantity
+        ? finiteProductionNumber(item.production_covers, 0)
+        : finiteProductionNumber(
+          item.production_covers
+            ?? item.expected_servings
+            ?? item.requested_servings
+            ?? item.produced_servings,
+          0
+        );
+      return {
+        ...item,
+        key: item.key
+          || item.manifest_item_key
+          || item.item_key
+          || item.source_menu_plan_item_key
+          || itemKeys[index]
+          || `${production.source_menu_plan_id || production.id}::${item.meal_type || production.meal_type || 'meal'}::${index}`,
+        site_id: production.site_id || item.site_id || '',
+        site_name: production.site_name || item.site_name || '',
+        plan_date: productionDate,
+        meal_type: item.meal_type || production.meal_type || mealView,
+        meal_label: PRODUCTION_ISSUE_MEAL_LABELS[item.meal_type || production.meal_type || mealView] || 'Meal',
+        menu_type: item.menu_type || menuType,
+        menu_category: item.menu_category || menuCategory,
+        recipe_id: item.recipe_id || item.source_recipe_id || '',
+        recipe_code: item.recipe_code || '',
+        recipe_name: item.recipe_name || item.item_name || 'Planned item',
+        expected_servings: finiteProductionNumber(
+          item.expected_servings
+            ?? item.requested_servings
+            ?? item.produced_servings
+            ?? productionCovers,
+          0
+        ),
+        selected: true,
+        production_covers: productionCovers,
+        production_quantity: hasFixedProductionQuantity ? productionQuantity : 0,
+        production_unit: hasFixedProductionQuantity ? productionUnit : '',
+        planned_quantity: item.planned_quantity ?? (hasFixedProductionQuantity ? productionQuantity : null),
+        planned_quantity_unit: item.planned_quantity_unit || (hasFixedProductionQuantity ? productionUnit : '')
+      };
+    });
     const seededSnapshots = {};
     seededItems.forEach((item) => {
       if (Array.isArray(item.ingredients_used) && item.ingredients_used.length > 0) {

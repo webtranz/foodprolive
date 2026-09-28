@@ -220,6 +220,96 @@ const statusOnlyUpdate = await prepareEntityPayload(
 assert.equal(statusOnlyUpdate.status, 'approved');
 assert.deepEqual(statusOnlyUpdate.ingredients_used, prepared.ingredients_used);
 
+await assert.rejects(
+  () => prepareEntityPayload(
+    {},
+    'Production',
+    {
+      site_id: 'site-1',
+      target_servings: 1,
+      production_date: '2026-09-01',
+      meal_type: 'breakfast',
+      menu_type: 'general',
+      menu_category: 'labor',
+      status: 'pending_approval'
+    },
+    null,
+    { scope, recipeCatalog: [recipe], ingredientCatalog: [ingredient] }
+  ),
+  /Select a valid recipe/
+);
+
+const groupedMenuProduction = await prepareEntityPayload(
+  {},
+  'Production',
+  {
+    site_id: 'site-1',
+    site_name: 'Yield Test Project',
+    production_date: '2026-09-01',
+    meal_type: 'breakfast',
+    menu_type: 'general',
+    menu_category: 'labor',
+    target_servings: 40,
+    status: 'pending_approval',
+    source_type: 'menu_plan',
+    source_menu_plan_id: 'menu-plan-1',
+    production_issue_grouped: true,
+    production_issue_group_key: 'menu-plan-1::breakfast',
+    production_issue_item_count: 1,
+    recipe_snapshot_mode: 'production_only_override',
+    recipe_snapshot_locked: true,
+    menu_issue_items: [{
+      key: 'menu-plan-1::breakfast::coffee::0',
+      recipe_id: '',
+      recipe_name: 'COFFEE',
+      meal_type: 'breakfast',
+      production_covers: 0,
+      production_quantity: 2,
+      production_unit: 'pak',
+      ingredients_used: [{
+        ingredient_id: ingredient.id,
+        ingredient_name: ingredient.name,
+        raw_quantity: 1,
+        planned_quantity: 1,
+        unit: 'kg',
+        estimated_cost: 5
+      }]
+    }],
+    manifest_lines: [{
+      line_number: 1,
+      key: 'menu-plan-1::breakfast::coffee::0',
+      item_name: 'COFFEE',
+      recipe_name: 'COFFEE',
+      meal_type: 'breakfast',
+      requested_servings: 2,
+      requested_quantity: 2,
+      requested_quantity_unit: 'pak',
+      estimated_cost: 5,
+      status: 'active'
+    }],
+    ingredients_used: [{
+      ingredient_id: ingredient.id,
+      ingredient_name: ingredient.name,
+      raw_quantity: 1,
+      planned_quantity: 1,
+      unit: 'kg',
+      estimated_cost: 5
+    }],
+    ingredient_cost_total: 5,
+    production_cost_total: 5,
+    estimated_batch_cost: 5,
+    cost_per_serving: 2.5,
+    estimated_cost_per_serving: 2.5
+  },
+  null,
+  { scope, recipeCatalog: [recipe], ingredientCatalog: [ingredient] }
+);
+assert.equal(groupedMenuProduction.status, 'pending_approval');
+assert.equal(groupedMenuProduction.recipe_id, undefined);
+assert.equal(groupedMenuProduction.manifest_lines.length, 1);
+assert.equal(groupedMenuProduction.menu_issue_items[0].production_quantity, 2);
+assert.equal(groupedMenuProduction.ingredients_used[0].ingredient_name, 'Test Protein');
+
 const upgradedLegacyProduction = await prepareEntityPayload(
   {},
   'Production',

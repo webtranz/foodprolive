@@ -432,6 +432,27 @@ function hasLockedProductionSnapshot(productionRecord = {}) {
     && Array.isArray(productionRecord.ingredients_used);
 }
 
+function isGroupedMenuProductionRecord(productionRecord = {}) {
+  const manifestLines = [
+    ...(Array.isArray(productionRecord.manifest_lines) ? productionRecord.manifest_lines : []),
+    ...(Array.isArray(productionRecord.menu_issue_items) ? productionRecord.menu_issue_items : [])
+  ];
+  const hasMenuProductionMarker = Boolean(
+    productionRecord.production_issue_grouped === true
+    || productionRecord.source_menu_plan_id
+    || String(productionRecord.source_type || '').toLowerCase() === 'menu_plan'
+  );
+  const hasManifestIdentity = manifestLines.some((line) => String(
+    line?.recipe_id
+    || line?.recipe_version_id
+    || line?.recipe_code
+    || line?.recipe_name
+    || line?.item_name
+    || ''
+  ).trim());
+  return hasMenuProductionMarker && hasManifestIdentity;
+}
+
 function prepareLockedProductionSnapshot(productionRecord, recipe, ingredientCatalog, targetServings) {
   const ingredientMap = new Map(
     ingredientCatalog.map((ingredient) => [String(ingredient.id), ingredient])
@@ -1124,8 +1145,9 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
     productionRecord = normalizeProductionMenuScope(productionRecord, {
       required: statusRequiresCompletePlan
     });
+    const isGroupedMenuProduction = isGroupedMenuProductionRecord(productionRecord);
     if (statusRequiresCompletePlan) {
-      if (!String(productionRecord.recipe_id || '').trim()) {
+      if (!String(productionRecord.recipe_id || '').trim() && !isGroupedMenuProduction) {
         const error = new Error('Select a valid recipe before submitting production for approval.');
         error.status = 400;
         throw error;
@@ -1140,6 +1162,10 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
         error.status = 400;
         throw error;
       }
+    }
+
+    if (isGroupedMenuProduction && hasLockedProductionSnapshot(productionRecord)) {
+      return productionRecord;
     }
 
     if (!shouldRecalculate || !productionRecord.recipe_id) {
