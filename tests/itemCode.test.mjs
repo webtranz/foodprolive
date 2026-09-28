@@ -75,10 +75,18 @@ assert.match(dashboardSource, /item_code: getItemCodeFromRecords/, 'dashboard lo
 assert.match(autoScheduleSource, /\$\{item\.item_code\} · \$\{item\.ingredient_name\}/, 'auto-schedule alerts show code before name');
 
 const fakeExecutor = {
-  async query(_sql, params) {
+  async query(sql, params) {
+    assert.doesNotMatch(sql, /\bpayload\b/, 'item code enrichment must not read retired JSON payload columns');
     assert.deepEqual(params, [['ingredient-rice']]);
     return {
-      rows: [{ id: 'ingredient-rice', data: { item_code: 'ITEM-RICE-001', name: 'Rice' } }]
+      rows: [{
+        id: 'ingredient-rice',
+        item_code: 'ITEM-RICE-001',
+        ingredient_code: null,
+        sku: null,
+        d365_item_id: null,
+        name: 'Rice'
+      }]
     };
   }
 };

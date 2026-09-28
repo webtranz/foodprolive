@@ -20,13 +20,13 @@ export async function enrichIngredientItemCodes(items = [], executor = pool) {
   }
 
   const result = await executor.query(
-    `SELECT ingredient_id AS id, payload AS data
+    `SELECT ingredient_id AS id, item_code, ingredient_code, sku, d365_item_id, name
        FROM ingredients
       WHERE ingredient_id = ANY($1::text[])`,
     [ingredientIds]
   );
   const ingredientsById = new Map(
-    result.rows.map((row) => [String(row.id), row.data || {}])
+    result.rows.map((row) => [String(row.id), row || {}])
   );
 
   return sourceItems.map((item) => ({
