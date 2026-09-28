@@ -30,6 +30,7 @@ import {
   buildCanonicalHierarchyFields,
   isCanonicalSiteType,
   isSupportedSiteType,
+  SITE_HIERARCHY_TYPES,
   normalizeSiteType,
   validateCanonicalSiteParent
 } from '../shared/siteHierarchy.js';
@@ -232,6 +233,8 @@ function buildSiteLookup(sites = []) {
       site?.id,
       site?.name,
       site?.project_code,
+      site?.warehouse_code,
+      site?.area_code,
       site?.d365_warehouse_id,
       site?.warehouse_id,
       site?.hierarchy_path
@@ -241,6 +244,36 @@ function buildSiteLookup(sites = []) {
     });
   });
   return lookup;
+}
+
+function collectActiveDescendantStores(rootSite = {}, sites = []) {
+  const childrenByParent = new Map();
+  (Array.isArray(sites) ? sites : []).forEach((site) => {
+    if (site?.is_active === false) return;
+    if (String(site?.status || 'active').toLowerCase() === 'archived') return;
+    const parentId = String(site?.parent_site_id || '').trim();
+    if (!parentId) return;
+    const children = childrenByParent.get(parentId) || [];
+    children.push(site);
+    childrenByParent.set(parentId, children);
+  });
+
+  const stores = [];
+  const visited = new Set();
+  const stack = [String(rootSite?.id || '').trim()].filter(Boolean);
+  while (stack.length) {
+    const parentId = stack.pop();
+    if (!parentId || visited.has(parentId)) continue;
+    visited.add(parentId);
+    (childrenByParent.get(parentId) || []).forEach((child) => {
+      if (normalizeSiteType(child?.type, '') === SITE_HIERARCHY_TYPES.STORE) {
+        stores.push(child);
+      }
+      stack.push(String(child?.id || '').trim());
+    });
+  }
+
+  return stores;
 }
 
 async function resolveMenuPlanRecipeReferences(menuPlan = {}, context = {}) {
@@ -289,12 +322,35 @@ function resolveMenuPlanLocation(menuPlan = {}, scope = {}) {
   const site = siteLookup.get(normalizeMenuRecipeLookupValue(menuPlan.site_id))
     || siteLookup.get(normalizeMenuRecipeLookupValue(menuPlan.site_name));
 
-  if (!site) return menuPlan;
+  if (!site) {
+    const error = new Error(`Menu Planning location "${menuPlan.site_id || menuPlan.site_name || ''}" could not be found. Use a valid store code such as 384.`);
+    error.status = 400;
+    throw error;
+  }
+
+  const siteType = normalizeSiteType(site.type, '');
+  let store = siteType === SITE_HIERARCHY_TYPES.STORE ? site : null;
+  if (!store) {
+    const descendantStores = collectActiveDescendantStores(site, scope.sites || []);
+    if (descendantStores.length === 1) {
+      store = descendantStores[0];
+    } else if (descendantStores.length > 1) {
+      const error = new Error('Menu Planning location has more than one Store / Warehouse. Select the exact store code such as 384.');
+      error.status = 400;
+      throw error;
+    }
+  }
+
+  if (!store) {
+    const error = new Error('Menu Planning must be saved against a Store / Warehouse. Use the store code such as 384 in the menu upload file.');
+    error.status = 400;
+    throw error;
+  }
 
   return {
     ...menuPlan,
-    site_id: site.id,
-    site_name: site.name || menuPlan.site_name || ''
+    site_id: store.id,
+    site_name: store.name || menuPlan.site_name || ''
   };
 }
 
@@ -801,7 +857,14 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
 
   if (entity === 'MenuPlan') {
     const locationResolvedPlan = resolveMenuPlanLocation(merged, scope);
-    return resolveMenuPlanRecipeReferences(locationResolvedPlan, { ...context, scope });
+    const recipeResolvedPlan = await resolveMenuPlanRecipeReferences(locationResolvedPlan, { ...context, scope });
+    const mealTypes = [...new Set((Array.isArray(recipeResolvedPlan.meals) ? recipeResolvedPlan.meals : [])
+      .map((meal) => String(meal?.meal_type || '').trim().toLowerCase())
+      .filter(Boolean))];
+    return {
+      ...recipeResolvedPlan,
+      meal_type: mealTypes.length > 1 ? 'all' : (recipeResolvedPlan.meal_type || mealTypes[0] || 'all')
+    };
   }
 
   if (entity === 'ProductionBatch') {

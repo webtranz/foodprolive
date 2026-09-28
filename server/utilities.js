@@ -1048,7 +1048,6 @@ function groupKeyForUploadPayload(moduleKey, payload = {}) {
     return [
       textKey(payload.site_id || payload.site_name),
       textKey(payload.plan_date),
-      textKey(payload.meal_type || 'all'),
       textKey(payload.menu_type || payload.cuisine_type || 'general'),
       textKey(payload.menu_category || 'senior')
     ].join('::');

@@ -301,6 +301,38 @@ assert.deepEqual(
   ['junior', 'labor']
 );
 
+const groupedDailyMenuPlanRows = groupBulkUploadRows('menu-plans', [
+  {
+    rowNumber: 10,
+    payload: mapCsvRow(
+      'menu-plans',
+      ['site_id', 'plan_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'recipe_code', 'recipe_name', 'expected_servings'],
+      ['384', '2026-09-01', 'Breakfast', 'General', 'Labor', '1', 'RCP-BF', 'Labor Breakfast', '120']
+    )
+  },
+  {
+    rowNumber: 11,
+    payload: mapCsvRow(
+      'menu-plans',
+      ['site_id', 'plan_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'recipe_code', 'recipe_name', 'expected_servings'],
+      ['384', '2026-09-01', 'Lunch', 'General', 'Labor', '2', 'RCP-LN', 'Labor Lunch', '120']
+    )
+  },
+  {
+    rowNumber: 12,
+    payload: mapCsvRow(
+      'menu-plans',
+      ['site_id', 'plan_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'recipe_code', 'recipe_name', 'expected_servings'],
+      ['384', '2026-09-01', 'Dinner', 'General', 'Labor', '3', 'RCP-DN', 'Labor Dinner', '120']
+    )
+  }
+]);
+assert.equal(groupedDailyMenuPlanRows.length, 1);
+assert.deepEqual(
+  groupedDailyMenuPlanRows[0].payload.meals.map((meal) => meal.meal_type),
+  ['Breakfast', 'Lunch', 'Dinner']
+);
+
 const relationalProductionLine = mapCsvRow(
   'production',
   ['site_id', 'production_date', 'meal_type', 'menu_type', 'menu_category', 'line_number', 'menu_plan_line_id', 'recipe_code', 'recipe_name', 'requested_servings', 'requested_weight_kg', 'produced_weight_kg', 'estimated_cost'],

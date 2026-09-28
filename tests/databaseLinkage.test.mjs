@@ -445,10 +445,14 @@ const cases = [
       assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredients_d365_unique/);
       assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouses_d365_unique/);
       assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_transactions_idempotency_unique/);
+      assert.match(sql, /CREATE TABLE IF NOT EXISTS menu_plan_lines \([\s\S]*meal_period TEXT/);
+      assert.match(sql, /ALTER TABLE menu_plan_lines[\s\S]*ADD COLUMN IF NOT EXISTS meal_period TEXT/);
 
       assert.match(dbSource, /DELETE FROM recipes recipe[\s\S]*NOT EXISTS \([\s\S]*FROM recipe_versions version[\s\S]*version\.recipe_id = recipe\.recipe_id/);
       assert.match(dbSource, /async function deleteOrphanRecipeMastersByCanonicalNames/);
       assert.match(dbSource, /LOWER\(BTRIM\(recipe\.canonical_name\)\) = ANY\(\$1::text\[\]\)/);
+      assert.match(dbSource, /await replaceMenuPlanLines\(record, executor\)/);
+      assert.match(dbSource, /'meal_period', COALESCE\(line\.meal_period, plan\.meal_period\)/);
 
       [
         'getPurchaseRequestById\\(id, client\\)',
@@ -461,6 +465,30 @@ const cases = [
       ].forEach((transactionalCall) => {
         assert.match(procurementSource, new RegExp(transactionalCall));
       });
+    }
+  },
+  {
+    name: 'keeps Menu Planning saves scoped to store warehouses',
+    async run() {
+      const [menuPlanningSource, entityPreparationSource, indexSource] = await Promise.all([
+        fs.readFile(new URL('../src/pages/MenuPlanning.jsx', import.meta.url), 'utf8'),
+        fs.readFile(new URL('../server/entityPreparation.js', import.meta.url), 'utf8'),
+        fs.readFile(new URL('../server/index.js', import.meta.url), 'utf8')
+      ]);
+
+      assert.match(menuPlanningSource, /function isMenuPlanningStore/);
+      assert.match(menuPlanningSource, /normalizeSiteType\(site\?\.type, ''\) === SITE_HIERARCHY_TYPES\.STORE/);
+      assert.match(menuPlanningSource, /const selectableMenuSites = useMemo/);
+      assert.match(menuPlanningSource, /selectableMenuSites\.map\(\(site\) =>/);
+      assert.match(menuPlanningSource, /Select store \/ warehouse/);
+
+      assert.match(entityPreparationSource, /function collectActiveDescendantStores/);
+      assert.match(entityPreparationSource, /descendantStores\.length === 1/);
+      assert.match(entityPreparationSource, /Select the exact store code such as 384/);
+
+      assert.match(indexSource, /const preparedPayload = await prepareEntityPayload\(request\.user, 'MenuPlan', payload\)/);
+      assert.match(indexSource, /findScopedOperationalMenuPlan\(request\.user, preparedPayload\.site_id, preparedPayload\.plan_date/);
+      assert.match(indexSource, /A menu plan already exists for this store, date, and category/);
     }
   }
 ];

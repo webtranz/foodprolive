@@ -3995,24 +3995,24 @@ app.post('/api/menu-plans', requireAuth, requirePermission('manage_menu_planning
       return response.status(400).json({ message: errors[0], errors });
     }
 
-    const existing = await findScopedOperationalMenuPlan(request.user, payload.site_id, payload.plan_date, {
-      cuisine_type: payload.cuisine_type,
-      menu_category: payload.menu_category
+    const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload);
+    const existing = await findScopedOperationalMenuPlan(request.user, preparedPayload.site_id, preparedPayload.plan_date, {
+      cuisine_type: preparedPayload.cuisine_type,
+      menu_category: preparedPayload.menu_category
     });
     if (existing) {
-      return response.status(409).json({ message: 'A menu plan already exists for this project and date' });
+      return response.status(409).json({ message: 'A menu plan already exists for this store, date, and category' });
     }
 
-    const selectedBudget = await validateMenuPlanBudgetSelection(request.user, payload);
+    const selectedBudget = await validateMenuPlanBudgetSelection(request.user, preparedPayload);
     if (selectedBudget) {
-      payload.budget_name = selectedBudget.name;
-      payload.budget_amount = numericMatch(selectedBudget.budget_amount, 0);
-      payload.remaining_budget = Math.max(0, payload.budget_amount - numericMatch(payload.total_planned_cost, 0));
-      payload.exceeded_budget_by = Math.max(0, numericMatch(payload.total_planned_cost, 0) - payload.budget_amount);
+      preparedPayload.budget_name = selectedBudget.name;
+      preparedPayload.budget_amount = numericMatch(selectedBudget.budget_amount, 0);
+      preparedPayload.remaining_budget = Math.max(0, preparedPayload.budget_amount - numericMatch(preparedPayload.total_planned_cost, 0));
+      preparedPayload.exceeded_budget_by = Math.max(0, numericMatch(preparedPayload.total_planned_cost, 0) - preparedPayload.budget_amount);
     }
 
-    authorizeEntityAction(request.user, 'MenuPlan', 'create', payload);
-    const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload);
+    authorizeEntityAction(request.user, 'MenuPlan', 'create', preparedPayload);
     const created = await createDocument('MenuPlan', preparedPayload);
     return response.status(201).json(buildApiObjectResponse(created, { action: 'create' }));
   } catch (error) {
@@ -4041,21 +4041,21 @@ app.patch('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_pla
     if (errors.length) {
       return response.status(400).json({ message: errors[0], errors });
     }
-    assertMenuPlanScopeUnchanged(existing, payload);
-    const selectedBudget = await validateMenuPlanBudgetSelection(request.user, payload);
-    if (selectedBudget) {
-      payload.budget_name = selectedBudget.name;
-      payload.budget_amount = numericMatch(selectedBudget.budget_amount, 0);
-      payload.remaining_budget = Math.max(0, payload.budget_amount - numericMatch(payload.total_planned_cost, 0));
-      payload.exceeded_budget_by = Math.max(0, numericMatch(payload.total_planned_cost, 0) - payload.budget_amount);
-    } else if (!payload.budget_id) {
-      payload.budget_name = null;
-      payload.budget_amount = 0;
-      payload.remaining_budget = 0;
-      payload.exceeded_budget_by = 0;
-    }
-    authorizeEntityAction(request.user, 'MenuPlan', 'update', payload, existing);
     const preparedPayload = await prepareEntityPayload(request.user, 'MenuPlan', payload, existing);
+    assertMenuPlanScopeUnchanged(existing, preparedPayload);
+    const selectedBudget = await validateMenuPlanBudgetSelection(request.user, preparedPayload);
+    if (selectedBudget) {
+      preparedPayload.budget_name = selectedBudget.name;
+      preparedPayload.budget_amount = numericMatch(selectedBudget.budget_amount, 0);
+      preparedPayload.remaining_budget = Math.max(0, preparedPayload.budget_amount - numericMatch(preparedPayload.total_planned_cost, 0));
+      preparedPayload.exceeded_budget_by = Math.max(0, numericMatch(preparedPayload.total_planned_cost, 0) - preparedPayload.budget_amount);
+    } else if (!preparedPayload.budget_id) {
+      preparedPayload.budget_name = null;
+      preparedPayload.budget_amount = 0;
+      preparedPayload.remaining_budget = 0;
+      preparedPayload.exceeded_budget_by = 0;
+    }
+    authorizeEntityAction(request.user, 'MenuPlan', 'update', preparedPayload, existing);
     const updated = await updateDocument('MenuPlan', request.params.id, preparedPayload);
     return response.json(buildApiObjectResponse(updated, { action: 'update' }));
   } catch (error) {

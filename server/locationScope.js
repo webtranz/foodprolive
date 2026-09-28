@@ -420,6 +420,8 @@ function normalizeRecipeLocationPayload(payload = {}, scope) {
       site.id,
       site.name,
       site.project_code,
+      site.warehouse_code,
+      site.area_code,
       site.d365_warehouse_id,
       site.warehouse_id,
       site.hierarchy_path

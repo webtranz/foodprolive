@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { addDays, eachDayOfInterval, format, startOfWeek } from 'date-fns';
+import { addDays, eachDayOfInterval, endOfMonth, format, startOfMonth, startOfWeek } from 'date-fns';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DragDropContext, Draggable, Droppable } from '@hello-pangea/dnd';
 import { useNavigate } from 'react-router-dom';
@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertCircle, Calendar, ChevronLeft, ChevronRight, Factory, GripVertical, Plus, RefreshCw, Save, ShoppingCart, Trash2, Users } from 'lucide-react';
+import { AlertCircle, Calendar, ChevronLeft, ChevronRight, Download, Factory, GripVertical, Plus, RefreshCw, Save, ShoppingCart, Trash2, Users } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
 import { recipeMatchesMenuSite } from '../../shared/menuRecipeLinks.js';
 import { usePermissions } from '@/components/auth/usePermissions';
@@ -23,6 +23,7 @@ import {
   normalizeMenuCategory,
   normalizeMenuCuisine
 } from '../../shared/menuCategories.js';
+import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 import {
   buildDailyMenuState,
   buildMenuPlanMeals,
@@ -55,6 +56,34 @@ const MEAL_BADGES = {
   dinner: 'bg-blue-100 text-blue-700 border-blue-200'
 };
 
+const MENU_PLAN_UPLOAD_HEADERS = [
+  'site_id',
+  'site_name',
+  'plan_date',
+  'meal_type',
+  'menu_type',
+  'menu_category',
+  'status',
+  'line_number',
+  'line_type',
+  'recipe_id',
+  'recipe_code',
+  'recipe_name',
+  'ingredient_id',
+  'ingredient_name',
+  'item_name',
+  'expected_servings',
+  'planned_weight_kg',
+  'planned_weight_grams',
+  'planned_unit',
+  'estimated_cost',
+  'event_name',
+  'event_date',
+  'expected_participants',
+  'budget_amount',
+  'notes'
+];
+
 function isOperationalMenuPlan(plan) {
   return !String(plan?.event_name || '').trim();
 }
@@ -79,6 +108,122 @@ function getGeneratedPRNumber(run) {
   return run?.generated_pr_number || run?.generated_request_number || '';
 }
 
+function csvEscape(value) {
+  if (value === null || typeof value === 'undefined') return '';
+  const text = String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadTextFile(filename, content, mimeType = 'text/csv;charset=utf-8;') {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function safeDateFromKey(dateKey) {
+  const parsed = new Date(`${dateKey}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function getExportDateRange(range, dateKey) {
+  const selected = safeDateFromKey(dateKey);
+  const start = range === 'month'
+    ? startOfMonth(selected)
+    : startOfWeek(selected, { weekStartsOn: 1 });
+  const end = range === 'month'
+    ? endOfMonth(selected)
+    : addDays(start, 6);
+  return {
+    start_date: format(start, 'yyyy-MM-dd'),
+    end_date: format(end, 'yyyy-MM-dd')
+  };
+}
+
+function getSiteUploadCode(site = {}) {
+  return site.warehouse_code
+    || site.d365_warehouse_id
+    || site.project_code
+    || site.id
+    || '';
+}
+
+function isMenuPlanningStore(site = {}) {
+  return site?.is_active !== false
+    && String(site?.status || 'active').toLowerCase() !== 'archived'
+    && normalizeSiteType(site?.type, '') === SITE_HIERARCHY_TYPES.STORE;
+}
+
+function formatCsvNumber(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '';
+  return String(Number(numeric.toFixed(6)));
+}
+
+function buildMenuPlanUploadCsv(plans = [], siteRecord = {}) {
+  const siteCode = getSiteUploadCode(siteRecord);
+  const rows = [];
+  const sortedPlans = [...plans].sort((left, right) => (
+    String(left.plan_date || '').localeCompare(String(right.plan_date || ''))
+      || String(left.menu_type || left.cuisine_type || '').localeCompare(String(right.menu_type || right.cuisine_type || ''))
+      || String(left.menu_category || '').localeCompare(String(right.menu_category || ''))
+  ));
+
+  sortedPlans.forEach((plan) => {
+    const rawLines = Array.isArray(plan.menu_plan_lines) && plan.menu_plan_lines.length
+      ? plan.menu_plan_lines
+      : Array.isArray(plan.meals)
+        ? plan.meals
+        : [];
+    const lineCounters = new Map();
+    rawLines.forEach((line) => {
+      const mealType = String(line?.meal_type || line?.meal_period || '').trim().toLowerCase();
+      if (!CORE_MENU_MEAL_TYPES.includes(mealType)) return;
+
+      const nextLineNumber = (lineCounters.get(mealType) || 0) + 1;
+      lineCounters.set(mealType, nextLineNumber);
+      const plannedWeightGrams = Number(line?.planned_weight_grams || 0);
+      rows.push({
+        site_id: siteCode,
+        site_name: siteRecord.name || plan.site_name || '',
+        plan_date: String(plan.plan_date || '').slice(0, 10),
+        meal_type: mealType,
+        menu_type: normalizeMenuCuisine(plan.cuisine_type ?? plan.menu_type, 'general'),
+        menu_category: normalizeMenuCategory(plan.menu_category, 'senior'),
+        status: line?.status || plan.status || 'planned',
+        line_number: line?.line_number || nextLineNumber,
+        line_type: line?.line_type || (line?.ingredient_id ? 'ingredient' : 'recipe'),
+        recipe_id: line?.recipe_id || line?.recipe_version_id || '',
+        recipe_code: line?.recipe_code || '',
+        recipe_name: line?.recipe_name || line?.item_name || '',
+        ingredient_id: line?.ingredient_id || '',
+        ingredient_name: line?.ingredient_name || '',
+        item_name: line?.item_name || line?.recipe_name || line?.ingredient_name || '',
+        expected_servings: formatCsvNumber(line?.expected_servings ?? line?.planned_servings),
+        planned_weight_kg: plannedWeightGrams > 0 ? formatCsvNumber(plannedWeightGrams / 1000) : '',
+        planned_weight_grams: plannedWeightGrams > 0 ? formatCsvNumber(plannedWeightGrams) : '',
+        planned_unit: line?.planned_unit || '',
+        estimated_cost: formatCsvNumber(line?.estimated_cost ?? line?.total_cost),
+        event_name: '',
+        event_date: '',
+        expected_participants: '',
+        budget_amount: formatCsvNumber(plan.budget_amount),
+        notes: ''
+      });
+    });
+  });
+
+  return [
+    MENU_PLAN_UPLOAD_HEADERS.join(','),
+    ...rows.map((row) => MENU_PLAN_UPLOAD_HEADERS.map((header) => csvEscape(row[header])).join(','))
+  ].join('\n');
+}
+
 export default function MenuPlanning() {
   const { can } = usePermissions();
   const navigate = useNavigate();
@@ -88,6 +233,8 @@ export default function MenuPlanning() {
   const [selectedMenuCuisine, setSelectedMenuCuisine] = useState('general');
   const [selectedMenuCategory, setSelectedMenuCategory] = useState('senior');
   const [selectedMealView, setSelectedMealView] = useState('all');
+  const [exportRange, setExportRange] = useState('week');
+  const [isExportingMenu, setIsExportingMenu] = useState(false);
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [formData, setFormData] = useState(createEmptyDailyMenuState());
   const [selectedBudgetId, setSelectedBudgetId] = useState('');
@@ -114,6 +261,10 @@ export default function MenuPlanning() {
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list()
   });
+
+  const selectableMenuSites = useMemo(() => (
+    sites.filter(isMenuPlanningStore)
+  ), [sites]);
 
   const {
     data: recipes = [],
@@ -240,6 +391,13 @@ export default function MenuPlanning() {
     setCurrentWeekStart(startOfWeek(new Date(selectedDate), { weekStartsOn: 1 }));
   }, [selectedDate]);
 
+  useEffect(() => {
+    if (!selectedSite || sitesLoading) return;
+    if (selectableMenuSites.some((site) => site.id === selectedSite)) return;
+    setSelectedSite('');
+    setMessage('Select the Store / Warehouse, such as 384, before saving Menu Planning.');
+  }, [selectableMenuSites, selectedSite, sitesLoading]);
+
   const selectedMenuCategoryOptions = useMemo(
     () => getMenuCategoryOptions(selectedMenuCuisine),
     [selectedMenuCuisine]
@@ -310,8 +468,8 @@ export default function MenuPlanning() {
   ), [weekPlanResponse?.plans, selectedSite]);
 
   const selectedSiteRecord = useMemo(
-    () => sites.find((site) => site.id === selectedSite) || null,
-    [sites, selectedSite]
+    () => selectableMenuSites.find((site) => site.id === selectedSite) || null,
+    [selectableMenuSites, selectedSite]
   );
 
   const additionalMeals = useMemo(() => (
@@ -566,7 +724,7 @@ export default function MenuPlanning() {
     setMessage('');
 
     if (!selectedSiteRecord) {
-      setMessage('Select a project first.');
+      setMessage('Select a Store / Warehouse first.');
       return;
     }
 
@@ -616,6 +774,63 @@ export default function MenuPlanning() {
     await createMutation.mutateAsync(payload);
   };
 
+  const handleDownloadMenuCsv = async () => {
+    setMessage('');
+    if (!selectedSiteRecord) {
+      setMessage('Select a Store / Warehouse before downloading menu plans.');
+      return;
+    }
+
+    const { start_date: startDate, end_date: endDate } = getExportDateRange(exportRange, selectedDate);
+    setIsExportingMenu(true);
+    try {
+      const exportedPlans = await base44.entities.MenuPlan.filter(
+        {
+          site_id: selectedSite,
+          menu_type: selectedMenuCuisine,
+          menu_category: selectedMenuCategory
+        },
+        'plan_date',
+        10000,
+        {
+          rangeFilters: {
+            plan_date: {
+              gte: startDate,
+              lte: endDate
+            }
+          }
+        }
+      );
+      const scopedPlans = (Array.isArray(exportedPlans) ? exportedPlans : [])
+        .filter(isOperationalMenuPlan)
+        .filter((plan) => (
+          String(plan.site_id || '').trim() === String(selectedSite || '').trim()
+          && normalizeMenuCuisine(plan.cuisine_type ?? plan.menu_type, 'general') === normalizeMenuCuisine(selectedMenuCuisine, 'general')
+          && normalizeMenuCategory(plan.menu_category, 'senior') === normalizeMenuCategory(selectedMenuCategory, 'senior')
+        ));
+      const csv = buildMenuPlanUploadCsv(scopedPlans, selectedSiteRecord);
+      const rangeLabel = exportRange === 'month' ? 'month' : 'week';
+      const filename = [
+        'menu-plan',
+        getSiteUploadCode(selectedSiteRecord) || 'site',
+        normalizeMenuCuisine(selectedMenuCuisine, 'general'),
+        normalizeMenuCategory(selectedMenuCategory, 'senior'),
+        rangeLabel,
+        startDate,
+        endDate
+      ].join('-') + '.csv';
+      downloadTextFile(filename, csv);
+      const lineCount = Math.max(0, csv.split('\n').length - 1);
+      setMessage(lineCount > 0
+        ? `Downloaded ${lineCount} menu line(s). Upload this CSV from Bulk Upload Center > Menu Plans.`
+        : `No saved menu lines were found for ${startDate} to ${endDate}. A blank upload template was downloaded.`);
+    } catch (error) {
+      setMessage(error.message || 'Failed to download menu plan CSV.');
+    } finally {
+      setIsExportingMenu(false);
+    }
+  };
+
   const handleClearPlan = async () => {
     setMessage('');
     if (!selectedPlan?.id) {
@@ -628,7 +843,7 @@ export default function MenuPlanning() {
 
   const handleSavePRConfig = async () => {
     if (!selectedSiteRecord) {
-      setMessage('Select a project first.');
+      setMessage('Select a Store / Warehouse first.');
       return;
     }
 
@@ -644,7 +859,7 @@ export default function MenuPlanning() {
 
   const handleRunPRGeneration = async () => {
     if (!selectedSiteRecord) {
-      setMessage('Select a project first.');
+      setMessage('Select a Store / Warehouse first.');
       return;
     }
 
@@ -695,10 +910,10 @@ export default function MenuPlanning() {
         >
           <Select value={selectedSite} onValueChange={setSelectedSite}>
             <SelectTrigger className="w-[250px] bg-white">
-              <SelectValue placeholder="Select project / location" />
+              <SelectValue placeholder="Select store / warehouse" />
             </SelectTrigger>
             <SelectContent>
-              {sites.map((site) => (
+              {selectableMenuSites.map((site) => (
                 <SelectItem key={site.id} value={site.id}>
                   {site.hierarchy_path || site.name}
                 </SelectItem>
@@ -751,6 +966,33 @@ export default function MenuPlanning() {
                   {MENU_CUISINE_OPTIONS.find((option) => option.value === selectedMenuCuisine)?.label} / {getMenuCategoryLabel(selectedMenuCategory)}
                 </p>
                 <p className="mt-1">Calendar, recipes, save, and upload lookup use this selection.</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 lg:min-w-[300px]">
+                <Label>Download Upload-Ready Menu</Label>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                  <Select value={exportRange} onValueChange={setExportRange}>
+                    <SelectTrigger className="bg-white sm:w-[120px]">
+                      <SelectValue placeholder="Range" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="week">1 Week</SelectItem>
+                      <SelectItem value="month">1 Month</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="border-slate-200"
+                    onClick={handleDownloadMenuCsv}
+                    disabled={!selectedSite || isExportingMenu}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    {isExportingMenu ? 'Preparing...' : 'Download CSV'}
+                  </Button>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  Re-upload from Bulk Upload Center &gt; Menu Plans.
+                </p>
               </div>
             </div>
           </CardContent>

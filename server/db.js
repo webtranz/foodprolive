@@ -934,6 +934,8 @@ function rowToSite(row = {}) {
     type: row.type,
     parent_site_id: row.parent_site_id || null,
     project_code: row.project_code || row.warehouse_code || row.area_code || row.project_code || null,
+    warehouse_code: row.warehouse_code || null,
+    area_code: row.area_code || null,
     d365_warehouse_id: row.d365_warehouse_id || null,
     source_name: row.source_name || null,
     is_active: row.status !== 'inactive',
@@ -1417,6 +1419,28 @@ function rowToRecipe(row = {}) {
 }
 
 function rowToMenuPlan(row = {}) {
+  const lines = rowJsonArray(row.menu_plan_lines).map((line) => ({
+    id: line.menu_plan_line_id || line.id || null,
+    menu_plan_line_id: line.menu_plan_line_id || line.id || null,
+    line_number: toIntegerOrNull(line.line_number) || 0,
+    line_type: line.line_type || 'recipe',
+    recipe_id: line.recipe_version_id || line.recipe_id || null,
+    recipe_version_id: line.recipe_version_id || line.recipe_id || null,
+    recipe_code: line.recipe_code || null,
+    recipe_name: line.recipe_name || null,
+    ingredient_id: line.ingredient_id || null,
+    ingredient_name: line.ingredient_name || null,
+    item_name: line.item_name || line.recipe_name || line.ingredient_name || null,
+    meal_type: line.meal_period || row.meal_period || null,
+    expected_servings: rowNumberOrNull(line.planned_servings),
+    planned_servings: rowNumberOrNull(line.planned_servings),
+    planned_weight_grams: rowNumberOrNull(line.planned_weight_grams),
+    planned_unit: line.planned_unit || null,
+    estimated_cost: rowNumberOrNull(line.estimated_cost),
+    total_cost: rowNumberOrNull(line.estimated_cost),
+    status: line.status || row.status || 'planned',
+    source_name: line.source_name || row.source_name || null
+  }));
   return hydrateDerivedFields('MenuPlan', {
     __entity: 'MenuPlan',
     id: row.menu_plan_id,
@@ -1427,6 +1451,8 @@ function rowToMenuPlan(row = {}) {
     menu_category: row.menu_category,
     meal_type: row.meal_period,
     status: row.status || 'planned',
+    meals: lines,
+    menu_plan_lines: lines,
     source_name: row.source_name || null,
     created_by: row.created_by || null,
     created_date: rowTimestamp(row.created_at),
@@ -4963,7 +4989,41 @@ function normalizedSelectForEntity(entity) {
             FROM recipe_versions version
             JOIN recipes recipe ON recipe.recipe_id = version.recipe_id`;
   }
-  if (entity === 'MenuPlan') return 'SELECT * FROM menu_plans';
+  if (entity === 'MenuPlan') {
+    return `SELECT plan.*,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'id', line.menu_plan_line_id,
+                         'menu_plan_line_id', line.menu_plan_line_id,
+                         'line_number', line.line_number,
+                         'line_type', line.line_type,
+                         'recipe_id', line.recipe_version_id,
+                         'recipe_version_id', line.recipe_version_id,
+                         'recipe_code', recipe.recipe_code,
+                         'recipe_name', COALESCE(recipe.display_name, line.item_name),
+                         'ingredient_id', line.ingredient_id,
+                         'ingredient_name', ingredient.name,
+                         'item_name', line.item_name,
+                         'meal_period', COALESCE(line.meal_period, plan.meal_period),
+                         'planned_servings', line.planned_servings,
+                         'planned_weight_grams', line.planned_weight_grams,
+                         'planned_unit', line.planned_unit,
+                         'estimated_cost', line.estimated_cost,
+                         'status', line.status,
+                         'source_name', line.source_name
+                       )
+                       ORDER BY line.line_number, line.menu_plan_line_id
+                     )
+                     FROM menu_plan_lines line
+                     LEFT JOIN recipe_versions recipe
+                       ON recipe.recipe_version_id = line.recipe_version_id
+                     LEFT JOIN ingredients ingredient
+                       ON ingredient.ingredient_id = line.ingredient_id
+                     WHERE line.menu_plan_id = plan.menu_plan_id
+                   ), '[]'::jsonb) AS menu_plan_lines
+            FROM menu_plans plan`;
+  }
   if (entity === 'Production') {
     return `SELECT event.*,
                    COALESCE((
@@ -7343,12 +7403,13 @@ async function replaceMenuPlanLines(record, executor = pool) {
     ).trim();
     await query(
       `INSERT INTO menu_plan_lines (
-        menu_plan_line_id, menu_plan_id, line_number, line_type, recipe_version_id,
+        menu_plan_line_id, menu_plan_id, line_number, line_type, meal_period, recipe_version_id,
         ingredient_id, item_name, planned_servings, planned_weight_grams, planned_unit,
         estimated_cost, status, source_name, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
       ON CONFLICT (menu_plan_line_id) DO UPDATE SET
         line_number = EXCLUDED.line_number, line_type = EXCLUDED.line_type,
+        meal_period = EXCLUDED.meal_period,
         recipe_version_id = EXCLUDED.recipe_version_id, ingredient_id = EXCLUDED.ingredient_id,
         item_name = EXCLUDED.item_name, planned_servings = EXCLUDED.planned_servings,
         planned_weight_grams = EXCLUDED.planned_weight_grams, planned_unit = EXCLUDED.planned_unit,
@@ -7360,6 +7421,7 @@ async function replaceMenuPlanLines(record, executor = pool) {
         record.id,
         lineNumber,
         lineType,
+        sourceLine?.meal_type || sourceLine?.meal_period || record.meal_type || 'all',
         sourceLine?.recipe_id || sourceLine?.recipe_version_id || null,
         sourceLine?.ingredient_id || null,
         itemName,
@@ -8530,6 +8592,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
       ],
       executor
     );
+    await replaceMenuPlanLines(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'Production') {

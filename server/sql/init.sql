@@ -3473,6 +3473,7 @@ CREATE TABLE IF NOT EXISTS menu_plan_lines (
   menu_plan_id TEXT NOT NULL REFERENCES menu_plans(menu_plan_id) ON DELETE CASCADE,
   line_number INTEGER NOT NULL DEFAULT 0,
   line_type TEXT NOT NULL DEFAULT 'recipe' CHECK (line_type IN ('recipe', 'ingredient', 'manual')),
+  meal_period TEXT,
   recipe_version_id TEXT REFERENCES recipe_versions(recipe_version_id) ON DELETE RESTRICT,
   ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
   item_name TEXT NOT NULL,
@@ -3493,6 +3494,9 @@ CREATE TABLE IF NOT EXISTS menu_plan_lines (
 
 CREATE INDEX IF NOT EXISTS idx_menu_plan_lines_plan
   ON menu_plan_lines(menu_plan_id, line_number);
+
+ALTER TABLE menu_plan_lines
+  ADD COLUMN IF NOT EXISTS meal_period TEXT;
 
 CREATE TABLE IF NOT EXISTS production_events (
   production_id TEXT PRIMARY KEY,
