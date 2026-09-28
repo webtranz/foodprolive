@@ -77,13 +77,22 @@ const recipeExecutor = createCapturingExecutor([{
   description: 'Test recipe',
   display_name: 'Chicken dish',
   recipe_code: 'RCP-CHICKEN',
+  recipe_type: 'full',
   cuisine_type: 'General',
   menu_category: 'Main Course',
+  costing_method: 'last_cost',
+  servings: '12',
+  prep_time_minutes: 15,
+  cook_time_minutes: 45,
+  instructions: 'Cook until done.',
+  image_url: '/files/recipe-images/chicken.webp',
   serving_size_grams: 150,
   batch_yield: '2',
   total_recipe_weight_grams: '300',
   total_cost: '10',
   cost_per_serving: '5',
+  calories_per_serving: '120',
+  declared_allergens: ['egg'],
   warehouse_id: 'site-384',
   project_id: null,
   area_id: null,
@@ -110,7 +119,15 @@ assert.match(recipeExecutor.calls[0].text, /FROM recipe_ingredient_lines line/);
 assert.match(recipeExecutor.calls[0].text, /LEFT JOIN ingredients ingredient/);
 assert.equal(recipes[0].site_scope, 'specific');
 assert.deepEqual(recipes[0].site_ids, ['site-384']);
-assert.equal(recipes[0].servings, 2);
+assert.equal(recipes[0].servings, 12);
+assert.equal(recipes[0].batch_yield, 2);
+assert.equal(recipes[0].costing_method, 'last_cost');
+assert.equal(recipes[0].prep_time_minutes, 15);
+assert.equal(recipes[0].cook_time_minutes, 45);
+assert.equal(recipes[0].instructions, 'Cook until done.');
+assert.equal(recipes[0].image_url, '/files/recipe-images/chicken.webp');
+assert.equal(recipes[0].calories_per_serving, 120);
+assert.deepEqual(recipes[0].declared_allergens, ['egg']);
 assert.equal(recipes[0].ingredients.length, 1);
 assert.equal(recipes[0].ingredients[0].ingredient_id, 'ingredient-189015');
 assert.equal(recipes[0].ingredients[0].item_code, '189015');
