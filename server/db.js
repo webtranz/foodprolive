@@ -590,31 +590,38 @@ function sortRecords(records, sort) {
 
 const SAFE_RELATIONAL_PAYLOAD_FIELD_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-const relationalDocumentTables = Object.freeze({
-  ERPIntegrationConfig: 'erp_integration_configs',
-  ERPIntegrationLog: 'erp_integration_logs',
-  ForecastScenario: 'forecast_scenarios',
-  ForecastSnapshot: 'forecast_snapshots',
-  AttendanceRecord: 'attendance_records',
-  AttendanceSession: 'attendance_sessions',
-  StaffShift: 'staff_shifts',
-  BranchOrder: 'branch_orders',
-  CategoryQRSession: 'category_qr_sessions',
-  D365Master: 'd365_masters',
-  DinerScan: 'diner_scans',
-  CustomerMealPlan: 'customer_meal_plans',
-  MaterialRequest: 'material_requests',
-  MenuPlanPRSchedule: 'menu_plan_pr_schedules',
-  MenuPlanPRRun: 'menu_plan_pr_runs',
-  ProductionBatch: 'production_batches',
-  ProductionTransfer: 'production_transfers',
-  PurchaseOrder: 'purchase_order_documents',
-  QRCode: 'qr_codes',
-  QRDelivery: 'qr_deliveries',
-  QualityControl: 'quality_controls',
-  RFQ: 'rfqs',
-  UserGroup: 'user_groups'
-});
+const relationalDocumentTables = Object.freeze({});
+
+const normalizedAuxiliaryEntities = [
+  'ERPIntegrationConfig',
+  'ERPIntegrationLog',
+  'ForecastSnapshot',
+  'BranchOrder',
+  'MaterialRequest',
+  'MenuPlanPRSchedule',
+  'MenuPlanPRRun',
+  'ProductionBatch',
+  'ProductionTransfer',
+  'PurchaseOrder',
+  'QualityControl',
+  'RFQ',
+  'AttendanceSession',
+  'CategoryQRSession',
+  'DinerScan',
+  'CustomerMealPlan',
+  'QRCode',
+  'QRDelivery',
+  'UserGroup',
+  'AttendanceRecord',
+  'StaffShift',
+  'D365Master',
+  'ForecastScenario',
+  'WasteDetectionLog',
+  'AdvancedReportSchedule',
+  'WasteTarget',
+  'Budget',
+  'FoodCategory'
+];
 
 const normalizedCoreEnabled = process.env.FOODPRO_NORMALIZED_CORE !== 'false';
 const normalizedCoreEntities = new Set([
@@ -633,6 +640,7 @@ const normalizedCoreEntities = new Set([
   'FoodWaste',
   'RoleProfile',
   'Supplier',
+  ...normalizedAuxiliaryEntities,
   ...Object.keys(relationalDocumentTables)
 ]);
 
@@ -1745,7 +1753,2255 @@ function rowToWasteDetectionLog(row = {}) {
   });
 }
 
+function rowToD365Master(row = {}) {
+  return hydrateDerivedFields('D365Master', {
+    __entity: 'D365Master',
+    id: row.id,
+    status: row.status || 'synced',
+    source_system: row.source_system || null,
+    module_key: row.module_key || null,
+    sync_id: row.sync_id || null,
+    idempotency_key: row.idempotency_key || null,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    ingredient_id: row.ingredient_id || null,
+    ingredient_name: row.ingredient_name || null,
+    d365_item_id: row.d365_item_id || null,
+    d365_warehouse_id: row.d365_warehouse_id || null,
+    integration_log_id: row.integration_log_id || null,
+    processed_at: rowTimestamp(row.processed_at) || rowTimestamp(row.created_at),
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToForecastScenario(row = {}) {
+  return hydrateDerivedFields('ForecastScenario', {
+    __entity: 'ForecastScenario',
+    id: row.id,
+    name: row.name || 'Forecast Scenario',
+    location_id: row.location_id || null,
+    location_name: row.location_name || null,
+    site_id: row.site_id || row.location_id || null,
+    site_name: row.site_name || row.location_name || null,
+    category: row.category || 'all',
+    status_filter: row.status_filter || 'all',
+    start_date: row.start_date ? String(row.start_date).slice(0, 10) : null,
+    end_date: row.end_date ? String(row.end_date).slice(0, 10) : null,
+    forecast_horizon_days: Math.max(1, Math.trunc(toNumberOrZero(row.forecast_horizon_days) || 7)),
+    safety_buffer_percent: toNumberOrZero(row.safety_buffer_percent),
+    model_type: row.model_type || 'blended_average',
+    status: row.status || 'draft',
+    notes: row.notes || '',
+    last_run_date: rowTimestamp(row.last_run_date),
+    latest_snapshot_id: row.latest_snapshot_id || null,
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToAttendanceRecord(row = {}) {
+  const attendeeId = row.attendee_id || row.employee_id || null;
+  const attendeeName = row.attendee_name || row.employee_name || null;
+  const attendanceDate = row.attendance_date || row.session_date || row.service_date || row.shift_date || null;
+  return hydrateDerivedFields('AttendanceRecord', {
+    __entity: 'AttendanceRecord',
+    id: row.id,
+    shift_id: row.shift_id || null,
+    session_id: row.session_id || null,
+    session_name: row.session_name || null,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    shift_date: row.shift_date ? String(row.shift_date).slice(0, 10) : null,
+    attendance_date: attendanceDate ? String(attendanceDate).slice(0, 10) : null,
+    session_date: row.session_date ? String(row.session_date).slice(0, 10) : null,
+    service_date: row.service_date ? String(row.service_date).slice(0, 10) : null,
+    meal_type: row.meal_type || null,
+    menu_type: row.menu_type || null,
+    menu_category: row.menu_category || null,
+    employee_id: attendeeId,
+    employee_name: attendeeName,
+    attendee_id: attendeeId,
+    attendee_name: attendeeName,
+    attendee_phone: row.attendee_phone || null,
+    category: row.category || null,
+    check_in: row.check_in || null,
+    check_out: row.check_out || null,
+    check_in_at: rowTimestamp(row.check_in_at),
+    check_out_at: rowTimestamp(row.check_out_at),
+    marked_at: rowTimestamp(row.marked_at),
+    scan_method: row.scan_method || null,
+    qr_code_id: row.qr_code_id || null,
+    scanned_by: row.scanned_by || null,
+    scanned_by_name: row.scanned_by_name || null,
+    attendance_status: row.attendance_status || 'present',
+    approval_status: row.approval_status || 'pending',
+    status: row.status || 'checked_in',
+    notes: row.notes || null,
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToStaffShift(row = {}) {
+  return hydrateDerivedFields('StaffShift', {
+    __entity: 'StaffShift',
+    id: row.id,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    shift_date: row.shift_date ? String(row.shift_date).slice(0, 10) : null,
+    employee_id: row.employee_id || null,
+    employee_name: row.employee_name || null,
+    role: row.role || null,
+    category: row.category || null,
+    shift_type: row.shift_type || null,
+    start_time: row.start_time || null,
+    end_time: row.end_time || null,
+    break_minutes: Math.max(0, Math.trunc(toNumberOrZero(row.break_minutes))),
+    approval_status: row.approval_status || 'pending',
+    status: row.status || 'scheduled',
+    notes: row.notes || null,
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function mealWindowRowsFromValue(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (entry && typeof entry === 'object' ? entry : null))
+      .filter(Boolean);
+  }
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value)
+    .map(([mealType, window]) => {
+      if (!window || typeof window !== 'object') return null;
+      return {
+        meal_type: mealType,
+        label: window.label || mealType,
+        start_time: window.start_time || window.start || null,
+        end_time: window.end_time || window.end || null
+      };
+    })
+    .filter(Boolean);
+}
+
+function mealWindowObjectFromRows(rows = []) {
+  const entries = rowJsonArray(rows);
+  return entries.reduce((windows, entry) => {
+    const mealType = entry.meal_type || entry.key || entry.name;
+    if (!mealType) return windows;
+    windows[mealType] = {
+      label: entry.label || mealType,
+      start_time: entry.start_time || null,
+      end_time: entry.end_time || null
+    };
+    return windows;
+  }, {});
+}
+
+function rowToAttendanceSession(row = {}) {
+  return hydrateDerivedFields('AttendanceSession', {
+    __entity: 'AttendanceSession',
+    id: row.id,
+    session_name: row.session_name || row.title || 'Attendance Session',
+    title: row.title || row.session_name || 'Attendance Session',
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    meal_type: row.meal_type || null,
+    session_date: row.session_date ? String(row.session_date).slice(0, 10) : null,
+    start_time: row.start_time || null,
+    end_time: row.end_time || null,
+    qr_token: row.qr_token || null,
+    qr_expiry: rowTimestamp(row.qr_expiry),
+    expected_labor: toNumberOrZero(row.expected_labor),
+    expected_junior: toNumberOrZero(row.expected_junior),
+    expected_senior: toNumberOrZero(row.expected_senior),
+    actual_labor: toNumberOrZero(row.actual_labor),
+    actual_junior: toNumberOrZero(row.actual_junior),
+    actual_senior: toNumberOrZero(row.actual_senior),
+    validity_minutes: Math.max(0, Math.trunc(toNumberOrZero(row.validity_minutes))),
+    notes: row.notes || null,
+    status: row.status || 'active',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToCategoryQRSession(row = {}) {
+  const categories = rowJsonArray(row.categories);
+  const scanCounts = categories.reduce((counts, category) => {
+    if (category?.category) counts[category.category] = toNumberOrZero(category.scan_count);
+    return counts;
+  }, rowJsonObject(row.scan_counts));
+  return hydrateDerivedFields('CategoryQRSession', {
+    __entity: 'CategoryQRSession',
+    id: row.id,
+    title: row.title || 'Category QR Session',
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    session_date: row.session_date ? String(row.session_date).slice(0, 10) : null,
+    from_date: row.from_date ? String(row.from_date).slice(0, 10) : null,
+    to_date: row.to_date ? String(row.to_date).slice(0, 10) : null,
+    start_time: row.start_time || null,
+    end_time: row.end_time || null,
+    categories,
+    scan_counts: scanCounts,
+    notes: row.notes || null,
+    status: row.status || 'active',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToDinerScan(row = {}) {
+  return hydrateDerivedFields('DinerScan', {
+    __entity: 'DinerScan',
+    id: row.id,
+    event_id: row.event_id || null,
+    event_name: row.event_name || null,
+    event_qr_token: row.event_qr_token || null,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    plan_date: row.plan_date ? String(row.plan_date).slice(0, 10) : null,
+    meal_type: row.meal_type || null,
+    guest_token: row.guest_token || null,
+    scan_method: row.scan_method || null,
+    scanned_at: rowTimestamp(row.scanned_at) || rowTimestamp(row.created_at),
+    status: row.status || 'scanned',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToCustomerMealPlan(row = {}) {
+  return hydrateDerivedFields('CustomerMealPlan', {
+    __entity: 'CustomerMealPlan',
+    id: row.id,
+    name: row.name || 'Customer Meal Plan',
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    plan_date: row.plan_date ? String(row.plan_date).slice(0, 10) : null,
+    customer_id: row.customer_id || null,
+    customer_name: row.customer_name || null,
+    meals: rowJsonArray(row.meals),
+    notes: row.notes || null,
+    status: row.status || 'draft',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToQRCode(row = {}) {
+  const title = row.title || row.name || row.employee_name || 'QR Code';
+  return hydrateDerivedFields('QRCode', {
+    __entity: 'QRCode',
+    id: row.id,
+    title,
+    name: row.name || title,
+    category: row.category || null,
+    description: row.description || null,
+    token: row.token || null,
+    linked_item: row.linked_item || null,
+    is_one_time: row.is_one_time === true,
+    one_time: row.is_one_time === true,
+    max_scans: Math.max(0, Math.trunc(toNumberOrZero(row.max_scans))),
+    scan_count: Math.max(0, Math.trunc(toNumberOrZero(row.scan_count))),
+    expiry_date: rowTimestamp(row.expiry_date),
+    last_scanned_at: rowTimestamp(row.last_scanned_at),
+    employee_name: row.employee_name || null,
+    company_id_number: row.company_id_number || null,
+    mobile_number: row.mobile_number || null,
+    active_whatsapp: row.active_whatsapp === true,
+    created_by: row.created_by || null,
+    created_by_name: row.created_by_name || null,
+    meal_windows: mealWindowObjectFromRows(row.meal_windows),
+    scan_history: rowJsonArray(row.scan_history),
+    status: row.status || 'active',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToQRDelivery(row = {}) {
+  return hydrateDerivedFields('QRDelivery', {
+    __entity: 'QRDelivery',
+    id: row.id,
+    qr_code_id: row.qr_code_id || null,
+    qr_code_title: row.qr_code_title || null,
+    qr_token: row.qr_token || null,
+    delivery_method: row.delivery_method || 'email',
+    subject: row.subject || null,
+    message: row.message || null,
+    scheduled_at: rowTimestamp(row.scheduled_at),
+    sent_at: rowTimestamp(row.sent_at),
+    sent_count: Math.max(0, Math.trunc(toNumberOrZero(row.sent_count))),
+    failed_count: Math.max(0, Math.trunc(toNumberOrZero(row.failed_count))),
+    recipients: rowJsonArray(row.recipients),
+    group_ids: normalizeTextArray(row.group_ids),
+    status: row.status || 'pending',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToUserGroup(row = {}) {
+  const members = rowJsonArray(row.members);
+  return hydrateDerivedFields('UserGroup', {
+    __entity: 'UserGroup',
+    id: row.id,
+    name: row.name || 'User Group',
+    description: row.description || null,
+    members,
+    total_members: Math.max(0, Math.trunc(toNumberOrZero(row.total_members) || members.length)),
+    status: row.status || 'active',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+async function replaceCategoryQRSessionCategories(record = {}, executor = pool) {
+  await query('DELETE FROM category_qr_session_categories WHERE session_id = $1', [record.id], executor);
+  const scanCounts = rowJsonObject(record.scan_counts);
+  const categories = rowJsonArray(record.categories);
+  for (const [index, category] of categories.entries()) {
+    await query(
+      `INSERT INTO category_qr_session_categories (
+        session_id, category, label, token, scan_count, sort_order
+      ) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [
+        record.id,
+        category.category || category.value || null,
+        category.label || category.name || category.category || null,
+        category.token || null,
+        toNumberOrZero(scanCounts[category.category] ?? category.scan_count),
+        index
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceCustomerMealPlanMeals(record = {}, executor = pool) {
+  await query('DELETE FROM customer_meal_plan_meals WHERE customer_meal_plan_id = $1', [record.id], executor);
+  const meals = rowJsonArray(record.meals);
+  for (const [index, meal] of meals.entries()) {
+    await query(
+      `INSERT INTO customer_meal_plan_meals (
+        customer_meal_plan_id, recipe_id, recipe_name, meal_type,
+        portions, servings_per_attendee, sort_order
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        record.id,
+        meal.recipe_id || null,
+        meal.recipe_name || null,
+        meal.meal_type || null,
+        toNumberOrZero(meal.portions),
+        toNumberOrZero(meal.servings_per_attendee || 1),
+        index
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceQRCodeMealWindows(record = {}, executor = pool) {
+  await query('DELETE FROM qr_code_meal_windows WHERE qr_code_id = $1', [record.id], executor);
+  const windows = mealWindowRowsFromValue(record.meal_windows);
+  for (const [index, window] of windows.entries()) {
+    await query(
+      `INSERT INTO qr_code_meal_windows (
+        qr_code_id, meal_type, label, start_time, end_time, sort_order
+      ) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [
+        record.id,
+        window.meal_type || window.key || window.name || null,
+        window.label || window.meal_type || null,
+        window.start_time || null,
+        window.end_time || null,
+        index
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceQRCodeScanHistory(record = {}, executor = pool) {
+  await query('DELETE FROM qr_code_scan_history WHERE qr_code_id = $1', [record.id], executor);
+  const history = rowJsonArray(record.scan_history);
+  for (const [index, scan] of history.entries()) {
+    await query(
+      `INSERT INTO qr_code_scan_history (
+        qr_code_id, scan_key, attendance_record_id, meal_type, session_date,
+        site_id, menu_type, menu_category, scanned_at, scanned_by, sort_order
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        record.id,
+        scan.scan_key || null,
+        scan.attendance_record_id || null,
+        scan.meal_type || null,
+        toDateOnlyOrNull(scan.session_date),
+        scan.site_id || null,
+        scan.menu_type || null,
+        scan.menu_category || null,
+        scan.scanned_at || null,
+        scan.scanned_by || null,
+        index
+      ],
+      executor
+    );
+  }
+}
+
+async function replaceQRDeliveryRecipients(record = {}, executor = pool) {
+  await query('DELETE FROM qr_delivery_recipients WHERE qr_delivery_id = $1', [record.id], executor);
+  const recipients = rowJsonArray(record.recipients);
+  for (const [index, recipient] of recipients.entries()) {
+    await query(
+      `INSERT INTO qr_delivery_recipients (
+        qr_delivery_id, name, email, phone, category, status, sort_order
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        record.id,
+        recipient.name || null,
+        recipient.email || null,
+        recipient.phone || null,
+        recipient.category || null,
+        recipient.status || 'pending',
+        index
+      ],
+      executor
+    );
+  }
+
+  await query('DELETE FROM qr_delivery_groups WHERE qr_delivery_id = $1', [record.id], executor);
+  for (const [index, groupId] of normalizeTextArray(record.group_ids).entries()) {
+    await query(
+      'INSERT INTO qr_delivery_groups (qr_delivery_id, group_id, sort_order) VALUES ($1,$2,$3)',
+      [record.id, groupId, index],
+      executor
+    );
+  }
+}
+
+async function replaceUserGroupMembers(record = {}, executor = pool) {
+  await query('DELETE FROM user_group_members WHERE user_group_id = $1', [record.id], executor);
+  const members = rowJsonArray(record.members);
+  for (const [index, member] of members.entries()) {
+    await query(
+      `INSERT INTO user_group_members (
+        user_group_id, name, email, phone, category, status, sort_order
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        record.id,
+        member.name || null,
+        member.email || null,
+        member.phone || null,
+        member.category || null,
+        member.status || 'active',
+        index
+      ],
+      executor
+    );
+  }
+}
+
+function documentFieldValue(entry = {}) {
+  return metadataValueFromColumns(entry, 'value');
+}
+
+function scalarListFromDocumentFieldRows(rows = [], collectionKey) {
+  return rowJsonArray(rows)
+    .filter((entry) => entry.collection_key === collectionKey)
+    .sort((left, right) => (
+      Number(left.item_order || 0) - Number(right.item_order || 0)
+      || String(left.field_name || '').localeCompare(String(right.field_name || ''))
+    ))
+    .map(documentFieldValue)
+    .filter((value) => value !== null && typeof value !== 'undefined' && value !== '');
+}
+
+function objectFromDocumentFieldRows(rows = [], collectionKey) {
+  const object = {};
+  rowJsonArray(rows)
+    .filter((entry) => entry.collection_key === collectionKey)
+    .forEach((entry) => {
+      const fieldName = entry.field_name || 'value';
+      object[fieldName] = documentFieldValue(entry);
+    });
+  return object;
+}
+
+function objectArrayFromDocumentFieldRows(rows = [], collectionKey) {
+  const grouped = new Map();
+  rowJsonArray(rows)
+    .filter((entry) => entry.collection_key === collectionKey)
+    .forEach((entry) => {
+      const order = Number(entry.item_order || 0);
+      const item = grouped.get(order) || {};
+      item[entry.field_name || 'value'] = documentFieldValue(entry);
+      grouped.set(order, item);
+    });
+  return [...grouped.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([, item]) => {
+      if (Object.keys(item).length === 1 && Object.prototype.hasOwnProperty.call(item, 'value')) {
+        return item.value;
+      }
+      return item;
+    });
+}
+
+async function insertDocumentField({
+  entity,
+  recordId,
+  collectionKey,
+  itemOrder = 0,
+  fieldName = 'value',
+  value
+}, executor = pool) {
+  const columns = metadataWriteColumns(value);
+  await query(
+    `INSERT INTO document_object_fields (
+      entity_name, record_id, collection_key, item_order, field_name,
+      value_text, value_numeric, value_boolean, value_date
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [
+      entity,
+      recordId,
+      collectionKey,
+      itemOrder,
+      fieldName,
+      columns.text,
+      columns.numeric,
+      columns.boolean,
+      columns.date
+    ],
+    executor
+  );
+}
+
+async function replaceDocumentCollections(entity, recordId, collections = {}, executor = pool) {
+  await query(
+    'DELETE FROM document_object_fields WHERE entity_name = $1 AND record_id = $2',
+    [entity, recordId],
+    executor
+  );
+  for (const [collectionKey, value] of Object.entries(collections || {})) {
+    if (Array.isArray(value)) {
+      for (const [index, item] of value.entries()) {
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          for (const [fieldName, fieldValue] of Object.entries(item)) {
+            await insertDocumentField({
+              entity,
+              recordId,
+              collectionKey,
+              itemOrder: index,
+              fieldName,
+              value: fieldValue
+            }, executor);
+          }
+        } else {
+          await insertDocumentField({
+            entity,
+            recordId,
+            collectionKey,
+            itemOrder: index,
+            fieldName: 'value',
+            value: item
+          }, executor);
+        }
+      }
+    } else if (value && typeof value === 'object') {
+      for (const [fieldName, fieldValue] of Object.entries(value)) {
+        await insertDocumentField({
+          entity,
+          recordId,
+          collectionKey,
+          itemOrder: 0,
+          fieldName,
+          value: fieldValue
+        }, executor);
+      }
+    } else if (value !== null && typeof value !== 'undefined') {
+      await insertDocumentField({
+        entity,
+        recordId,
+        collectionKey,
+        itemOrder: 0,
+        fieldName: 'value',
+        value
+      }, executor);
+    }
+  }
+}
+
+async function replaceMaterialRequestItems(record = {}, executor = pool) {
+  await query('DELETE FROM material_request_items WHERE material_request_id = $1', [record.id], executor);
+  const items = rowJsonArray(record.items);
+  for (const [index, item] of items.entries()) {
+    const itemResult = await query(
+      `INSERT INTO material_request_items (
+        material_request_id, ingredient_id, item_code, ingredient_name,
+        required_quantity, current_stock, shortage_quantity, request_quantity,
+        unit, estimated_cost, live_reservable_quantity, live_shortage_quantity,
+        source_line_count, validation_status, repairable_issue_count, sort_order
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      RETURNING id`,
+      [
+        record.id,
+        item.ingredient_id || null,
+        item.item_code || null,
+        item.ingredient_name || null,
+        toNumberOrZero(item.required_quantity),
+        toNumberOrZero(item.current_stock),
+        toNumberOrZero(item.shortage_quantity),
+        toNumberOrZero(item.request_quantity ?? item.required_quantity),
+        item.unit || null,
+        toNumberOrZero(item.estimated_cost),
+        toNumberOrZero(item.live_reservable_quantity ?? item.current_stock),
+        toNumberOrZero(item.live_shortage_quantity),
+        Math.max(0, Math.trunc(toNumberOrZero(item.source_line_count))),
+        item.validation_status || null,
+        Math.max(0, Math.trunc(toNumberOrZero(item.repairable_issue_count))),
+        index
+      ],
+      executor
+    );
+    const itemId = itemResult.rows[0]?.id;
+    for (const [issueIndex, issue] of rowJsonArray(item.validation_issues).entries()) {
+      await query(
+        `INSERT INTO material_request_item_issues (
+          material_request_item_id, code, message, severity, repairable, sort_order
+        ) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          itemId,
+          issue.code || null,
+          issue.message || null,
+          issue.severity || 'warning',
+          issue.repairable === true,
+          issueIndex
+        ],
+        executor
+      );
+    }
+  }
+}
+
+function rowToERPIntegrationConfig(row = {}) {
+  return hydrateDerivedFields('ERPIntegrationConfig', {
+    __entity: 'ERPIntegrationConfig',
+    id: row.id,
+    provider_name: row.provider_name || 'Dynamics 365',
+    api_endpoint: row.api_endpoint || null,
+    api_key: row.api_key || null,
+    sync_schedule: row.sync_schedule || 'manual',
+    data_mapping: objectFromDocumentFieldRows(row.field_rows, 'data_mapping'),
+    error_notes: row.error_notes || null,
+    is_active: row.is_active !== false,
+    status: row.status || (row.is_active === false ? 'inactive' : 'active'),
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToERPIntegrationLog(row = {}) {
+  const requestRecords = objectArrayFromDocumentFieldRows(row.field_rows, 'request_records');
+  const responseRows = objectArrayFromDocumentFieldRows(row.field_rows, 'response_rows');
+  const requestExtra = objectFromDocumentFieldRows(row.field_rows, 'request_payload');
+  const responseSummary = objectFromDocumentFieldRows(row.field_rows, 'response_summary');
+  const requestPayload = {
+    ...requestExtra,
+    configId: row.request_config_id || row.config_id || null,
+    moduleKey: row.request_module_key || row.module_key || null,
+    transport: row.request_transport || row.transport || null,
+    startDate: row.request_start_date || '',
+    endDate: row.request_end_date || '',
+    locationId: row.request_location_id || '',
+    category: row.request_category || '',
+    operation: row.operation || requestExtra.operation || null,
+    module_key: row.module_key || requestExtra.module_key || null,
+    source_system: row.source_system || requestExtra.source_system || null,
+    sync_id: row.sync_id || requestExtra.sync_id || null,
+    quantity_semantics: row.quantity_semantics || requestExtra.quantity_semantics || null,
+    received_at: rowTimestamp(row.received_at) || requestExtra.received_at || null,
+    records: requestRecords
+  };
+  const responsePayload = {
+    summary: responseSummary,
+    rows: responseRows
+  };
+  return hydrateDerivedFields('ERPIntegrationLog', {
+    __entity: 'ERPIntegrationLog',
+    id: row.id,
+    config_id: row.config_id || null,
+    provider_name: row.provider_name || null,
+    module_key: row.module_key || null,
+    operation: row.operation || null,
+    direction: row.direction || null,
+    transport: row.transport || null,
+    status: row.status || 'pending',
+    message: row.message || null,
+    records_count: toNumberOrZero(row.records_count),
+    applied_count: toNumberOrZero(row.applied_count),
+    skipped_count: toNumberOrZero(row.skipped_count),
+    failed_count: toNumberOrZero(row.failed_count),
+    source_system: row.source_system || null,
+    sync_id: row.sync_id || null,
+    quantity_semantics: row.quantity_semantics || null,
+    received_at: rowTimestamp(row.received_at),
+    retry_of_log_id: row.retry_of_log_id || null,
+    retry_count: toNumberOrZero(row.retry_count),
+    retried_at: rowTimestamp(row.retried_at),
+    last_retry_status: row.last_retry_status || null,
+    last_retry_log_id: row.last_retry_log_id || null,
+    last_retry_error: row.last_retry_error || null,
+    site_id: row.site_id || null,
+    site_ids: normalizeTextArray(row.site_ids),
+    attempted_by: row.attempted_by || null,
+    attempted_by_name: row.attempted_by_name || null,
+    attempted_at: rowTimestamp(row.attempted_at),
+    completed_at: rowTimestamp(row.completed_at),
+    request_payload: requestPayload,
+    response_payload: responsePayload,
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToForecastSnapshot(row = {}) {
+  return hydrateDerivedFields('ForecastSnapshot', {
+    __entity: 'ForecastSnapshot',
+    id: row.id,
+    scenario_id: row.scenario_id || null,
+    scenario_name: row.scenario_name || null,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    start_date: row.start_date ? String(row.start_date).slice(0, 10) : null,
+    end_date: row.end_date ? String(row.end_date).slice(0, 10) : null,
+    forecast_horizon_days: Math.max(1, Math.trunc(toNumberOrZero(row.forecast_horizon_days) || 7)),
+    generated_by_id: row.generated_by_id || null,
+    generated_by_email: row.generated_by_email || null,
+    generated_at: rowTimestamp(row.generated_at),
+    forecast_rows: objectArrayFromDocumentFieldRows(row.field_rows, 'forecast_rows'),
+    summary: objectFromDocumentFieldRows(row.field_rows, 'summary'),
+    chart: objectArrayFromDocumentFieldRows(row.field_rows, 'chart'),
+    inventory_coverage: objectArrayFromDocumentFieldRows(row.field_rows, 'inventory_coverage'),
+    status: row.status || 'ready',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToBranchOrder(row = {}) {
+  return hydrateDerivedFields('BranchOrder', {
+    __entity: 'BranchOrder',
+    id: row.id,
+    order_number: row.order_number || null,
+    branch_id: row.branch_id || row.site_id || null,
+    branch_name: row.branch_name || row.site_name || null,
+    site_id: row.site_id || row.branch_id || null,
+    site_name: row.site_name || row.branch_name || null,
+    order_date: rowTimestamp(row.order_date) || rowTimestamp(row.created_at),
+    required_date: row.required_date ? String(row.required_date).slice(0, 10) : null,
+    priority: row.priority || 'medium',
+    items: objectArrayFromDocumentFieldRows(row.field_rows, 'items'),
+    notes: row.notes || null,
+    approved_by: row.approved_by || null,
+    approved_at: rowTimestamp(row.approved_at),
+    status: row.status || 'draft',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToMaterialRequest(row = {}) {
+  const items = rowJsonArray(row.items).map((item) => ({
+    ...item,
+    validation_issues: rowJsonArray(item.validation_issues)
+  }));
+  return hydrateDerivedFields('MaterialRequest', {
+    __entity: 'MaterialRequest',
+    id: row.id,
+    request_number: row.request_number || null,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    requesting_site_id: row.requesting_site_id || null,
+    requesting_site_name: row.requesting_site_name || null,
+    fulfillment_store_id: row.fulfillment_store_id || null,
+    fulfillment_store_name: row.fulfillment_store_name || null,
+    request_date: row.request_date ? String(row.request_date).slice(0, 10) : null,
+    period_start: row.period_start ? String(row.period_start).slice(0, 10) : null,
+    period_end: row.period_end ? String(row.period_end).slice(0, 10) : null,
+    items,
+    total_estimated_cost: toNumberOrZero(row.total_estimated_cost),
+    source_type: row.source_type || 'manual',
+    source_production_id: row.source_production_id || null,
+    source_production_name: row.source_production_name || null,
+    created_by: row.created_by || null,
+    created_by_name: row.created_by_name || null,
+    acknowledged_by: row.acknowledged_by || null,
+    acknowledged_by_name: row.acknowledged_by_name || null,
+    acknowledged_at: rowTimestamp(row.acknowledged_at),
+    procurement_notes: row.procurement_notes || null,
+    notes: row.notes || null,
+    status: row.status || 'pending_procurement_ack',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToMenuPlanPRSchedule(row = {}) {
+  return hydrateDerivedFields('MenuPlanPRSchedule', {
+    __entity: 'MenuPlanPRSchedule',
+    id: row.id,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    is_active: row.is_active !== false,
+    cycle_days: Math.max(1, Math.trunc(toNumberOrZero(row.cycle_days) || 7)),
+    preferred_weekday: row.preferred_weekday || 'thursday',
+    notes: row.notes || null,
+    status: row.status || (row.is_active === false ? 'inactive' : 'active'),
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToMenuPlanPRRun(row = {}) {
+  return hydrateDerivedFields('MenuPlanPRRun', {
+    __entity: 'MenuPlanPRRun',
+    id: row.id,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    cycle_start: row.cycle_start ? String(row.cycle_start).slice(0, 10) : null,
+    cycle_end: row.cycle_end ? String(row.cycle_end).slice(0, 10) : null,
+    preferred_run_date: row.preferred_run_date ? String(row.preferred_run_date).slice(0, 10) : null,
+    requested_run_date: row.requested_run_date ? String(row.requested_run_date).slice(0, 10) : null,
+    cycle_days: Math.max(1, Math.trunc(toNumberOrZero(row.cycle_days) || 7)),
+    preferred_weekday: row.preferred_weekday || null,
+    trigger_type: row.trigger_type || 'manual',
+    generated_pr_id: row.generated_pr_id || null,
+    generated_pr_number: row.generated_pr_number || null,
+    generated_request_id: row.generated_request_id || null,
+    generated_request_number: row.generated_request_number || null,
+    generated_item_count: toNumberOrZero(row.generated_item_count),
+    total_estimated_cost: toNumberOrZero(row.total_estimated_cost),
+    notes: row.notes || null,
+    missing_recipe_ids: scalarListFromDocumentFieldRows(row.field_rows, 'missing_recipe_ids'),
+    missing_ingredient_ids: scalarListFromDocumentFieldRows(row.field_rows, 'missing_ingredient_ids'),
+    status: row.status || 'pending',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToProductionBatch(row = {}) {
+  return hydrateDerivedFields('ProductionBatch', {
+    __entity: 'ProductionBatch',
+    id: row.id,
+    batch_number: row.batch_number || null,
+    production_id: row.production_id || null,
+    recipe_id: row.recipe_id || null,
+    recipe_name: row.recipe_name || null,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    meal_type: row.meal_type || null,
+    quantity: toNumberOrZero(row.quantity),
+    unit: row.unit || 'servings',
+    production_date: row.production_date ? String(row.production_date).slice(0, 10) : null,
+    expiry_date: row.expiry_date ? String(row.expiry_date).slice(0, 10) : null,
+    process_stage: row.process_stage || 'cleaning',
+    qc_status: row.qc_status || 'pending',
+    packaging_status: row.packaging_status || 'pending',
+    process_logs: objectArrayFromDocumentFieldRows(row.field_rows, 'process_logs'),
+    notes: row.notes || null,
+    status: row.status || 'planned',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToProductionTransfer(row = {}) {
+  return hydrateDerivedFields('ProductionTransfer', {
+    __entity: 'ProductionTransfer',
+    id: row.id,
+    transfer_number: row.transfer_number || null,
+    from_site_id: row.from_site_id || null,
+    from_site_name: row.from_site_name || null,
+    to_site_id: row.to_site_id || null,
+    to_site_name: row.to_site_name || null,
+    site_id: row.from_site_id || null,
+    transfer_date: row.transfer_date ? String(row.transfer_date).slice(0, 10) : null,
+    transfer_type: row.transfer_type || 'inventory',
+    items: objectArrayFromDocumentFieldRows(row.field_rows, 'items'),
+    requested_by: row.requested_by || null,
+    received_by: row.received_by || null,
+    notes: row.notes || null,
+    status: row.status || 'draft',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToPurchaseOrder(row = {}) {
+  return hydrateDerivedFields('PurchaseOrder', {
+    __entity: 'PurchaseOrder',
+    id: row.id,
+    po_number: row.po_number || row.order_number || null,
+    order_number: row.order_number || row.po_number || null,
+    supplier_id: row.supplier_id || null,
+    supplier_name: row.supplier_name || null,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    order_date: row.order_date ? String(row.order_date).slice(0, 10) : null,
+    expected_delivery_date: row.expected_delivery_date ? String(row.expected_delivery_date).slice(0, 10) : null,
+    total_amount: toNumberOrZero(row.total_amount),
+    items: objectArrayFromDocumentFieldRows(row.field_rows, 'items'),
+    notes: row.notes || null,
+    status: row.status || 'draft',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToQualityControl(row = {}) {
+  return hydrateDerivedFields('QualityControl', {
+    __entity: 'QualityControl',
+    id: row.id,
+    batch_id: row.batch_id || null,
+    batch_number: row.batch_number || null,
+    production_id: row.production_id || null,
+    recipe_id: row.recipe_id || null,
+    recipe_name: row.recipe_name || null,
+    site_id: row.site_id || null,
+    site_name: row.site_name || null,
+    inspection_date: rowTimestamp(row.inspection_date) || rowTimestamp(row.created_at),
+    inspector_name: row.inspector_name || null,
+    temperature_logs: objectArrayFromDocumentFieldRows(row.field_rows, 'temperature_logs'),
+    hygiene_checklist: objectArrayFromDocumentFieldRows(row.field_rows, 'hygiene_checklist'),
+    quality_checklist: objectArrayFromDocumentFieldRows(row.field_rows, 'quality_checklist'),
+    overall_status: row.overall_status || null,
+    approval_notes: row.approval_notes || null,
+    approved_by: row.approved_by || null,
+    approved_at: rowTimestamp(row.approved_at),
+    status: row.status || 'pending',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function rowToRFQ(row = {}) {
+  return hydrateDerivedFields('RFQ', {
+    __entity: 'RFQ',
+    id: row.id,
+    rfq_number: row.rfq_number || null,
+    issue_date: row.issue_date ? String(row.issue_date).slice(0, 10) : null,
+    response_deadline: row.response_deadline ? String(row.response_deadline).slice(0, 10) : null,
+    suppliers: scalarListFromDocumentFieldRows(row.field_rows, 'suppliers'),
+    items: objectArrayFromDocumentFieldRows(row.field_rows, 'items'),
+    notes: row.notes || null,
+    status: row.status || 'draft',
+    source_name: row.source_name || null,
+    created_date: rowTimestamp(row.created_at),
+    updated_date: rowTimestamp(row.updated_at)
+  });
+}
+
+function documentFieldRowsSelect(entity, aliasName = 'record') {
+  return `COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'collection_key', field.collection_key,
+      'item_order', field.item_order,
+      'field_name', field.field_name,
+      'value_text', field.value_text,
+      'value_numeric', field.value_numeric,
+      'value_boolean', field.value_boolean,
+      'value_date', field.value_date
+    ) ORDER BY field.collection_key, field.item_order, field.field_name, field.id)
+    FROM document_object_fields field
+    WHERE field.entity_name = '${entity}' AND field.record_id = ${aliasName}.id
+  ), '[]'::jsonb) AS field_rows`;
+}
+
 const normalizedSimpleConfigs = {
+  ERPIntegrationConfig: {
+    table: 'erp_integration_configs',
+    idColumn: 'id',
+    mapper: rowToERPIntegrationConfig,
+    select: `SELECT record.*, ${documentFieldRowsSelect('ERPIntegrationConfig', 'record')} FROM erp_integration_configs record`,
+    insertSql: `INSERT INTO erp_integration_configs (
+      id, provider_name, api_endpoint, api_key, sync_schedule,
+      error_notes, is_active, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    values(record) {
+      const isActive = record.is_active !== false;
+      return [
+        record.id,
+        record.provider_name || 'Dynamics 365',
+        record.api_endpoint || null,
+        record.api_key || null,
+        record.sync_schedule || 'manual',
+        record.error_notes || null,
+        isActive,
+        record.status || (isActive ? 'active' : 'inactive'),
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE erp_integration_configs SET
+      provider_name = $2, api_endpoint = $3, api_key = $4,
+      sync_schedule = $5, error_notes = $6, is_active = $7,
+      status = $8, source_name = $9, updated_at = $10
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 9), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('ERPIntegrationConfig', record.id, {
+      data_mapping: record.data_mapping || {}
+    }, executor)
+  },
+  ERPIntegrationLog: {
+    table: 'erp_integration_logs',
+    idColumn: 'id',
+    mapper: rowToERPIntegrationLog,
+    select: `SELECT record.*, ${documentFieldRowsSelect('ERPIntegrationLog', 'record')} FROM erp_integration_logs record`,
+    insertSql: `INSERT INTO erp_integration_logs (
+      id, config_id, provider_name, module_key, operation, direction, transport,
+      status, message, records_count, applied_count, skipped_count, failed_count,
+      source_system, sync_id, quantity_semantics, received_at, retry_of_log_id,
+      retry_count, retried_at, last_retry_status, last_retry_log_id, last_retry_error,
+      site_id, site_ids, attempted_by, attempted_by_name, attempted_at, completed_at,
+      request_config_id, request_module_key, request_transport, request_start_date,
+      request_end_date, request_location_id, request_category, source_name,
+      created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+      $21,$22,$23,$24,$25::text[],$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39
+    )`,
+    values(record) {
+      const requestPayload = rowJsonObject(record.request_payload);
+      const responseSummary = rowJsonObject(record.response_payload?.summary);
+      const appliedCount = toNumberOrZero(record.applied_count ?? responseSummary.applied_rows);
+      const skippedCount = toNumberOrZero(record.skipped_count ?? responseSummary.skipped_rows);
+      const failedCount = toNumberOrZero(record.failed_count ?? responseSummary.failed_rows);
+      return [
+        record.id,
+        record.config_id || null,
+        record.provider_name || null,
+        record.module_key || requestPayload.moduleKey || requestPayload.module_key || null,
+        record.operation || requestPayload.operation || null,
+        record.direction || null,
+        record.transport || requestPayload.transport || null,
+        record.status || 'pending',
+        record.message || null,
+        toNumberOrZero(record.records_count),
+        appliedCount,
+        skippedCount,
+        failedCount,
+        record.source_system || requestPayload.source_system || null,
+        record.sync_id || requestPayload.sync_id || null,
+        record.quantity_semantics || requestPayload.quantity_semantics || null,
+        record.received_at || requestPayload.received_at || null,
+        record.retry_of_log_id || null,
+        Math.max(0, Math.trunc(toNumberOrZero(record.retry_count))),
+        record.retried_at || null,
+        record.last_retry_status || null,
+        record.last_retry_log_id || null,
+        record.last_retry_error || null,
+        record.site_id || null,
+        normalizeTextArray(record.site_ids),
+        record.attempted_by || null,
+        record.attempted_by_name || null,
+        record.attempted_at || record.created_date || nowIso(),
+        record.completed_at || null,
+        requestPayload.configId || record.config_id || null,
+        requestPayload.moduleKey || record.module_key || null,
+        requestPayload.transport || record.transport || null,
+        toDateOnlyOrNull(requestPayload.startDate),
+        toDateOnlyOrNull(requestPayload.endDate),
+        requestPayload.locationId || null,
+        requestPayload.category || null,
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE erp_integration_logs SET
+      config_id = $2, provider_name = $3, module_key = $4, operation = $5,
+      direction = $6, transport = $7, status = $8, message = $9,
+      records_count = $10, applied_count = $11, skipped_count = $12,
+      failed_count = $13, source_system = $14, sync_id = $15,
+      quantity_semantics = $16, received_at = $17, retry_of_log_id = $18,
+      retry_count = $19, retried_at = $20, last_retry_status = $21,
+      last_retry_log_id = $22, last_retry_error = $23, site_id = $24,
+      site_ids = $25::text[], attempted_by = $26, attempted_by_name = $27,
+      attempted_at = $28, completed_at = $29, request_config_id = $30,
+      request_module_key = $31, request_transport = $32, request_start_date = $33,
+      request_end_date = $34, request_location_id = $35, request_category = $36,
+      source_name = $37, updated_at = $38
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 37), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('ERPIntegrationLog', record.id, {
+      request_payload: {
+        operation: record.request_payload?.operation || record.operation || null,
+        module_key: record.request_payload?.module_key || record.module_key || null,
+        source_system: record.request_payload?.source_system || record.source_system || null,
+        sync_id: record.request_payload?.sync_id || record.sync_id || null,
+        quantity_semantics: record.request_payload?.quantity_semantics || record.quantity_semantics || null,
+        received_at: record.request_payload?.received_at || record.received_at || null
+      },
+      request_records: rowJsonArray(record.request_payload?.records),
+      response_summary: record.response_payload?.summary || {},
+      response_rows: rowJsonArray(record.response_payload?.rows)
+    }, executor)
+  },
+  ForecastSnapshot: {
+    table: 'forecast_snapshots',
+    idColumn: 'id',
+    mapper: rowToForecastSnapshot,
+    select: `SELECT record.*, ${documentFieldRowsSelect('ForecastSnapshot', 'record')} FROM forecast_snapshots record`,
+    insertSql: `INSERT INTO forecast_snapshots (
+      id, scenario_id, scenario_name, site_id, site_name, start_date, end_date,
+      forecast_horizon_days, generated_by_id, generated_by_email, generated_at,
+      status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    values(record) {
+      return [
+        record.id,
+        record.scenario_id || null,
+        record.scenario_name || null,
+        record.site_id || null,
+        record.site_name || null,
+        toDateOnlyOrNull(record.start_date),
+        toDateOnlyOrNull(record.end_date),
+        Math.max(1, Math.trunc(toNumberOrZero(record.forecast_horizon_days) || 7)),
+        record.generated_by_id || null,
+        record.generated_by_email || null,
+        record.generated_at || record.created_date || nowIso(),
+        record.status || 'ready',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE forecast_snapshots SET
+      scenario_id = $2, scenario_name = $3, site_id = $4, site_name = $5,
+      start_date = $6, end_date = $7, forecast_horizon_days = $8,
+      generated_by_id = $9, generated_by_email = $10, generated_at = $11,
+      status = $12, source_name = $13, updated_at = $14
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 13), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('ForecastSnapshot', record.id, {
+      forecast_rows: rowJsonArray(record.forecast_rows),
+      summary: record.summary || {},
+      chart: rowJsonArray(record.chart),
+      inventory_coverage: rowJsonArray(record.inventory_coverage)
+    }, executor)
+  },
+  BranchOrder: {
+    table: 'branch_orders',
+    idColumn: 'id',
+    mapper: rowToBranchOrder,
+    select: `SELECT record.*, ${documentFieldRowsSelect('BranchOrder', 'record')} FROM branch_orders record`,
+    insertSql: `INSERT INTO branch_orders (
+      id, order_number, branch_id, branch_name, site_id, site_name,
+      order_date, required_date, priority, notes, approved_by, approved_at,
+      status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+    values(record) {
+      return [
+        record.id,
+        record.order_number || null,
+        record.branch_id || record.site_id || null,
+        record.branch_name || record.site_name || null,
+        record.site_id || record.branch_id || null,
+        record.site_name || record.branch_name || null,
+        record.order_date || record.created_date || nowIso(),
+        toDateOnlyOrNull(record.required_date),
+        record.priority || 'medium',
+        record.notes || null,
+        record.approved_by || null,
+        record.approved_at || null,
+        record.status || 'draft',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE branch_orders SET
+      order_number = $2, branch_id = $3, branch_name = $4, site_id = $5,
+      site_name = $6, order_date = $7, required_date = $8, priority = $9,
+      notes = $10, approved_by = $11, approved_at = $12, status = $13,
+      source_name = $14, updated_at = $15
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 14), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('BranchOrder', record.id, {
+      items: rowJsonArray(record.items)
+    }, executor)
+  },
+  MaterialRequest: {
+    table: 'material_requests',
+    idColumn: 'id',
+    mapper: rowToMaterialRequest,
+    select: `SELECT request.*,
+                    COALESCE(item_rows.items, '[]'::jsonb) AS items
+               FROM material_requests request
+               LEFT JOIN (
+                 SELECT item.material_request_id,
+                        jsonb_agg(jsonb_build_object(
+                          'id', item.id,
+                          'ingredient_id', item.ingredient_id,
+                          'item_code', item.item_code,
+                          'ingredient_name', item.ingredient_name,
+                          'required_quantity', item.required_quantity,
+                          'current_stock', item.current_stock,
+                          'shortage_quantity', item.shortage_quantity,
+                          'request_quantity', item.request_quantity,
+                          'unit', item.unit,
+                          'estimated_cost', item.estimated_cost,
+                          'live_reservable_quantity', item.live_reservable_quantity,
+                          'live_shortage_quantity', item.live_shortage_quantity,
+                          'source_line_count', item.source_line_count,
+                          'validation_status', item.validation_status,
+                          'repairable_issue_count', item.repairable_issue_count,
+                          'validation_issues', COALESCE(issue_rows.issues, '[]'::jsonb)
+                        ) ORDER BY item.sort_order, item.id) AS items
+                   FROM material_request_items item
+                   LEFT JOIN (
+                     SELECT material_request_item_id,
+                            jsonb_agg(jsonb_build_object(
+                              'code', code,
+                              'message', message,
+                              'severity', severity,
+                              'repairable', repairable
+                            ) ORDER BY sort_order, id) AS issues
+                       FROM material_request_item_issues
+                      GROUP BY material_request_item_id
+                   ) issue_rows ON issue_rows.material_request_item_id = item.id
+                  GROUP BY item.material_request_id
+               ) item_rows ON item_rows.material_request_id = request.id`,
+    insertSql: `INSERT INTO material_requests (
+      id, request_number, site_id, site_name, requesting_site_id, requesting_site_name,
+      fulfillment_store_id, fulfillment_store_name, request_date, period_start, period_end,
+      total_estimated_cost, source_type, source_production_id, source_production_name,
+      created_by, created_by_name, acknowledged_by, acknowledged_by_name, acknowledged_at,
+      procurement_notes, notes, status, source_name, created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
+    )`,
+    values(record) {
+      return [
+        record.id,
+        record.request_number || null,
+        record.site_id || null,
+        record.site_name || null,
+        record.requesting_site_id || null,
+        record.requesting_site_name || null,
+        record.fulfillment_store_id || null,
+        record.fulfillment_store_name || null,
+        toDateOnlyOrNull(record.request_date) || dateOnlyOffset(0),
+        toDateOnlyOrNull(record.period_start),
+        toDateOnlyOrNull(record.period_end),
+        toNumberOrZero(record.total_estimated_cost),
+        record.source_type || 'manual',
+        record.source_production_id || null,
+        record.source_production_name || null,
+        record.created_by || null,
+        record.created_by_name || null,
+        record.acknowledged_by || null,
+        record.acknowledged_by_name || null,
+        record.acknowledged_at || null,
+        record.procurement_notes || null,
+        record.notes || null,
+        record.status || 'pending_procurement_ack',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE material_requests SET
+      request_number = $2, site_id = $3, site_name = $4,
+      requesting_site_id = $5, requesting_site_name = $6,
+      fulfillment_store_id = $7, fulfillment_store_name = $8,
+      request_date = $9, period_start = $10, period_end = $11,
+      total_estimated_cost = $12, source_type = $13,
+      source_production_id = $14, source_production_name = $15,
+      created_by = $16, created_by_name = $17, acknowledged_by = $18,
+      acknowledged_by_name = $19, acknowledged_at = $20,
+      procurement_notes = $21, notes = $22, status = $23,
+      source_name = $24, updated_at = $25
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 24), record.updated_date || nowIso()];
+    },
+    afterSave: replaceMaterialRequestItems
+  },
+  MenuPlanPRSchedule: {
+    table: 'menu_plan_pr_schedules',
+    idColumn: 'id',
+    mapper: rowToMenuPlanPRSchedule,
+    select: 'SELECT * FROM menu_plan_pr_schedules',
+    insertSql: `INSERT INTO menu_plan_pr_schedules (
+      id, site_id, site_name, is_active, cycle_days, preferred_weekday,
+      notes, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    values(record) {
+      const isActive = record.is_active !== false;
+      return [
+        record.id,
+        record.site_id || null,
+        record.site_name || null,
+        isActive,
+        Math.max(1, Math.trunc(toNumberOrZero(record.cycle_days) || 7)),
+        record.preferred_weekday || 'thursday',
+        record.notes || null,
+        record.status || (isActive ? 'active' : 'inactive'),
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE menu_plan_pr_schedules SET
+      site_id = $2, site_name = $3, is_active = $4,
+      cycle_days = $5, preferred_weekday = $6, notes = $7,
+      status = $8, source_name = $9, updated_at = $10
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 9), record.updated_date || nowIso()];
+    }
+  },
+  MenuPlanPRRun: {
+    table: 'menu_plan_pr_runs',
+    idColumn: 'id',
+    mapper: rowToMenuPlanPRRun,
+    select: `SELECT record.*, ${documentFieldRowsSelect('MenuPlanPRRun', 'record')} FROM menu_plan_pr_runs record`,
+    insertSql: `INSERT INTO menu_plan_pr_runs (
+      id, site_id, site_name, cycle_start, cycle_end, preferred_run_date,
+      requested_run_date, cycle_days, preferred_weekday, trigger_type,
+      generated_pr_id, generated_pr_number, generated_request_id,
+      generated_request_number, generated_item_count, total_estimated_cost,
+      notes, status, source_name, created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+    )`,
+    values(record) {
+      return [
+        record.id,
+        record.site_id || null,
+        record.site_name || null,
+        toDateOnlyOrNull(record.cycle_start),
+        toDateOnlyOrNull(record.cycle_end),
+        toDateOnlyOrNull(record.preferred_run_date),
+        toDateOnlyOrNull(record.requested_run_date),
+        Math.max(1, Math.trunc(toNumberOrZero(record.cycle_days) || 7)),
+        record.preferred_weekday || null,
+        record.trigger_type || 'manual',
+        record.generated_pr_id || null,
+        record.generated_pr_number || null,
+        record.generated_request_id || null,
+        record.generated_request_number || null,
+        Math.max(0, Math.trunc(toNumberOrZero(record.generated_item_count))),
+        toNumberOrZero(record.total_estimated_cost),
+        record.notes || null,
+        record.status || 'pending',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE menu_plan_pr_runs SET
+      site_id = $2, site_name = $3, cycle_start = $4,
+      cycle_end = $5, preferred_run_date = $6, requested_run_date = $7,
+      cycle_days = $8, preferred_weekday = $9, trigger_type = $10,
+      generated_pr_id = $11, generated_pr_number = $12,
+      generated_request_id = $13, generated_request_number = $14,
+      generated_item_count = $15, total_estimated_cost = $16,
+      notes = $17, status = $18, source_name = $19, updated_at = $20
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 19), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('MenuPlanPRRun', record.id, {
+      missing_recipe_ids: rowJsonArray(record.missing_recipe_ids),
+      missing_ingredient_ids: rowJsonArray(record.missing_ingredient_ids)
+    }, executor)
+  },
+  ProductionBatch: {
+    table: 'production_batches',
+    idColumn: 'id',
+    mapper: rowToProductionBatch,
+    select: `SELECT record.*, ${documentFieldRowsSelect('ProductionBatch', 'record')} FROM production_batches record`,
+    insertSql: `INSERT INTO production_batches (
+      id, batch_number, production_id, recipe_id, recipe_name, site_id,
+      site_name, meal_type, quantity, unit, production_date, expiry_date,
+      process_stage, qc_status, packaging_status, notes, status,
+      source_name, created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+    )`,
+    values(record) {
+      return [
+        record.id,
+        record.batch_number || null,
+        record.production_id || null,
+        record.recipe_id || null,
+        record.recipe_name || null,
+        record.site_id || null,
+        record.site_name || null,
+        record.meal_type || null,
+        toNumberOrZero(record.quantity),
+        record.unit || 'servings',
+        toDateOnlyOrNull(record.production_date),
+        toDateOnlyOrNull(record.expiry_date),
+        record.process_stage || 'cleaning',
+        record.qc_status || 'pending',
+        record.packaging_status || 'pending',
+        record.notes || null,
+        record.status || 'planned',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE production_batches SET
+      batch_number = $2, production_id = $3, recipe_id = $4,
+      recipe_name = $5, site_id = $6, site_name = $7, meal_type = $8,
+      quantity = $9, unit = $10, production_date = $11, expiry_date = $12,
+      process_stage = $13, qc_status = $14, packaging_status = $15,
+      notes = $16, status = $17, source_name = $18, updated_at = $19
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 18), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('ProductionBatch', record.id, {
+      process_logs: rowJsonArray(record.process_logs)
+    }, executor)
+  },
+  ProductionTransfer: {
+    table: 'production_transfers',
+    idColumn: 'id',
+    mapper: rowToProductionTransfer,
+    select: `SELECT record.*, ${documentFieldRowsSelect('ProductionTransfer', 'record')} FROM production_transfers record`,
+    insertSql: `INSERT INTO production_transfers (
+      id, transfer_number, from_site_id, from_site_name, to_site_id,
+      to_site_name, site_id, transfer_date, transfer_type, requested_by,
+      received_by, notes, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+    values(record) {
+      const fromSiteId = record.from_site_id || record.site_id || null;
+      return [
+        record.id,
+        record.transfer_number || null,
+        fromSiteId,
+        record.from_site_name || null,
+        record.to_site_id || null,
+        record.to_site_name || null,
+        record.site_id || fromSiteId,
+        toDateOnlyOrNull(record.transfer_date),
+        record.transfer_type || 'inventory',
+        record.requested_by || null,
+        record.received_by || null,
+        record.notes || null,
+        record.status || 'draft',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE production_transfers SET
+      transfer_number = $2, from_site_id = $3, from_site_name = $4,
+      to_site_id = $5, to_site_name = $6, site_id = $7,
+      transfer_date = $8, transfer_type = $9, requested_by = $10,
+      received_by = $11, notes = $12, status = $13,
+      source_name = $14, updated_at = $15
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 14), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('ProductionTransfer', record.id, {
+      items: rowJsonArray(record.items)
+    }, executor)
+  },
+  PurchaseOrder: {
+    table: 'purchase_order_documents',
+    idColumn: 'id',
+    mapper: rowToPurchaseOrder,
+    select: `SELECT record.*, ${documentFieldRowsSelect('PurchaseOrder', 'record')} FROM purchase_order_documents record`,
+    insertSql: `INSERT INTO purchase_order_documents (
+      id, po_number, order_number, supplier_id, supplier_name, site_id,
+      site_name, order_date, expected_delivery_date, total_amount,
+      notes, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    values(record) {
+      const orderNumber = record.order_number || record.po_number || null;
+      return [
+        record.id,
+        record.po_number || orderNumber,
+        orderNumber,
+        record.supplier_id || null,
+        record.supplier_name || null,
+        record.site_id || null,
+        record.site_name || null,
+        toDateOnlyOrNull(record.order_date) || dateOnlyOffset(0),
+        toDateOnlyOrNull(record.expected_delivery_date),
+        toNumberOrZero(record.total_amount),
+        record.notes || null,
+        record.status || 'draft',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE purchase_order_documents SET
+      po_number = $2, order_number = $3, supplier_id = $4,
+      supplier_name = $5, site_id = $6, site_name = $7,
+      order_date = $8, expected_delivery_date = $9, total_amount = $10,
+      notes = $11, status = $12, source_name = $13, updated_at = $14
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 13), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('PurchaseOrder', record.id, {
+      items: rowJsonArray(record.items)
+    }, executor)
+  },
+  QualityControl: {
+    table: 'quality_controls',
+    idColumn: 'id',
+    mapper: rowToQualityControl,
+    select: `SELECT record.*, ${documentFieldRowsSelect('QualityControl', 'record')} FROM quality_controls record`,
+    insertSql: `INSERT INTO quality_controls (
+      id, batch_id, batch_number, production_id, recipe_id, recipe_name,
+      site_id, site_name, inspection_date, inspector_name, overall_status,
+      approval_notes, approved_by, approved_at, status, source_name,
+      created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+    )`,
+    values(record) {
+      return [
+        record.id,
+        record.batch_id || null,
+        record.batch_number || null,
+        record.production_id || null,
+        record.recipe_id || null,
+        record.recipe_name || null,
+        record.site_id || null,
+        record.site_name || null,
+        record.inspection_date || record.created_date || nowIso(),
+        record.inspector_name || null,
+        record.overall_status || null,
+        record.approval_notes || null,
+        record.approved_by || null,
+        record.approved_at || null,
+        record.status || 'pending',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE quality_controls SET
+      batch_id = $2, batch_number = $3, production_id = $4,
+      recipe_id = $5, recipe_name = $6, site_id = $7,
+      site_name = $8, inspection_date = $9, inspector_name = $10,
+      overall_status = $11, approval_notes = $12, approved_by = $13,
+      approved_at = $14, status = $15, source_name = $16,
+      updated_at = $17
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 16), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('QualityControl', record.id, {
+      temperature_logs: rowJsonArray(record.temperature_logs),
+      hygiene_checklist: rowJsonArray(record.hygiene_checklist),
+      quality_checklist: rowJsonArray(record.quality_checklist)
+    }, executor)
+  },
+  RFQ: {
+    table: 'rfqs',
+    idColumn: 'id',
+    mapper: rowToRFQ,
+    select: `SELECT record.*, ${documentFieldRowsSelect('RFQ', 'record')} FROM rfqs record`,
+    insertSql: `INSERT INTO rfqs (
+      id, rfq_number, issue_date, response_deadline, notes,
+      status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    values(record) {
+      return [
+        record.id,
+        record.rfq_number || null,
+        toDateOnlyOrNull(record.issue_date) || dateOnlyOffset(0),
+        toDateOnlyOrNull(record.response_deadline),
+        record.notes || null,
+        record.status || 'draft',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE rfqs SET
+      rfq_number = $2, issue_date = $3, response_deadline = $4,
+      notes = $5, status = $6, source_name = $7, updated_at = $8
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 7), record.updated_date || nowIso()];
+    },
+    afterSave: (record, executor) => replaceDocumentCollections('RFQ', record.id, {
+      suppliers: rowJsonArray(record.suppliers),
+      items: rowJsonArray(record.items)
+    }, executor)
+  },
+  AttendanceSession: {
+    table: 'attendance_sessions',
+    idColumn: 'id',
+    mapper: rowToAttendanceSession,
+    select: 'SELECT * FROM attendance_sessions',
+    insertSql: `INSERT INTO attendance_sessions (
+      id, session_name, title, site_id, site_name, meal_type, session_date,
+      start_time, end_time, qr_token, qr_expiry, expected_labor,
+      expected_junior, expected_senior, actual_labor, actual_junior,
+      actual_senior, validity_minutes, notes, status, source_name,
+      created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+    )`,
+    values(record) {
+      return [
+        record.id,
+        record.session_name || record.title || 'Attendance Session',
+        record.title || record.session_name || 'Attendance Session',
+        record.site_id || null,
+        record.site_name || null,
+        record.meal_type || null,
+        toDateOnlyOrNull(record.session_date),
+        record.start_time || null,
+        record.end_time || null,
+        record.qr_token || null,
+        record.qr_expiry || null,
+        toNumberOrZero(record.expected_labor),
+        toNumberOrZero(record.expected_junior),
+        toNumberOrZero(record.expected_senior),
+        toNumberOrZero(record.actual_labor),
+        toNumberOrZero(record.actual_junior),
+        toNumberOrZero(record.actual_senior),
+        Math.max(0, Math.trunc(toNumberOrZero(record.validity_minutes))),
+        record.notes || null,
+        record.status || 'active',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE attendance_sessions SET
+      session_name = $2, title = $3, site_id = $4, site_name = $5,
+      meal_type = $6, session_date = $7, start_time = $8, end_time = $9,
+      qr_token = $10, qr_expiry = $11, expected_labor = $12,
+      expected_junior = $13, expected_senior = $14, actual_labor = $15,
+      actual_junior = $16, actual_senior = $17, validity_minutes = $18,
+      notes = $19, status = $20, source_name = $21, updated_at = $22
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 21), record.updated_date || nowIso()];
+    }
+  },
+  CategoryQRSession: {
+    table: 'category_qr_sessions',
+    idColumn: 'id',
+    mapper: rowToCategoryQRSession,
+    select: `SELECT session.*,
+                    COALESCE(category_rows.categories, '[]'::jsonb) AS categories
+               FROM category_qr_sessions session
+               LEFT JOIN (
+                 SELECT session_id,
+                        jsonb_agg(jsonb_build_object(
+                          'category', category,
+                          'label', label,
+                          'token', token,
+                          'scan_count', scan_count
+                        ) ORDER BY sort_order, id) AS categories
+                   FROM category_qr_session_categories
+                  GROUP BY session_id
+               ) category_rows ON category_rows.session_id = session.id`,
+    insertSql: `INSERT INTO category_qr_sessions (
+      id, title, site_id, site_name, session_date, from_date, to_date,
+      start_time, end_time, notes, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    values(record) {
+      const sessionDate = toDateOnlyOrNull(record.session_date || record.from_date || record.date);
+      return [
+        record.id,
+        record.title || 'Category QR Session',
+        record.site_id || null,
+        record.site_name || null,
+        sessionDate,
+        toDateOnlyOrNull(record.from_date || sessionDate),
+        toDateOnlyOrNull(record.to_date || sessionDate),
+        record.start_time || null,
+        record.end_time || null,
+        record.notes || null,
+        record.status || 'active',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE category_qr_sessions SET
+      title = $2, site_id = $3, site_name = $4, session_date = $5,
+      from_date = $6, to_date = $7, start_time = $8, end_time = $9,
+      notes = $10, status = $11, source_name = $12, updated_at = $13
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 12), record.updated_date || nowIso()];
+    },
+    afterSave: replaceCategoryQRSessionCategories
+  },
+  DinerScan: {
+    table: 'diner_scans',
+    idColumn: 'id',
+    mapper: rowToDinerScan,
+    select: 'SELECT * FROM diner_scans',
+    insertSql: `INSERT INTO diner_scans (
+      id, event_id, event_name, event_qr_token, site_id, site_name,
+      plan_date, meal_type, guest_token, scan_method, scanned_at,
+      status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    values(record) {
+      return [
+        record.id,
+        record.event_id || null,
+        record.event_name || null,
+        record.event_qr_token || null,
+        record.site_id || null,
+        record.site_name || null,
+        toDateOnlyOrNull(record.plan_date),
+        record.meal_type || null,
+        record.guest_token || null,
+        record.scan_method || null,
+        record.scanned_at || record.created_date || nowIso(),
+        record.status || 'scanned',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE diner_scans SET
+      event_id = $2, event_name = $3, event_qr_token = $4, site_id = $5,
+      site_name = $6, plan_date = $7, meal_type = $8, guest_token = $9,
+      scan_method = $10, scanned_at = $11, status = $12,
+      source_name = $13, updated_at = $14
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 13), record.updated_date || nowIso()];
+    }
+  },
+  CustomerMealPlan: {
+    table: 'customer_meal_plans',
+    idColumn: 'id',
+    mapper: rowToCustomerMealPlan,
+    select: `SELECT plan.*,
+                    COALESCE(meal_rows.meals, '[]'::jsonb) AS meals
+               FROM customer_meal_plans plan
+               LEFT JOIN (
+                 SELECT customer_meal_plan_id,
+                        jsonb_agg(jsonb_build_object(
+                          'recipe_id', recipe_id,
+                          'recipe_name', recipe_name,
+                          'meal_type', meal_type,
+                          'portions', portions,
+                          'servings_per_attendee', servings_per_attendee
+                        ) ORDER BY sort_order, id) AS meals
+                   FROM customer_meal_plan_meals
+                  GROUP BY customer_meal_plan_id
+               ) meal_rows ON meal_rows.customer_meal_plan_id = plan.id`,
+    insertSql: `INSERT INTO customer_meal_plans (
+      id, name, site_id, site_name, plan_date, customer_id, customer_name,
+      notes, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    values(record) {
+      return [
+        record.id,
+        record.name || 'Customer Meal Plan',
+        record.site_id || null,
+        record.site_name || null,
+        toDateOnlyOrNull(record.plan_date),
+        record.customer_id || null,
+        record.customer_name || null,
+        record.notes || null,
+        record.status || 'draft',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE customer_meal_plans SET
+      name = $2, site_id = $3, site_name = $4, plan_date = $5,
+      customer_id = $6, customer_name = $7, notes = $8, status = $9,
+      source_name = $10, updated_at = $11
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 10), record.updated_date || nowIso()];
+    },
+    afterSave: replaceCustomerMealPlanMeals
+  },
+  QRCode: {
+    table: 'qr_codes',
+    idColumn: 'id',
+    mapper: rowToQRCode,
+    select: `SELECT qr_code.*,
+                    COALESCE(window_rows.meal_windows, '[]'::jsonb) AS meal_windows,
+                    COALESCE(history_rows.scan_history, '[]'::jsonb) AS scan_history
+               FROM qr_codes qr_code
+               LEFT JOIN (
+                 SELECT qr_code_id,
+                        jsonb_agg(jsonb_build_object(
+                          'meal_type', meal_type,
+                          'label', label,
+                          'start_time', start_time,
+                          'end_time', end_time
+                        ) ORDER BY sort_order, id) AS meal_windows
+                   FROM qr_code_meal_windows
+                  GROUP BY qr_code_id
+               ) window_rows ON window_rows.qr_code_id = qr_code.id
+               LEFT JOIN (
+                 SELECT qr_code_id,
+                        jsonb_agg(jsonb_build_object(
+                          'scan_key', scan_key,
+                          'attendance_record_id', attendance_record_id,
+                          'meal_type', meal_type,
+                          'session_date', session_date,
+                          'site_id', site_id,
+                          'menu_type', menu_type,
+                          'menu_category', menu_category,
+                          'scanned_at', scanned_at,
+                          'scanned_by', scanned_by
+                        ) ORDER BY sort_order, id) AS scan_history
+                   FROM qr_code_scan_history
+                  GROUP BY qr_code_id
+               ) history_rows ON history_rows.qr_code_id = qr_code.id`,
+    insertSql: `INSERT INTO qr_codes (
+      id, title, name, category, description, token, linked_item,
+      is_one_time, max_scans, scan_count, expiry_date, last_scanned_at,
+      employee_name, company_id_number, mobile_number, active_whatsapp,
+      created_by, created_by_name, status, source_name, created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
+    )`,
+    values(record) {
+      const title = record.title || record.name || record.employee_name || 'QR Code';
+      return [
+        record.id,
+        title,
+        record.name || title,
+        record.category || null,
+        record.description || null,
+        record.token || null,
+        record.linked_item || null,
+        record.is_one_time === true || record.one_time === true,
+        Math.max(0, Math.trunc(toNumberOrZero(record.max_scans))),
+        Math.max(0, Math.trunc(toNumberOrZero(record.scan_count))),
+        record.expiry_date || record.exp || null,
+        record.last_scanned_at || null,
+        record.employee_name || null,
+        record.company_id_number || null,
+        record.mobile_number || null,
+        record.active_whatsapp === true,
+        record.created_by || null,
+        record.created_by_name || null,
+        record.status || 'active',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE qr_codes SET
+      title = $2, name = $3, category = $4, description = $5,
+      token = $6, linked_item = $7, is_one_time = $8, max_scans = $9,
+      scan_count = $10, expiry_date = $11, last_scanned_at = $12,
+      employee_name = $13, company_id_number = $14, mobile_number = $15,
+      active_whatsapp = $16, created_by = $17, created_by_name = $18,
+      status = $19, source_name = $20, updated_at = $21
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 20), record.updated_date || nowIso()];
+    },
+    afterSave: async (record, executor) => {
+      await replaceQRCodeMealWindows(record, executor);
+      await replaceQRCodeScanHistory(record, executor);
+    }
+  },
+  QRDelivery: {
+    table: 'qr_deliveries',
+    idColumn: 'id',
+    mapper: rowToQRDelivery,
+    select: `SELECT delivery.*,
+                    COALESCE(recipient_rows.recipients, '[]'::jsonb) AS recipients,
+                    COALESCE(group_rows.group_ids, ARRAY[]::text[]) AS group_ids
+               FROM qr_deliveries delivery
+               LEFT JOIN (
+                 SELECT qr_delivery_id,
+                        jsonb_agg(jsonb_build_object(
+                          'name', name,
+                          'email', email,
+                          'phone', phone,
+                          'category', category,
+                          'status', status
+                        ) ORDER BY sort_order, id) AS recipients
+                   FROM qr_delivery_recipients
+                  GROUP BY qr_delivery_id
+               ) recipient_rows ON recipient_rows.qr_delivery_id = delivery.id
+               LEFT JOIN (
+                 SELECT qr_delivery_id,
+                        ARRAY_AGG(group_id ORDER BY sort_order, id) AS group_ids
+                   FROM qr_delivery_groups
+                  GROUP BY qr_delivery_id
+               ) group_rows ON group_rows.qr_delivery_id = delivery.id`,
+    insertSql: `INSERT INTO qr_deliveries (
+      id, qr_code_id, qr_code_title, qr_token, delivery_method, subject,
+      message, scheduled_at, sent_at, sent_count, failed_count, status,
+      source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    values(record) {
+      return [
+        record.id,
+        record.qr_code_id || null,
+        record.qr_code_title || null,
+        record.qr_token || null,
+        record.delivery_method || 'email',
+        record.subject || null,
+        record.message || null,
+        record.scheduled_at || null,
+        record.sent_at || null,
+        Math.max(0, Math.trunc(toNumberOrZero(record.sent_count))),
+        Math.max(0, Math.trunc(toNumberOrZero(record.failed_count))),
+        record.status || 'pending',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE qr_deliveries SET
+      qr_code_id = $2, qr_code_title = $3, qr_token = $4,
+      delivery_method = $5, subject = $6, message = $7,
+      scheduled_at = $8, sent_at = $9, sent_count = $10,
+      failed_count = $11, status = $12, source_name = $13,
+      updated_at = $14
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 13), record.updated_date || nowIso()];
+    },
+    afterSave: replaceQRDeliveryRecipients
+  },
+  UserGroup: {
+    table: 'user_groups',
+    idColumn: 'id',
+    mapper: rowToUserGroup,
+    select: `SELECT group_record.*,
+                    COALESCE(member_rows.members, '[]'::jsonb) AS members
+               FROM user_groups group_record
+               LEFT JOIN (
+                 SELECT user_group_id,
+                        jsonb_agg(jsonb_build_object(
+                          'name', name,
+                          'email', email,
+                          'phone', phone,
+                          'category', category,
+                          'status', status
+                        ) ORDER BY sort_order, id) AS members
+                   FROM user_group_members
+                  GROUP BY user_group_id
+               ) member_rows ON member_rows.user_group_id = group_record.id`,
+    insertSql: `INSERT INTO user_groups (
+      id, name, description, total_members, status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    values(record) {
+      const members = rowJsonArray(record.members);
+      return [
+        record.id,
+        record.name || 'User Group',
+        record.description || null,
+        Math.max(0, Math.trunc(toNumberOrZero(record.total_members) || members.length)),
+        record.status || 'active',
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE user_groups SET
+      name = $2, description = $3, total_members = $4, status = $5,
+      source_name = $6, updated_at = $7
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 6), record.updated_date || nowIso()];
+    },
+    afterSave: replaceUserGroupMembers
+  },
+  AttendanceRecord: {
+    table: 'attendance_records',
+    idColumn: 'id',
+    mapper: rowToAttendanceRecord,
+    select: 'SELECT * FROM attendance_records',
+    insertSql: `INSERT INTO attendance_records (
+      id, shift_id, session_id, session_name, site_id, site_name, shift_date,
+      attendance_date, session_date, service_date, meal_type, menu_type, menu_category,
+      employee_id, employee_name, attendee_id, attendee_name, attendee_phone,
+      category, check_in, check_out, check_in_at, check_out_at, marked_at,
+      scan_method, qr_code_id, scanned_by, scanned_by_name, attendance_status,
+      approval_status, status, notes, source_name, created_at, updated_at
+    ) VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+      $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35
+    )`,
+    values(record) {
+      const markedAt = record.marked_at || record.check_in_at || record.created_date || nowIso();
+      const attendanceDate = toDateOnlyOrNull(
+        record.attendance_date
+        || record.session_date
+        || record.service_date
+        || record.shift_date
+        || markedAt
+      );
+      const attendeeId = record.attendee_id || record.employee_id || null;
+      const attendeeName = record.attendee_name || record.employee_name || null;
+      return [
+        record.id,
+        record.shift_id || null,
+        record.session_id || null,
+        record.session_name || null,
+        record.site_id || null,
+        record.site_name || null,
+        toDateOnlyOrNull(record.shift_date),
+        attendanceDate,
+        toDateOnlyOrNull(record.session_date || attendanceDate),
+        toDateOnlyOrNull(record.service_date),
+        record.meal_type || null,
+        record.menu_type || null,
+        record.menu_category || null,
+        attendeeId,
+        attendeeName,
+        attendeeId,
+        attendeeName,
+        record.attendee_phone || null,
+        record.category || null,
+        record.check_in || null,
+        record.check_out || null,
+        record.check_in_at || null,
+        record.check_out_at || null,
+        markedAt,
+        record.scan_method || null,
+        record.qr_code_id || null,
+        record.scanned_by || null,
+        record.scanned_by_name || null,
+        record.attendance_status || 'present',
+        record.approval_status || 'pending',
+        record.status || 'checked_in',
+        record.notes || null,
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE attendance_records SET
+      shift_id = $2, session_id = $3, session_name = $4, site_id = $5,
+      site_name = $6, shift_date = $7, attendance_date = $8,
+      session_date = $9, service_date = $10, meal_type = $11, menu_type = $12,
+      menu_category = $13, employee_id = $14, employee_name = $15,
+      attendee_id = $16, attendee_name = $17, attendee_phone = $18,
+      category = $19, check_in = $20, check_out = $21, check_in_at = $22,
+      check_out_at = $23, marked_at = $24, scan_method = $25,
+      qr_code_id = $26, scanned_by = $27, scanned_by_name = $28,
+      attendance_status = $29, approval_status = $30, status = $31,
+      notes = $32, source_name = $33, updated_at = $34
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 33), record.updated_date || nowIso()];
+    }
+  },
+  StaffShift: {
+    table: 'staff_shifts',
+    idColumn: 'id',
+    mapper: rowToStaffShift,
+    select: 'SELECT * FROM staff_shifts',
+    insertSql: `INSERT INTO staff_shifts (
+      id, site_id, site_name, shift_date, employee_id, employee_name,
+      role, category, shift_type, start_time, end_time, break_minutes,
+      approval_status, status, notes, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+    values(record) {
+      return [
+        record.id,
+        record.site_id || null,
+        record.site_name || null,
+        toDateOnlyOrNull(record.shift_date),
+        record.employee_id || null,
+        record.employee_name || null,
+        record.role || null,
+        record.category || null,
+        record.shift_type || null,
+        record.start_time || null,
+        record.end_time || null,
+        Math.max(0, Math.trunc(toNumberOrZero(record.break_minutes) || 60)),
+        record.approval_status || 'pending',
+        record.status || 'scheduled',
+        record.notes || null,
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE staff_shifts SET
+      site_id = $2, site_name = $3, shift_date = $4, employee_id = $5,
+      employee_name = $6, role = $7, category = $8, shift_type = $9,
+      start_time = $10, end_time = $11, break_minutes = $12,
+      approval_status = $13, status = $14, notes = $15, source_name = $16,
+      updated_at = $17
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 16), record.updated_date || nowIso()];
+    }
+  },
+  D365Master: {
+    table: 'd365_masters',
+    idColumn: 'id',
+    mapper: rowToD365Master,
+    select: 'SELECT * FROM d365_masters',
+    insertSql: `INSERT INTO d365_masters (
+      id, status, source_system, module_key, sync_id, idempotency_key,
+      site_id, site_name, ingredient_id, ingredient_name, d365_item_id,
+      d365_warehouse_id, integration_log_id, processed_at, source_name,
+      created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+    values(record) {
+      const createdAt = record.created_date || nowIso();
+      return [
+        record.id,
+        record.status || 'synced',
+        record.source_system || null,
+        record.module_key || null,
+        record.sync_id || null,
+        record.idempotency_key || null,
+        record.site_id || null,
+        record.site_name || null,
+        record.ingredient_id || null,
+        record.ingredient_name || null,
+        record.d365_item_id || null,
+        record.d365_warehouse_id || null,
+        record.integration_log_id || null,
+        record.processed_at || createdAt,
+        record.source_name || null,
+        createdAt,
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE d365_masters SET
+      status = $2, source_system = $3, module_key = $4, sync_id = $5,
+      idempotency_key = $6, site_id = $7, site_name = $8, ingredient_id = $9,
+      ingredient_name = $10, d365_item_id = $11, d365_warehouse_id = $12,
+      integration_log_id = $13, processed_at = $14, source_name = $15,
+      updated_at = $16
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 15), record.updated_date || nowIso()];
+    }
+  },
+  ForecastScenario: {
+    table: 'forecast_scenarios',
+    idColumn: 'id',
+    mapper: rowToForecastScenario,
+    select: 'SELECT * FROM forecast_scenarios',
+    insertSql: `INSERT INTO forecast_scenarios (
+      id, name, location_id, location_name, site_id, site_name, category,
+      status_filter, start_date, end_date, forecast_horizon_days,
+      safety_buffer_percent, model_type, status, notes, last_run_date,
+      latest_snapshot_id, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+    values(record) {
+      const locationId = record.location_id || record.site_id || null;
+      return [
+        record.id,
+        record.name || 'Forecast Scenario',
+        locationId,
+        record.location_name || record.site_name || null,
+        record.site_id || locationId,
+        record.site_name || record.location_name || null,
+        record.category || 'all',
+        record.status_filter || 'all',
+        toDateOnlyOrNull(record.start_date),
+        toDateOnlyOrNull(record.end_date),
+        Math.max(1, Math.trunc(toNumberOrZero(record.forecast_horizon_days) || 7)),
+        toNumberOrZero(record.safety_buffer_percent || 10),
+        record.model_type || 'blended_average',
+        record.status || 'draft',
+        record.notes || '',
+        record.last_run_date || null,
+        record.latest_snapshot_id || null,
+        record.source_name || null,
+        record.created_date || nowIso(),
+        record.updated_date || nowIso()
+      ];
+    },
+    updateSql: `UPDATE forecast_scenarios SET
+      name = $2, location_id = $3, location_name = $4, site_id = $5,
+      site_name = $6, category = $7, status_filter = $8, start_date = $9,
+      end_date = $10, forecast_horizon_days = $11, safety_buffer_percent = $12,
+      model_type = $13, status = $14, notes = $15, last_run_date = $16,
+      latest_snapshot_id = $17, source_name = $18, updated_at = $19
+      WHERE id = $1`,
+    updateValues(record) {
+      const values = this.values(record);
+      return [values[0], ...values.slice(1, 18), record.updated_date || nowIso()];
+    }
+  },
   WasteDetectionLog: {
     table: 'waste_detection_logs',
     idColumn: 'id',
@@ -3344,6 +5600,380 @@ function normalizedSqlColumnForField(entity, field) {
       detection_method: 'detection_method',
       detected_by: 'detected_by',
       detected_at: 'detected_at',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    D365Master: {
+      status: 'status',
+      source_system: 'source_system',
+      module_key: 'module_key',
+      sync_id: 'sync_id',
+      idempotency_key: 'idempotency_key',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      ingredient_id: 'ingredient_id',
+      ingredient_name: 'ingredient_name',
+      d365_item_id: 'd365_item_id',
+      d365_warehouse_id: 'd365_warehouse_id',
+      integration_log_id: 'integration_log_id',
+      processed_at: 'processed_at',
+      source_name: 'source_name'
+    },
+    ForecastScenario: {
+      name: 'name',
+      location_id: 'location_id',
+      location_name: 'location_name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      category: 'category',
+      status_filter: 'status_filter',
+      start_date: 'start_date',
+      end_date: 'end_date',
+      forecast_horizon_days: 'forecast_horizon_days',
+      safety_buffer_percent: 'safety_buffer_percent',
+      model_type: 'model_type',
+      status: 'status',
+      notes: 'notes',
+      last_run_date: 'last_run_date',
+      latest_snapshot_id: 'latest_snapshot_id',
+      source_name: 'source_name'
+    },
+    AttendanceRecord: {
+      shift_id: 'shift_id',
+      session_id: 'session_id',
+      session_name: 'session_name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      shift_date: 'shift_date',
+      attendance_date: 'attendance_date',
+      session_date: 'session_date',
+      service_date: 'service_date',
+      meal_type: 'meal_type',
+      menu_type: 'menu_type',
+      menu_category: 'menu_category',
+      employee_id: 'employee_id',
+      employee_name: 'employee_name',
+      attendee_id: 'attendee_id',
+      attendee_name: 'attendee_name',
+      attendee_phone: 'attendee_phone',
+      category: 'category',
+      check_in: 'check_in',
+      check_out: 'check_out',
+      check_in_at: 'check_in_at',
+      check_out_at: 'check_out_at',
+      marked_at: 'marked_at',
+      scan_method: 'scan_method',
+      qr_code_id: 'qr_code_id',
+      scanned_by: 'scanned_by',
+      scanned_by_name: 'scanned_by_name',
+      attendance_status: 'attendance_status',
+      approval_status: 'approval_status',
+      status: 'status',
+      notes: 'notes',
+      source_name: 'source_name'
+    },
+    StaffShift: {
+      site_id: 'site_id',
+      site_name: 'site_name',
+      shift_date: 'shift_date',
+      employee_id: 'employee_id',
+      employee_name: 'employee_name',
+      role: 'role',
+      category: 'category',
+      shift_type: 'shift_type',
+      start_time: 'start_time',
+      end_time: 'end_time',
+      break_minutes: 'break_minutes',
+      approval_status: 'approval_status',
+      status: 'status',
+      notes: 'notes',
+      source_name: 'source_name'
+    },
+    ERPIntegrationConfig: {
+      provider_name: 'provider_name',
+      api_endpoint: 'api_endpoint',
+      sync_schedule: 'sync_schedule',
+      is_active: 'is_active',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    ERPIntegrationLog: {
+      config_id: 'config_id',
+      provider_name: 'provider_name',
+      module_key: 'module_key',
+      operation: 'operation',
+      direction: 'direction',
+      transport: 'transport',
+      records_count: 'records_count',
+      applied_count: 'applied_count',
+      skipped_count: 'skipped_count',
+      failed_count: 'failed_count',
+      source_system: 'source_system',
+      sync_id: 'sync_id',
+      quantity_semantics: 'quantity_semantics',
+      received_at: 'received_at',
+      retry_of_log_id: 'retry_of_log_id',
+      retry_count: 'retry_count',
+      retried_at: 'retried_at',
+      site_id: 'site_id',
+      attempted_by: 'attempted_by',
+      attempted_at: 'attempted_at',
+      completed_at: 'completed_at',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    ForecastSnapshot: {
+      scenario_id: 'scenario_id',
+      scenario_name: 'scenario_name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      start_date: 'start_date',
+      end_date: 'end_date',
+      forecast_horizon_days: 'forecast_horizon_days',
+      generated_by_id: 'generated_by_id',
+      generated_by_email: 'generated_by_email',
+      generated_at: 'generated_at',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    BranchOrder: {
+      order_number: 'order_number',
+      branch_id: 'branch_id',
+      branch_name: 'branch_name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      order_date: 'order_date',
+      required_date: 'required_date',
+      priority: 'priority',
+      approved_by: 'approved_by',
+      approved_at: 'approved_at',
+      status: 'status',
+      notes: 'notes',
+      source_name: 'source_name'
+    },
+    MaterialRequest: {
+      request_number: 'request_number',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      requesting_site_id: 'requesting_site_id',
+      requesting_site_name: 'requesting_site_name',
+      fulfillment_store_id: 'fulfillment_store_id',
+      fulfillment_store_name: 'fulfillment_store_name',
+      request_date: 'request_date',
+      period_start: 'period_start',
+      period_end: 'period_end',
+      total_estimated_cost: 'total_estimated_cost',
+      source_type: 'source_type',
+      source_production_id: 'source_production_id',
+      source_production_name: 'source_production_name',
+      created_by: 'created_by',
+      created_by_name: 'created_by_name',
+      acknowledged_by: 'acknowledged_by',
+      acknowledged_at: 'acknowledged_at',
+      procurement_notes: 'procurement_notes',
+      notes: 'notes',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    MenuPlanPRSchedule: {
+      site_id: 'site_id',
+      site_name: 'site_name',
+      is_active: 'is_active',
+      cycle_days: 'cycle_days',
+      preferred_weekday: 'preferred_weekday',
+      notes: 'notes',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    MenuPlanPRRun: {
+      site_id: 'site_id',
+      site_name: 'site_name',
+      cycle_start: 'cycle_start',
+      cycle_end: 'cycle_end',
+      preferred_run_date: 'preferred_run_date',
+      requested_run_date: 'requested_run_date',
+      cycle_days: 'cycle_days',
+      preferred_weekday: 'preferred_weekday',
+      trigger_type: 'trigger_type',
+      generated_pr_id: 'generated_pr_id',
+      generated_pr_number: 'generated_pr_number',
+      generated_request_id: 'generated_request_id',
+      generated_request_number: 'generated_request_number',
+      generated_item_count: 'generated_item_count',
+      total_estimated_cost: 'total_estimated_cost',
+      notes: 'notes',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    ProductionBatch: {
+      batch_number: 'batch_number',
+      production_id: 'production_id',
+      recipe_id: 'recipe_id',
+      recipe_name: 'recipe_name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      meal_type: 'meal_type',
+      quantity: 'quantity',
+      unit: 'unit',
+      production_date: 'production_date',
+      expiry_date: 'expiry_date',
+      process_stage: 'process_stage',
+      qc_status: 'qc_status',
+      packaging_status: 'packaging_status',
+      notes: 'notes',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    ProductionTransfer: {
+      transfer_number: 'transfer_number',
+      from_site_id: 'from_site_id',
+      from_site_name: 'from_site_name',
+      to_site_id: 'to_site_id',
+      to_site_name: 'to_site_name',
+      site_id: 'site_id',
+      transfer_date: 'transfer_date',
+      transfer_type: 'transfer_type',
+      requested_by: 'requested_by',
+      received_by: 'received_by',
+      notes: 'notes',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    PurchaseOrder: {
+      po_number: 'po_number',
+      order_number: 'order_number',
+      supplier_id: 'supplier_id',
+      supplier_name: 'supplier_name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      order_date: 'order_date',
+      expected_delivery_date: 'expected_delivery_date',
+      total_amount: 'total_amount',
+      notes: 'notes',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    QualityControl: {
+      batch_id: 'batch_id',
+      batch_number: 'batch_number',
+      production_id: 'production_id',
+      recipe_id: 'recipe_id',
+      recipe_name: 'recipe_name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      inspection_date: 'inspection_date',
+      inspector_name: 'inspector_name',
+      overall_status: 'overall_status',
+      approval_notes: 'approval_notes',
+      approved_by: 'approved_by',
+      approved_at: 'approved_at',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    RFQ: {
+      rfq_number: 'rfq_number',
+      issue_date: 'issue_date',
+      response_deadline: 'response_deadline',
+      notes: 'notes',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    AttendanceSession: {
+      session_name: 'session_name',
+      title: 'title',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      meal_type: 'meal_type',
+      session_date: 'session_date',
+      start_time: 'start_time',
+      end_time: 'end_time',
+      qr_token: 'qr_token',
+      qr_expiry: 'qr_expiry',
+      expected_labor: 'expected_labor',
+      expected_junior: 'expected_junior',
+      expected_senior: 'expected_senior',
+      actual_labor: 'actual_labor',
+      actual_junior: 'actual_junior',
+      actual_senior: 'actual_senior',
+      status: 'status',
+      notes: 'notes',
+      source_name: 'source_name'
+    },
+    CategoryQRSession: {
+      title: 'title',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      session_date: 'session_date',
+      from_date: 'from_date',
+      to_date: 'to_date',
+      start_time: 'start_time',
+      end_time: 'end_time',
+      status: 'status',
+      notes: 'notes',
+      source_name: 'source_name'
+    },
+    DinerScan: {
+      event_id: 'event_id',
+      event_name: 'event_name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      plan_date: 'plan_date',
+      meal_type: 'meal_type',
+      guest_token: 'guest_token',
+      scan_method: 'scan_method',
+      scanned_at: 'scanned_at',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    CustomerMealPlan: {
+      name: 'name',
+      site_id: 'site_id',
+      site_name: 'site_name',
+      plan_date: 'plan_date',
+      customer_id: 'customer_id',
+      customer_name: 'customer_name',
+      status: 'status',
+      notes: 'notes',
+      source_name: 'source_name'
+    },
+    QRCode: {
+      title: 'title',
+      name: 'name',
+      category: 'category',
+      description: 'description',
+      token: 'token',
+      linked_item: 'linked_item',
+      is_one_time: 'is_one_time',
+      max_scans: 'max_scans',
+      scan_count: 'scan_count',
+      expiry_date: 'expiry_date',
+      last_scanned_at: 'last_scanned_at',
+      employee_name: 'employee_name',
+      company_id_number: 'company_id_number',
+      mobile_number: 'mobile_number',
+      active_whatsapp: 'active_whatsapp',
+      created_by: 'created_by',
+      created_by_name: 'created_by_name',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    QRDelivery: {
+      qr_code_id: 'qr_code_id',
+      qr_code_title: 'qr_code_title',
+      qr_token: 'qr_token',
+      delivery_method: 'delivery_method',
+      subject: 'subject',
+      scheduled_at: 'scheduled_at',
+      sent_at: 'sent_at',
+      sent_count: 'sent_count',
+      failed_count: 'failed_count',
+      status: 'status',
+      source_name: 'source_name'
+    },
+    UserGroup: {
+      name: 'name',
+      description: 'description',
+      total_members: 'total_members',
       status: 'status',
       source_name: 'source_name'
     },
@@ -6037,6 +8667,11 @@ async function deleteNormalizedDocument(entity, id, executor = pool) {
   const config = normalizedSimpleConfigs[entity];
   if (config) {
     const result = await query(`DELETE FROM ${config.table} WHERE ${config.idColumn} = $1`, [id], executor);
+    await query(
+      'DELETE FROM document_object_fields WHERE entity_name = $1 AND record_id = $2',
+      [entity, id],
+      executor
+    );
     return result.rowCount > 0;
   }
   const tableByEntity = {

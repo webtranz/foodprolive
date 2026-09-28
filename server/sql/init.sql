@@ -251,30 +251,7 @@ BEGIN
   FOR document_table, entity_value IN
     SELECT *
     FROM (VALUES
-      ('erp_integration_configs', 'ERPIntegrationConfig'),
-      ('erp_integration_logs', 'ERPIntegrationLog'),
-      ('forecast_scenarios', 'ForecastScenario'),
-      ('forecast_snapshots', 'ForecastSnapshot'),
-      ('attendance_records', 'AttendanceRecord'),
-      ('attendance_sessions', 'AttendanceSession'),
-      ('staff_shifts', 'StaffShift'),
-      ('branch_orders', 'BranchOrder'),
-      ('category_qr_sessions', 'CategoryQRSession'),
-      ('d365_masters', 'D365Master'),
-      ('diner_scans', 'DinerScan'),
-      ('customer_meal_plans', 'CustomerMealPlan'),
-      ('material_requests', 'MaterialRequest'),
-      ('menu_plan_pr_schedules', 'MenuPlanPRSchedule'),
-      ('menu_plan_pr_runs', 'MenuPlanPRRun'),
-      ('production_batches', 'ProductionBatch'),
-      ('production_transfers', 'ProductionTransfer'),
-      ('purchase_order_documents', 'PurchaseOrder'),
-      ('qr_codes', 'QRCode'),
-      ('role_profiles', 'RoleProfile'),
-      ('qr_deliveries', 'QRDelivery'),
-      ('quality_controls', 'QualityControl'),
-      ('rfqs', 'RFQ'),
-      ('user_groups', 'UserGroup')
+      ('role_profiles', 'RoleProfile')
     ) AS mapped(document_table, entity_value)
   LOOP
     EXECUTE format($sql$
@@ -1214,6 +1191,2649 @@ BEGIN
   END IF;
 END;
 $waste_detection_log_trigger$;
+
+CREATE TABLE IF NOT EXISTS d365_masters (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'synced',
+  source_system TEXT,
+  module_key TEXT,
+  sync_id TEXT,
+  idempotency_key TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  ingredient_id TEXT,
+  ingredient_name TEXT,
+  d365_item_id TEXT,
+  d365_warehouse_id TEXT,
+  integration_log_id TEXT,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'synced';
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS source_system TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS module_key TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS sync_id TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS ingredient_id TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS ingredient_name TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS d365_item_id TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS d365_warehouse_id TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS integration_log_id TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE d365_masters ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $d365_masters_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'd365_masters'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE d365_masters
+         SET status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'synced'),
+             source_system = COALESCE(NULLIF(source_system, ''), NULLIF(payload->>'source_system', '')),
+             module_key = COALESCE(NULLIF(module_key, ''), NULLIF(payload->>'module_key', '')),
+             sync_id = COALESCE(NULLIF(sync_id, ''), NULLIF(payload->>'sync_id', '')),
+             idempotency_key = COALESCE(NULLIF(idempotency_key, ''), NULLIF(payload->>'idempotency_key', '')),
+             site_id = COALESCE(NULLIF(site_id, ''), NULLIF(payload->>'site_id', '')),
+             site_name = COALESCE(NULLIF(site_name, ''), NULLIF(payload->>'site_name', '')),
+             ingredient_id = COALESCE(NULLIF(ingredient_id, ''), NULLIF(payload->>'ingredient_id', '')),
+             ingredient_name = COALESCE(NULLIF(ingredient_name, ''), NULLIF(payload->>'ingredient_name', '')),
+             d365_item_id = COALESCE(NULLIF(d365_item_id, ''), NULLIF(payload->>'d365_item_id', '')),
+             d365_warehouse_id = COALESCE(NULLIF(d365_warehouse_id, ''), NULLIF(payload->>'d365_warehouse_id', '')),
+             integration_log_id = COALESCE(NULLIF(integration_log_id, ''), NULLIF(payload->>'integration_log_id', '')),
+             processed_at = COALESCE(processed_at, CASE
+               WHEN COALESCE(payload->>'processed_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'processed_at', '')::timestamptz
+               ELSE NULL
+             END, created_at, NOW()),
+             source_name = COALESCE(source_name, NULLIF(payload->>'source_name', '')),
+             created_at = COALESCE(created_at, CASE
+               WHEN COALESCE(payload->>'created_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'created_date', '')::timestamptz
+               ELSE NULL
+             END, NOW()),
+             updated_at = COALESCE(updated_at, CASE
+               WHEN COALESCE(payload->>'updated_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'updated_date', '')::timestamptz
+               ELSE NULL
+             END, NOW())
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    DROP TRIGGER IF EXISTS d365_masters_realtime_change ON d365_masters;
+    DROP INDEX IF EXISTS idx_d365_masters_payload;
+    DROP INDEX IF EXISTS idx_d365_masters_site_ids;
+    DROP INDEX IF EXISTS idx_d365_masters_record_date;
+    EXECUTE 'ALTER TABLE d365_masters DROP COLUMN payload';
+  END IF;
+END;
+$d365_masters_payload_cutover$;
+
+INSERT INTO d365_masters (
+  id, status, source_system, module_key, sync_id, idempotency_key,
+  site_id, site_name, ingredient_id, ingredient_name, d365_item_id,
+  d365_warehouse_id, integration_log_id, processed_at, source_name,
+  created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'status', ''), 'synced'),
+  NULLIF(record.data->>'source_system', ''),
+  NULLIF(record.data->>'module_key', ''),
+  NULLIF(record.data->>'sync_id', ''),
+  NULLIF(record.data->>'idempotency_key', ''),
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  NULLIF(record.data->>'ingredient_id', ''),
+  NULLIF(record.data->>'ingredient_name', ''),
+  NULLIF(record.data->>'d365_item_id', ''),
+  NULLIF(record.data->>'d365_warehouse_id', ''),
+  NULLIF(record.data->>'integration_log_id', ''),
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'processed_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      THEN NULLIF(record.data->>'processed_at', '')::timestamptz
+    ELSE NULL
+  END, record.created_at, NOW()),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'D365Master'
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE d365_masters
+   SET status = COALESCE(NULLIF(status, ''), 'synced'),
+       processed_at = COALESCE(processed_at, created_at, NOW());
+
+ALTER TABLE d365_masters ALTER COLUMN status SET NOT NULL;
+ALTER TABLE d365_masters ALTER COLUMN processed_at SET NOT NULL;
+
+ALTER TABLE d365_masters DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE d365_masters DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE d365_masters DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE d365_masters DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE d365_masters DROP COLUMN IF EXISTS record_date;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_d365_master_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  master_row d365_masters%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    master_row := OLD;
+  ELSE
+    master_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'D365Master',
+      'action', LOWER(TG_OP),
+      'id', master_row.id,
+      'site_id', master_row.site_id,
+      'site_ids', CASE
+        WHEN master_row.site_id IS NULL THEN '[]'::jsonb
+        ELSE jsonb_build_array(master_row.site_id)
+      END,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $d365_master_trigger$
+BEGIN
+  DROP TRIGGER IF EXISTS d365_masters_realtime_change ON d365_masters;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'd365_masters_realtime_change' AND tgrelid = 'd365_masters'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER d365_masters_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON d365_masters
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_d365_master_change()';
+  END IF;
+END;
+$d365_master_trigger$;
+
+CREATE TABLE IF NOT EXISTS forecast_scenarios (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT 'Forecast Scenario',
+  location_id TEXT,
+  location_name TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  category TEXT NOT NULL DEFAULT 'all',
+  status_filter TEXT NOT NULL DEFAULT 'all',
+  start_date DATE,
+  end_date DATE,
+  forecast_horizon_days INTEGER NOT NULL DEFAULT 7,
+  safety_buffer_percent NUMERIC(8, 3) NOT NULL DEFAULT 10,
+  model_type TEXT NOT NULL DEFAULT 'blended_average',
+  status TEXT NOT NULL DEFAULT 'draft',
+  notes TEXT NOT NULL DEFAULT '',
+  last_run_date TIMESTAMPTZ,
+  latest_snapshot_id TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS location_id TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS location_name TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS status_filter TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS start_date DATE;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS end_date DATE;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS forecast_horizon_days INTEGER NOT NULL DEFAULT 7;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS safety_buffer_percent NUMERIC(8, 3) NOT NULL DEFAULT 10;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS model_type TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS last_run_date TIMESTAMPTZ;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS latest_snapshot_id TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE forecast_scenarios ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $forecast_scenarios_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'forecast_scenarios'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE forecast_scenarios
+         SET name = COALESCE(NULLIF(name, ''), NULLIF(payload->>'name', ''), 'Forecast Scenario'),
+             location_id = COALESCE(NULLIF(location_id, ''), NULLIF(payload->>'location_id', '')),
+             location_name = COALESCE(NULLIF(location_name, ''), NULLIF(payload->>'location_name', '')),
+             site_id = COALESCE(NULLIF(site_id, ''), NULLIF(payload->>'site_id', ''), NULLIF(payload->>'location_id', '')),
+             site_name = COALESCE(NULLIF(site_name, ''), NULLIF(payload->>'site_name', ''), NULLIF(payload->>'location_name', '')),
+             category = COALESCE(NULLIF(category, ''), NULLIF(payload->>'category', ''), 'all'),
+             status_filter = COALESCE(NULLIF(status_filter, ''), NULLIF(payload->>'status_filter', ''), 'all'),
+             start_date = COALESCE(start_date, CASE
+               WHEN COALESCE(payload->>'start_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'start_date')::date
+               ELSE NULL
+             END),
+             end_date = COALESCE(end_date, CASE
+               WHEN COALESCE(payload->>'end_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'end_date')::date
+               ELSE NULL
+             END),
+             forecast_horizon_days = COALESCE(CASE
+               WHEN COALESCE(payload->>'forecast_horizon_days', '') ~ '^[0-9]+$'
+                 THEN (payload->>'forecast_horizon_days')::integer
+               ELSE NULL
+             END, forecast_horizon_days, 7),
+             safety_buffer_percent = COALESCE(CASE
+               WHEN COALESCE(payload->>'safety_buffer_percent', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                 THEN (payload->>'safety_buffer_percent')::numeric
+               ELSE NULL
+             END, safety_buffer_percent, 10),
+             model_type = COALESCE(NULLIF(model_type, ''), NULLIF(payload->>'model_type', ''), 'blended_average'),
+             status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'draft'),
+             notes = COALESCE(notes, payload->>'notes', ''),
+             last_run_date = COALESCE(last_run_date, CASE
+               WHEN COALESCE(payload->>'last_run_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'last_run_date', '')::timestamptz
+               ELSE NULL
+             END),
+             latest_snapshot_id = COALESCE(NULLIF(latest_snapshot_id, ''), NULLIF(payload->>'latest_snapshot_id', '')),
+             source_name = COALESCE(source_name, NULLIF(payload->>'source_name', '')),
+             created_at = COALESCE(created_at, CASE
+               WHEN COALESCE(payload->>'created_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'created_date', '')::timestamptz
+               ELSE NULL
+             END, NOW()),
+             updated_at = COALESCE(updated_at, CASE
+               WHEN COALESCE(payload->>'updated_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'updated_date', '')::timestamptz
+               ELSE NULL
+             END, NOW())
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    DROP TRIGGER IF EXISTS forecast_scenarios_realtime_change ON forecast_scenarios;
+    DROP INDEX IF EXISTS idx_forecast_scenarios_payload;
+    DROP INDEX IF EXISTS idx_forecast_scenarios_site_ids;
+    DROP INDEX IF EXISTS idx_forecast_scenarios_record_date;
+    EXECUTE 'ALTER TABLE forecast_scenarios DROP COLUMN payload';
+  END IF;
+END;
+$forecast_scenarios_payload_cutover$;
+
+INSERT INTO forecast_scenarios (
+  id, name, location_id, location_name, site_id, site_name, category,
+  status_filter, start_date, end_date, forecast_horizon_days,
+  safety_buffer_percent, model_type, status, notes, last_run_date,
+  latest_snapshot_id, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'name', ''), 'Forecast Scenario'),
+  NULLIF(record.data->>'location_id', ''),
+  NULLIF(record.data->>'location_name', ''),
+  COALESCE(NULLIF(record.data->>'site_id', ''), NULLIF(record.data->>'location_id', '')),
+  COALESCE(NULLIF(record.data->>'site_name', ''), NULLIF(record.data->>'location_name', '')),
+  COALESCE(NULLIF(record.data->>'category', ''), 'all'),
+  COALESCE(NULLIF(record.data->>'status_filter', ''), 'all'),
+  CASE
+    WHEN COALESCE(record.data->>'start_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      THEN (record.data->>'start_date')::date
+    ELSE NULL
+  END,
+  CASE
+    WHEN COALESCE(record.data->>'end_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      THEN (record.data->>'end_date')::date
+    ELSE NULL
+  END,
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'forecast_horizon_days', '') ~ '^[0-9]+$'
+      THEN (record.data->>'forecast_horizon_days')::integer
+    ELSE NULL
+  END, 7),
+  COALESCE(CASE
+    WHEN COALESCE(record.data->>'safety_buffer_percent', '') ~ '^-?[0-9]+(\.[0-9]+)?$'
+      THEN (record.data->>'safety_buffer_percent')::numeric
+    ELSE NULL
+  END, 10),
+  COALESCE(NULLIF(record.data->>'model_type', ''), 'blended_average'),
+  COALESCE(NULLIF(record.data->>'status', ''), 'draft'),
+  COALESCE(record.data->>'notes', ''),
+  CASE
+    WHEN COALESCE(record.data->>'last_run_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      THEN NULLIF(record.data->>'last_run_date', '')::timestamptz
+    ELSE NULL
+  END,
+  NULLIF(record.data->>'latest_snapshot_id', ''),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'ForecastScenario'
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE forecast_scenarios
+   SET name = COALESCE(NULLIF(name, ''), 'Forecast Scenario'),
+       category = COALESCE(NULLIF(category, ''), 'all'),
+       status_filter = COALESCE(NULLIF(status_filter, ''), 'all'),
+       forecast_horizon_days = GREATEST(1, COALESCE(forecast_horizon_days, 7)),
+       safety_buffer_percent = COALESCE(safety_buffer_percent, 10),
+       model_type = COALESCE(NULLIF(model_type, ''), 'blended_average'),
+       status = COALESCE(NULLIF(status, ''), 'draft'),
+       notes = COALESCE(notes, '');
+
+ALTER TABLE forecast_scenarios ALTER COLUMN name SET NOT NULL;
+ALTER TABLE forecast_scenarios ALTER COLUMN category SET NOT NULL;
+ALTER TABLE forecast_scenarios ALTER COLUMN status_filter SET NOT NULL;
+ALTER TABLE forecast_scenarios ALTER COLUMN forecast_horizon_days SET NOT NULL;
+ALTER TABLE forecast_scenarios ALTER COLUMN safety_buffer_percent SET NOT NULL;
+ALTER TABLE forecast_scenarios ALTER COLUMN model_type SET NOT NULL;
+ALTER TABLE forecast_scenarios ALTER COLUMN status SET NOT NULL;
+ALTER TABLE forecast_scenarios ALTER COLUMN notes SET NOT NULL;
+
+ALTER TABLE forecast_scenarios DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE forecast_scenarios DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE forecast_scenarios DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE forecast_scenarios DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE forecast_scenarios DROP COLUMN IF EXISTS record_date;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_forecast_scenario_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  scenario_row forecast_scenarios%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    scenario_row := OLD;
+  ELSE
+    scenario_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'ForecastScenario',
+      'action', LOWER(TG_OP),
+      'id', scenario_row.id,
+      'site_id', scenario_row.site_id,
+      'site_ids', CASE
+        WHEN scenario_row.site_id IS NULL THEN '[]'::jsonb
+        ELSE jsonb_build_array(scenario_row.site_id)
+      END,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $forecast_scenario_trigger$
+BEGIN
+  DROP TRIGGER IF EXISTS forecast_scenarios_realtime_change ON forecast_scenarios;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'forecast_scenarios_realtime_change' AND tgrelid = 'forecast_scenarios'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER forecast_scenarios_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON forecast_scenarios
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_forecast_scenario_change()';
+  END IF;
+END;
+$forecast_scenario_trigger$;
+
+CREATE TABLE IF NOT EXISTS attendance_records (
+  id TEXT PRIMARY KEY,
+  shift_id TEXT,
+  session_id TEXT,
+  session_name TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  shift_date DATE,
+  attendance_date DATE,
+  session_date DATE,
+  service_date DATE,
+  meal_type TEXT,
+  menu_type TEXT,
+  menu_category TEXT,
+  employee_id TEXT,
+  employee_name TEXT,
+  attendee_id TEXT,
+  attendee_name TEXT,
+  attendee_phone TEXT,
+  category TEXT,
+  check_in TEXT,
+  check_out TEXT,
+  check_in_at TIMESTAMPTZ,
+  check_out_at TIMESTAMPTZ,
+  marked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  scan_method TEXT,
+  qr_code_id TEXT,
+  scanned_by TEXT,
+  scanned_by_name TEXT,
+  attendance_status TEXT NOT NULL DEFAULT 'present',
+  approval_status TEXT NOT NULL DEFAULT 'pending',
+  status TEXT NOT NULL DEFAULT 'checked_in',
+  notes TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS shift_id TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS session_id TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS session_name TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS shift_date DATE;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS attendance_date DATE;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS session_date DATE;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS service_date DATE;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS meal_type TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS menu_type TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS menu_category TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS employee_id TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS employee_name TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS attendee_id TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS attendee_name TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS attendee_phone TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS check_in TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS check_out TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS check_in_at TIMESTAMPTZ;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS check_out_at TIMESTAMPTZ;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS marked_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS scan_method TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS qr_code_id TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS scanned_by TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS scanned_by_name TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS attendance_status TEXT NOT NULL DEFAULT 'present';
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'checked_in';
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $attendance_records_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'attendance_records'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE attendance_records
+         SET shift_id = COALESCE(NULLIF(shift_id, ''), NULLIF(payload->>'shift_id', '')),
+             session_id = COALESCE(NULLIF(session_id, ''), NULLIF(payload->>'session_id', '')),
+             session_name = COALESCE(NULLIF(session_name, ''), NULLIF(payload->>'session_name', '')),
+             site_id = COALESCE(NULLIF(site_id, ''), NULLIF(payload->>'site_id', '')),
+             site_name = COALESCE(NULLIF(site_name, ''), NULLIF(payload->>'site_name', '')),
+             shift_date = COALESCE(shift_date, CASE
+               WHEN COALESCE(payload->>'shift_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'shift_date')::date
+               ELSE NULL
+             END),
+             attendance_date = COALESCE(attendance_date, CASE
+               WHEN COALESCE(payload->>'attendance_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'attendance_date')::date
+               WHEN COALESCE(payload->>'session_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'session_date')::date
+               WHEN COALESCE(payload->>'service_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'service_date')::date
+               WHEN COALESCE(payload->>'shift_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'shift_date')::date
+               ELSE NULL
+             END),
+             session_date = COALESCE(session_date, CASE
+               WHEN COALESCE(payload->>'session_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'session_date')::date
+               ELSE NULL
+             END),
+             service_date = COALESCE(service_date, CASE
+               WHEN COALESCE(payload->>'service_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'service_date')::date
+               ELSE NULL
+             END),
+             meal_type = COALESCE(NULLIF(meal_type, ''), NULLIF(payload->>'meal_type', '')),
+             menu_type = COALESCE(NULLIF(menu_type, ''), NULLIF(payload->>'menu_type', '')),
+             menu_category = COALESCE(NULLIF(menu_category, ''), NULLIF(payload->>'menu_category', '')),
+             employee_id = COALESCE(NULLIF(employee_id, ''), NULLIF(payload->>'employee_id', ''), NULLIF(payload->>'attendee_id', '')),
+             employee_name = COALESCE(NULLIF(employee_name, ''), NULLIF(payload->>'employee_name', ''), NULLIF(payload->>'attendee_name', '')),
+             attendee_id = COALESCE(NULLIF(attendee_id, ''), NULLIF(payload->>'attendee_id', ''), NULLIF(payload->>'employee_id', '')),
+             attendee_name = COALESCE(NULLIF(attendee_name, ''), NULLIF(payload->>'attendee_name', ''), NULLIF(payload->>'employee_name', '')),
+             attendee_phone = COALESCE(NULLIF(attendee_phone, ''), NULLIF(payload->>'attendee_phone', '')),
+             category = COALESCE(NULLIF(category, ''), NULLIF(payload->>'category', '')),
+             check_in = COALESCE(NULLIF(check_in, ''), NULLIF(payload->>'check_in', '')),
+             check_out = COALESCE(NULLIF(check_out, ''), NULLIF(payload->>'check_out', '')),
+             check_in_at = COALESCE(check_in_at, CASE
+               WHEN COALESCE(payload->>'check_in_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'check_in_at', '')::timestamptz
+               ELSE NULL
+             END),
+             check_out_at = COALESCE(check_out_at, CASE
+               WHEN COALESCE(payload->>'check_out_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'check_out_at', '')::timestamptz
+               ELSE NULL
+             END),
+             marked_at = COALESCE(marked_at, CASE
+               WHEN COALESCE(payload->>'marked_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'marked_at', '')::timestamptz
+               ELSE NULL
+             END, created_at, NOW()),
+             scan_method = COALESCE(NULLIF(scan_method, ''), NULLIF(payload->>'scan_method', '')),
+             qr_code_id = COALESCE(NULLIF(qr_code_id, ''), NULLIF(payload->>'qr_code_id', '')),
+             scanned_by = COALESCE(NULLIF(scanned_by, ''), NULLIF(payload->>'scanned_by', '')),
+             scanned_by_name = COALESCE(NULLIF(scanned_by_name, ''), NULLIF(payload->>'scanned_by_name', '')),
+             attendance_status = COALESCE(NULLIF(attendance_status, ''), NULLIF(payload->>'attendance_status', ''), 'present'),
+             approval_status = COALESCE(NULLIF(approval_status, ''), NULLIF(payload->>'approval_status', ''), 'pending'),
+             status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'checked_in'),
+             notes = COALESCE(notes, payload->>'notes'),
+             source_name = COALESCE(source_name, NULLIF(payload->>'source_name', '')),
+             created_at = COALESCE(created_at, CASE
+               WHEN COALESCE(payload->>'created_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'created_date', '')::timestamptz
+               ELSE NULL
+             END, NOW()),
+             updated_at = COALESCE(updated_at, CASE
+               WHEN COALESCE(payload->>'updated_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'updated_date', '')::timestamptz
+               ELSE NULL
+             END, NOW())
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    DROP TRIGGER IF EXISTS attendance_records_realtime_change ON attendance_records;
+    DROP INDEX IF EXISTS idx_attendance_records_payload;
+    DROP INDEX IF EXISTS idx_attendance_records_site_ids;
+    DROP INDEX IF EXISTS idx_attendance_records_record_date;
+    EXECUTE 'ALTER TABLE attendance_records DROP COLUMN payload';
+  END IF;
+END;
+$attendance_records_payload_cutover$;
+
+INSERT INTO attendance_records (
+  id, shift_id, session_id, session_name, site_id, site_name, shift_date,
+  attendance_date, session_date, service_date, meal_type, menu_type, menu_category,
+  employee_id, employee_name, attendee_id, attendee_name, attendee_phone,
+  category, check_in, check_out, check_in_at, check_out_at, marked_at,
+  scan_method, qr_code_id, scanned_by, scanned_by_name, attendance_status,
+  approval_status, status, notes, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(record.data->>'shift_id', ''),
+  NULLIF(record.data->>'session_id', ''),
+  NULLIF(record.data->>'session_name', ''),
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  CASE WHEN COALESCE(record.data->>'shift_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'shift_date')::date ELSE NULL END,
+  COALESCE(
+    CASE WHEN COALESCE(record.data->>'attendance_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'attendance_date')::date ELSE NULL END,
+    CASE WHEN COALESCE(record.data->>'session_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'session_date')::date ELSE NULL END,
+    CASE WHEN COALESCE(record.data->>'service_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'service_date')::date ELSE NULL END,
+    CASE WHEN COALESCE(record.data->>'shift_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'shift_date')::date ELSE NULL END
+  ),
+  CASE WHEN COALESCE(record.data->>'session_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'session_date')::date ELSE NULL END,
+  CASE WHEN COALESCE(record.data->>'service_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'service_date')::date ELSE NULL END,
+  NULLIF(record.data->>'meal_type', ''),
+  NULLIF(record.data->>'menu_type', ''),
+  NULLIF(record.data->>'menu_category', ''),
+  COALESCE(NULLIF(record.data->>'employee_id', ''), NULLIF(record.data->>'attendee_id', '')),
+  COALESCE(NULLIF(record.data->>'employee_name', ''), NULLIF(record.data->>'attendee_name', '')),
+  COALESCE(NULLIF(record.data->>'attendee_id', ''), NULLIF(record.data->>'employee_id', '')),
+  COALESCE(NULLIF(record.data->>'attendee_name', ''), NULLIF(record.data->>'employee_name', '')),
+  NULLIF(record.data->>'attendee_phone', ''),
+  NULLIF(record.data->>'category', ''),
+  NULLIF(record.data->>'check_in', ''),
+  NULLIF(record.data->>'check_out', ''),
+  CASE WHEN COALESCE(record.data->>'check_in_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN NULLIF(record.data->>'check_in_at', '')::timestamptz ELSE NULL END,
+  CASE WHEN COALESCE(record.data->>'check_out_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN NULLIF(record.data->>'check_out_at', '')::timestamptz ELSE NULL END,
+  COALESCE(CASE WHEN COALESCE(record.data->>'marked_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN NULLIF(record.data->>'marked_at', '')::timestamptz ELSE NULL END, record.created_at, NOW()),
+  NULLIF(record.data->>'scan_method', ''),
+  NULLIF(record.data->>'qr_code_id', ''),
+  NULLIF(record.data->>'scanned_by', ''),
+  NULLIF(record.data->>'scanned_by_name', ''),
+  COALESCE(NULLIF(record.data->>'attendance_status', ''), 'present'),
+  COALESCE(NULLIF(record.data->>'approval_status', ''), 'pending'),
+  COALESCE(NULLIF(record.data->>'status', ''), 'checked_in'),
+  NULLIF(record.data->>'notes', ''),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'AttendanceRecord'
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE attendance_records
+   SET marked_at = COALESCE(marked_at, created_at, NOW()),
+       attendance_status = COALESCE(NULLIF(attendance_status, ''), 'present'),
+       approval_status = COALESCE(NULLIF(approval_status, ''), 'pending'),
+       status = COALESCE(NULLIF(status, ''), 'checked_in'),
+       attendance_date = COALESCE(attendance_date, session_date, service_date, shift_date, marked_at::date);
+
+ALTER TABLE attendance_records ALTER COLUMN marked_at SET NOT NULL;
+ALTER TABLE attendance_records ALTER COLUMN attendance_status SET NOT NULL;
+ALTER TABLE attendance_records ALTER COLUMN approval_status SET NOT NULL;
+ALTER TABLE attendance_records ALTER COLUMN status SET NOT NULL;
+
+ALTER TABLE attendance_records DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE attendance_records DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE attendance_records DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE attendance_records DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE attendance_records DROP COLUMN IF EXISTS record_date;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_attendance_record_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  attendance_row attendance_records%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    attendance_row := OLD;
+  ELSE
+    attendance_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'AttendanceRecord',
+      'action', LOWER(TG_OP),
+      'id', attendance_row.id,
+      'site_id', attendance_row.site_id,
+      'site_ids', CASE
+        WHEN attendance_row.site_id IS NULL THEN '[]'::jsonb
+        ELSE jsonb_build_array(attendance_row.site_id)
+      END,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $attendance_record_trigger$
+BEGIN
+  DROP TRIGGER IF EXISTS attendance_records_realtime_change ON attendance_records;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'attendance_records_realtime_change' AND tgrelid = 'attendance_records'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER attendance_records_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON attendance_records
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_attendance_record_change()';
+  END IF;
+END;
+$attendance_record_trigger$;
+
+CREATE TABLE IF NOT EXISTS staff_shifts (
+  id TEXT PRIMARY KEY,
+  site_id TEXT,
+  site_name TEXT,
+  shift_date DATE,
+  employee_id TEXT,
+  employee_name TEXT,
+  role TEXT,
+  category TEXT,
+  shift_type TEXT,
+  start_time TEXT,
+  end_time TEXT,
+  break_minutes INTEGER NOT NULL DEFAULT 60,
+  approval_status TEXT NOT NULL DEFAULT 'pending',
+  status TEXT NOT NULL DEFAULT 'scheduled',
+  notes TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS shift_date DATE;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS employee_id TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS employee_name TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS role TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS shift_type TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS start_time TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS end_time TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS break_minutes INTEGER NOT NULL DEFAULT 60;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'scheduled';
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE staff_shifts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $staff_shifts_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'staff_shifts'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE staff_shifts
+         SET site_id = COALESCE(NULLIF(site_id, ''), NULLIF(payload->>'site_id', '')),
+             site_name = COALESCE(NULLIF(site_name, ''), NULLIF(payload->>'site_name', '')),
+             shift_date = COALESCE(shift_date, CASE
+               WHEN COALESCE(payload->>'shift_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN (payload->>'shift_date')::date
+               ELSE NULL
+             END),
+             employee_id = COALESCE(NULLIF(employee_id, ''), NULLIF(payload->>'employee_id', '')),
+             employee_name = COALESCE(NULLIF(employee_name, ''), NULLIF(payload->>'employee_name', '')),
+             role = COALESCE(NULLIF(role, ''), NULLIF(payload->>'role', '')),
+             category = COALESCE(NULLIF(category, ''), NULLIF(payload->>'category', '')),
+             shift_type = COALESCE(NULLIF(shift_type, ''), NULLIF(payload->>'shift_type', '')),
+             start_time = COALESCE(NULLIF(start_time, ''), NULLIF(payload->>'start_time', '')),
+             end_time = COALESCE(NULLIF(end_time, ''), NULLIF(payload->>'end_time', '')),
+             break_minutes = COALESCE(CASE
+               WHEN COALESCE(payload->>'break_minutes', '') ~ '^[0-9]+$'
+                 THEN (payload->>'break_minutes')::integer
+               ELSE NULL
+             END, break_minutes, 60),
+             approval_status = COALESCE(NULLIF(approval_status, ''), NULLIF(payload->>'approval_status', ''), 'pending'),
+             status = COALESCE(NULLIF(status, ''), NULLIF(payload->>'status', ''), 'scheduled'),
+             notes = COALESCE(notes, payload->>'notes'),
+             source_name = COALESCE(source_name, NULLIF(payload->>'source_name', '')),
+             created_at = COALESCE(created_at, CASE
+               WHEN COALESCE(payload->>'created_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'created_date', '')::timestamptz
+               ELSE NULL
+             END, NOW()),
+             updated_at = COALESCE(updated_at, CASE
+               WHEN COALESCE(payload->>'updated_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                 THEN NULLIF(payload->>'updated_date', '')::timestamptz
+               ELSE NULL
+             END, NOW())
+       WHERE payload IS NOT NULL
+    $sql$;
+
+    DROP TRIGGER IF EXISTS staff_shifts_realtime_change ON staff_shifts;
+    DROP INDEX IF EXISTS idx_staff_shifts_payload;
+    DROP INDEX IF EXISTS idx_staff_shifts_site_ids;
+    DROP INDEX IF EXISTS idx_staff_shifts_record_date;
+    EXECUTE 'ALTER TABLE staff_shifts DROP COLUMN payload';
+  END IF;
+END;
+$staff_shifts_payload_cutover$;
+
+INSERT INTO staff_shifts (
+  id, site_id, site_name, shift_date, employee_id, employee_name,
+  role, category, shift_type, start_time, end_time, break_minutes,
+  approval_status, status, notes, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  CASE WHEN COALESCE(record.data->>'shift_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'shift_date')::date ELSE NULL END,
+  NULLIF(record.data->>'employee_id', ''),
+  NULLIF(record.data->>'employee_name', ''),
+  NULLIF(record.data->>'role', ''),
+  NULLIF(record.data->>'category', ''),
+  NULLIF(record.data->>'shift_type', ''),
+  NULLIF(record.data->>'start_time', ''),
+  NULLIF(record.data->>'end_time', ''),
+  COALESCE(CASE WHEN COALESCE(record.data->>'break_minutes', '') ~ '^[0-9]+$' THEN (record.data->>'break_minutes')::integer ELSE NULL END, 60),
+  COALESCE(NULLIF(record.data->>'approval_status', ''), 'pending'),
+  COALESCE(NULLIF(record.data->>'status', ''), 'scheduled'),
+  NULLIF(record.data->>'notes', ''),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'StaffShift'
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE staff_shifts
+   SET break_minutes = COALESCE(break_minutes, 60),
+       approval_status = COALESCE(NULLIF(approval_status, ''), 'pending'),
+       status = COALESCE(NULLIF(status, ''), 'scheduled');
+
+ALTER TABLE staff_shifts ALTER COLUMN break_minutes SET NOT NULL;
+ALTER TABLE staff_shifts ALTER COLUMN approval_status SET NOT NULL;
+ALTER TABLE staff_shifts ALTER COLUMN status SET NOT NULL;
+
+ALTER TABLE staff_shifts DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE staff_shifts DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE staff_shifts DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE staff_shifts DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE staff_shifts DROP COLUMN IF EXISTS record_date;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_staff_shift_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  shift_row staff_shifts%ROWTYPE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    shift_row := OLD;
+  ELSE
+    shift_row := NEW;
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', 'StaffShift',
+      'action', LOWER(TG_OP),
+      'id', shift_row.id,
+      'site_id', shift_row.site_id,
+      'site_ids', CASE
+        WHEN shift_row.site_id IS NULL THEN '[]'::jsonb
+        ELSE jsonb_build_array(shift_row.site_id)
+      END,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $staff_shift_trigger$
+BEGIN
+  DROP TRIGGER IF EXISTS staff_shifts_realtime_change ON staff_shifts;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'staff_shifts_realtime_change' AND tgrelid = 'staff_shifts'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER staff_shifts_realtime_change
+      AFTER INSERT OR UPDATE OR DELETE ON staff_shifts
+      FOR EACH ROW EXECUTE FUNCTION notify_foodpro_staff_shift_change()';
+  END IF;
+END;
+$staff_shift_trigger$;
+
+CREATE OR REPLACE FUNCTION notify_foodpro_typed_document_change()
+RETURNS TRIGGER AS $$
+DECLARE
+  changed_row JSONB;
+  entity_name TEXT;
+BEGIN
+  entity_name := TG_ARGV[0];
+  IF TG_OP = 'DELETE' THEN
+    changed_row := to_jsonb(OLD);
+  ELSE
+    changed_row := to_jsonb(NEW);
+  END IF;
+  PERFORM pg_notify(
+    'foodpro_entity_events',
+    jsonb_build_object(
+      'entity', entity_name,
+      'action', LOWER(TG_OP),
+      'id', changed_row->>'id',
+      'site_id', changed_row->>'site_id',
+      'site_ids', CASE
+        WHEN COALESCE(changed_row->>'site_id', '') = '' THEN '[]'::jsonb
+        ELSE jsonb_build_array(changed_row->>'site_id')
+      END,
+      'occurred_at', NOW()
+    )::text
+  );
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TABLE IF NOT EXISTS attendance_sessions (
+  id TEXT PRIMARY KEY,
+  session_name TEXT NOT NULL DEFAULT 'Attendance Session',
+  title TEXT NOT NULL DEFAULT 'Attendance Session',
+  site_id TEXT,
+  site_name TEXT,
+  meal_type TEXT,
+  session_date DATE,
+  start_time TEXT,
+  end_time TEXT,
+  qr_token TEXT,
+  qr_expiry TIMESTAMPTZ,
+  expected_labor NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  expected_junior NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  expected_senior NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  actual_labor NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  actual_junior NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  actual_senior NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  validity_minutes INTEGER NOT NULL DEFAULT 60,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS session_name TEXT NOT NULL DEFAULT 'Attendance Session';
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT 'Attendance Session';
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS meal_type TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS session_date DATE;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS start_time TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS end_time TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS qr_token TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS qr_expiry TIMESTAMPTZ;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS expected_labor NUMERIC(14, 3) NOT NULL DEFAULT 0;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS expected_junior NUMERIC(14, 3) NOT NULL DEFAULT 0;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS expected_senior NUMERIC(14, 3) NOT NULL DEFAULT 0;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS actual_labor NUMERIC(14, 3) NOT NULL DEFAULT 0;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS actual_junior NUMERIC(14, 3) NOT NULL DEFAULT 0;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS actual_senior NUMERIC(14, 3) NOT NULL DEFAULT 0;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS validity_minutes INTEGER NOT NULL DEFAULT 60;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+INSERT INTO attendance_sessions (
+  id, session_name, title, site_id, site_name, meal_type, session_date,
+  start_time, end_time, qr_token, qr_expiry, expected_labor,
+  expected_junior, expected_senior, actual_labor, actual_junior,
+  actual_senior, validity_minutes, notes, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'session_name', ''), NULLIF(record.data->>'title', ''), 'Attendance Session'),
+  COALESCE(NULLIF(record.data->>'title', ''), NULLIF(record.data->>'session_name', ''), 'Attendance Session'),
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  NULLIF(record.data->>'meal_type', ''),
+  CASE WHEN COALESCE(record.data->>'session_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'session_date')::date ELSE NULL END,
+  NULLIF(record.data->>'start_time', ''),
+  NULLIF(record.data->>'end_time', ''),
+  NULLIF(record.data->>'qr_token', ''),
+  CASE WHEN COALESCE(record.data->>'qr_expiry', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'qr_expiry')::timestamptz ELSE NULL END,
+  CASE WHEN COALESCE(record.data->>'expected_labor', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (record.data->>'expected_labor')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(record.data->>'expected_junior', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (record.data->>'expected_junior')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(record.data->>'expected_senior', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (record.data->>'expected_senior')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(record.data->>'actual_labor', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (record.data->>'actual_labor')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(record.data->>'actual_junior', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (record.data->>'actual_junior')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(record.data->>'actual_senior', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (record.data->>'actual_senior')::numeric ELSE 0 END,
+  COALESCE(CASE WHEN COALESCE(record.data->>'validity_minutes', '') ~ '^[0-9]+$' THEN (record.data->>'validity_minutes')::integer ELSE NULL END, 60),
+  NULLIF(record.data->>'notes', ''),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'AttendanceSession'
+ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE attendance_sessions DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE attendance_sessions DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE attendance_sessions DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE attendance_sessions DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE attendance_sessions DROP COLUMN IF EXISTS record_date;
+ALTER TABLE attendance_sessions DROP COLUMN IF EXISTS payload;
+
+CREATE TABLE IF NOT EXISTS category_qr_sessions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT 'Category QR Session',
+  site_id TEXT,
+  site_name TEXT,
+  session_date DATE,
+  from_date DATE,
+  to_date DATE,
+  start_time TEXT,
+  end_time TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT 'Category QR Session';
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS session_date DATE;
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS from_date DATE;
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS to_date DATE;
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS start_time TEXT;
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS end_time TEXT;
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE category_qr_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS category_qr_session_categories (
+  id BIGSERIAL PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES category_qr_sessions(id) ON DELETE CASCADE,
+  category TEXT,
+  label TEXT,
+  token TEXT,
+  scan_count NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO category_qr_sessions (
+  id, title, site_id, site_name, session_date, from_date, to_date,
+  start_time, end_time, notes, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'title', ''), 'Category QR Session'),
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  CASE WHEN COALESCE(record.data->>'session_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'session_date')::date ELSE NULL END,
+  CASE WHEN COALESCE(record.data->>'from_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'from_date')::date ELSE NULL END,
+  CASE WHEN COALESCE(record.data->>'to_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'to_date')::date ELSE NULL END,
+  NULLIF(record.data->>'start_time', ''),
+  NULLIF(record.data->>'end_time', ''),
+  NULLIF(record.data->>'notes', ''),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'CategoryQRSession'
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO category_qr_session_categories (
+  session_id, category, label, token, scan_count, sort_order
+)
+SELECT
+  record.id,
+  NULLIF(category_row.value->>'category', ''),
+  NULLIF(category_row.value->>'label', ''),
+  NULLIF(category_row.value->>'token', ''),
+  CASE WHEN COALESCE(category_row.value->>'scan_count', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (category_row.value->>'scan_count')::numeric ELSE 0 END,
+  (category_row.ordinality - 1)::integer
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_array_elements(CASE
+  WHEN jsonb_typeof(record.data->'categories') = 'array' THEN record.data->'categories'
+  ELSE '[]'::jsonb
+END) WITH ORDINALITY AS category_row(value, ordinality)
+WHERE record.entity_name = 'CategoryQRSession'
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE category_qr_sessions DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE category_qr_sessions DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE category_qr_sessions DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE category_qr_sessions DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE category_qr_sessions DROP COLUMN IF EXISTS record_date;
+ALTER TABLE category_qr_sessions DROP COLUMN IF EXISTS payload;
+
+CREATE TABLE IF NOT EXISTS diner_scans (
+  id TEXT PRIMARY KEY,
+  event_id TEXT,
+  event_name TEXT,
+  event_qr_token TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  plan_date DATE,
+  meal_type TEXT,
+  guest_token TEXT,
+  scan_method TEXT,
+  scanned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL DEFAULT 'scanned',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS event_id TEXT;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS event_name TEXT;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS event_qr_token TEXT;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS plan_date DATE;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS meal_type TEXT;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS guest_token TEXT;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS scan_method TEXT;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS scanned_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'scanned';
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE diner_scans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+INSERT INTO diner_scans (
+  id, event_id, event_name, event_qr_token, site_id, site_name,
+  plan_date, meal_type, guest_token, scan_method, scanned_at,
+  status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(record.data->>'event_id', ''),
+  NULLIF(record.data->>'event_name', ''),
+  NULLIF(record.data->>'event_qr_token', ''),
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  CASE WHEN COALESCE(record.data->>'plan_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'plan_date')::date ELSE NULL END,
+  NULLIF(record.data->>'meal_type', ''),
+  NULLIF(record.data->>'guest_token', ''),
+  NULLIF(record.data->>'scan_method', ''),
+  COALESCE(CASE WHEN COALESCE(record.data->>'scanned_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'scanned_at')::timestamptz ELSE NULL END, record.created_at, NOW()),
+  COALESCE(NULLIF(record.data->>'status', ''), 'scanned'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'DinerScan'
+ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE diner_scans DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE diner_scans DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE diner_scans DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE diner_scans DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE diner_scans DROP COLUMN IF EXISTS record_date;
+ALTER TABLE diner_scans DROP COLUMN IF EXISTS payload;
+
+CREATE TABLE IF NOT EXISTS customer_meal_plans (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT 'Customer Meal Plan',
+  site_id TEXT,
+  site_name TEXT,
+  plan_date DATE,
+  customer_id TEXT,
+  customer_name TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Customer Meal Plan';
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS plan_date DATE;
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS customer_id TEXT;
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS customer_name TEXT;
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE customer_meal_plans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS customer_meal_plan_meals (
+  id BIGSERIAL PRIMARY KEY,
+  customer_meal_plan_id TEXT NOT NULL REFERENCES customer_meal_plans(id) ON DELETE CASCADE,
+  recipe_id TEXT,
+  recipe_name TEXT,
+  meal_type TEXT,
+  portions NUMERIC(14, 3) NOT NULL DEFAULT 0,
+  servings_per_attendee NUMERIC(14, 3) NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO customer_meal_plans (
+  id, name, site_id, site_name, plan_date, customer_id, customer_name,
+  notes, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'name', ''), 'Customer Meal Plan'),
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  CASE WHEN COALESCE(record.data->>'plan_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'plan_date')::date ELSE NULL END,
+  NULLIF(record.data->>'customer_id', ''),
+  NULLIF(record.data->>'customer_name', ''),
+  NULLIF(record.data->>'notes', ''),
+  COALESCE(NULLIF(record.data->>'status', ''), 'draft'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'CustomerMealPlan'
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO customer_meal_plan_meals (
+  customer_meal_plan_id, recipe_id, recipe_name, meal_type,
+  portions, servings_per_attendee, sort_order
+)
+SELECT
+  record.id,
+  NULLIF(meal_row.value->>'recipe_id', ''),
+  NULLIF(meal_row.value->>'recipe_name', ''),
+  NULLIF(meal_row.value->>'meal_type', ''),
+  CASE WHEN COALESCE(meal_row.value->>'portions', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (meal_row.value->>'portions')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(meal_row.value->>'servings_per_attendee', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (meal_row.value->>'servings_per_attendee')::numeric ELSE 1 END,
+  (meal_row.ordinality - 1)::integer
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_array_elements(CASE
+  WHEN jsonb_typeof(record.data->'meals') = 'array' THEN record.data->'meals'
+  ELSE '[]'::jsonb
+END) WITH ORDINALITY AS meal_row(value, ordinality)
+WHERE record.entity_name = 'CustomerMealPlan'
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE customer_meal_plans DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE customer_meal_plans DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE customer_meal_plans DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE customer_meal_plans DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE customer_meal_plans DROP COLUMN IF EXISTS record_date;
+ALTER TABLE customer_meal_plans DROP COLUMN IF EXISTS payload;
+
+CREATE TABLE IF NOT EXISTS qr_codes (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT 'QR Code',
+  name TEXT NOT NULL DEFAULT 'QR Code',
+  category TEXT,
+  description TEXT,
+  token TEXT,
+  linked_item TEXT,
+  is_one_time BOOLEAN NOT NULL DEFAULT FALSE,
+  max_scans INTEGER NOT NULL DEFAULT 0,
+  scan_count INTEGER NOT NULL DEFAULT 0,
+  expiry_date TIMESTAMPTZ,
+  last_scanned_at TIMESTAMPTZ,
+  employee_name TEXT,
+  company_id_number TEXT,
+  mobile_number TEXT,
+  active_whatsapp BOOLEAN NOT NULL DEFAULT FALSE,
+  created_by TEXT,
+  created_by_name TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT 'QR Code';
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'QR Code';
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS token TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS linked_item TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS is_one_time BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS max_scans INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS scan_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS expiry_date TIMESTAMPTZ;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS last_scanned_at TIMESTAMPTZ;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS employee_name TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS company_id_number TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS mobile_number TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS active_whatsapp BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS created_by_name TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE qr_codes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS qr_code_meal_windows (
+  id BIGSERIAL PRIMARY KEY,
+  qr_code_id TEXT NOT NULL REFERENCES qr_codes(id) ON DELETE CASCADE,
+  meal_type TEXT,
+  label TEXT,
+  start_time TEXT,
+  end_time TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS qr_code_scan_history (
+  id BIGSERIAL PRIMARY KEY,
+  qr_code_id TEXT NOT NULL REFERENCES qr_codes(id) ON DELETE CASCADE,
+  scan_key TEXT,
+  attendance_record_id TEXT,
+  meal_type TEXT,
+  session_date DATE,
+  site_id TEXT,
+  menu_type TEXT,
+  menu_category TEXT,
+  scanned_at TIMESTAMPTZ,
+  scanned_by TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO qr_codes (
+  id, title, name, category, description, token, linked_item,
+  is_one_time, max_scans, scan_count, expiry_date, last_scanned_at,
+  employee_name, company_id_number, mobile_number, active_whatsapp,
+  created_by, created_by_name, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'title', ''), NULLIF(record.data->>'name', ''), NULLIF(record.data->>'employee_name', ''), 'QR Code'),
+  COALESCE(NULLIF(record.data->>'name', ''), NULLIF(record.data->>'title', ''), NULLIF(record.data->>'employee_name', ''), 'QR Code'),
+  NULLIF(record.data->>'category', ''),
+  NULLIF(record.data->>'description', ''),
+  NULLIF(record.data->>'token', ''),
+  NULLIF(record.data->>'linked_item', ''),
+  CASE
+    WHEN LOWER(COALESCE(NULLIF(record.data->>'is_one_time', ''), NULLIF(record.data->>'one_time', ''), 'false')) IN ('true', 't', '1', 'yes')
+      THEN TRUE
+    ELSE FALSE
+  END,
+  COALESCE(CASE WHEN COALESCE(record.data->>'max_scans', '') ~ '^[0-9]+$' THEN (record.data->>'max_scans')::integer ELSE NULL END, 0),
+  COALESCE(CASE WHEN COALESCE(record.data->>'scan_count', '') ~ '^[0-9]+$' THEN (record.data->>'scan_count')::integer ELSE NULL END, 0),
+  CASE WHEN COALESCE(record.data->>'expiry_date', record.data->>'exp', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN COALESCE(record.data->>'expiry_date', record.data->>'exp')::timestamptz ELSE NULL END,
+  CASE WHEN COALESCE(record.data->>'last_scanned_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'last_scanned_at')::timestamptz ELSE NULL END,
+  NULLIF(record.data->>'employee_name', ''),
+  NULLIF(record.data->>'company_id_number', ''),
+  NULLIF(record.data->>'mobile_number', ''),
+  CASE
+    WHEN LOWER(COALESCE(NULLIF(record.data->>'active_whatsapp', ''), 'false')) IN ('true', 't', '1', 'yes')
+      THEN TRUE
+    ELSE FALSE
+  END,
+  NULLIF(record.data->>'created_by', ''),
+  NULLIF(record.data->>'created_by_name', ''),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'QRCode'
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO qr_code_meal_windows (
+  qr_code_id, meal_type, label, start_time, end_time, sort_order
+)
+SELECT
+  record.id,
+  window_row.key,
+  NULLIF(window_row.value->>'label', ''),
+  NULLIF(window_row.value->>'start_time', ''),
+  NULLIF(window_row.value->>'end_time', ''),
+  ROW_NUMBER() OVER (PARTITION BY record.id ORDER BY window_row.key)::integer - 1
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_each(CASE
+  WHEN jsonb_typeof(record.data->'meal_windows') = 'object' THEN record.data->'meal_windows'
+  ELSE '{}'::jsonb
+END) AS window_row(key, value)
+WHERE record.entity_name = 'QRCode'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO qr_code_scan_history (
+  qr_code_id, scan_key, attendance_record_id, meal_type, session_date,
+  site_id, menu_type, menu_category, scanned_at, scanned_by, sort_order
+)
+SELECT
+  record.id,
+  NULLIF(scan_row.value->>'scan_key', ''),
+  NULLIF(scan_row.value->>'attendance_record_id', ''),
+  NULLIF(scan_row.value->>'meal_type', ''),
+  CASE WHEN COALESCE(scan_row.value->>'session_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (scan_row.value->>'session_date')::date ELSE NULL END,
+  NULLIF(scan_row.value->>'site_id', ''),
+  NULLIF(scan_row.value->>'menu_type', ''),
+  NULLIF(scan_row.value->>'menu_category', ''),
+  CASE WHEN COALESCE(scan_row.value->>'scanned_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (scan_row.value->>'scanned_at')::timestamptz ELSE NULL END,
+  NULLIF(scan_row.value->>'scanned_by', ''),
+  (scan_row.ordinality - 1)::integer
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_array_elements(CASE
+  WHEN jsonb_typeof(record.data->'scan_history') = 'array' THEN record.data->'scan_history'
+  ELSE '[]'::jsonb
+END) WITH ORDINALITY AS scan_row(value, ordinality)
+WHERE record.entity_name = 'QRCode'
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE qr_codes DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE qr_codes DROP COLUMN IF EXISTS site_id;
+ALTER TABLE qr_codes DROP COLUMN IF EXISTS site_name;
+ALTER TABLE qr_codes DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE qr_codes DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE qr_codes DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE qr_codes DROP COLUMN IF EXISTS record_date;
+ALTER TABLE qr_codes DROP COLUMN IF EXISTS payload;
+
+CREATE TABLE IF NOT EXISTS qr_deliveries (
+  id TEXT PRIMARY KEY,
+  qr_code_id TEXT,
+  qr_code_title TEXT,
+  qr_token TEXT,
+  delivery_method TEXT NOT NULL DEFAULT 'email',
+  subject TEXT,
+  message TEXT,
+  scheduled_at TIMESTAMPTZ,
+  sent_at TIMESTAMPTZ,
+  sent_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS qr_code_id TEXT;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS qr_code_title TEXT;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS qr_token TEXT;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS delivery_method TEXT NOT NULL DEFAULT 'email';
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS subject TEXT;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS message TEXT;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS sent_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS failed_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE qr_deliveries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS qr_delivery_recipients (
+  id BIGSERIAL PRIMARY KEY,
+  qr_delivery_id TEXT NOT NULL REFERENCES qr_deliveries(id) ON DELETE CASCADE,
+  name TEXT,
+  email TEXT,
+  phone TEXT,
+  category TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS qr_delivery_groups (
+  id BIGSERIAL PRIMARY KEY,
+  qr_delivery_id TEXT NOT NULL REFERENCES qr_deliveries(id) ON DELETE CASCADE,
+  group_id TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO qr_deliveries (
+  id, qr_code_id, qr_code_title, qr_token, delivery_method, subject,
+  message, scheduled_at, sent_at, sent_count, failed_count, status,
+  source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(record.data->>'qr_code_id', ''),
+  NULLIF(record.data->>'qr_code_title', ''),
+  NULLIF(record.data->>'qr_token', ''),
+  COALESCE(NULLIF(record.data->>'delivery_method', ''), 'email'),
+  NULLIF(record.data->>'subject', ''),
+  NULLIF(record.data->>'message', ''),
+  CASE WHEN COALESCE(record.data->>'scheduled_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'scheduled_at')::timestamptz ELSE NULL END,
+  CASE WHEN COALESCE(record.data->>'sent_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'sent_at')::timestamptz ELSE NULL END,
+  COALESCE(CASE WHEN COALESCE(record.data->>'sent_count', '') ~ '^[0-9]+$' THEN (record.data->>'sent_count')::integer ELSE NULL END, 0),
+  COALESCE(CASE WHEN COALESCE(record.data->>'failed_count', '') ~ '^[0-9]+$' THEN (record.data->>'failed_count')::integer ELSE NULL END, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), 'pending'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'QRDelivery'
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO qr_delivery_recipients (
+  qr_delivery_id, name, email, phone, category, status, sort_order
+)
+SELECT
+  record.id,
+  NULLIF(recipient_row.value->>'name', ''),
+  NULLIF(recipient_row.value->>'email', ''),
+  NULLIF(recipient_row.value->>'phone', ''),
+  NULLIF(recipient_row.value->>'category', ''),
+  COALESCE(NULLIF(recipient_row.value->>'status', ''), 'pending'),
+  (recipient_row.ordinality - 1)::integer
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_array_elements(CASE
+  WHEN jsonb_typeof(record.data->'recipients') = 'array' THEN record.data->'recipients'
+  ELSE '[]'::jsonb
+END) WITH ORDINALITY AS recipient_row(value, ordinality)
+WHERE record.entity_name = 'QRDelivery'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO qr_delivery_groups (qr_delivery_id, group_id, sort_order)
+SELECT
+  record.id,
+  group_row.value #>> '{}',
+  (group_row.ordinality - 1)::integer
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_array_elements(CASE
+  WHEN jsonb_typeof(record.data->'group_ids') = 'array' THEN record.data->'group_ids'
+  ELSE '[]'::jsonb
+END) WITH ORDINALITY AS group_row(value, ordinality)
+WHERE record.entity_name = 'QRDelivery'
+  AND COALESCE(group_row.value #>> '{}', '') <> ''
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE qr_deliveries DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE qr_deliveries DROP COLUMN IF EXISTS site_id;
+ALTER TABLE qr_deliveries DROP COLUMN IF EXISTS site_name;
+ALTER TABLE qr_deliveries DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE qr_deliveries DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE qr_deliveries DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE qr_deliveries DROP COLUMN IF EXISTS record_date;
+ALTER TABLE qr_deliveries DROP COLUMN IF EXISTS payload;
+
+CREATE TABLE IF NOT EXISTS user_groups (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT 'User Group',
+  description TEXT,
+  total_members INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'User Group';
+ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS total_members INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE user_groups ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS user_group_members (
+  id BIGSERIAL PRIMARY KEY,
+  user_group_id TEXT NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+  name TEXT,
+  email TEXT,
+  phone TEXT,
+  category TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO user_groups (
+  id, name, description, total_members, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  COALESCE(NULLIF(record.data->>'name', ''), 'User Group'),
+  NULLIF(record.data->>'description', ''),
+  COALESCE(CASE WHEN COALESCE(record.data->>'total_members', '') ~ '^[0-9]+$' THEN (record.data->>'total_members')::integer ELSE NULL END, 0),
+  COALESCE(NULLIF(record.data->>'status', ''), 'active'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'UserGroup'
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO user_group_members (
+  user_group_id, name, email, phone, category, status, sort_order
+)
+SELECT
+  record.id,
+  NULLIF(member_row.value->>'name', ''),
+  NULLIF(member_row.value->>'email', ''),
+  NULLIF(member_row.value->>'phone', ''),
+  NULLIF(member_row.value->>'category', ''),
+  COALESCE(NULLIF(member_row.value->>'status', ''), 'active'),
+  (member_row.ordinality - 1)::integer
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_array_elements(CASE
+  WHEN jsonb_typeof(record.data->'members') = 'array' THEN record.data->'members'
+  ELSE '[]'::jsonb
+END) WITH ORDINALITY AS member_row(value, ordinality)
+WHERE record.entity_name = 'UserGroup'
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE user_groups DROP COLUMN IF EXISTS entity_name;
+ALTER TABLE user_groups DROP COLUMN IF EXISTS site_id;
+ALTER TABLE user_groups DROP COLUMN IF EXISTS site_name;
+ALTER TABLE user_groups DROP COLUMN IF EXISTS from_site_id;
+ALTER TABLE user_groups DROP COLUMN IF EXISTS to_site_id;
+ALTER TABLE user_groups DROP COLUMN IF EXISTS site_ids;
+ALTER TABLE user_groups DROP COLUMN IF EXISTS record_date;
+ALTER TABLE user_groups DROP COLUMN IF EXISTS payload;
+
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_site_date ON attendance_sessions(site_id, session_date, meal_type);
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_status ON attendance_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_category_qr_sessions_site_date ON category_qr_sessions(site_id, session_date);
+CREATE INDEX IF NOT EXISTS idx_category_qr_session_categories_session ON category_qr_session_categories(session_id);
+CREATE INDEX IF NOT EXISTS idx_diner_scans_event ON diner_scans(event_id, guest_token);
+CREATE INDEX IF NOT EXISTS idx_diner_scans_site_date ON diner_scans(site_id, plan_date, meal_type);
+CREATE INDEX IF NOT EXISTS idx_customer_meal_plans_site_date ON customer_meal_plans(site_id, plan_date);
+CREATE INDEX IF NOT EXISTS idx_customer_meal_plan_meals_plan ON customer_meal_plan_meals(customer_meal_plan_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_qr_codes_token_unique ON qr_codes(token) WHERE COALESCE(token, '') <> '';
+CREATE INDEX IF NOT EXISTS idx_qr_codes_category_status ON qr_codes(category, status);
+CREATE INDEX IF NOT EXISTS idx_qr_code_meal_windows_code ON qr_code_meal_windows(qr_code_id);
+CREATE INDEX IF NOT EXISTS idx_qr_code_scan_history_code ON qr_code_scan_history(qr_code_id, scan_key);
+CREATE INDEX IF NOT EXISTS idx_qr_deliveries_code ON qr_deliveries(qr_code_id);
+CREATE INDEX IF NOT EXISTS idx_qr_delivery_recipients_delivery ON qr_delivery_recipients(qr_delivery_id);
+CREATE INDEX IF NOT EXISTS idx_qr_delivery_groups_delivery ON qr_delivery_groups(qr_delivery_id);
+CREATE INDEX IF NOT EXISTS idx_user_group_members_group ON user_group_members(user_group_id);
+
+DO $typed_qr_pos_triggers$
+BEGIN
+  DROP TRIGGER IF EXISTS attendance_sessions_realtime_change ON attendance_sessions;
+  EXECUTE 'CREATE TRIGGER attendance_sessions_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON attendance_sessions
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''AttendanceSession'')';
+
+  DROP TRIGGER IF EXISTS category_qr_sessions_realtime_change ON category_qr_sessions;
+  EXECUTE 'CREATE TRIGGER category_qr_sessions_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON category_qr_sessions
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''CategoryQRSession'')';
+
+  DROP TRIGGER IF EXISTS diner_scans_realtime_change ON diner_scans;
+  EXECUTE 'CREATE TRIGGER diner_scans_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON diner_scans
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''DinerScan'')';
+
+  DROP TRIGGER IF EXISTS customer_meal_plans_realtime_change ON customer_meal_plans;
+  EXECUTE 'CREATE TRIGGER customer_meal_plans_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON customer_meal_plans
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''CustomerMealPlan'')';
+
+  DROP TRIGGER IF EXISTS qr_codes_realtime_change ON qr_codes;
+  EXECUTE 'CREATE TRIGGER qr_codes_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON qr_codes
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''QRCode'')';
+
+  DROP TRIGGER IF EXISTS qr_deliveries_realtime_change ON qr_deliveries;
+  EXECUTE 'CREATE TRIGGER qr_deliveries_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON qr_deliveries
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''QRDelivery'')';
+
+  DROP TRIGGER IF EXISTS user_groups_realtime_change ON user_groups;
+  EXECUTE 'CREATE TRIGGER user_groups_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON user_groups
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''UserGroup'')';
+END;
+$typed_qr_pos_triggers$;
+
+CREATE TABLE IF NOT EXISTS document_object_fields (
+  id BIGSERIAL PRIMARY KEY,
+  entity_name TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  collection_key TEXT NOT NULL,
+  item_order INTEGER NOT NULL DEFAULT 0,
+  field_name TEXT NOT NULL,
+  value_text TEXT,
+  value_numeric NUMERIC(18, 6),
+  value_boolean BOOLEAN,
+  value_date TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_object_fields_record
+  ON document_object_fields(entity_name, record_id, collection_key, item_order);
+CREATE INDEX IF NOT EXISTS idx_document_object_fields_field
+  ON document_object_fields(entity_name, collection_key, field_name);
+
+CREATE TABLE IF NOT EXISTS erp_integration_configs (
+  id TEXT PRIMARY KEY,
+  provider_name TEXT NOT NULL DEFAULT 'Dynamics 365',
+  api_endpoint TEXT,
+  api_key TEXT,
+  sync_schedule TEXT NOT NULL DEFAULT 'manual',
+  error_notes TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS provider_name TEXT NOT NULL DEFAULT 'Dynamics 365';
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS api_endpoint TEXT;
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS api_key TEXT;
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS sync_schedule TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS error_notes TEXT;
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE erp_integration_configs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS erp_integration_logs (
+  id TEXT PRIMARY KEY,
+  config_id TEXT,
+  provider_name TEXT,
+  module_key TEXT,
+  operation TEXT,
+  direction TEXT,
+  transport TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  message TEXT,
+  records_count INTEGER NOT NULL DEFAULT 0,
+  applied_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  source_system TEXT,
+  sync_id TEXT,
+  quantity_semantics TEXT,
+  received_at TIMESTAMPTZ,
+  retry_of_log_id TEXT,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  retried_at TIMESTAMPTZ,
+  last_retry_status TEXT,
+  last_retry_log_id TEXT,
+  last_retry_error TEXT,
+  site_id TEXT,
+  site_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+  attempted_by TEXT,
+  attempted_by_name TEXT,
+  attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+  request_config_id TEXT,
+  request_module_key TEXT,
+  request_transport TEXT,
+  request_start_date DATE,
+  request_end_date DATE,
+  request_location_id TEXT,
+  request_category TEXT,
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS config_id TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS provider_name TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS module_key TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS operation TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS direction TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS transport TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS message TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS records_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS applied_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS skipped_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS failed_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS source_system TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS sync_id TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS quantity_semantics TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS retry_of_log_id TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS retried_at TIMESTAMPTZ;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS last_retry_status TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS last_retry_log_id TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS last_retry_error TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS site_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS attempted_by TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS attempted_by_name TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS request_config_id TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS request_module_key TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS request_transport TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS request_start_date DATE;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS request_end_date DATE;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS request_location_id TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS request_category TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE erp_integration_logs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS forecast_snapshots (
+  id TEXT PRIMARY KEY,
+  scenario_id TEXT,
+  scenario_name TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  start_date DATE,
+  end_date DATE,
+  forecast_horizon_days INTEGER NOT NULL DEFAULT 7,
+  generated_by_id TEXT,
+  generated_by_email TEXT,
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL DEFAULT 'ready',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS scenario_id TEXT;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS scenario_name TEXT;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS start_date DATE;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS end_date DATE;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS forecast_horizon_days INTEGER NOT NULL DEFAULT 7;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS generated_by_id TEXT;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS generated_by_email TEXT;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ready';
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE forecast_snapshots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS branch_orders (
+  id TEXT PRIMARY KEY,
+  order_number TEXT,
+  branch_id TEXT,
+  branch_name TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  order_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  required_date DATE,
+  priority TEXT NOT NULL DEFAULT 'medium',
+  notes TEXT,
+  approved_by TEXT,
+  approved_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'draft',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS order_number TEXT;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS branch_id TEXT;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS branch_name TEXT;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS order_date TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS required_date DATE;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'medium';
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS approved_by TEXT;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE branch_orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS material_requests (
+  id TEXT PRIMARY KEY,
+  request_number TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  requesting_site_id TEXT,
+  requesting_site_name TEXT,
+  fulfillment_store_id TEXT,
+  fulfillment_store_name TEXT,
+  request_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  period_start DATE,
+  period_end DATE,
+  total_estimated_cost NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  source_type TEXT NOT NULL DEFAULT 'manual',
+  source_production_id TEXT,
+  source_production_name TEXT,
+  created_by TEXT,
+  created_by_name TEXT,
+  acknowledged_by TEXT,
+  acknowledged_by_name TEXT,
+  acknowledged_at TIMESTAMPTZ,
+  procurement_notes TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'pending_procurement_ack',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS request_number TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS requesting_site_id TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS requesting_site_name TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS fulfillment_store_id TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS fulfillment_store_name TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS request_date DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS period_start DATE;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS period_end DATE;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS total_estimated_cost NUMERIC(14, 2) NOT NULL DEFAULT 0;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS source_production_id TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS source_production_name TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS created_by_name TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledged_by TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledged_by_name TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS procurement_notes TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_procurement_ack';
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS material_request_items (
+  id BIGSERIAL PRIMARY KEY,
+  material_request_id TEXT NOT NULL REFERENCES material_requests(id) ON DELETE CASCADE,
+  ingredient_id TEXT,
+  item_code TEXT,
+  ingredient_name TEXT,
+  required_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  current_stock NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  shortage_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  request_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  unit TEXT,
+  estimated_cost NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  live_reservable_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  live_shortage_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  source_line_count INTEGER NOT NULL DEFAULT 0,
+  validation_status TEXT,
+  repairable_issue_count INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS material_request_item_issues (
+  id BIGSERIAL PRIMARY KEY,
+  material_request_item_id BIGINT NOT NULL REFERENCES material_request_items(id) ON DELETE CASCADE,
+  code TEXT,
+  message TEXT,
+  severity TEXT NOT NULL DEFAULT 'warning',
+  repairable BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS menu_plan_pr_schedules (
+  id TEXT PRIMARY KEY,
+  site_id TEXT,
+  site_name TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  cycle_days INTEGER NOT NULL DEFAULT 7,
+  preferred_weekday TEXT NOT NULL DEFAULT 'thursday',
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS cycle_days INTEGER NOT NULL DEFAULT 7;
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS preferred_weekday TEXT NOT NULL DEFAULT 'thursday';
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE menu_plan_pr_schedules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS menu_plan_pr_runs (
+  id TEXT PRIMARY KEY,
+  site_id TEXT,
+  site_name TEXT,
+  cycle_start DATE,
+  cycle_end DATE,
+  preferred_run_date DATE,
+  requested_run_date DATE,
+  cycle_days INTEGER NOT NULL DEFAULT 7,
+  preferred_weekday TEXT,
+  trigger_type TEXT NOT NULL DEFAULT 'manual',
+  generated_pr_id TEXT,
+  generated_pr_number TEXT,
+  generated_request_id TEXT,
+  generated_request_number TEXT,
+  generated_item_count INTEGER NOT NULL DEFAULT 0,
+  total_estimated_cost NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS cycle_start DATE;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS cycle_end DATE;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS preferred_run_date DATE;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS requested_run_date DATE;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS cycle_days INTEGER NOT NULL DEFAULT 7;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS preferred_weekday TEXT;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS trigger_type TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS generated_pr_id TEXT;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS generated_pr_number TEXT;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS generated_request_id TEXT;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS generated_request_number TEXT;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS generated_item_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS total_estimated_cost NUMERIC(14, 2) NOT NULL DEFAULT 0;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE menu_plan_pr_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS production_batches (
+  id TEXT PRIMARY KEY,
+  batch_number TEXT,
+  production_id TEXT,
+  recipe_id TEXT,
+  recipe_name TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  meal_type TEXT,
+  quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL DEFAULT 'servings',
+  production_date DATE,
+  expiry_date DATE,
+  process_stage TEXT NOT NULL DEFAULT 'cleaning',
+  qc_status TEXT NOT NULL DEFAULT 'pending',
+  packaging_status TEXT NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'planned',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS batch_number TEXT;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS production_id TEXT;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS recipe_id TEXT;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS recipe_name TEXT;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS meal_type TEXT;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS quantity NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'servings';
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS production_date DATE;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS expiry_date DATE;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS process_stage TEXT NOT NULL DEFAULT 'cleaning';
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS qc_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS packaging_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'planned';
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE production_batches ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS production_transfers (
+  id TEXT PRIMARY KEY,
+  transfer_number TEXT,
+  from_site_id TEXT,
+  from_site_name TEXT,
+  to_site_id TEXT,
+  to_site_name TEXT,
+  site_id TEXT,
+  transfer_date DATE,
+  transfer_type TEXT NOT NULL DEFAULT 'inventory',
+  requested_by TEXT,
+  received_by TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS transfer_number TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS from_site_id TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS from_site_name TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS to_site_id TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS to_site_name TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS transfer_date DATE;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS transfer_type TEXT NOT NULL DEFAULT 'inventory';
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS requested_by TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS received_by TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE production_transfers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS purchase_order_documents (
+  id TEXT PRIMARY KEY,
+  po_number TEXT,
+  order_number TEXT,
+  supplier_id TEXT,
+  supplier_name TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  order_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  expected_delivery_date DATE,
+  total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS po_number TEXT;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS order_number TEXT;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS supplier_id TEXT;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS supplier_name TEXT;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS order_date DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS expected_delivery_date DATE;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE purchase_order_documents ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS quality_controls (
+  id TEXT PRIMARY KEY,
+  batch_id TEXT,
+  batch_number TEXT,
+  production_id TEXT,
+  recipe_id TEXT,
+  recipe_name TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  inspection_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  inspector_name TEXT,
+  overall_status TEXT,
+  approval_notes TEXT,
+  approved_by TEXT,
+  approved_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'pending',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS batch_id TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS batch_number TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS production_id TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS recipe_id TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS recipe_name TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS inspection_date TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS inspector_name TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS overall_status TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS approval_notes TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS approved_by TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE quality_controls ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS rfqs (
+  id TEXT PRIMARY KEY,
+  rfq_number TEXT,
+  issue_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  response_deadline DATE,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS rfq_number TEXT;
+ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS issue_date DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS response_deadline DATE;
+ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS source_name TEXT;
+ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE rfqs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+INSERT INTO material_requests (
+  id, request_number, site_id, site_name, requesting_site_id, requesting_site_name,
+  fulfillment_store_id, fulfillment_store_name, request_date, period_start, period_end,
+  total_estimated_cost, source_type, source_production_id, source_production_name,
+  created_by, created_by_name, acknowledged_by, acknowledged_by_name, acknowledged_at,
+  procurement_notes, notes, status, source_name, created_at, updated_at
+)
+SELECT
+  record.id,
+  NULLIF(record.data->>'request_number', ''),
+  NULLIF(record.data->>'site_id', ''),
+  NULLIF(record.data->>'site_name', ''),
+  NULLIF(record.data->>'requesting_site_id', ''),
+  NULLIF(record.data->>'requesting_site_name', ''),
+  NULLIF(record.data->>'fulfillment_store_id', ''),
+  NULLIF(record.data->>'fulfillment_store_name', ''),
+  COALESCE(CASE WHEN COALESCE(record.data->>'request_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN LEFT(record.data->>'request_date', 10)::date ELSE NULL END, CURRENT_DATE),
+  CASE WHEN COALESCE(record.data->>'period_start', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN LEFT(record.data->>'period_start', 10)::date ELSE NULL END,
+  CASE WHEN COALESCE(record.data->>'period_end', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN LEFT(record.data->>'period_end', 10)::date ELSE NULL END,
+  CASE WHEN COALESCE(record.data->>'total_estimated_cost', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (record.data->>'total_estimated_cost')::numeric ELSE 0 END,
+  COALESCE(NULLIF(record.data->>'source_type', ''), 'manual'),
+  NULLIF(record.data->>'source_production_id', ''),
+  NULLIF(record.data->>'source_production_name', ''),
+  NULLIF(record.data->>'created_by', ''),
+  NULLIF(record.data->>'created_by_name', ''),
+  NULLIF(record.data->>'acknowledged_by', ''),
+  NULLIF(record.data->>'acknowledged_by_name', ''),
+  CASE WHEN COALESCE(record.data->>'acknowledged_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (record.data->>'acknowledged_at')::timestamptz ELSE NULL END,
+  NULLIF(record.data->>'procurement_notes', ''),
+  NULLIF(record.data->>'notes', ''),
+  COALESCE(NULLIF(record.data->>'status', ''), 'pending_procurement_ack'),
+  NULLIF(record.data->>'source_name', ''),
+  record.created_at,
+  record.updated_at
+FROM entity_records record
+WHERE record.entity_name = 'MaterialRequest'
+ON CONFLICT (id) DO UPDATE SET
+  request_number = EXCLUDED.request_number,
+  site_id = EXCLUDED.site_id,
+  site_name = EXCLUDED.site_name,
+  requesting_site_id = EXCLUDED.requesting_site_id,
+  requesting_site_name = EXCLUDED.requesting_site_name,
+  fulfillment_store_id = EXCLUDED.fulfillment_store_id,
+  fulfillment_store_name = EXCLUDED.fulfillment_store_name,
+  request_date = EXCLUDED.request_date,
+  period_start = EXCLUDED.period_start,
+  period_end = EXCLUDED.period_end,
+  total_estimated_cost = EXCLUDED.total_estimated_cost,
+  source_type = EXCLUDED.source_type,
+  source_production_id = EXCLUDED.source_production_id,
+  source_production_name = EXCLUDED.source_production_name,
+  created_by = EXCLUDED.created_by,
+  created_by_name = EXCLUDED.created_by_name,
+  acknowledged_by = EXCLUDED.acknowledged_by,
+  acknowledged_by_name = EXCLUDED.acknowledged_by_name,
+  acknowledged_at = EXCLUDED.acknowledged_at,
+  procurement_notes = EXCLUDED.procurement_notes,
+  notes = EXCLUDED.notes,
+  status = EXCLUDED.status,
+  source_name = EXCLUDED.source_name,
+  updated_at = EXCLUDED.updated_at;
+
+INSERT INTO material_request_items (
+  material_request_id, ingredient_id, item_code, ingredient_name,
+  required_quantity, current_stock, shortage_quantity, request_quantity,
+  unit, estimated_cost, live_reservable_quantity, live_shortage_quantity,
+  source_line_count, validation_status, repairable_issue_count, sort_order
+)
+SELECT
+  record.id,
+  NULLIF(item_row.value->>'ingredient_id', ''),
+  NULLIF(item_row.value->>'item_code', ''),
+  NULLIF(item_row.value->>'ingredient_name', ''),
+  CASE WHEN COALESCE(item_row.value->>'required_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'required_quantity')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(item_row.value->>'current_stock', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'current_stock')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(item_row.value->>'shortage_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'shortage_quantity')::numeric ELSE 0 END,
+  CASE
+    WHEN COALESCE(item_row.value->>'request_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'request_quantity')::numeric
+    WHEN COALESCE(item_row.value->>'required_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'required_quantity')::numeric
+    ELSE 0
+  END,
+  NULLIF(item_row.value->>'unit', ''),
+  CASE WHEN COALESCE(item_row.value->>'estimated_cost', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'estimated_cost')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(item_row.value->>'live_reservable_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'live_reservable_quantity')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(item_row.value->>'live_shortage_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'live_shortage_quantity')::numeric ELSE 0 END,
+  CASE WHEN COALESCE(item_row.value->>'source_line_count', '') ~ '^[0-9]+$' THEN (item_row.value->>'source_line_count')::integer ELSE 0 END,
+  NULLIF(item_row.value->>'validation_status', ''),
+  CASE WHEN COALESCE(item_row.value->>'repairable_issue_count', '') ~ '^[0-9]+$' THEN (item_row.value->>'repairable_issue_count')::integer ELSE 0 END,
+  (item_row.ordinality - 1)::integer
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_array_elements(CASE
+  WHEN jsonb_typeof(record.data->'items') = 'array' THEN record.data->'items'
+  ELSE '[]'::jsonb
+END) WITH ORDINALITY AS item_row(value, ordinality)
+WHERE record.entity_name = 'MaterialRequest'
+  AND NOT EXISTS (
+    SELECT 1 FROM material_request_items existing
+    WHERE existing.material_request_id = record.id
+  );
+
+INSERT INTO material_request_item_issues (
+  material_request_item_id, code, message, severity, repairable, sort_order
+)
+SELECT
+  item.id,
+  NULLIF(issue_row.value->>'code', ''),
+  NULLIF(issue_row.value->>'message', ''),
+  COALESCE(NULLIF(issue_row.value->>'severity', ''), 'warning'),
+  LOWER(COALESCE(issue_row.value->>'repairable', 'false')) IN ('true', 't', '1', 'yes'),
+  (issue_row.ordinality - 1)::integer
+FROM entity_records record
+CROSS JOIN LATERAL jsonb_array_elements(CASE
+  WHEN jsonb_typeof(record.data->'items') = 'array' THEN record.data->'items'
+  ELSE '[]'::jsonb
+END) WITH ORDINALITY AS item_row(value, item_ordinality)
+JOIN material_request_items item
+  ON item.material_request_id = record.id
+ AND item.sort_order = (item_row.item_ordinality - 1)::integer
+CROSS JOIN LATERAL jsonb_array_elements(CASE
+  WHEN jsonb_typeof(item_row.value->'validation_issues') = 'array' THEN item_row.value->'validation_issues'
+  ELSE '[]'::jsonb
+END) WITH ORDINALITY AS issue_row(value, ordinality)
+WHERE record.entity_name = 'MaterialRequest'
+  AND NOT EXISTS (
+    SELECT 1 FROM material_request_item_issues existing
+    WHERE existing.material_request_item_id = item.id
+  );
+
+DO $material_request_payload_cutover$
+DECLARE
+  has_payload BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'material_requests'
+      AND column_name = 'payload'
+  ) INTO has_payload;
+
+  IF has_payload THEN
+    EXECUTE $sql$
+      UPDATE material_requests
+      SET
+        request_number = COALESCE(NULLIF(payload->>'request_number', ''), request_number),
+        site_id = COALESCE(NULLIF(payload->>'site_id', ''), site_id),
+        site_name = COALESCE(NULLIF(payload->>'site_name', ''), site_name),
+        requesting_site_id = COALESCE(NULLIF(payload->>'requesting_site_id', ''), requesting_site_id),
+        requesting_site_name = COALESCE(NULLIF(payload->>'requesting_site_name', ''), requesting_site_name),
+        fulfillment_store_id = COALESCE(NULLIF(payload->>'fulfillment_store_id', ''), fulfillment_store_id),
+        fulfillment_store_name = COALESCE(NULLIF(payload->>'fulfillment_store_name', ''), fulfillment_store_name),
+        request_date = COALESCE(
+          CASE WHEN COALESCE(payload->>'request_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN LEFT(payload->>'request_date', 10)::date ELSE NULL END,
+          request_date,
+          CURRENT_DATE
+        ),
+        period_start = COALESCE(
+          CASE WHEN COALESCE(payload->>'period_start', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN LEFT(payload->>'period_start', 10)::date ELSE NULL END,
+          period_start
+        ),
+        period_end = COALESCE(
+          CASE WHEN COALESCE(payload->>'period_end', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN LEFT(payload->>'period_end', 10)::date ELSE NULL END,
+          period_end
+        ),
+        total_estimated_cost = COALESCE(
+          CASE WHEN COALESCE(payload->>'total_estimated_cost', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (payload->>'total_estimated_cost')::numeric ELSE NULL END,
+          total_estimated_cost,
+          0
+        ),
+        source_type = COALESCE(NULLIF(payload->>'source_type', ''), source_type, 'manual'),
+        source_production_id = COALESCE(NULLIF(payload->>'source_production_id', ''), source_production_id),
+        source_production_name = COALESCE(NULLIF(payload->>'source_production_name', ''), source_production_name),
+        created_by = COALESCE(NULLIF(payload->>'created_by', ''), created_by),
+        created_by_name = COALESCE(NULLIF(payload->>'created_by_name', ''), created_by_name),
+        acknowledged_by = COALESCE(NULLIF(payload->>'acknowledged_by', ''), acknowledged_by),
+        acknowledged_by_name = COALESCE(NULLIF(payload->>'acknowledged_by_name', ''), acknowledged_by_name),
+        acknowledged_at = COALESCE(
+          CASE WHEN COALESCE(payload->>'acknowledged_at', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (payload->>'acknowledged_at')::timestamptz ELSE NULL END,
+          acknowledged_at
+        ),
+        procurement_notes = COALESCE(NULLIF(payload->>'procurement_notes', ''), procurement_notes),
+        notes = COALESCE(NULLIF(payload->>'notes', ''), notes),
+        status = COALESCE(NULLIF(payload->>'status', ''), status, 'pending_procurement_ack'),
+        source_name = COALESCE(NULLIF(payload->>'source_name', ''), source_name)
+      WHERE payload IS NOT NULL
+    $sql$;
+
+    EXECUTE $sql$
+      INSERT INTO material_request_items (
+        material_request_id, ingredient_id, item_code, ingredient_name,
+        required_quantity, current_stock, shortage_quantity, request_quantity,
+        unit, estimated_cost, live_reservable_quantity, live_shortage_quantity,
+        source_line_count, validation_status, repairable_issue_count, sort_order
+      )
+      SELECT
+        request.id,
+        NULLIF(item_row.value->>'ingredient_id', ''),
+        NULLIF(item_row.value->>'item_code', ''),
+        NULLIF(item_row.value->>'ingredient_name', ''),
+        CASE WHEN COALESCE(item_row.value->>'required_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'required_quantity')::numeric ELSE 0 END,
+        CASE WHEN COALESCE(item_row.value->>'current_stock', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'current_stock')::numeric ELSE 0 END,
+        CASE WHEN COALESCE(item_row.value->>'shortage_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'shortage_quantity')::numeric ELSE 0 END,
+        CASE
+          WHEN COALESCE(item_row.value->>'request_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'request_quantity')::numeric
+          WHEN COALESCE(item_row.value->>'required_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'required_quantity')::numeric
+          ELSE 0
+        END,
+        NULLIF(item_row.value->>'unit', ''),
+        CASE WHEN COALESCE(item_row.value->>'estimated_cost', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'estimated_cost')::numeric ELSE 0 END,
+        CASE WHEN COALESCE(item_row.value->>'live_reservable_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'live_reservable_quantity')::numeric ELSE 0 END,
+        CASE WHEN COALESCE(item_row.value->>'live_shortage_quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (item_row.value->>'live_shortage_quantity')::numeric ELSE 0 END,
+        CASE WHEN COALESCE(item_row.value->>'source_line_count', '') ~ '^[0-9]+$' THEN (item_row.value->>'source_line_count')::integer ELSE 0 END,
+        NULLIF(item_row.value->>'validation_status', ''),
+        CASE WHEN COALESCE(item_row.value->>'repairable_issue_count', '') ~ '^[0-9]+$' THEN (item_row.value->>'repairable_issue_count')::integer ELSE 0 END,
+        (item_row.ordinality - 1)::integer
+      FROM material_requests request
+      CROSS JOIN LATERAL jsonb_array_elements(CASE
+        WHEN jsonb_typeof(request.payload->'items') = 'array' THEN request.payload->'items'
+        ELSE '[]'::jsonb
+      END) WITH ORDINALITY AS item_row(value, ordinality)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM material_request_items existing
+        WHERE existing.material_request_id = request.id
+      )
+    $sql$;
+
+    EXECUTE $sql$
+      INSERT INTO material_request_item_issues (
+        material_request_item_id, code, message, severity, repairable, sort_order
+      )
+      SELECT
+        item.id,
+        NULLIF(issue_row.value->>'code', ''),
+        NULLIF(issue_row.value->>'message', ''),
+        COALESCE(NULLIF(issue_row.value->>'severity', ''), 'warning'),
+        LOWER(COALESCE(issue_row.value->>'repairable', 'false')) IN ('true', 't', '1', 'yes'),
+        (issue_row.ordinality - 1)::integer
+      FROM material_requests request
+      CROSS JOIN LATERAL jsonb_array_elements(CASE
+        WHEN jsonb_typeof(request.payload->'items') = 'array' THEN request.payload->'items'
+        ELSE '[]'::jsonb
+      END) WITH ORDINALITY AS item_row(value, item_ordinality)
+      JOIN material_request_items item
+        ON item.material_request_id = request.id
+       AND item.sort_order = (item_row.item_ordinality - 1)::integer
+      CROSS JOIN LATERAL jsonb_array_elements(CASE
+        WHEN jsonb_typeof(item_row.value->'validation_issues') = 'array' THEN item_row.value->'validation_issues'
+        ELSE '[]'::jsonb
+      END) WITH ORDINALITY AS issue_row(value, ordinality)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM material_request_item_issues existing
+        WHERE existing.material_request_item_id = item.id
+      )
+    $sql$;
+  END IF;
+END;
+$material_request_payload_cutover$;
+
+CREATE INDEX IF NOT EXISTS idx_erp_integration_logs_module_status
+  ON erp_integration_logs(module_key, status, attempted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_erp_integration_logs_site_attempted
+  ON erp_integration_logs(site_id, attempted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_erp_integration_logs_site_ids
+  ON erp_integration_logs USING GIN(site_ids);
+CREATE INDEX IF NOT EXISTS idx_forecast_snapshots_site_generated
+  ON forecast_snapshots(site_id, generated_at DESC, status);
+CREATE INDEX IF NOT EXISTS idx_branch_orders_branch_required
+  ON branch_orders(branch_id, required_date, status);
+CREATE INDEX IF NOT EXISTS idx_material_requests_site_date
+  ON material_requests(site_id, request_date DESC, status);
+CREATE INDEX IF NOT EXISTS idx_material_requests_requesting_site
+  ON material_requests(requesting_site_id, request_date DESC, status);
+CREATE INDEX IF NOT EXISTS idx_material_requests_source_production
+  ON material_requests(source_production_id);
+CREATE INDEX IF NOT EXISTS idx_material_request_items_request
+  ON material_request_items(material_request_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_material_request_items_ingredient
+  ON material_request_items(ingredient_id, item_code);
+CREATE INDEX IF NOT EXISTS idx_material_request_item_issues_item
+  ON material_request_item_issues(material_request_item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_menu_plan_pr_schedules_site_active
+  ON menu_plan_pr_schedules(site_id)
+  WHERE is_active IS TRUE;
+CREATE INDEX IF NOT EXISTS idx_menu_plan_pr_runs_site_cycle
+  ON menu_plan_pr_runs(site_id, cycle_start, cycle_end, status);
+CREATE INDEX IF NOT EXISTS idx_production_batches_site_date
+  ON production_batches(site_id, production_date, status);
+CREATE INDEX IF NOT EXISTS idx_production_batches_production
+  ON production_batches(production_id);
+CREATE INDEX IF NOT EXISTS idx_production_transfers_from_to_date
+  ON production_transfers(from_site_id, to_site_id, transfer_date, status);
+CREATE INDEX IF NOT EXISTS idx_purchase_order_documents_supplier_date
+  ON purchase_order_documents(supplier_id, order_date DESC, status);
+CREATE INDEX IF NOT EXISTS idx_purchase_order_documents_site_date
+  ON purchase_order_documents(site_id, order_date DESC, status);
+CREATE INDEX IF NOT EXISTS idx_quality_controls_site_inspection
+  ON quality_controls(site_id, inspection_date DESC, status);
+CREATE INDEX IF NOT EXISTS idx_quality_controls_batch
+  ON quality_controls(batch_id);
+CREATE INDEX IF NOT EXISTS idx_rfqs_issue_status
+  ON rfqs(issue_date DESC, status);
+
+DO $typed_remaining_document_cleanup$
+BEGIN
+  ALTER TABLE erp_integration_configs DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE erp_integration_configs DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE erp_integration_configs DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE erp_integration_configs DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE erp_integration_configs DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE erp_integration_configs DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE erp_integration_logs DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE erp_integration_logs DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE erp_integration_logs DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE erp_integration_logs DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE erp_integration_logs DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE forecast_snapshots DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE forecast_snapshots DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE forecast_snapshots DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE forecast_snapshots DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE forecast_snapshots DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE forecast_snapshots DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE branch_orders DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE branch_orders DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE branch_orders DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE branch_orders DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE branch_orders DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE branch_orders DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE material_requests DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE material_requests DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE material_requests DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE material_requests DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE material_requests DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE material_requests DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE menu_plan_pr_schedules DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE menu_plan_pr_schedules DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE menu_plan_pr_schedules DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE menu_plan_pr_schedules DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE menu_plan_pr_schedules DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE menu_plan_pr_schedules DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE menu_plan_pr_runs DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE menu_plan_pr_runs DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE menu_plan_pr_runs DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE menu_plan_pr_runs DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE menu_plan_pr_runs DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE menu_plan_pr_runs DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE production_batches DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE production_batches DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE production_batches DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE production_batches DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE production_batches DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE production_batches DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE production_transfers DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE production_transfers DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE production_transfers DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE production_transfers DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE purchase_order_documents DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE purchase_order_documents DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE purchase_order_documents DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE purchase_order_documents DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE purchase_order_documents DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE purchase_order_documents DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE quality_controls DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE quality_controls DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE quality_controls DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE quality_controls DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE quality_controls DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE quality_controls DROP COLUMN IF EXISTS payload;
+
+  ALTER TABLE rfqs DROP COLUMN IF EXISTS entity_name;
+  ALTER TABLE rfqs DROP COLUMN IF EXISTS site_id;
+  ALTER TABLE rfqs DROP COLUMN IF EXISTS site_name;
+  ALTER TABLE rfqs DROP COLUMN IF EXISTS from_site_id;
+  ALTER TABLE rfqs DROP COLUMN IF EXISTS to_site_id;
+  ALTER TABLE rfqs DROP COLUMN IF EXISTS site_ids;
+  ALTER TABLE rfqs DROP COLUMN IF EXISTS record_date;
+  ALTER TABLE rfqs DROP COLUMN IF EXISTS payload;
+END;
+$typed_remaining_document_cleanup$;
+
+DO $typed_remaining_document_triggers$
+BEGIN
+  DROP TRIGGER IF EXISTS erp_integration_configs_realtime_change ON erp_integration_configs;
+  EXECUTE 'CREATE TRIGGER erp_integration_configs_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON erp_integration_configs
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''ERPIntegrationConfig'')';
+
+  DROP TRIGGER IF EXISTS erp_integration_logs_realtime_change ON erp_integration_logs;
+  EXECUTE 'CREATE TRIGGER erp_integration_logs_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON erp_integration_logs
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''ERPIntegrationLog'')';
+
+  DROP TRIGGER IF EXISTS forecast_snapshots_realtime_change ON forecast_snapshots;
+  EXECUTE 'CREATE TRIGGER forecast_snapshots_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON forecast_snapshots
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''ForecastSnapshot'')';
+
+  DROP TRIGGER IF EXISTS branch_orders_realtime_change ON branch_orders;
+  EXECUTE 'CREATE TRIGGER branch_orders_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON branch_orders
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''BranchOrder'')';
+
+  DROP TRIGGER IF EXISTS material_requests_realtime_change ON material_requests;
+  EXECUTE 'CREATE TRIGGER material_requests_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON material_requests
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''MaterialRequest'')';
+
+  DROP TRIGGER IF EXISTS menu_plan_pr_schedules_realtime_change ON menu_plan_pr_schedules;
+  EXECUTE 'CREATE TRIGGER menu_plan_pr_schedules_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON menu_plan_pr_schedules
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''MenuPlanPRSchedule'')';
+
+  DROP TRIGGER IF EXISTS menu_plan_pr_runs_realtime_change ON menu_plan_pr_runs;
+  EXECUTE 'CREATE TRIGGER menu_plan_pr_runs_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON menu_plan_pr_runs
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''MenuPlanPRRun'')';
+
+  DROP TRIGGER IF EXISTS production_batches_realtime_change ON production_batches;
+  EXECUTE 'CREATE TRIGGER production_batches_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON production_batches
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''ProductionBatch'')';
+
+  DROP TRIGGER IF EXISTS production_transfers_realtime_change ON production_transfers;
+  EXECUTE 'CREATE TRIGGER production_transfers_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON production_transfers
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''ProductionTransfer'')';
+
+  DROP TRIGGER IF EXISTS purchase_order_documents_realtime_change ON purchase_order_documents;
+  EXECUTE 'CREATE TRIGGER purchase_order_documents_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON purchase_order_documents
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''PurchaseOrder'')';
+
+  DROP TRIGGER IF EXISTS quality_controls_realtime_change ON quality_controls;
+  EXECUTE 'CREATE TRIGGER quality_controls_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON quality_controls
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''QualityControl'')';
+
+  DROP TRIGGER IF EXISTS rfqs_realtime_change ON rfqs;
+  EXECUTE 'CREATE TRIGGER rfqs_realtime_change
+    AFTER INSERT OR UPDATE OR DELETE ON rfqs
+    FOR EACH ROW EXECUTE FUNCTION notify_foodpro_typed_document_change(''RFQ'')';
+END;
+$typed_remaining_document_triggers$;
 
 CREATE TABLE IF NOT EXISTS food_categories (
   id TEXT PRIMARY KEY,
@@ -6658,6 +9278,24 @@ CREATE INDEX IF NOT EXISTS idx_waste_detection_logs_site_detected
   ON waste_detection_logs(site_id, detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_waste_detection_logs_category_status
   ON waste_detection_logs(waste_category, status, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_d365_masters_idempotency
+  ON d365_masters(idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_d365_masters_sync_module
+  ON d365_masters(sync_id, module_key, status);
+CREATE INDEX IF NOT EXISTS idx_forecast_scenarios_site_status
+  ON forecast_scenarios(site_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_forecast_scenarios_run_date
+  ON forecast_scenarios(last_run_date DESC)
+  WHERE last_run_date IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_attendance_records_site_marked
+  ON attendance_records(site_id, marked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_attendance_records_session_attendee
+  ON attendance_records(session_id, attendee_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_records_date_status
+  ON attendance_records(attendance_date, approval_status, status);
+CREATE INDEX IF NOT EXISTS idx_staff_shifts_site_date_status
+  ON staff_shifts(site_id, shift_date, status);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_status ON bulk_upload_jobs(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_actor ON bulk_upload_jobs(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bulk_upload_jobs_site ON bulk_upload_jobs(site_id, created_at DESC);

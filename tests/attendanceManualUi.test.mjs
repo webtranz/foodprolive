@@ -175,7 +175,8 @@ assert.match(permissions, /Save Meal Service covers/);
 assert.match(permissions, /Generate Meal Service cover QR codes/);
 assert.match(permissions, /Create meal QR codes/);
 
-assert.match(foodWaste, /analyticsWaste[\s\S]*status \|\| ''\)\.toLowerCase\(\) !== 'reversed'/);
+assert.match(foodWaste, /function isValidWasteRecord[\s\S]*\['reversed', 'voided', 'cancelled', 'canceled'\]\.includes\(status\)/);
+assert.match(foodWaste, /filteredWaste[\s\S]*isValidWasteRecord\(item\)/);
 assert.match(foodWaste, /Meal Service Leftover/);
 assert.match(foodWaste, /System generated/);
 assert.match(foodWaste, /Meal Service Leftover records are system managed/);

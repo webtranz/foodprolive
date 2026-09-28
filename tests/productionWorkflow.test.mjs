@@ -160,7 +160,8 @@ const cases = [
       assert.match(serverSource, /started_by:\s*actor\.id\s*\|\|\s*null/);
       assert.doesNotMatch(serverSource, /started_by:\s*actor\.email/);
       assert.match(dbSource, /function userReferenceSql\(parameterNumber\)/);
-      assert.match(dbSource, /started_by,[\s\S]*\$\{userReferenceSql\(11\)\}/);
+      assert.match(dbSource, /\['started_by',\s*record\.started_by\s*\|\|\s*null,\s*'user'\]/);
+      assert.match(dbSource, /kind === 'user'\s*\?\s*userReferenceSql\(index \+ 1\)/);
     }
   },
   {
