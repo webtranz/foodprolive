@@ -70,6 +70,54 @@ assert.match(inventoryExecutor.calls[0].text, /FOR UPDATE/);
 assert.doesNotMatch(inventoryExecutor.calls[0].text, /entity_records|record\.data/);
 assert.deepEqual(inventoryExecutor.calls[0].parameters.slice(0, 2), ['ing-1', 'site-384']);
 
+const recipeExecutor = createCapturingExecutor([{
+  recipe_version_id: 'recipe-v1',
+  recipe_id: 'recipe-master',
+  canonical_name: 'Chicken dish',
+  description: 'Test recipe',
+  display_name: 'Chicken dish',
+  recipe_code: 'RCP-CHICKEN',
+  cuisine_type: 'General',
+  menu_category: 'Main Course',
+  serving_size_grams: 150,
+  batch_yield: '2',
+  total_recipe_weight_grams: '300',
+  total_cost: '10',
+  cost_per_serving: '5',
+  warehouse_id: 'site-384',
+  project_id: null,
+  area_id: null,
+  status: 'active',
+  source_name: 'D365',
+  created_at: '2026-09-28T00:00:00.000Z',
+  updated_at: '2026-09-28T00:00:00.000Z',
+  ingredients: [{
+    recipe_line_id: 'recipe-v1:line:1',
+    ingredient_id: 'ingredient-189015',
+    item_code: '189015',
+    ingredient_code: '189015',
+    sku: '189015',
+    ingredient_name: 'TAFGA LOCAL TANMIAH CHICKEN 10/900G',
+    line_number: 1,
+    quantity: '150',
+    unit: 'g',
+    yield_percent: '100',
+    cost: '1.97'
+  }]
+}]);
+const recipes = await listDocuments('Recipe', { sort: 'name', limit: 10 }, recipeExecutor);
+assert.match(recipeExecutor.calls[0].text, /FROM recipe_ingredient_lines line/);
+assert.match(recipeExecutor.calls[0].text, /LEFT JOIN ingredients ingredient/);
+assert.equal(recipes[0].site_scope, 'specific');
+assert.deepEqual(recipes[0].site_ids, ['site-384']);
+assert.equal(recipes[0].servings, 2);
+assert.equal(recipes[0].ingredients.length, 1);
+assert.equal(recipes[0].ingredients[0].ingredient_id, 'ingredient-189015');
+assert.equal(recipes[0].ingredients[0].item_code, '189015');
+assert.equal(recipes[0].ingredients[0].ingredient_name, 'TAFGA LOCAL TANMIAH CHICKEN 10/900G');
+assert.equal(recipes[0].ingredients[0].quantity, 150);
+assert.equal(recipes[0].ingredients[0].unit, 'g');
+
 await assert.rejects(
   () => listDocuments('EmailLog', {}, createCapturingExecutor()),
   /EmailLog is not backed by normalized relational storage/

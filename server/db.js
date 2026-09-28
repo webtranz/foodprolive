@@ -1318,6 +1318,32 @@ function rowToInventoryTransaction(row = {}) {
 }
 
 function rowToRecipe(row = {}) {
+  const ingredients = rowJsonArray(row.ingredients).map((line = {}, index) => ({
+    id: line.id || line.recipe_line_id || `${row.recipe_version_id}:line:${index + 1}`,
+    recipe_line_id: line.recipe_line_id || line.id || `${row.recipe_version_id}:line:${index + 1}`,
+    ingredient_id: line.ingredient_id || null,
+    item_code: line.item_code || line.ingredient_code || line.sku || line.d365_item_id || null,
+    ingredient_code: line.ingredient_code || null,
+    sku: line.sku || null,
+    d365_item_id: line.d365_item_id || null,
+    ingredient_name: line.ingredient_name || line.name || null,
+    name: line.ingredient_name || line.name || null,
+    line_number: Number(line.line_number || index + 1),
+    quantity: Number(line.quantity || 0),
+    line_quantity: Number(line.quantity || 0),
+    unit: line.unit || 'EA',
+    line_unit: line.unit || 'EA',
+    converted_quantity: rowNumberOrNull(line.converted_quantity),
+    converted_unit: line.converted_unit || null,
+    raw_weight_grams: rowNumberOrNull(line.raw_weight_grams),
+    yield_percent: rowNumberOrNull(line.yield_percent) ?? 100,
+    line_yield_percent: rowNumberOrNull(line.yield_percent) ?? 100,
+    yielded_weight_grams: rowNumberOrNull(line.yielded_weight_grams),
+    cost: Number(line.cost || 0),
+    line_cost: Number(line.cost || 0),
+    source_name: line.source_name || null
+  }));
+  const scopedSiteIds = [row.warehouse_id, row.project_id, row.area_id].filter(Boolean);
   return hydrateDerivedFields('Recipe', {
     __entity: 'Recipe',
     id: row.recipe_version_id,
@@ -1329,13 +1355,18 @@ function rowToRecipe(row = {}) {
     cuisine_type: row.cuisine_type || null,
     category: row.menu_category || null,
     menu_category: row.menu_category || null,
+    servings: Number(row.batch_yield || 1),
     portion_size_grams: row.serving_size_grams === null ? null : Number(row.serving_size_grams || 0),
     batch_yield: Number(row.batch_yield || 1),
     total_recipe_weight_grams: row.total_recipe_weight_grams === null ? null : Number(row.total_recipe_weight_grams || 0),
     total_cost: Number(row.total_cost || 0),
     cost_per_serving: Number(row.cost_per_serving || 0),
-    site_scope: row.warehouse_id ? 'warehouse' : row.project_id ? 'project' : row.area_id ? 'area' : 'global',
-    site_ids: [row.warehouse_id, row.project_id, row.area_id].filter(Boolean),
+    ingredients,
+    site_scope: scopedSiteIds.length ? 'specific' : 'global',
+    site_ids: scopedSiteIds,
+    warehouse_id: row.warehouse_id || null,
+    project_id: row.project_id || null,
+    area_id: row.area_id || null,
     status: row.status || 'active',
     is_active: row.status !== 'inactive',
     source_name: row.source_name || null,
@@ -4850,7 +4881,37 @@ function normalizedSelectForEntity(entity) {
             FROM warehouses`;
   }
   if (entity === 'Recipe') {
-    return `SELECT version.*, recipe.canonical_name, recipe.description
+    return `SELECT version.*, recipe.canonical_name, recipe.description,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'id', line.recipe_line_id,
+                         'recipe_line_id', line.recipe_line_id,
+                         'ingredient_id', line.ingredient_id,
+                         'item_code', ingredient.item_code,
+                         'ingredient_code', ingredient.ingredient_code,
+                         'sku', ingredient.sku,
+                         'd365_item_id', ingredient.d365_item_id,
+                         'ingredient_name', COALESCE(ingredient.name, line.ingredient_id),
+                         'name', COALESCE(ingredient.name, line.ingredient_id),
+                         'line_number', line.line_number,
+                         'quantity', line.quantity,
+                         'unit', line.unit,
+                         'converted_quantity', line.converted_quantity,
+                         'converted_unit', line.converted_unit,
+                         'raw_weight_grams', line.raw_weight_grams,
+                         'yield_percent', line.yield_percent,
+                         'yielded_weight_grams', line.yielded_weight_grams,
+                         'cost', line.cost,
+                         'source_name', line.source_name
+                       )
+                       ORDER BY line.line_number, line.recipe_line_id
+                     )
+                     FROM recipe_ingredient_lines line
+                     LEFT JOIN ingredients ingredient
+                       ON ingredient.ingredient_id = line.ingredient_id
+                     WHERE line.recipe_version_id = version.recipe_version_id
+                   ), '[]'::jsonb) AS ingredients
             FROM recipe_versions version
             JOIN recipes recipe ON recipe.recipe_id = version.recipe_id`;
   }
@@ -6785,9 +6846,19 @@ async function insertOrUpdateNormalizedRecipe(record, existing = null, executor 
   );
   const scopeIds = Array.isArray(record.site_ids) ? record.site_ids.filter(Boolean).map(String) : [];
   const scope = String(record.site_scope || '').toLowerCase();
-  const warehouseId = record.warehouse_id || (scope === 'warehouse' || scope === 'store' ? scopeIds[0] : null);
-  const projectId = record.project_id || (scope === 'project' ? scopeIds[0] : null);
-  const areaId = record.area_id || (scope === 'area' ? scopeIds[0] : null);
+  let warehouseId = record.warehouse_id || (scope === 'warehouse' || scope === 'store' ? scopeIds[0] : null);
+  let projectId = record.project_id || (scope === 'project' ? scopeIds[0] : null);
+  let areaId = record.area_id || (scope === 'area' ? scopeIds[0] : null);
+  if (!warehouseId && !projectId && !areaId && scope === 'specific' && scopeIds.length > 0) {
+    const scopedId = scopeIds[0];
+    if (/^area[_-]/i.test(scopedId)) {
+      areaId = scopedId;
+    } else if (/^project[_-]/i.test(scopedId)) {
+      projectId = scopedId;
+    } else {
+      warehouseId = scopedId;
+    }
+  }
   await query(
     `INSERT INTO recipe_versions (
       recipe_version_id, recipe_id, area_id, project_id, warehouse_id, recipe_code,
