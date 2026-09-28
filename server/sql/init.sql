@@ -3573,6 +3573,17 @@ CREATE TABLE IF NOT EXISTS production_events (
   reversed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   reversed_at TIMESTAMPTZ,
   reversal_reason TEXT,
+  completion_job_id TEXT,
+  completion_job_status TEXT,
+  completion_job_progress NUMERIC(6, 2),
+  completion_job_message TEXT,
+  completion_job_error TEXT,
+  completion_job_requested_at TIMESTAMPTZ,
+  completion_job_started_at TIMESTAMPTZ,
+  completion_job_completed_at TIMESTAMPTZ,
+  completion_job_updated_at TIMESTAMPTZ,
+  completion_job_requested_by TEXT,
+  completion_job_requested_by_name TEXT,
   source_name TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -4755,6 +4766,17 @@ ALTER TABLE production_events ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
 ALTER TABLE production_events ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
 ALTER TABLE production_events ADD COLUMN IF NOT EXISTS cancelled_by TEXT REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE production_events ADD COLUMN IF NOT EXISTS cancelled_by_name TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_id TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_status TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_progress NUMERIC(6, 2);
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_message TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_error TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_requested_at TIMESTAMPTZ;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_started_at TIMESTAMPTZ;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_completed_at TIMESTAMPTZ;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_updated_at TIMESTAMPTZ;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_requested_by TEXT;
+ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_requested_by_name TEXT;
 ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS line_type TEXT NOT NULL DEFAULT 'recipe';
 ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS item_key TEXT;
 ALTER TABLE production_manifest_lines ADD COLUMN IF NOT EXISTS source_menu_plan_item_key TEXT;

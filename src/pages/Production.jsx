@@ -1515,8 +1515,7 @@ export default function Production() {
 
   const completionJobForPolling = completionJob || getProductionCompletionJobFromRecord(completionProduction);
   const shouldPollCompletionJob = Boolean(
-    completionOpen
-    && completionProduction?.id
+    completionProduction?.id
     && isActiveProductionCompletionJob(completionJobForPolling)
   );
   const { data: completionJobResponse } = useQuery({
@@ -1783,8 +1782,7 @@ export default function Production() {
       }
 
       if (status === 'in_progress') {
-        await base44.productionWorkflow.start(id);
-        return;
+        return base44.productionWorkflow.start(id);
       }
 
       await base44.entities.Production.update(id, { status });
@@ -1806,7 +1804,21 @@ export default function Production() {
         invalidateCurrentProductionScope({ inventory: true, output: true });
         setActionMessage('Production completed and finished output is available.');
       } else if (variables?.status === 'in_progress') {
+        const job = result?.job || result?.completion_job || getProductionCompletionJobFromRecord(result);
+        if (job) setCompletionJob(job);
+        if (isActiveProductionCompletionJob(job)) {
+          setCompletionProduction(result);
+          invalidateCurrentProductionScope({ inventory: true, output: true });
+          setActionMessage(job.message || 'Production started; automatic completion is running.');
+          setActionError('');
+          return;
+        }
+        if (job?.status === 'failed') {
+          setActionError(job.error || job.message || 'Production automatic completion failed.');
+          return;
+        }
         invalidateCurrentProductionScope({ inventory: true, output: true });
+        setActionMessage('Production started and completed automatically.');
       } else {
         invalidateCurrentProductionScope();
       }
@@ -3239,10 +3251,10 @@ export default function Production() {
     const productionCompletionIsActive = isActiveProductionCompletionJob(productionCompletionJob);
     const canDeleteDraftProduction = isAdmin && ['draft', 'planned', 'changes_requested'].includes(productionStatus);
     const startActionLabel = productionInventoryState.is_legacy_consumption
-      ? 'Start Production (Legacy Stock Already Deducted)'
+      ? 'Start Production & Complete (Legacy Stock Already Deducted)'
       : productionInventoryState.is_reserved
-        ? 'Start Production & Consume Reserved Stock'
-        : 'Start Production & Consume Stock';
+        ? 'Start Production, Consume Reserved Stock & Complete'
+        : 'Start Production, Consume Stock & Complete';
     if (productionStatus === 'reversed' || productionStatus === 'voided') {
       return (
         <div className="grid gap-2">
@@ -3316,7 +3328,7 @@ export default function Production() {
           title={!canStartApprovedProduction(production) ? startBlockReason : undefined}
           className="justify-center whitespace-normal text-xs leading-snug"
         >
-          {isStatusActionPending(production, 'in_progress') ? 'Starting & Consuming...' : startActionLabel}
+          {isStatusActionPending(production, 'in_progress') ? 'Starting, Consuming & Completing...' : startActionLabel}
         </Button>
       ) : null}
       {production.status === 'approved' && (can('adjust_approved_production') || can('approve_production')) ? (

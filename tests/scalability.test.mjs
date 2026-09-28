@@ -111,6 +111,7 @@ assert.match(productionPage, /invalidateCurrentProductionScope/);
 assert.match(productionPage, /foodWasteForProduction', selectedDate/);
 assert.match(productionPage, /productionCompletionJob/);
 assert.match(productionPage, /refetchInterval: shouldPollCompletionJob \? 1500 : false/);
+assert.match(productionPage, /completionProduction\?\.id[\s\S]*isActiveProductionCompletionJob\(completionJobForPolling\)/);
 assert.match(productionPage, /Completion status/);
 assert.match(productionPage, /exact: true, refetchType: 'active'/);
 assert.match(productionPage, /invalidateCurrentProductionScope\(\{ inventory: true, output: true \}\)/);

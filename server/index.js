@@ -5718,6 +5718,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
     let updated;
     let productionInventoryMutated = false;
     let materialRequestMutated = false;
+    let autoCompleteStartedProduction = null;
     if (entity === 'Production') {
       updated = await withTransaction(async (client) => {
         const lockedExisting = await findDocument(entity, request.params.id, client, true);
@@ -5817,6 +5818,9 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
             fulfillment_store_id: fulfillmentStore.id,
             fulfillment_store_name: fulfillmentStore.name || null
           };
+          autoCompleteStartedProduction = {
+            fulfillmentStoreId: fulfillmentStore.id
+          };
         }
         let saved = await updateDocument(entity, request.params.id, transactionPayload, client);
         const status = String(saved?.status || '');
@@ -5839,6 +5843,22 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       });
     } else {
       updated = await updateDocument(entity, request.params.id, preparedPayload);
+    }
+    if (entity === 'Production' && autoCompleteStartedProduction && normalizeProductionStatus(updated?.status) === 'in_progress') {
+      const completionQueue = await queueProductionCompletionForRecord(
+        updated,
+        request.user,
+        autoCompleteStartedProduction.fulfillmentStoreId,
+        {
+          message: 'Production started and automatic completion has been queued.'
+        }
+      );
+      updated = {
+        ...completionQueue.production,
+        queued: completionQueue.queued,
+        completion_job: completionQueue.job,
+        job: completionQueue.job
+      };
     }
     invalidateEntityAccessCaches(entity);
     recordChanged(entity);
@@ -9650,6 +9670,62 @@ function enqueueProductionCompletionWork(work) {
   productionCompletionQueue.push(work);
   scheduleProductionCompletionQueueDrain();
   return true;
+}
+
+async function queueProductionCompletionForRecord(production, actor, fulfillmentStoreId, options = {}) {
+  const existingJob = serializeProductionCompletionJob(production);
+  if (normalizeProductionStatus(production?.status) === 'completed') {
+    const completedJob = serializeProductionCompletionJob(production, {
+      id: existingJob?.id || production.completion_job_id || `completed-${production.id}`,
+      status: 'completed',
+      progress: 100,
+      message: options.completedMessage || 'Production is already completed.'
+    });
+    return {
+      production,
+      queued: false,
+      job: completedJob
+    };
+  }
+
+  if (existingJob && PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(existingJob.status)) {
+    enqueueProductionCompletionWork({
+      productionId: production.id,
+      jobId: existingJob.id,
+      actor,
+      fulfillmentStoreId
+    });
+    return {
+      production,
+      queued: true,
+      job: existingJob
+    };
+  }
+
+  const jobId = randomUUID();
+  const now = new Date().toISOString();
+  const queuedProduction = await updateProductionCompletionJob(production.id, productionCompletionJobPatch(jobId, 'queued', {
+    completion_job_progress: 5,
+    completion_job_message: options.message || 'Production completion has been queued.',
+    completion_job_requested_at: now,
+    completion_job_started_at: null,
+    completion_job_completed_at: null,
+    completion_job_error: '',
+    completion_job_requested_by: actor.email || actor.id || '',
+    completion_job_requested_by_name: actor.full_name || actor.email || ''
+  }));
+  const queuedJob = serializeProductionCompletionJob(queuedProduction);
+  enqueueProductionCompletionWork({
+    productionId: production.id,
+    jobId,
+    actor,
+    fulfillmentStoreId
+  });
+  return {
+    production: queuedProduction,
+    queued: true,
+    job: queuedJob
+  };
 }
 
 async function runProductionCompletionWork(work) {

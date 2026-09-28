@@ -371,7 +371,10 @@ test('approval reserves without a physical transaction and start consumes exactl
 
 test('server start transition reserves or validates first, then consumes in the same transaction', () => {
   const serverSource = source('server/index.js');
+  const schemaSource = source('server/sql/init.sql');
+  const databaseSource = source('server/db.js');
   assert.match(serverSource, /consumeProductionInventoryReservation,/);
+  assert.match(serverSource, /queueProductionCompletionForRecord/);
   const startBlock = sourceBlock(
     serverSource,
     "normalizeProductionStatus(request.body?.status) === 'in_progress'",
@@ -384,6 +387,10 @@ test('server start transition reserves or validates first, then consumes in the 
   assert.match(startBlock, /production: reservationReadyProduction/);
   assert.match(startBlock, /consumptionResult\.inventory_mutated/);
   assert.match(startBlock, /\.\.\.commitmentResult\.production_patch,[\s\S]*\.\.\.consumptionResult\.production_patch/);
+  assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS production_events[\s\S]*completion_job_status TEXT/);
+  assert.match(schemaSource, /ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_status TEXT/);
+  assert.match(databaseSource, /completion_job_status: row\.completion_job_status/);
+  assert.match(databaseSource, /\['completion_job_status', record\.completion_job_status/);
 
   const inventorySource = source('server/inventory.js');
   assert.match(
