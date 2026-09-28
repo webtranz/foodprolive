@@ -4978,7 +4978,7 @@ export default function Production() {
             }
           }}
         >
-          <DialogContent className="max-w-xl">
+          <DialogContent className="max-h-[92vh] w-[98vw] max-w-[1800px] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {inventoryActionMode === 'cancel'
@@ -5019,46 +5019,46 @@ export default function Production() {
                   An increase reserves only the additional yield-adjusted ingredients; a reduction releases the difference back to available stock.
                 </p>
                 {inventoryActionPreview.length > 0 ? (
-                  <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
-                    <Table>
+                  <div className="mt-3 rounded-lg border border-slate-200">
+                    <Table className="min-w-[1080px]">
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Ingredient</TableHead>
-                          <TableHead>Revised Required</TableHead>
-                          <TableHead>Own Reservation</TableHead>
-                          <TableHead>Free Available</TableHead>
-                          <TableHead>Total Capacity</TableHead>
-                          <TableHead>Reservation Change</TableHead>
+                          <TableHead className="min-w-[260px]">Ingredient</TableHead>
+                          <TableHead className="min-w-[130px] whitespace-nowrap">Revised Required</TableHead>
+                          <TableHead className="min-w-[130px] whitespace-nowrap">Own Reservation</TableHead>
+                          <TableHead className="min-w-[130px] whitespace-nowrap">Free Available</TableHead>
+                          <TableHead className="min-w-[130px] whitespace-nowrap">Total Capacity</TableHead>
+                          <TableHead className="min-w-[150px]">Reservation Change</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {inventoryActionPreview.map((line) => (
                           <TableRow key={line.ingredient_id}>
-                            <TableCell>
+                            <TableCell className="min-w-[260px]">
                               <p className="font-medium text-slate-900">{line.ingredient_name}</p>
                               <p className="font-mono text-xs text-slate-500">{line.item_code}</p>
                             </TableCell>
-                            <TableCell>{formatRecipeQuantity(line.revised_required, line.unit)} {line.unit}</TableCell>
-                            <TableCell className="text-violet-700">
+                            <TableCell className="whitespace-nowrap">{formatRecipeQuantity(line.revised_required, line.unit)} {line.unit}</TableCell>
+                            <TableCell className="whitespace-nowrap text-violet-700">
                               {formatRecipeQuantity(line.own_reserved, line.unit)} {line.unit}
                             </TableCell>
-                            <TableCell className="text-cyan-700">
+                            <TableCell className="whitespace-nowrap text-cyan-700">
                               {formatRecipeQuantity(line.free_available, line.unit)} {line.unit}
                             </TableCell>
-                            <TableCell className="font-medium">
+                            <TableCell className="whitespace-nowrap font-medium">
                               {formatRecipeQuantity(line.total_capacity, line.unit)} {line.unit}
                             </TableCell>
                             <TableCell>
                               {!line.sufficient ? (
-                                <Badge className="bg-red-100 text-red-700">
+                                <Badge className="whitespace-normal bg-red-100 text-left leading-tight text-red-700">
                                   Short {formatRecipeQuantity(line.shortage, line.unit)} {line.unit}
                                 </Badge>
                               ) : line.release_quantity > 0 ? (
-                                <Badge className="bg-cyan-100 text-cyan-800">
+                                <Badge className="whitespace-normal bg-cyan-100 text-left leading-tight text-cyan-800">
                                   Release {formatRecipeQuantity(line.release_quantity, line.unit)} {line.unit}
                                 </Badge>
                               ) : line.additional_reservation > 0 ? (
-                                <Badge className="bg-violet-100 text-violet-800">
+                                <Badge className="whitespace-normal bg-violet-100 text-left leading-tight text-violet-800">
                                   Reserve {formatRecipeQuantity(line.additional_reservation, line.unit)} {line.unit}
                                 </Badge>
                               ) : (
@@ -5395,16 +5395,16 @@ export default function Production() {
                 </div>
               ) : null}
               {reportManifestItems.length > 0 ? (
-                <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <Table>
+                <div className="rounded-xl border border-slate-200">
+                  <Table className="min-w-[1120px]">
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Manifest Item</TableHead>
-                        <TableHead>Production Covers</TableHead>
-                        <TableHead>Estimated Cost</TableHead>
-                        <TableHead>Snapshot Lines</TableHead>
-                        <TableHead>Raw Weight</TableHead>
-                        <TableHead>Yielded Weight</TableHead>
+                        <TableHead className="min-w-[260px]">Manifest Item</TableHead>
+                        <TableHead className="whitespace-nowrap">Production Covers</TableHead>
+                        <TableHead className="whitespace-nowrap">Estimated Cost</TableHead>
+                        <TableHead className="whitespace-nowrap">Snapshot Lines</TableHead>
+                        <TableHead className="whitespace-nowrap">Raw Weight</TableHead>
+                        <TableHead className="whitespace-nowrap">Yielded Weight</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -5413,12 +5413,12 @@ export default function Production() {
                         const yieldedWeight = sumManifestItemWeight(item, 'yielded_weight_grams');
                         return (
                           <TableRow key={item.key || `${item.recipe_id || 'item'}-${index}`}>
-                            <TableCell className="font-medium text-slate-900">{item.recipe_name || 'Planned item'}</TableCell>
-                            <TableCell>{formatReportQuantity(item.production_covers ?? item.expected_servings, 'servings')}</TableCell>
-                            <TableCell>{formatCurrency(item.estimated_batch_cost || 0)}</TableCell>
-                            <TableCell>{Array.isArray(item.ingredients_used) ? item.ingredients_used.length : '—'}</TableCell>
-                            <TableCell>{formatReportWeightFromGrams(rawWeight)}</TableCell>
-                            <TableCell>{formatReportWeightFromGrams(yieldedWeight)}</TableCell>
+                            <TableCell className="min-w-[260px] font-medium text-slate-900">{item.recipe_name || 'Planned item'}</TableCell>
+                            <TableCell className="whitespace-nowrap">{formatReportQuantity(item.production_covers ?? item.expected_servings, 'servings')}</TableCell>
+                            <TableCell className="whitespace-nowrap">{formatCurrency(item.estimated_batch_cost || 0)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{Array.isArray(item.ingredients_used) ? item.ingredients_used.length : '—'}</TableCell>
+                            <TableCell className="whitespace-nowrap">{formatReportWeightFromGrams(rawWeight)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{formatReportWeightFromGrams(yieldedWeight)}</TableCell>
                           </TableRow>
                         );
                       })}
@@ -5433,22 +5433,22 @@ export default function Production() {
               <p className="text-sm text-slate-500">
                 Every row below is what the production posted to stock. Recipe quantities are shown beside the converted inventory quantity so unit changes are visible.
               </p>
-              <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <Table>
+              <div className="rounded-lg border border-slate-200">
+                <Table className="min-w-[1680px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Item Code</TableHead>
-                      <TableHead>Item Name</TableHead>
-                      <TableHead>Used In</TableHead>
-                      <TableHead>Recipe Qty</TableHead>
-                      <TableHead>Inventory Qty</TableHead>
-                      <TableHead>Stock Issued</TableHead>
-                      <TableHead>Raw Weight</TableHead>
-                      <TableHead>Yield</TableHead>
-                      <TableHead>Yielded Weight</TableHead>
-                      <TableHead>Shortage</TableHead>
-                      <TableHead>Unit / Conversion</TableHead>
-                      <TableHead>Cost</TableHead>
+                      <TableHead className="min-w-[90px]">Item Code</TableHead>
+                      <TableHead className="min-w-[300px]">Item Name</TableHead>
+                      <TableHead className="min-w-[210px]">Used In</TableHead>
+                      <TableHead className="min-w-[100px] whitespace-nowrap">Recipe Qty</TableHead>
+                      <TableHead className="min-w-[110px] whitespace-nowrap">Inventory Qty</TableHead>
+                      <TableHead className="min-w-[110px] whitespace-nowrap">Stock Issued</TableHead>
+                      <TableHead className="min-w-[105px] whitespace-nowrap">Raw Weight</TableHead>
+                      <TableHead className="min-w-[75px] whitespace-nowrap">Yield</TableHead>
+                      <TableHead className="min-w-[115px] whitespace-nowrap">Yielded Weight</TableHead>
+                      <TableHead className="min-w-[100px] whitespace-nowrap">Shortage</TableHead>
+                      <TableHead className="min-w-[230px]">Unit / Conversion</TableHead>
+                      <TableHead className="min-w-[95px] text-right">Cost</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -5460,22 +5460,22 @@ export default function Production() {
                       return (
                         <TableRow key={`${line.ingredient_id}-${index}`} className={hasUnitIssue ? 'bg-red-50/60' : ''}>
                           <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
-                          <TableCell className="min-w-[220px] font-medium">{line.ingredient_name}</TableCell>
-                          <TableCell className="min-w-[180px] text-xs text-slate-600">
+                          <TableCell className="min-w-[300px] font-medium">{line.ingredient_name}</TableCell>
+                          <TableCell className="min-w-[210px] text-xs text-slate-600">
                             {Array.isArray(line.source_recipe_names) && line.source_recipe_names.length > 0
                               ? line.source_recipe_names.join(', ')
                               : reportEventTitle}
                           </TableCell>
-                          <TableCell>{formatReportQuantity(line.recipe_quantity ?? line.planned_recipe_quantity ?? line.planned_quantity, recipeUnit)}</TableCell>
-                          <TableCell>{formatReportQuantity(line.actual_requested_quantity, inventoryUnit)}</TableCell>
-                          <TableCell>{formatReportQuantity(line.issued_quantity, inventoryUnit)}</TableCell>
-                          <TableCell>{formatReportWeightFromGrams(line.raw_weight_grams)}</TableCell>
-                          <TableCell>{formatReportPercent(line.yield_percent)}</TableCell>
-                          <TableCell>{formatReportWeightFromGrams(line.yielded_weight_grams)}</TableCell>
-                          <TableCell className={Number(line.shortage_quantity) > 0 ? 'font-semibold text-red-600' : ''}>
+                          <TableCell className="whitespace-nowrap">{formatReportQuantity(line.recipe_quantity ?? line.planned_recipe_quantity ?? line.planned_quantity, recipeUnit)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{formatReportQuantity(line.actual_requested_quantity, inventoryUnit)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{formatReportQuantity(line.issued_quantity, inventoryUnit)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{formatReportWeightFromGrams(line.raw_weight_grams)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{formatReportPercent(line.yield_percent)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{formatReportWeightFromGrams(line.yielded_weight_grams)}</TableCell>
+                          <TableCell className={`whitespace-nowrap ${Number(line.shortage_quantity) > 0 ? 'font-semibold text-red-600' : ''}`}>
                             {formatReportQuantity(line.shortage_quantity, inventoryUnit)}
                           </TableCell>
-                          <TableCell className="min-w-[180px]">
+                          <TableCell className="min-w-[230px]">
                             <Badge
                               variant="outline"
                               className={hasUnitIssue
@@ -5488,7 +5488,7 @@ export default function Production() {
                               {line.conversion_note || formatReportSource(line.quantity_basis)}
                             </p>
                           </TableCell>
-                          <TableCell>{formatCurrency(line.posted_cost || 0)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right">{formatCurrency(line.posted_cost || 0)}</TableCell>
                         </TableRow>
                       );
                     })}
