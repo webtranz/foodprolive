@@ -82,7 +82,7 @@ assert.match(server, /listInventoryRiskCounts/);
 assert.match(server, /MANAGEMENT_DASHBOARD_SOURCE_LIMIT/);
 assert.match(server, /withSnapshotCache/);
 assert.match(server, /openStatusFields:\s*\['approval_status'/);
-assert.equal((server.match(/REGEXP_REPLACE\(LOWER\(BTRIM\(COALESCE/g) || []).length, 2);
+assert.equal((server.match(/REGEXP_REPLACE\(LOWER\(BTRIM\(COALESCE/g) || []).length, 1);
 assert.doesNotMatch(server, /itemTable|itemForeignKey|itemsByHeader/);
 
 assert.match(roles, /general_manager/);

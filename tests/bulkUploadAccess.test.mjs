@@ -147,7 +147,9 @@ assert.match(worker, /context\.ingredientCatalog = await listDocuments\('Ingredi
 assert.match(worker, /async function clearRecipeMatchesForBulkUpload/);
 assert.match(worker, /const recipes = await listDocuments\('Recipe', \{ limit: 10000, lock: true \}, client\)/);
 const db = read('server/db.js');
-assert.match(db, /COALESCE\(data->'site_ids', '\[\]'::jsonb\) \?\| \$2::text\[\]/);
+assert.doesNotMatch(db, /COALESCE\(data->'site_ids', '\[\]'::jsonb\) \?\| \$2::text\[\]/);
+assert.doesNotMatch(db, /entity_records/);
+assert.doesNotMatch(db, /record\.data(?!base|_mapping)/);
 assert.match(entityPreparation, /if \(entity === 'UserGroup'\) \{\s*assertStandardUserGroupMemberEdit\(user, payload, existing\);/);
 assert.match(apiClient, /userGroups:\s*\{\s*bulkImport\(data\)/);
 

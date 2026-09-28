@@ -20,6 +20,15 @@ function roundRecipeCost(value) {
   return Number.isFinite(numeric) ? roundStandardDecimal(numeric, 4) : 0;
 }
 
+function scaleRecipeTotalCost(costSnapshot = {}, recipe = {}, servings = 0) {
+  if (!costSnapshot.has_cost) return 0;
+  const recipeServings = safeNumber(recipe?.servings, 0);
+  if (recipeServings > 0) {
+    return roundRecipeCost((safeNumber(costSnapshot.total_cost, 0) / recipeServings) * servings);
+  }
+  return roundRecipeCost(safeNumber(costSnapshot.cost_per_serving, 0) * servings);
+}
+
 export function calculateRecipeCostSnapshot(recipe, ingredients = [], recipes = []) {
   const hasRecipeLines = (Array.isArray(recipe?.ingredients) && recipe.ingredients.length > 0)
     || (Array.isArray(recipe?.sub_recipes) && recipe.sub_recipes.length > 0);
@@ -216,6 +225,7 @@ export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], ex
         const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
         const nutritionSnapshot = calculateRecipeNutritionSnapshot(recipe, ingredients, recipes);
         const costPerServing = costSnapshot.has_cost ? costSnapshot.cost_per_serving : 0;
+        const totalCost = scaleRecipeTotalCost(costSnapshot, recipe, servings);
 
         return [{
           meal_type: mealType,
@@ -224,7 +234,7 @@ export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], ex
           recipe_name: recipe.name || '',
           expected_servings: servings,
           cost_per_serving: costPerServing,
-          total_cost: costPerServing * servings,
+          total_cost: totalCost,
           calories_per_serving: safeNumber(nutritionSnapshot.calories_per_serving, 0),
           protein_per_serving: safeNumber(nutritionSnapshot.protein_per_serving, 0),
           carbs_per_serving: safeNumber(nutritionSnapshot.carbs_per_serving, 0),
@@ -334,11 +344,12 @@ export function summarizeDailyMenuCosts(formState, recipes = [], ingredients = [
 
       const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
       const costPerServing = costSnapshot.has_cost ? costSnapshot.cost_per_serving : 0;
+      const totalCost = scaleRecipeTotalCost(costSnapshot, recipe, servings);
       return {
         recipe_id: recipe.id,
         expected_servings: servings,
         cost_per_serving: costPerServing,
-        total_cost: costPerServing * servings,
+        total_cost: totalCost,
         has_cost: costSnapshot.has_cost
       };
     });

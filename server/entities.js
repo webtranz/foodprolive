@@ -1223,15 +1223,22 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
   );
 
   if (entity === 'FoodWaste' && ['create', 'update', 'delete'].includes(action)) {
+    const normalizedWasteCategory = String(payload?.waste_category || resource?.waste_category || '').trim().toLowerCase();
+    const normalizedWasteScope = String(payload?.waste_scope || resource?.waste_scope || '').trim().toLowerCase();
+    const normalizedPayloadSourceType = String(payload?.source_type || '').trim().toLowerCase();
+    const normalizedSourceType = String(payload?.source_type || resource?.source_type || '').trim().toLowerCase();
+    const isBatchOverproductionWaste = normalizedWasteCategory === 'batch_overproduction'
+      || normalizedWasteScope === 'batch'
+      || normalizedSourceType === 'batch_overproduction';
     const reservedFields = [
       'auto_generated',
-      'output_allocations',
       'meal_service_attendance_id',
       'service_reference'
     ];
     const attemptsReservedWrite = ['create', 'update'].includes(action) && (
       reservedFields.some((field) => Object.prototype.hasOwnProperty.call(payload || {}, field))
-      || String(payload?.source_type || '').trim().toLowerCase() === 'meal_service_leftover'
+      || (!isBatchOverproductionWaste && Object.prototype.hasOwnProperty.call(payload || {}, 'output_allocations'))
+      || normalizedPayloadSourceType === 'meal_service_leftover'
     );
     if (attemptsReservedWrite) {
       const error = new Error('Meal-service leftover fields are server-managed and cannot be supplied through Food Waste APIs');

@@ -88,18 +88,21 @@ function positiveConversionNumber(value) {
 function establishedUnitMeasure(unit, ingredient) {
   if (unit in WEIGHT_IN_GRAMS) return { dimension: 'mass', quantity: WEIGHT_IN_GRAMS[unit] };
   if (unit in VOLUME_IN_MILLILITRES) return { dimension: 'volume', quantity: VOLUME_IN_MILLILITRES[unit] };
-  if (unit in COUNT_IN_PIECES) return { dimension: 'count', quantity: 1 };
   const base = packageBaseQuantityForUnit(ingredient, unit);
-  if (!base) return null;
-  const source = ingredient.package_parse_source || base.source;
-  const name = ingredient.supplier_item_name || ingredient.ingredient_name || ingredient.name || ingredient.item_name || '';
-  if (source === 'default_bundle_weight'
-    || (source === 'item_name_package' && !/\d\s*(?:KG|KGS|G|GM|GMS|GRAMS|LTR|L|LT|LITRE|LITER|ML|CT|CNT|COUNT|COUNTS|OZ|Z)\b/i.test(name))) return null;
-  const canonical = packageMeasureToCanonical(base.quantity, base.unit);
-  if (!(canonical.quantity > 0) || !Number.isFinite(canonical.quantity)) return null;
-  if (canonical.unit === 'kg') return { dimension: 'mass', quantity: canonical.quantity * 1000 };
-  if (canonical.unit === 'l') return { dimension: 'volume', quantity: canonical.quantity * 1000 };
-  if (canonical.unit === 'pieces') return { dimension: 'count', quantity: canonical.quantity };
+  if (base) {
+    const source = ingredient.package_parse_source || base.source;
+    const name = ingredient.supplier_item_name || ingredient.ingredient_name || ingredient.name || ingredient.item_name || '';
+    if (source !== 'default_bundle_weight'
+      && !(source === 'item_name_package' && !/\d\s*(?:KG|KGS|G|GM|GMS|GRAMS|LTR|L|LT|LITRE|LITER|ML|CT|CNT|COUNT|COUNTS|OZ|Z)\b/i.test(name))) {
+      const canonical = packageMeasureToCanonical(base.quantity, base.unit);
+      if (canonical.quantity > 0 && Number.isFinite(canonical.quantity)) {
+        if (canonical.unit === 'kg') return { dimension: 'mass', quantity: canonical.quantity * 1000 };
+        if (canonical.unit === 'l') return { dimension: 'volume', quantity: canonical.quantity * 1000 };
+        if (canonical.unit === 'pieces') return { dimension: 'count', quantity: canonical.quantity };
+      }
+    }
+  }
+  if (unit in COUNT_IN_PIECES) return { dimension: 'count', quantity: 1 };
   return null;
 }
 

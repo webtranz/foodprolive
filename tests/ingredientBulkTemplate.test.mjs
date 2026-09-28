@@ -101,11 +101,14 @@ test('legacy ingredient headers and direct package/custom unit spellings remain 
   assert.equal(payload.item_code, 'LEG-001');
   assert.equal(payload.alias, 'Old name');
   assert.equal(payload.aliases, undefined);
-  assert.equal(payload.unit, 'EA');
+  assert.equal(payload.unit, 'ea');
   assert.equal(payload.cooking_yield_percent, 80);
   assert.deepEqual(payload.allergens, ['dairy', 'nuts']);
-  for (const unit of ['EA', 'PAK', 'BDL', 'CS', 'Scoop-Large']) {
+  for (const unit of ['BDL', 'CS', 'Scoop-Large']) {
     assert.equal(mapIngredient({ name: 'Unit preservation', unit }).unit, unit);
+  }
+  for (const [unit, expected] of [['EA', 'ea'], ['PAK', 'pak']]) {
+    assert.equal(mapIngredient({ name: 'Canonical stock unit', unit }).unit, expected);
   }
   for (const [unit, expected] of [
     ['Kilograms (kg)', 'kg'],

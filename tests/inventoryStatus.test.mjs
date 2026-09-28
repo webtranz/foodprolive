@@ -52,9 +52,10 @@ const database = read('server/db.js');
 const inventory = read('server/inventory.js');
 const procurement = read('server/procurement.js');
 
-assert.match(database, /hydrateDerivedFields\(entity, row\.data\)/);
+assert.match(database, /function withPayload\(row = \{\}, explicit = \{\}\)/);
+assert.match(database, /const payload = row\.payload && typeof row\.payload === 'object' \? row\.payload : \{\}/);
 assert.match(database, /entity === 'Inventory' \? deriveInventoryRecord\(record\) : record/);
-assert.match(database, /result\.rowCount \? hydrateDerivedFields\(entity, result\.rows\[0\]\.data\) : null/);
+assert.doesNotMatch(database, /row\.data/);
 assert.match(inventory, /low_stock_alert: hasLowStockAlert\(derivedItem\)/);
 assert.match(procurement, /const status = deriveInventoryStatus\(quantity, minimum\)/);
 assert.doesNotMatch(procurement, /lowByStatus \|\| lowByThreshold/);

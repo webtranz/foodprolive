@@ -181,7 +181,7 @@ const cases = [
       assert.equal(meals[1].meal_type, 'breakfast');
       assert.equal(meals[2].meal_type, 'lunch');
       assert.equal(meals[3].meal_type, 'snack');
-      assert.equal(meals[0].cost_per_serving, 20 / 18);
+      assert.equal(meals[0].cost_per_serving, 1.1111);
       assert.equal(meals[2].total_cost, 80);
     }
   },

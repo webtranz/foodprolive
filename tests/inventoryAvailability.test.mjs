@@ -74,7 +74,7 @@ const inventorySource = fs.readFileSync(new URL('../src/pages/Inventory.jsx', im
 const procurementSource = fs.readFileSync(new URL('../src/pages/ProcurementPlanning.jsx', import.meta.url), 'utf8');
 const clientSource = fs.readFileSync(new URL('../src/api/base44Client.js', import.meta.url), 'utf8');
 
-assert.match(productionSource, /Approve, Reserve Inventory & Mark Ready/);
+assert.match(productionSource, /Approve & Send to Store \/ Procurement/);
 assert.match(productionSource, /Start Production & Consume Reserved Stock/);
 assert.match(productionSource, /Cancel & Release Reservation/);
 assert.match(productionSource, /totalCapacity = stock\.available_quantity \+ ownReserved/);

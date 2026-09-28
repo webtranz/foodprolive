@@ -155,8 +155,30 @@ export const utilityModules = Object.freeze({
   'material-requests': {
     label: 'MR to Store',
     entity: 'MaterialRequest',
-    required: [],
-    headers: [...commonSiteFields, 'request_number', 'production_id', 'production_name', 'request_date', 'required_date', 'status', 'items', 'notes']
+    required: ['request_number'],
+    headers: [
+      ...commonSiteFields,
+      'request_number',
+      'request_date',
+      'period_start',
+      'period_end',
+      'fulfillment_store_id',
+      'fulfillment_store_name',
+      'source_type',
+      'status',
+      'line_number',
+      'ingredient_id',
+      'item_code',
+      'ingredient_name',
+      'required_quantity',
+      'current_stock',
+      'shortage_quantity',
+      'request_quantity',
+      'unit',
+      'estimated_cost',
+      'validation_status',
+      'notes'
+    ]
   },
   suppliers: {
     label: 'Suppliers',
@@ -168,7 +190,44 @@ export const utilityModules = Object.freeze({
     label: 'Food Waste',
     entity: 'FoodWaste',
     required: ['waste_date'],
-    headers: [...commonSiteFields, 'waste_date', 'meal_type', 'waste_category', 'reason_code', 'reason', 'avoidable_type', 'ingredient_id', 'ingredient_name', 'recipe_id', 'recipe_name', 'production_id', 'production_name', 'quantity', 'unit', 'estimated_cost', 'status', 'notes']
+    headers: [
+      ...commonSiteFields,
+      'waste_date',
+      'meal_type',
+      'menu_type',
+      'menu_category',
+      'waste_category',
+      'reason_code',
+      'reason',
+      'waste_scope',
+      'source_type',
+      'avoidable_type',
+      'preventable',
+      'line_number',
+      'production_id',
+      'production_name',
+      'production_line_id',
+      'produced_item_batch_id',
+      'batch_reference',
+      'recipe_id',
+      'recipe_name',
+      'ingredient_id',
+      'ingredient_name',
+      'batch_overproduction_item_key',
+      'manifest_item_key',
+      'source_menu_plan_item_key',
+      'produced_weight_grams',
+      'available_weight_grams_before',
+      'wasted_production_equivalent_servings',
+      'waste_weight_grams',
+      'quantity',
+      'unit',
+      'estimated_cost',
+      'evidence_image_url',
+      'evidence_image_urls',
+      'status',
+      'notes'
+    ]
   },
   attendance: {
     label: 'Attendance Records',
@@ -184,9 +243,21 @@ export const utilityModules = Object.freeze({
   }
 });
 
-const JSON_FIELDS = new Set([
-  'allergens', 'ingredients', 'sub_recipes', 'site_ids', 'site_names', 'meals',
-  'ingredients_used', 'items', 'categories', 'approval_history', 'menu_plan_lines', 'manifest_lines'
+const LIST_FIELDS = new Set([
+  'site_ids',
+  'site_names',
+  'categories',
+  'evidence_image_urls',
+  'image_urls'
+]);
+const LEGACY_NESTED_UPLOAD_FIELDS = new Set([
+  'ingredients',
+  'sub_recipes',
+  'meals',
+  'menu_plan_lines',
+  'manifest_lines',
+  'items',
+  'output_allocations'
 ]);
 const BOOLEAN_FIELDS = new Set(['is_active', 'preventable', 'high_value']);
 const NUMBER_FIELDS = new Set([
@@ -204,7 +275,14 @@ const NUMBER_FIELDS = new Set([
   'line_yielded_weight_grams', 'line_cost', 'expected_servings',
   'planned_servings', 'planned_weight_kg', 'planned_weight_grams',
   'requested_servings', 'requested_weight_kg', 'requested_weight_grams',
-  'produced_servings', 'produced_weight_kg', 'produced_weight_grams'
+  'produced_servings', 'produced_weight_kg', 'produced_weight_grams',
+  'required_quantity', 'current_stock', 'shortage_quantity', 'request_quantity',
+  'live_reservable_quantity', 'live_shortage_quantity', 'source_line_count',
+  'repairable_issue_count', 'total_estimated_cost', 'waste_weight_grams',
+  'quantity_grams', 'wasted_weight_grams', 'produced_weight_grams',
+  'available_weight_grams_before', 'wasted_production_equivalent_servings',
+  'meal_service_adjustment_cost', 'inventory_deduction_quantity',
+  'inventory_shortage_quantity'
 ]);
 
 const HEADER_ALIASES = Object.freeze({
@@ -213,6 +291,8 @@ const HEADER_ALIASES = Object.freeze({
     recipe_type: 'cuisine_type',
     cuisine: 'cuisine_type',
     category: 'menu_category',
+    ingredients: 'ingredients',
+    sub_recipes: 'sub_recipes',
     quantity: 'line_quantity',
     ingredient_quantity: 'line_quantity',
     recipe_line_quantity: 'line_quantity',
@@ -267,6 +347,7 @@ const HEADER_ALIASES = Object.freeze({
     cuisine_type: 'menu_type',
     menu_cuisine: 'menu_type',
     cuisine: 'menu_type',
+    manifest_lines: 'manifest_lines',
     target_servings: 'requested_servings',
     actual_servings: 'produced_servings',
     recipe_name: 'recipe_name',
@@ -278,6 +359,8 @@ const HEADER_ALIASES = Object.freeze({
   'menu-plans': {
     cuisine_type: 'menu_type',
     cuisine: 'menu_type',
+    meals: 'meals',
+    menu_plan_lines: 'menu_plan_lines',
     meal_period: 'meal_type',
     servings: 'expected_servings',
     planned_servings: 'expected_servings',
@@ -297,6 +380,25 @@ const HEADER_ALIASES = Object.freeze({
     warehouse: 'source_warehouse',
     site: 'source_site',
     item_group: 'source_item_group'
+  },
+  'material-requests': {
+    items: 'items',
+    required_date: 'period_end',
+    production_id: 'source_production_id',
+    production_name: 'source_production_name',
+    quantity: 'request_quantity',
+    qty: 'request_quantity'
+  },
+  'food-waste': {
+    output_allocations: 'output_allocations',
+    cuisine_type: 'menu_type',
+    category: 'waste_category',
+    reason_category: 'reason_code',
+    produced_batch_id: 'produced_item_batch_id',
+    output_batch_id: 'produced_item_batch_id',
+    line_cost: 'estimated_cost',
+    image_url: 'evidence_image_url',
+    image_urls: 'evidence_image_urls'
   }
 });
 
@@ -377,11 +479,20 @@ function parseCell(field, value) {
   if (field === 'allergens') {
     return normalizeAllergenTags(trimmed);
   }
-  if (JSON_FIELDS.has(field)) {
+  if (LIST_FIELDS.has(field)) {
     try {
       return JSON.parse(trimmed);
     } catch {
       return trimmed.split('|').map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  if (LEGACY_NESTED_UPLOAD_FIELDS.has(field)) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) throw new Error('not an array');
+      return parsed;
+    } catch {
+      throw new Error(`${field} must be a JSON array when using the legacy nested upload format`);
     }
   }
   if (BOOLEAN_FIELDS.has(field)) {
@@ -419,7 +530,8 @@ function normalizeIngredientUploadUnit(value) {
     if (standardUnits.has(symbol)) return symbol;
   }
   const normalized = normalizeIngredientUnit(trimmed);
-  // Keep canonical legacy spellings such as EA and custom units unchanged.
+  // Standard stock units use their canonical upload spelling; truly custom
+  // units remain unchanged.
   return standardUnits.has(normalized) || normalized !== trimmed.toLowerCase() ? normalized : trimmed;
 }
 
@@ -494,6 +606,40 @@ const PRODUCTION_LINE_FIELDS = new Set([
   'produced_weight_grams',
   'estimated_cost',
   'actual_cost'
+]);
+
+const MATERIAL_REQUEST_LINE_FIELDS = new Set([
+  'line_number',
+  'ingredient_id',
+  'item_code',
+  'ingredient_name',
+  'required_quantity',
+  'current_stock',
+  'shortage_quantity',
+  'request_quantity',
+  'unit',
+  'estimated_cost',
+  'validation_status'
+]);
+
+const FOOD_WASTE_LINE_FIELDS = new Set([
+  'line_number',
+  'production_line_id',
+  'produced_item_batch_id',
+  'output_batch_id',
+  'recipe_id',
+  'recipe_name',
+  'ingredient_id',
+  'ingredient_name',
+  'batch_overproduction_item_key',
+  'manifest_item_key',
+  'source_menu_plan_item_key',
+  'produced_weight_grams',
+  'available_weight_grams_before',
+  'wasted_production_equivalent_servings',
+  'waste_weight_grams',
+  'quantity_grams',
+  'wasted_weight_grams'
 ]);
 
 function stripFields(payload = {}, fields = new Set()) {
@@ -619,6 +765,82 @@ function productionManifestLineFromUploadPayload(payload = {}) {
   });
 }
 
+function materialRequestLineFromUploadPayload(payload = {}) {
+  const hasLine = [
+    payload.ingredient_id,
+    payload.item_code,
+    payload.ingredient_name,
+    payload.required_quantity,
+    payload.shortage_quantity,
+    payload.request_quantity
+  ].some(hasText);
+  if (!hasLine) return null;
+  return cleanUndefinedValues({
+    line_number: normalizeLineNumber(payload.line_number, undefined),
+    ingredient_id: payload.ingredient_id,
+    item_code: payload.item_code,
+    ingredient_name: payload.ingredient_name,
+    required_quantity: payload.required_quantity,
+    current_stock: payload.current_stock,
+    shortage_quantity: payload.shortage_quantity,
+    request_quantity: firstValue(payload.request_quantity, payload.required_quantity),
+    unit: payload.unit,
+    estimated_cost: payload.estimated_cost,
+    validation_status: payload.validation_status
+  });
+}
+
+function foodWasteWeightGramsFromUploadPayload(payload = {}) {
+  const direct = firstValue(
+    payload.waste_weight_grams,
+    payload.quantity_grams,
+    payload.wasted_weight_grams
+  );
+  if (hasNumber(direct)) return Number(direct);
+  if (!hasNumber(payload.quantity)) return undefined;
+  const unit = String(payload.unit || 'g').trim().toLowerCase();
+  return unit === 'kg' ? Number(payload.quantity) * 1000 : Number(payload.quantity);
+}
+
+function foodWasteLineFromUploadPayload(payload = {}) {
+  const wasteWeightGrams = foodWasteWeightGramsFromUploadPayload(payload);
+  const hasLine = [
+    payload.production_line_id,
+    payload.produced_item_batch_id,
+    payload.output_batch_id,
+    payload.recipe_id,
+    payload.recipe_name,
+    payload.ingredient_id,
+    payload.ingredient_name,
+    payload.batch_overproduction_item_key,
+    payload.manifest_item_key,
+    payload.source_menu_plan_item_key,
+    wasteWeightGrams
+  ].some(hasText);
+  if (!hasLine) return null;
+  return cleanUndefinedValues({
+    line_number: normalizeLineNumber(payload.line_number, undefined),
+    production_line_id: payload.production_line_id,
+    produced_item_batch_id: payload.produced_item_batch_id || payload.output_batch_id,
+    output_batch_id: payload.produced_item_batch_id || payload.output_batch_id,
+    production_id: payload.production_id,
+    recipe_id: payload.recipe_id,
+    recipe_name: payload.recipe_name,
+    ingredient_id: payload.ingredient_id,
+    ingredient_name: payload.ingredient_name,
+    item_name: firstValue(payload.recipe_name, payload.ingredient_name),
+    batch_number: payload.batch_reference,
+    batch_overproduction_item_key: payload.batch_overproduction_item_key,
+    manifest_item_key: payload.manifest_item_key,
+    source_menu_plan_item_key: payload.source_menu_plan_item_key,
+    produced_weight_grams: payload.produced_weight_grams,
+    available_weight_grams_before: payload.available_weight_grams_before,
+    wasted_production_equivalent_servings: payload.wasted_production_equivalent_servings,
+    waste_weight_grams: wasteWeightGrams,
+    cost: payload.estimated_cost
+  });
+}
+
 function normalizeMappedPayload(moduleKey, payload) {
   if (moduleKey === 'recipes' && payload.recipe_type && !payload.cuisine_type) {
     payload.cuisine_type = payload.recipe_type;
@@ -696,6 +918,35 @@ function normalizeMappedPayload(moduleKey, payload) {
     }
     return normalizeProductionMenuScope(payload, { required: true });
   }
+  if (moduleKey === 'material-requests') {
+    const line = materialRequestLineFromUploadPayload(payload);
+    stripFields(payload, MATERIAL_REQUEST_LINE_FIELDS);
+    if (line) {
+      payload.items = [
+        ...(Array.isArray(payload.items) ? payload.items : []),
+        line
+      ];
+      if (!payload.total_estimated_cost && hasNumber(line.estimated_cost)) {
+        payload.total_estimated_cost = Number(line.estimated_cost);
+      }
+    }
+  }
+  if (moduleKey === 'food-waste') {
+    const line = foodWasteLineFromUploadPayload(payload);
+    stripFields(payload, FOOD_WASTE_LINE_FIELDS);
+    if (line) {
+      payload.output_allocations = [
+        ...(Array.isArray(payload.output_allocations) ? payload.output_allocations : []),
+        line
+      ];
+      if (!payload.quantity && hasNumber(line.waste_weight_grams)) {
+        payload.quantity = Number(line.waste_weight_grams);
+        payload.quantity_grams = Number(line.waste_weight_grams);
+        payload.waste_weight_grams = Number(line.waste_weight_grams);
+      }
+      payload.unit = payload.unit || 'g';
+    }
+  }
   return payload;
 }
 
@@ -710,7 +961,9 @@ function mergeUploadBase(target, source) {
       'sub_recipes',
       'meals',
       'menu_plan_lines',
-      'manifest_lines'
+      'manifest_lines',
+      'items',
+      'output_allocations'
     ].includes(key)) return;
     if (target[key] === undefined || target[key] === null || target[key] === '') {
       target[key] = value;
@@ -758,11 +1011,32 @@ function groupKeyForUploadPayload(moduleKey, payload = {}) {
       textKey(payload.menu_plan_id)
     ].join('::');
   }
+  if (moduleKey === 'material-requests') {
+    const requestNumber = textKey(payload.request_number);
+    if (!requestNumber) return '';
+    return [
+      textKey(payload.site_id || payload.site_name),
+      requestNumber
+    ].join('::');
+  }
+  if (moduleKey === 'food-waste') {
+    return [
+      textKey(payload.waste_reference || payload.idempotency_key),
+      textKey(payload.site_id || payload.site_name),
+      textKey(payload.waste_date),
+      textKey(payload.meal_type || 'all'),
+      textKey(payload.menu_type || payload.cuisine_type || 'general'),
+      textKey(payload.menu_category || 'senior'),
+      textKey(payload.waste_category || 'ingredient'),
+      textKey(payload.reason_code || payload.reason),
+      textKey(payload.batch_reference)
+    ].join('::');
+  }
   return '';
 }
 
 export function groupBulkUploadRows(moduleKey, stagedRows = []) {
-  if (!['recipes', 'menu-plans', 'production'].includes(moduleKey)) {
+  if (!['recipes', 'menu-plans', 'production', 'material-requests', 'food-waste'].includes(moduleKey)) {
     return stagedRows;
   }
   const groups = new Map();
@@ -787,6 +1061,12 @@ export function groupBulkUploadRows(moduleKey, stagedRows = []) {
       if (moduleKey === 'production') {
         groups.get(key).payload.manifest_lines = [];
       }
+      if (moduleKey === 'material-requests') {
+        groups.get(key).payload.items = [];
+      }
+      if (moduleKey === 'food-waste') {
+        groups.get(key).payload.output_allocations = [];
+      }
     }
     const group = groups.get(key);
     group.rowNumbers.push(staged.rowNumber);
@@ -800,6 +1080,10 @@ export function groupBulkUploadRows(moduleKey, stagedRows = []) {
       group.payload.menu_plan_lines.push(...(Array.isArray(payload.menu_plan_lines) ? payload.menu_plan_lines : []));
     } else if (moduleKey === 'production') {
       group.payload.manifest_lines.push(...(Array.isArray(payload.manifest_lines) ? payload.manifest_lines : []));
+    } else if (moduleKey === 'material-requests') {
+      group.payload.items.push(...(Array.isArray(payload.items) ? payload.items : []));
+    } else if (moduleKey === 'food-waste') {
+      group.payload.output_allocations.push(...(Array.isArray(payload.output_allocations) ? payload.output_allocations : []));
     }
   }
   return [...groups.values()].map((group) => {
@@ -821,6 +1105,27 @@ export function groupBulkUploadRows(moduleKey, stagedRows = []) {
       group.payload.manifest_lines = group.payload.manifest_lines
         .map((line, index) => ({ ...line, line_number: normalizeLineNumber(line.line_number, index + 1) }))
         .sort(lineSort);
+    } else if (moduleKey === 'material-requests') {
+      group.payload.items = group.payload.items
+        .map((line, index) => ({ ...line, line_number: normalizeLineNumber(line.line_number, index + 1) }))
+        .sort(lineSort);
+      const totalEstimatedCost = group.payload.items.reduce((sum, line) => (
+        sum + (hasNumber(line.estimated_cost) ? Number(line.estimated_cost) : 0)
+      ), 0);
+      if (totalEstimatedCost > 0) group.payload.total_estimated_cost = Number(totalEstimatedCost.toFixed(6));
+    } else if (moduleKey === 'food-waste') {
+      group.payload.output_allocations = group.payload.output_allocations
+        .map((line, index) => ({ ...line, line_number: normalizeLineNumber(line.line_number, index + 1) }))
+        .sort(lineSort);
+      const totalWasteWeightGrams = group.payload.output_allocations.reduce((sum, line) => (
+        sum + (hasNumber(line.waste_weight_grams) ? Number(line.waste_weight_grams) : 0)
+      ), 0);
+      if (totalWasteWeightGrams > 0) {
+        group.payload.quantity = Number(totalWasteWeightGrams.toFixed(6));
+        group.payload.quantity_grams = Number(totalWasteWeightGrams.toFixed(6));
+        group.payload.waste_weight_grams = Number(totalWasteWeightGrams.toFixed(6));
+        group.payload.unit = group.payload.unit || 'g';
+      }
     }
     return group;
   });

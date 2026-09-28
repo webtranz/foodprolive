@@ -36,6 +36,20 @@ assert.equal(productionTemplateHeaders.includes('line_number'), true);
 assert.equal(productionTemplateHeaders.includes('menu_plan_line_id'), true);
 assert.equal(productionTemplateHeaders.includes('requested_weight_kg'), true);
 assert.equal(productionTemplateHeaders.includes('produced_weight_kg'), true);
+
+const materialRequestTemplateHeaders = templateHeaders('material-requests');
+assert.equal(materialRequestTemplateHeaders.includes('items'), false, 'MR to Store templates use relational item line columns');
+assert.equal(materialRequestTemplateHeaders.includes('line_number'), true);
+assert.equal(materialRequestTemplateHeaders.includes('ingredient_id'), true);
+assert.equal(materialRequestTemplateHeaders.includes('request_quantity'), true);
+
+const foodWasteTemplateHeaders = templateHeaders('food-waste');
+assert.equal(foodWasteTemplateHeaders.includes('output_allocations'), false, 'food waste templates use relational waste line columns');
+assert.equal(foodWasteTemplateHeaders.includes('line_number'), true);
+assert.equal(foodWasteTemplateHeaders.includes('menu_category'), true);
+assert.equal(foodWasteTemplateHeaders.includes('waste_weight_grams'), true);
+assert.equal(foodWasteTemplateHeaders.includes('evidence_image_urls'), true);
+
 assert.match(createTemplateCsv('ingredients'), /^item_code,name,/, 'ingredient templates put Item Code before Item Name');
 assert.match(
   createTemplateCsv('inventory'),
@@ -307,6 +321,90 @@ assert.deepEqual(relationalProductionLine.manifest_lines, [
     estimated_cost: 121.43
   }
 ]);
+
+const relationalMaterialRequestLine = mapCsvRow(
+  'material-requests',
+  ['site_id', 'request_number', 'request_date', 'line_number', 'item_code', 'ingredient_name', 'required_quantity', 'current_stock', 'shortage_quantity', 'request_quantity', 'unit', 'estimated_cost'],
+  ['store-1', 'MR-001', '2026-09-01', '1', 'ING-001', 'Rice', '20', '5', '15', '15', 'kg', '75']
+);
+assert.deepEqual(relationalMaterialRequestLine.items, [
+  {
+    line_number: 1,
+    item_code: 'ING-001',
+    ingredient_name: 'Rice',
+    required_quantity: 20,
+    current_stock: 5,
+    shortage_quantity: 15,
+    request_quantity: 15,
+    unit: 'kg',
+    estimated_cost: 75
+  }
+]);
+
+const groupedMaterialRequestRows = groupBulkUploadRows('material-requests', [
+  {
+    rowNumber: 7,
+    payload: mapCsvRow(
+      'material-requests',
+      ['site_id', 'request_number', 'line_number', 'item_code', 'ingredient_name', 'request_quantity', 'unit', 'estimated_cost'],
+      ['store-1', 'MR-GROUP', '2', 'ING-SALT', 'Salt', '1', 'kg', '2']
+    )
+  },
+  {
+    rowNumber: 8,
+    payload: mapCsvRow(
+      'material-requests',
+      ['site_id', 'request_number', 'line_number', 'item_code', 'ingredient_name', 'request_quantity', 'unit', 'estimated_cost'],
+      ['store-1', 'MR-GROUP', '1', 'ING-RICE', 'Rice', '15', 'kg', '75']
+    )
+  }
+]);
+assert.equal(groupedMaterialRequestRows.length, 1);
+assert.deepEqual(groupedMaterialRequestRows[0].payload.items.map((line) => line.ingredient_name), ['Rice', 'Salt']);
+assert.equal(groupedMaterialRequestRows[0].payload.total_estimated_cost, 77);
+
+const relationalFoodWasteLine = mapCsvRow(
+  'food-waste',
+  ['site_id', 'waste_date', 'meal_type', 'menu_type', 'menu_category', 'waste_category', 'waste_scope', 'source_type', 'line_number', 'recipe_id', 'recipe_name', 'waste_weight_grams', 'unit', 'estimated_cost', 'evidence_image_urls'],
+  ['store-1', '2026-09-01', 'Breakfast', 'General', 'Junior', 'batch_overproduction', 'batch', 'batch_overproduction', '1', 'recipe-egg', 'Boiled Eggs', '950', 'g', '0.91', '/uploads/a.jpg|/uploads/b.jpg']
+);
+assert.equal(relationalFoodWasteLine.menu_category, 'Junior');
+assert.equal(relationalFoodWasteLine.quantity, 950);
+assert.equal(relationalFoodWasteLine.unit, 'g');
+assert.deepEqual(relationalFoodWasteLine.evidence_image_urls, ['/uploads/a.jpg', '/uploads/b.jpg']);
+assert.deepEqual(relationalFoodWasteLine.output_allocations, [
+  {
+    line_number: 1,
+    recipe_id: 'recipe-egg',
+    recipe_name: 'Boiled Eggs',
+    item_name: 'Boiled Eggs',
+    waste_weight_grams: 950,
+    cost: 0.91
+  }
+]);
+
+const groupedFoodWasteRows = groupBulkUploadRows('food-waste', [
+  {
+    rowNumber: 9,
+    payload: mapCsvRow(
+      'food-waste',
+      ['site_id', 'waste_date', 'meal_type', 'menu_type', 'menu_category', 'waste_category', 'waste_scope', 'source_type', 'line_number', 'recipe_name', 'waste_weight_grams', 'unit'],
+      ['store-1', '2026-09-01', 'Breakfast', 'General', 'Junior', 'batch_overproduction', 'batch', 'batch_overproduction', '2', 'Oatmeal', '500', 'g']
+    )
+  },
+  {
+    rowNumber: 10,
+    payload: mapCsvRow(
+      'food-waste',
+      ['site_id', 'waste_date', 'meal_type', 'menu_type', 'menu_category', 'waste_category', 'waste_scope', 'source_type', 'line_number', 'recipe_name', 'waste_weight_grams', 'unit'],
+      ['store-1', '2026-09-01', 'Breakfast', 'General', 'Junior', 'batch_overproduction', 'batch', 'batch_overproduction', '1', 'Boiled Eggs', '950', 'g']
+    )
+  }
+]);
+assert.equal(groupedFoodWasteRows.length, 1);
+assert.deepEqual(groupedFoodWasteRows[0].payload.output_allocations.map((line) => line.recipe_name), ['Boiled Eggs', 'Oatmeal']);
+assert.equal(groupedFoodWasteRows[0].payload.quantity, 1450);
+assert.equal(groupedFoodWasteRows[0].payload.unit, 'g');
 
 const groupedRecipeRows = groupBulkUploadRows('recipes', [
   {

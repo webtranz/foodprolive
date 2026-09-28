@@ -36,6 +36,7 @@ function readHarness(catalog = ingredients) {
   const methods = vm.runInNewContext(`${decorator}\n${invalidator}\n({ decorate: decorateRecipesWithServingWeights, invalidate: invalidateEntityDataCaches })`, {
     getCostingCatalogs: async () => ({ recipeCatalog: [legacyRecipe], ingredients: state.ingredients }),
     calculateRecipeNutrition, calculateRecipeServingWeight, calculateRecipeCostingSnapshot, roundStandardDecimal,
+    bumpEntityReadCacheGeneration: () => {},
     costingCatalogCacheTtlMs: 10000, costingCatalogGeneration: 1, recipeDecorationCache: new Map(),
     maximumRecipeDecorationCacheEntries: 10000, costingCatalogCache: null, costingCatalogPromise: null
   });
@@ -184,8 +185,9 @@ test('editor, cards and nutrition labels distinguish missing values from legitim
   assert.match(form, /calculateRecipeNutrition\(/);
   assert.doesNotMatch(form, /function quantityToGrams/);
   assert.match(form, /legacy_allergens: recipe\.legacy_allergens/);
+  assert.match(form, /calculatedNutrition\.calories_per_serving \?\? '—'/);
+  assert.match(card, /formatNutritionValue\(nutritionSnapshot\.calories_per_serving\)/);
   for (const source of [form, card]) {
-    assert.match(source, /calories_per_serving \?\? '—'/);
     assert.match(source, /Nutrition incomplete/);
     assert.match(source, /Allergen information incomplete/);
     assert.match(source, /slice\(0, 3\)/);
