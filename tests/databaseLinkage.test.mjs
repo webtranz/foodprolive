@@ -453,6 +453,18 @@ const cases = [
       assert.match(dbSource, /LOWER\(BTRIM\(recipe\.canonical_name\)\) = ANY\(\$1::text\[\]\)/);
       assert.match(dbSource, /await replaceMenuPlanLines\(record, executor\)/);
       assert.match(dbSource, /'meal_period', COALESCE\(line\.meal_period, plan\.meal_period\)/);
+      const manifestReplaceStart = dbSource.indexOf('async function replaceProductionManifestLines');
+      const manifestReplaceEnd = dbSource.indexOf('\nfunction productionConsumptionQuantity', manifestReplaceStart);
+      assert.ok(manifestReplaceStart >= 0 && manifestReplaceEnd > manifestReplaceStart);
+      const manifestReplaceSource = dbSource.slice(manifestReplaceStart, manifestReplaceEnd);
+      assert.doesNotMatch(
+        manifestReplaceSource,
+        /DELETE FROM production_manifest_lines WHERE production_id = \$1/,
+        'production manifest persistence must not delete linked lines before upserting replacements'
+      );
+      assert.match(manifestReplaceSource, /INSERT INTO production_manifest_lines/);
+      assert.match(manifestReplaceSource, /NOT EXISTS \([\s\S]*FROM produced_output_batches batch/);
+      assert.match(manifestReplaceSource, /UPDATE production_manifest_lines line[\s\S]*status = 'inactive'[\s\S]*EXISTS \([\s\S]*FROM produced_output_batches batch/);
 
       [
         'getPurchaseRequestById\\(id, client\\)',

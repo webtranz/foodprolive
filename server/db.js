@@ -7599,11 +7599,15 @@ async function replaceProductionManifestLines(record, executor = pool) {
     return;
   }
 
-  await query('DELETE FROM production_manifest_lines WHERE production_id = $1', [record.id], executor);
   const createdAt = record.created_date || nowIso();
   const updatedAt = record.updated_date || nowIso();
+  const sourceLineIds = sourceLines.map((sourceLine, index) => {
+    const lineNumber = safeLineNumber(sourceLine?.line_number, index + 1);
+    return sourceLine?.production_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber);
+  });
   for (const [index, sourceLine] of sourceLines.entries()) {
     const lineNumber = safeLineNumber(sourceLine?.line_number, index + 1);
+    const productionLineId = sourceLineIds[index];
     const requestedServings = toNumberOrNull(sourceLine?.requested_servings);
     const requestedQuantity = toNumberOrNull(sourceLine?.requested_quantity ?? sourceLine?.production_quantity);
     const requestedWeightGrams = toNumberOrNull(sourceLine?.requested_weight_grams);
@@ -7669,7 +7673,7 @@ async function replaceProductionManifestLines(record, executor = pool) {
         status = EXCLUDED.status, source_name = EXCLUDED.source_name,
         updated_at = EXCLUDED.updated_at`,
       [
-        sourceLine?.production_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber),
+        productionLineId,
         record.id,
         sourceLine?.menu_plan_line_id || null,
         lineNumber,
@@ -7710,6 +7714,33 @@ async function replaceProductionManifestLines(record, executor = pool) {
       executor
     );
   }
+
+  const distinctLineIds = [...new Set(sourceLineIds.filter(Boolean))];
+  await query(
+    `DELETE FROM production_manifest_lines line
+      WHERE line.production_id = $1
+        AND NOT (line.production_line_id = ANY($2::text[]))
+        AND NOT EXISTS (
+          SELECT 1
+            FROM produced_output_batches batch
+           WHERE batch.production_line_id = line.production_line_id
+        )`,
+    [record.id, distinctLineIds],
+    executor
+  );
+  await query(
+    `UPDATE production_manifest_lines line
+        SET status = 'inactive', updated_at = $3
+      WHERE line.production_id = $1
+        AND NOT (line.production_line_id = ANY($2::text[]))
+        AND EXISTS (
+          SELECT 1
+            FROM produced_output_batches batch
+           WHERE batch.production_line_id = line.production_line_id
+        )`,
+    [record.id, distinctLineIds, updatedAt],
+    executor
+  );
 }
 
 function productionConsumptionQuantity(line = {}) {
