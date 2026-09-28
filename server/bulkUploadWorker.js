@@ -121,20 +121,70 @@ function findRecipeLineIngredientMatch(ingredients = [], line = {}) {
   return chooseBestIngredientMatch(matches, codeCandidates, nameCandidate, { allowAmbiguousCodeMatch: true });
 }
 
-function findBulkRecipeMatch(recipes = [], payload = {}) {
+function getRecipeLocationIds(recipe = {}) {
+  return [
+    recipe.site_id,
+    recipe.warehouse_id,
+    recipe.project_id,
+    recipe.area_id,
+    ...(Array.isArray(recipe.site_ids) ? recipe.site_ids : [])
+  ].filter(Boolean).map((value) => String(value));
+}
+
+function recipeMatchesUploadScope(recipe = {}, uploadScope = {}) {
+  const siteId = uploadScope.siteId ? String(uploadScope.siteId) : '';
+  if (!siteId) return true;
+  return getRecipeLocationIds(recipe).includes(siteId);
+}
+
+function isGlobalRecipeScope(recipe = {}) {
+  return String(recipe.site_scope || 'global').toLowerCase() === 'global'
+    && getRecipeLocationIds(recipe).length === 0;
+}
+
+function chooseScopedRecipeMatch(matches = [], payload = {}, uploadScope = {}) {
+  const uniqueMatches = [...new Map(matches.map((recipe) => [recipe.id, recipe])).values()];
+  if (!uniqueMatches.length) return null;
+
+  const scopedMatches = uploadScope.siteId
+    ? uniqueMatches.filter((recipe) => recipeMatchesUploadScope(recipe, uploadScope))
+    : uniqueMatches;
+  if (scopedMatches.length === 1) return scopedMatches[0];
+  if (scopedMatches.length > 1) {
+    const error = new Error(`Recipe "${payload.recipe_code || payload.name}" matches multiple existing recipes for the selected store.`);
+    error.status = 409;
+    throw error;
+  }
+
+  // Older uploads created store recipes as Global. If there is exactly one
+  // global match and the current job is tied to a store, allow the update to
+  // convert that old global copy into the selected store scope.
+  const globalMatches = uploadScope.siteId
+    ? uniqueMatches.filter(isGlobalRecipeScope)
+    : [];
+  if (globalMatches.length === 1) return globalMatches[0];
+  if (globalMatches.length > 1) {
+    const error = new Error(`Recipe "${payload.recipe_code || payload.name}" matches multiple global recipes and cannot be safely scoped to the selected store.`);
+    error.status = 409;
+    throw error;
+  }
+
+  if (uniqueMatches.length > 1) {
+    const error = new Error(`Recipe "${payload.recipe_code || payload.name}" matches multiple existing recipes.`);
+    error.status = 409;
+    throw error;
+  }
+  return uploadScope.siteId ? null : uniqueMatches[0];
+}
+
+function findBulkRecipeMatch(recipes = [], payload = {}, uploadScope = {}) {
   const codeCandidate = normalizeLookup(payload.recipe_code);
   const nameCandidate = normalizeLookup(payload.name);
   const matches = recipes.filter((recipe) => (
     (codeCandidate && normalizeLookup(recipe.recipe_code) === codeCandidate)
     || (nameCandidate && normalizeLookup(recipe.name) === nameCandidate)
   ));
-  const uniqueMatches = [...new Map(matches.map((recipe) => [recipe.id, recipe])).values()];
-  if (uniqueMatches.length > 1) {
-    const error = new Error(`Recipe "${payload.recipe_code || payload.name}" matches multiple existing recipes.`);
-    error.status = 409;
-    throw error;
-  }
-  return uniqueMatches[0] || null;
+  return chooseScopedRecipeMatch(matches, payload, uploadScope);
 }
 
 function findBulkMenuPlanMatch(menuPlans = [], payload = {}) {
@@ -181,7 +231,7 @@ function resolveProductionManifestRecipeLinks(payload = {}, recipes = []) {
   };
 }
 
-async function findBulkRecipeMatchInDatabase(client, payload = {}) {
+async function findBulkRecipeMatchInDatabase(client, payload = {}, uploadScope = {}) {
   const codeCandidate = normalizeLookup(payload.recipe_code);
   const nameCandidate = normalizeLookup(payload.name);
   if (!codeCandidate && !nameCandidate) return null;
@@ -189,14 +239,31 @@ async function findBulkRecipeMatchInDatabase(client, payload = {}) {
   const matches = recipes.filter((recipe) => (
     (codeCandidate && normalizeLookup(recipe.recipe_code) === codeCandidate)
     || (nameCandidate && normalizeLookup(recipe.name) === nameCandidate)
-  )).slice(0, 2);
-  const uniqueMatches = [...new Map(matches.map((recipe) => [recipe.id, recipe])).values()];
-  if (uniqueMatches.length > 1) {
-    const error = new Error(`Recipe "${payload.recipe_code || payload.name}" matches multiple existing recipes.`);
-    error.status = 409;
-    throw error;
-  }
-  return uniqueMatches[0] || null;
+  ));
+  return chooseScopedRecipeMatch(matches, payload, uploadScope);
+}
+
+function buildRecipeUploadScope(job = {}) {
+  const siteId = String(job.site_id || '').trim();
+  return siteId
+    ? {
+        siteId,
+        siteName: job.site_name || ''
+      }
+    : {};
+}
+
+function applyRecipeUploadScope(payload = {}, job = {}, recipeType = '') {
+  const uploadScope = buildRecipeUploadScope(job);
+  return {
+    ...payload,
+    ...(recipeType ? { cuisine_type: recipeType } : {}),
+    ...(uploadScope.siteId ? {
+      site_scope: 'specific',
+      site_ids: [uploadScope.siteId],
+      site_names: uploadScope.siteName ? [uploadScope.siteName] : []
+    } : {})
+  };
 }
 
 function buildIngredientPayloadFromRecipeLine(line = {}) {
@@ -695,17 +762,12 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
         }
         authorizeEntityAction(user, job.entity_name, 'create', staged.payload);
         const recipeType = job.entity_name === 'Recipe' ? getJobRecipeType(job) : '';
+        const recipeUploadScope = job.entity_name === 'Recipe'
+          ? buildRecipeUploadScope(job)
+          : {};
         const stagedPayload = job.entity_name === 'Recipe'
           ? await ensureRecipeIngredientsExist({
-            payload: {
-              ...staged.payload,
-              ...(recipeType ? { cuisine_type: recipeType } : {}),
-              ...(job.site_id ? {
-                site_scope: 'specific',
-                site_ids: [job.site_id],
-                site_names: job.site_name ? [job.site_name] : []
-              } : {})
-            },
+            payload: applyRecipeUploadScope(staged.payload, job, recipeType),
             user,
             context,
             client
@@ -733,15 +795,7 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
           context
         );
         if (job.entity_name === 'Recipe') {
-          recipePayloadForDuplicateRecovery = {
-            ...staged.payload,
-            ...(recipeType ? { cuisine_type: recipeType } : {}),
-            ...(job.site_id ? {
-              site_scope: 'specific',
-              site_ids: [job.site_id],
-              site_names: job.site_name ? [job.site_name] : []
-            } : {})
-          };
+          recipePayloadForDuplicateRecovery = applyRecipeUploadScope(staged.payload, job, recipeType);
         }
         if (job.entity_name === 'Production') {
           const requestedStatus = String(preparedPayload.status || 'planned').toLowerCase();
@@ -786,7 +840,7 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
           }
         }
         if (job.entity_name === 'Recipe' && job.import_mode === 'keep_existing') {
-          const existingRecipe = findBulkRecipeMatch(context.recipeCatalog, preparedPayload);
+          const existingRecipe = findBulkRecipeMatch(context.recipeCatalog, preparedPayload, recipeUploadScope);
           if (existingRecipe) {
             authorizeEntityAction(user, job.entity_name, 'update', preparedPayload);
             const updated = await updateDocument(job.entity_name, existingRecipe.id, preparedPayload, client);
@@ -838,7 +892,8 @@ async function processBatch({ job, batch, user, context, counters, errors, execu
             );
             const existingRecipe = await findBulkRecipeMatchInDatabase(
               client,
-              recoveredPreparedPayload
+              recoveredPreparedPayload,
+              buildRecipeUploadScope(job)
             );
             if (!existingRecipe) throw error;
             authorizeEntityAction(user, job.entity_name, 'update', recoveredPreparedPayload);
