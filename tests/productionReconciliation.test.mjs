@@ -262,6 +262,57 @@ test('menu production completion uses the saved manifest instead of rebuilding o
   assert.equal(plan.production_snapshot.yield_snapshot_source, 'saved_production_manifest');
 });
 
+test('saved production manifests complete from their frozen snapshot even when the live recipe is unavailable', () => {
+  const plan = buildAutomaticProductionCompletionPlan({
+    production: {
+      id: 'snapshot-with-deleted-recipe',
+      recipe_id: 'deleted-recipe',
+      recipe_name: 'Breakfast / General / Labor',
+      meal_type: 'breakfast',
+      menu_type: 'general',
+      menu_category: 'labor',
+      target_servings: 10,
+      production_issue_grouped: true,
+      recipe_snapshot_locked: true,
+      yield_adjustment_version: 2,
+      quantity_semantics: 'raw_recipe_to_yielded_output_v2',
+      portion_size_source: 'yield_calculated',
+      ingredients_used: [
+        {
+          ingredient_id: chicken.id,
+          ingredient_name: chicken.name,
+          planned_quantity: 5,
+          raw_quantity: 5,
+          unit: 'EA',
+          raw_weight_grams: 4500,
+          yielded_weight_grams: 3600,
+          yield_multiplier: 0.8
+        },
+        {
+          ingredient_id: oats.id,
+          ingredient_name: oats.name,
+          planned_quantity: 2,
+          raw_quantity: 2,
+          unit: 'kg',
+          raw_weight_grams: 2000,
+          yielded_weight_grams: 2000,
+          yield_multiplier: 1
+        }
+      ]
+    },
+    recipeCatalog: [],
+    ingredientCatalog: [chicken, oats]
+  });
+
+  assert.equal(plan.recipe.id, 'deleted-recipe');
+  assert.equal(plan.recipe.name, 'Breakfast / General / Labor');
+  assert.equal(plan.quantity_basis, 'raw_recipe_plan');
+  assert.deepEqual(plan.ingredients_used.map((line) => line.ingredient_id), [chicken.id, oats.id]);
+  assert.equal(plan.production_snapshot.expected_finished_weight_grams, 5600);
+  assert.equal(plan.production_snapshot.portion_size_grams, 560);
+  assert.equal(plan.production_snapshot.expected_yield_servings, 10);
+});
+
 test('frozen v2 line weights remain stable when ingredient package and yield metadata later change', () => {
   const summary = buildAutomaticProductionYieldSummary({
     production: {

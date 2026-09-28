@@ -157,14 +157,23 @@ export function buildAutomaticProductionCompletionPlan({
   recipeCatalog = [],
   ingredientCatalog = []
 } = {}) {
+  const frozenV2 = isFrozenRawProductionSnapshot(production);
+  const savedManifestSnapshot = hasSavedProductionManifestSnapshot(production);
   const recipe = (Array.isArray(recipeCatalog) ? recipeCatalog : []).find(
     (candidate) => String(candidate?.id || '') === String(production.recipe_id || '')
-  );
-  if (!recipe) {
+  ) || null;
+  if (!recipe && !savedManifestSnapshot) {
     const error = new Error('Production cannot be completed because its recipe no longer exists');
     error.status = 409;
     throw error;
   }
+  const recipeIdentity = recipe || {
+    id: production.recipe_id || null,
+    name: production.recipe_name || null,
+    servings: production.target_servings || 1,
+    portion_size_grams: production.portion_size_grams || null,
+    ingredients: []
+  };
   const targetServings = positiveNumber(production.target_servings);
   if (!targetServings) {
     const error = new Error('Production cannot be completed because its target servings are invalid');
@@ -176,8 +185,6 @@ export function buildAutomaticProductionCompletionPlan({
   const ingredientMap = new Map(
     ingredients.map((ingredient) => [String(ingredient?.id || ''), ingredient])
   );
-  const frozenV2 = isFrozenRawProductionSnapshot(production);
-  const savedManifestSnapshot = hasSavedProductionManifestSnapshot(production);
   let productionIngredients;
 
   if (savedManifestSnapshot) {
@@ -301,7 +308,7 @@ export function buildAutomaticProductionCompletionPlan({
         }
         : {})
     },
-    recipe,
+    recipe: recipeIdentity,
     ingredients
   });
   if (savedManifestSnapshot && !positiveNumber(lineYieldSummary.expected_finished_weight_grams)) {
@@ -331,8 +338,8 @@ export function buildAutomaticProductionCompletionPlan({
   });
   const recipeWeight = savedManifestSnapshot
     ? null
-    : calculateRecipeServingWeight(recipe, recipeCatalog, ingredients);
-  const recipeServings = Math.max(1, toNumber(recipe.servings, 1));
+    : calculateRecipeServingWeight(recipeIdentity, recipeCatalog, ingredients);
+  const recipeServings = Math.max(1, toNumber(recipeIdentity.servings, 1));
   const scale = targetServings / recipeServings;
   const portionSize = positiveNumber(lineYieldSummary.portion_size_grams)
     ?? (recipeWeight ? positiveNumber(recipeWeight.grams_per_serving) : null);
@@ -362,7 +369,7 @@ export function buildAutomaticProductionCompletionPlan({
         : 'target_portion_fallback';
 
   return {
-    recipe,
+    recipe: recipeIdentity,
     ingredients_used: productionIngredients,
     upgraded_legacy_yield: !savedManifestSnapshot,
     quantity_basis: frozenV2
@@ -387,7 +394,7 @@ export function buildAutomaticProductionCompletionPlan({
       expected_finished_weight_grams: roundQuantity(expectedFinishedWeight),
       portion_size_grams: roundQuantity(portionSize),
       portion_size_source: lineYieldSummary.portion_size_source
-        || (positiveNumber(recipe.portion_size_grams) ? 'recipe_portion_size' : 'yield_calculated'),
+        || (positiveNumber(recipeIdentity.portion_size_grams) ? 'recipe_portion_size' : 'yield_calculated'),
       expected_yield_servings: roundQuantity(expectedYieldServings),
       reconciliation_mode: 'automatic_yield_plan',
       output_calculation_source: outputCalculationSource,
