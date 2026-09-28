@@ -9117,7 +9117,21 @@ async function deleteNormalizedDocument(entity, id, executor = pool) {
     return result.rowCount > 0;
   }
   if (entity === 'Recipe') {
+    const existing = await findNormalizedDocument('Recipe', id, executor, true);
     const result = await query('DELETE FROM recipe_versions WHERE recipe_version_id = $1', [id], executor);
+    if (result.rowCount > 0 && existing?.recipe_master_id) {
+      await query(
+        `DELETE FROM recipes recipe
+          WHERE recipe.recipe_id = $1
+            AND NOT EXISTS (
+              SELECT 1
+                FROM recipe_versions version
+               WHERE version.recipe_id = recipe.recipe_id
+            )`,
+        [existing.recipe_master_id],
+        executor
+      );
+    }
     return result.rowCount > 0;
   }
   const config = normalizedSimpleConfigs[entity];

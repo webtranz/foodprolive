@@ -398,9 +398,10 @@ const cases = [
   {
     name: 'keeps database linkage constraints and indexes in the schema',
     async run() {
-      const [sql, procurementSource] = await Promise.all([
+      const [sql, procurementSource, dbSource] = await Promise.all([
         fs.readFile(new URL('../server/sql/init.sql', import.meta.url), 'utf8'),
-        fs.readFile(new URL('../server/procurement.js', import.meta.url), 'utf8')
+        fs.readFile(new URL('../server/procurement.js', import.meta.url), 'utf8'),
+        fs.readFile(new URL('../server/db.js', import.meta.url), 'utf8')
       ]);
 
       [
@@ -444,6 +445,8 @@ const cases = [
       assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredients_d365_unique/);
       assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouses_d365_unique/);
       assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_transactions_idempotency_unique/);
+
+      assert.match(dbSource, /DELETE FROM recipes recipe[\s\S]*NOT EXISTS \([\s\S]*FROM recipe_versions version[\s\S]*version\.recipe_id = recipe\.recipe_id/);
 
       [
         'getPurchaseRequestById\\(id, client\\)',

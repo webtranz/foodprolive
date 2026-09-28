@@ -139,6 +139,7 @@ assert.match(worker, /async function findBulkRecipeMatchInDatabase/);
 assert.match(worker, /function findRecipeLineIngredientMatch/);
 assert.match(worker, /async function ensureRecipeIngredientsExist/);
 assert.match(worker, /function applyRecipeUploadScope/);
+assert.match(worker, /isGlobalRecipeScope\(recipe\)/);
 assert.match(worker, /site_scope: 'specific'/);
 assert.match(worker, /site_ids: \[uploadScope\.siteId\]/);
 assert.match(worker, /findBulkRecipeMatch\(context\.recipeCatalog, preparedPayload, recipeUploadScope\)/);

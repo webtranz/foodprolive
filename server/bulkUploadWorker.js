@@ -631,11 +631,14 @@ async function clearRecipesForBulkDelete(job, siteIds = null, client) {
     const recipes = await listDocuments('Recipe', { limit: 10000, lock: true }, client);
     const matches = recipes.filter((recipe) => (
       [recipe.cuisine_type, recipe.recipe_type].some((value) => normalizeLookup(value) === recipeTypeLookup)
-      && [
-        recipe.site_id,
-        recipe.warehouse_id,
-        ...(Array.isArray(recipe.site_ids) ? recipe.site_ids : [])
-      ].filter(Boolean).map(String).some((siteId) => scopedSiteIds.has(siteId))
+      && (
+        isGlobalRecipeScope(recipe)
+        || [
+          recipe.site_id,
+          recipe.warehouse_id,
+          ...(Array.isArray(recipe.site_ids) ? recipe.site_ids : [])
+        ].filter(Boolean).map(String).some((siteId) => scopedSiteIds.has(siteId))
+      )
     ));
     let deletedRows = 0;
     for (const recipe of matches) {
