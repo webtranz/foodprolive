@@ -1445,6 +1445,22 @@ function summarizeMenuPlanMeals(meals = []) {
   });
 }
 
+function buildMenuPlanLinePayloads(meals = []) {
+  return (Array.isArray(meals) ? meals : [])
+    .filter((meal) => meal && (meal.recipe_id || meal.ingredient_id || meal.item_name || meal.recipe_name || meal.name))
+    .map((meal, index) => ({
+      ...meal,
+      line_number: meal.line_number || index + 1,
+      line_type: meal.line_type || (meal.ingredient_id && !meal.recipe_id ? 'ingredient' : 'recipe'),
+      meal_type: meal.meal_type || meal.meal_period || 'all',
+      recipe_id: meal.recipe_id || meal.recipe_version_id || null,
+      recipe_version_id: meal.recipe_version_id || meal.recipe_id || null,
+      item_name: meal.item_name || meal.recipe_name || meal.ingredient_name || meal.name || `Menu plan line ${index + 1}`,
+      planned_servings: meal.planned_servings ?? meal.expected_servings,
+      estimated_cost: meal.estimated_cost ?? meal.total_cost
+    }));
+}
+
 function normalizeDateOnly(value) {
   const normalized = String(value || '').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : '';
@@ -2036,8 +2052,8 @@ function buildMenuPlanWritePayload(body = {}, existing = null) {
     meals,
     // Normalized Menu Planning persists menu rows from menu_plan_lines. On update,
     // existing records already contain the old normalized lines, so the current
-    // editor meals must explicitly replace them or the save rewrites stale rows.
-    menu_plan_lines: meals,
+    // editor recipe rows must explicitly replace them or the save rewrites stale rows.
+    menu_plan_lines: buildMenuPlanLinePayloads(meals),
     cuisine_type: normalizeMenuCuisine(body.cuisine_type ?? existing?.cuisine_type, 'general'),
     menu_category: normalizeMenuCategory(body.menu_category ?? existing?.menu_category, 'senior'),
     status: body.status || existing?.status || 'draft',

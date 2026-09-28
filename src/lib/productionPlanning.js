@@ -281,7 +281,18 @@ function resolveProductionCost(production, ingredientMap) {
       )
     ), 0);
 
-  return round(calculated || production?.estimated_batch_cost || 0);
+  if (calculated > 0) return round(calculated);
+
+  const persistedCost = [
+    production?.estimated_batch_cost,
+    production?.production_cost_total,
+    production?.ingredient_cost_total,
+    production?.actual_cost,
+    production?.total_cost,
+    production?.estimated_cost
+  ].find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+
+  return round(persistedCost || 0);
 }
 
 function resolvePortionSize(production, recipe, recipes, ingredients) {

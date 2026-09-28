@@ -1444,8 +1444,16 @@ export default function Production() {
         inventory,
         siteId: issueInventorySiteId
       });
+      const missingSnapshotItem = selectedItems.find((item) => !Array.isArray(issueSnapshots[item.key]) || issueSnapshots[item.key].length === 0);
+      if (missingSnapshotItem) {
+        throw new Error(`Ingredient details are not ready for ${missingSnapshotItem.recipe_name || 'one planned item'}. Wait for the inventory check, then submit again.`);
+      }
       if (mealGroups.length === 0) {
         throw new Error('Select at least one meal group before issuing production.');
+      }
+      const emptyManifestGroup = mealGroups.find((group) => !Array.isArray(group.snapshot_lines) || group.snapshot_lines.length === 0);
+      if (emptyManifestGroup) {
+        throw new Error(`Ingredient details are missing for ${emptyManifestGroup.meal_label || 'this meal review'}. Check the linked recipes before issuing production.`);
       }
       if (editingIssueProduction) {
         if (mealGroups.length !== 1) {
@@ -2785,6 +2793,7 @@ export default function Production() {
         admin_reissue_run_id: adminReissueRunId,
         source_menu_plan_item_index: item.source_menu_plan_item_index,
         recipe_id: item.recipe_id,
+        recipe_code: item.recipe_code || '',
         recipe_name: item.recipe_name,
         meal_type: item.meal_type,
         expected_servings: item.expected_servings,
@@ -2805,6 +2814,30 @@ export default function Production() {
         }))
       };
     });
+    const menuManifestLines = menuIssueItems.map((item, index) => ({
+      line_number: index + 1,
+      line_type: 'recipe',
+      key: item.key,
+      manifest_item_key: item.key,
+      source_menu_plan_item_key: item.key,
+      original_source_menu_plan_item_key: item.original_source_menu_plan_item_key || item.key,
+      source_menu_plan_item_index: item.source_menu_plan_item_index,
+      recipe_id: item.recipe_id,
+      recipe_code: item.recipe_code || '',
+      recipe_name: item.recipe_name,
+      item_name: item.recipe_name,
+      meal_type: item.meal_type,
+      requested_servings: finiteProductionNumber(item.production_covers || item.expected_servings, 0),
+      produced_servings: null,
+      production_covers: finiteProductionNumber(item.production_covers, 0),
+      raw_weight_grams: item.raw_weight_grams,
+      yielded_weight_grams: item.yielded_weight_grams,
+      expected_finished_weight_grams: item.yielded_weight_grams,
+      expected_yield_servings: finiteProductionNumber(item.production_covers, 0),
+      estimated_cost: item.estimated_batch_cost,
+      estimated_batch_cost: item.estimated_batch_cost,
+      status: 'active'
+    }));
     const productionOverrides = menuIssueItems.flatMap((item) => item.production_overrides || []);
     const menuType = group.menu_type || issueSource?.menu_type || 'general';
     const menuCategory = group.menu_category || issueSource?.menu_category || 'senior';
@@ -2859,12 +2892,16 @@ export default function Production() {
       production_issue_reissue_original_group_key: isAdminReissue ? group.key : '',
       production_issue_reissue_original_item_keys: isAdminReissue ? group.items.map((item) => item.key) : [],
       menu_issue_items: menuIssueItems,
+      manifest_lines: menuManifestLines,
       recipe_snapshot_mode: 'production_only_override',
       recipe_snapshot_locked: true,
       original_recipe_snapshot: buildOriginalSnapshot(lines),
       ingredients_used: buildProductionIngredientsForSubmit(lines),
       production_overrides: productionOverrides,
       production_override_count: productionOverrides.length,
+      ingredient_cost_total: estimatedBatchCost,
+      production_cost_total: estimatedBatchCost,
+      cost_per_serving: Number((estimatedBatchCost / servingCount).toFixed(2)),
       total_calories: group.items.reduce((sum, item) => {
         const itemRecipe = recipes.find((entry) => String(entry.id) === String(item.recipe_id)) || {};
         const nutritionSnapshot = calculateRecipeNutritionSnapshot(itemRecipe, recipes, ingredients);

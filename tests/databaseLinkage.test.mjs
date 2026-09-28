@@ -470,8 +470,9 @@ const cases = [
   {
     name: 'keeps Menu Planning saves scoped to store warehouses',
     async run() {
-      const [menuPlanningSource, entityPreparationSource, indexSource] = await Promise.all([
+      const [menuPlanningSource, productionSource, entityPreparationSource, indexSource] = await Promise.all([
         fs.readFile(new URL('../src/pages/MenuPlanning.jsx', import.meta.url), 'utf8'),
+        fs.readFile(new URL('../src/pages/Production.jsx', import.meta.url), 'utf8'),
         fs.readFile(new URL('../server/entityPreparation.js', import.meta.url), 'utf8'),
         fs.readFile(new URL('../server/index.js', import.meta.url), 'utf8')
       ]);
@@ -496,8 +497,13 @@ const cases = [
       assert.match(indexSource, /const preparedPayload = await prepareEntityPayload\(request\.user, 'MenuPlan', payload\)/);
       assert.match(indexSource, /findScopedOperationalMenuPlan\(request\.user, preparedPayload\.site_id, preparedPayload\.plan_date/);
       assert.match(indexSource, /A menu plan already exists for this store, date, and category/);
-      assert.match(indexSource, /menu_plan_lines:\s*meals/);
-      assert.match(indexSource, /current[\s\S]*editor meals[\s\S]*replace them|rewrites stale rows/);
+      assert.match(indexSource, /menu_plan_lines:\s*buildMenuPlanLinePayloads\(meals\)/);
+      assert.match(indexSource, /current[\s\S]*editor recipe rows[\s\S]*replace them|rewrites stale rows/);
+      assert.match(productionSource, /const menuManifestLines = menuIssueItems\.map/);
+      assert.match(productionSource, /manifest_lines:\s*menuManifestLines/);
+      assert.match(productionSource, /Ingredient details are not ready/);
+      assert.match(productionSource, /production_cost_total:\s*estimatedBatchCost/);
+      assert.match(entityPreparationSource, /production_cost_total:\s*Number\(estimatedBatchCost\.toFixed\(2\)\)/);
     }
   }
 ];
