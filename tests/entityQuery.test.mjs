@@ -53,7 +53,17 @@ assert.deepEqual(pagedQuery.parameters.find(Array.isArray), ['site-1', 'site-2']
 assert.equal(pagedQuery.parameters.at(-2), 50);
 assert.equal(pagedQuery.parameters.at(-1), 100);
 
-const inventoryExecutor = createCapturingExecutor([]);
+const inventoryExecutor = createCapturingExecutor([{
+  inventory_id: 'inventory-1',
+  warehouse_id: 'site-384',
+  ingredient_id: 'ing-1',
+  ingredient_name: 'Rice',
+  stock_unit: 'kg',
+  available_quantity: 10,
+  reserved_quantity: 0,
+  on_hand_quantity: 10,
+  status: 'active'
+}]);
 await listDocuments('Inventory', {
   filters: { ingredient_id: 'ing-1', site_id: 'site-384' },
   sort: 'ingredient_id',
@@ -66,9 +76,11 @@ assert.match(inventoryExecutor.calls[0].text, /LEFT JOIN ingredients ingredient/
 assert.match(inventoryExecutor.calls[0].text, /ingredient\.name AS ingredient_name/);
 assert.match(inventoryExecutor.calls[0].text, /normalized_record\.ingredient_id/);
 assert.match(inventoryExecutor.calls[0].text, /normalized_record\.warehouse_id/);
-assert.match(inventoryExecutor.calls[0].text, /FOR UPDATE/);
+assert.doesNotMatch(inventoryExecutor.calls[0].text, /FOR UPDATE/);
 assert.doesNotMatch(inventoryExecutor.calls[0].text, /entity_records|record\.data/);
 assert.deepEqual(inventoryExecutor.calls[0].parameters.slice(0, 2), ['ing-1', 'site-384']);
+assert.match(inventoryExecutor.calls[1].text, /SELECT inventory_id FROM warehouse_inventory WHERE inventory_id = ANY\(\$1::text\[\]\) FOR UPDATE/);
+assert.deepEqual(inventoryExecutor.calls[1].parameters, [['inventory-1']]);
 
 const recipeExecutor = createCapturingExecutor([{
   recipe_version_id: 'recipe-v1',

@@ -5652,6 +5652,39 @@ function normalizedMapper(entity) {
   })[entity] || normalizedSimpleConfigs[entity]?.mapper;
 }
 
+function normalizedLockTarget(entity) {
+  const config = normalizedSimpleConfigs[entity];
+  if (config?.table && config?.idColumn) {
+    return { table: config.table, idColumn: config.idColumn };
+  }
+  const target = {
+    Recipe: ['recipe_versions', 'recipe_version_id'],
+    MenuPlan: ['menu_plans', 'menu_plan_id'],
+    Production: ['production_events', 'production_id'],
+    ProductionConsumptionReport: ['production_consumption_reports', 'report_id'],
+    ProducedItemBatch: ['produced_output_batches', 'output_batch_id'],
+    MealServiceAttendance: ['meal_service_headers', 'meal_service_id'],
+    MealServiceConsumption: ['meal_service_consumptions', 'meal_consumption_id'],
+    FoodWaste: ['food_waste_records', 'food_waste_id'],
+    RoleProfile: ['role_profiles', 'id']
+  }[entity];
+  return target ? { table: target[0], idColumn: target[1] } : null;
+}
+
+async function lockNormalizedEntityIds(entity, ids = [], executor = pool) {
+  const target = normalizedLockTarget(entity);
+  const uniqueIds = [...new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean))];
+  if (!target || !uniqueIds.length) return false;
+  await query(
+    `SELECT ${target.idColumn} FROM ${target.table} WHERE ${target.idColumn} = ANY($1::text[]) FOR UPDATE`,
+    [uniqueIds],
+    executor
+  );
+  return true;
+}
+
 function normalizedOrder(records, sort) {
   return sortRecords(records, sort || '-updated_date');
 }
@@ -6786,7 +6819,7 @@ function buildNormalizedListQuery({
   const pageOffset = normalizedOffset(offset);
   const limitClause = pageSize === null ? '' : `LIMIT ${addSqlParameter(parameters, pageSize)}::integer`;
   const offsetClause = pageOffset > 0 ? `OFFSET ${addSqlParameter(parameters, pageOffset)}::integer` : '';
-  const lockClause = lock && entity !== 'Site' ? 'FOR UPDATE' : '';
+  const lockClause = lock && entity !== 'Site' && !normalizedLockTarget(entity) ? 'FOR UPDATE' : '';
   const totalColumn = includeTotal ? ', COUNT(*) OVER() AS total_count' : '';
 
   return {
@@ -6812,7 +6845,7 @@ async function listNormalizedDocumentsInMemory(
   const select = normalizedSelectForEntity(entity);
   const mapper = normalizedMapper(entity);
   if (!select || !mapper) return null;
-  const lockClause = lock && entity !== 'Site' ? 'FOR UPDATE' : '';
+  const lockClause = lock && entity !== 'Site' && !normalizedLockTarget(entity) ? 'FOR UPDATE' : '';
   const result = await query(`SELECT * FROM (${select}) normalized_record ${lockClause}`, [], executor);
   let records = result.rows.map(mapper);
   records = records.filter((record) => matchesFilter(record, filters));
@@ -6841,7 +6874,11 @@ async function listNormalizedDocumentsInMemory(
   }
   const ordered = normalizedOrder(records, sort);
   const start = Math.max(0, Number(offset) || 0);
-  return typeof limit === 'number' ? ordered.slice(start, start + limit) : ordered.slice(start);
+  const selected = typeof limit === 'number' ? ordered.slice(start, start + limit) : ordered.slice(start);
+  if (lock) {
+    await lockNormalizedEntityIds(entity, selected.map((record) => record.id), executor);
+  }
+  return selected;
 }
 
 async function listNormalizedDocuments(
@@ -6873,6 +6910,10 @@ async function listNormalizedDocuments(
     }, executor);
   }
   const result = await query(built.text, built.parameters, executor);
+  if (lock) {
+    const idColumn = normalizedIdColumn(entity);
+    await lockNormalizedEntityIds(entity, result.rows.map((row) => row[idColumn] ?? row.id), executor);
+  }
   return result.rows.map(mapper);
 }
 
@@ -6942,10 +6983,10 @@ async function findNormalizedDocument(entity, id, executor = pool, lock = false)
   if (!select || !idColumn || !mapper) return null;
   let lockClause = '';
   if (lock && entity !== 'Site') {
-    const config = normalizedSimpleConfigs[entity];
-    if (config?.table) {
+    const target = normalizedLockTarget(entity);
+    if (target) {
       const lockResult = await query(
-        `SELECT ${idColumn} FROM ${config.table} WHERE ${idColumn} = $1 LIMIT 1 FOR UPDATE`,
+        `SELECT ${target.idColumn} FROM ${target.table} WHERE ${target.idColumn} = $1 LIMIT 1 FOR UPDATE`,
         [id],
         executor
       );
