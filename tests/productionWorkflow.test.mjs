@@ -180,6 +180,9 @@ const cases = [
       assert.match(activationBlock, /PRODUCTION_MATERIAL_REQUEST_ACTIVATED/);
       assert.match(activationBlock, /PRODUCTION_MATERIAL_REQUEST_NOT_REQUIRED/);
       assert.doesNotMatch(activationBlock, /no ingredients to build a material request/);
+      assert.match(serverSource, /let materialRequestMutated = false/);
+      assert.match(serverSource, /materialRequestMutated = true/);
+      assert.match(serverSource, /if \(materialRequestMutated\) \{\s*recordChanged\('MaterialRequest'\);/);
 
       const productionLock = acknowledgementBlock.indexOf("findDocument('Production', sourceProductionId, client, true)");
       const materialRequestLock = acknowledgementBlock.indexOf("findDocument('MaterialRequest', request.params.id, client, true)");

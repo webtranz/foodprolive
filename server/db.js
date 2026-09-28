@@ -6653,6 +6653,21 @@ function buildNormalizedLocationClause(entity, location, parameters) {
       OR normalized_record.area_id = ANY(${parameter}::text[])
     )`;
   }
+  if (entity === 'MaterialRequest') {
+    if (!allowedIds.length) {
+      return `(
+        COALESCE(normalized_record.site_id::text, '') = ''
+        AND COALESCE(normalized_record.requesting_site_id::text, '') = ''
+        AND COALESCE(normalized_record.fulfillment_store_id::text, '') = ''
+      )`;
+    }
+    return `(
+      COALESCE(normalized_record.site_id::text, '') = ''
+      OR normalized_record.site_id = ANY(${parameter}::text[])
+      OR normalized_record.requesting_site_id = ANY(${parameter}::text[])
+      OR normalized_record.fulfillment_store_id = ANY(${parameter}::text[])
+    )`;
+  }
   const locationColumn = normalizedSqlColumnForField(entity, 'site_id')
     || normalizedSqlColumnForField(entity, 'warehouse_id')
     || normalizedSqlColumnForField(entity, 'fulfillment_store_id');
@@ -6768,11 +6783,15 @@ async function listNormalizedDocumentsInMemory(
     const allowed = new Set([...(location.accessibleSiteIds || [])].map(String));
     records = records.filter((record) => {
       if (entity === 'Site') return allowed.has(String(record.id));
-      const siteIds = [record.site_id, record.fulfillment_store_id, record.warehouse_id]
+      const siteIds = entity === 'MaterialRequest'
+        ? [record.site_id, record.requesting_site_id, record.fulfillment_store_id]
+        : [record.site_id, record.fulfillment_store_id, record.warehouse_id]
         .filter(Boolean)
         .map(String);
       if (!siteIds.length && entity === 'Recipe' && record.site_scope === 'global') return true;
-      return siteIds.length ? siteIds.every((siteId) => allowed.has(siteId)) : true;
+      if (!siteIds.length) return true;
+      if (entity === 'MaterialRequest') return siteIds.some((siteId) => allowed.has(siteId));
+      return siteIds.every((siteId) => allowed.has(siteId));
     });
   }
   const ordered = normalizedOrder(records, sort);

@@ -468,6 +468,19 @@ const cases = [
     }
   },
   {
+    name: 'routes MR to Store visibility through requesting project and fulfillment store',
+    async run() {
+      const dbSource = await fs.readFile(new URL('../server/db.js', import.meta.url), 'utf8');
+
+      assert.match(dbSource, /if \(entity === 'MaterialRequest'\) \{/);
+      assert.match(dbSource, /normalized_record\.site_id = ANY\(\$\{parameter\}::text\[\]\)/);
+      assert.match(dbSource, /normalized_record\.requesting_site_id = ANY\(\$\{parameter\}::text\[\]\)/);
+      assert.match(dbSource, /normalized_record\.fulfillment_store_id = ANY\(\$\{parameter\}::text\[\]\)/);
+      assert.match(dbSource, /\[record\.site_id, record\.requesting_site_id, record\.fulfillment_store_id\]/);
+      assert.match(dbSource, /if \(entity === 'MaterialRequest'\) return siteIds\.some\(\(siteId\) => allowed\.has\(siteId\)\)/);
+    }
+  },
+  {
     name: 'keeps Menu Planning saves scoped to store warehouses',
     async run() {
       const [menuPlanningSource, productionSource, entityPreparationSource, indexSource] = await Promise.all([

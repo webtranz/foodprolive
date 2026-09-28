@@ -5678,6 +5678,9 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
     }
     invalidateEntityAccessCaches(entity);
     recordChanged(entity);
+    if (entity === 'Production') {
+      recordChanged('MaterialRequest');
+    }
 
     await auditAction({
       user: request.user,
@@ -5714,6 +5717,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       : await prepareEntityPayload(request.user, entity, request.body || {}, existing);
     let updated;
     let productionInventoryMutated = false;
+    let materialRequestMutated = false;
     if (entity === 'Production') {
       updated = await withTransaction(async (client) => {
         const lockedExisting = await findDocument(entity, request.params.id, client, true);
@@ -5818,6 +5822,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
         const status = String(saved?.status || '');
         if (['draft', 'planned', 'pending_approval', 'changes_requested'].includes(status)) {
           await syncMaterialRequestForProduction(request.user, saved, 'draft', client);
+          materialRequestMutated = true;
           saved = await findDocument(entity, request.params.id, client);
         } else if (status === 'pending_procurement') {
           await syncMaterialRequestForProduction(
@@ -5827,6 +5832,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
             client,
             isAreaRejectionRollback
           );
+          materialRequestMutated = true;
           saved = await findDocument(entity, request.params.id, client);
         }
         return saved;
@@ -5836,6 +5842,9 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
     }
     invalidateEntityAccessCaches(entity);
     recordChanged(entity);
+    if (materialRequestMutated) {
+      recordChanged('MaterialRequest');
+    }
     if (productionInventoryMutated) {
       recordChanged('Inventory');
       recordChanged('InventoryLot');
