@@ -156,11 +156,14 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(summaryBlock, /inventory_transaction_id:/);
   assert.match(summaryBlock, /movement_layers:/);
 
-  const reportStart = inventorySource.indexOf("createDocument('ProductionConsumptionReport'");
+  const reportStart = inventorySource.indexOf('saveProductionConsumptionReportForCompletion({');
   const reportEnd = inventorySource.indexOf("status: 'posted'", reportStart);
   const reportBlock = inventorySource.slice(reportStart, reportEnd);
-  assert.ok(reportStart >= 0, 'completion should create a consumption report in its transaction');
+  assert.ok(reportStart >= 0, 'completion should save a consumption report in its transaction');
   assert.ok(reportEnd > reportStart, 'consumption report should be finalized as posted');
+  assert.match(inventorySource, /async function saveProductionConsumptionReportForCompletion/);
+  assert.match(inventorySource, /filters:\s*\{\s*production_id:\s*productionId\s*\}/);
+  assert.match(inventorySource, /updateDocument\('ProductionConsumptionReport',\s*existingReport\.id/);
   assert.match(reportBlock, /key: 'ingredient_consumption',[\s\S]*title: 'Ingredient Consumption'/);
   assert.match(reportBlock, /key: 'inventory_lot_usage',[\s\S]*title: 'Inventory Lots Consumed'/);
   assert.match(reportBlock, /key: 'shortages',[\s\S]*title: 'Shortages and Exceptions'/);

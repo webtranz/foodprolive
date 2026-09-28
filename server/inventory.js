@@ -507,6 +507,51 @@ function enrichCompletedMenuIssueItems({
   });
 }
 
+async function saveProductionConsumptionReportForCompletion(reportPayload, executor) {
+  const productionId = normalizeText(reportPayload?.production_id);
+  if (!productionId) {
+    const error = new Error('Production consumption report requires a production ID');
+    error.status = 400;
+    throw error;
+  }
+
+  if (typeof executor?.query === 'function') {
+    await executor.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      [`production-consumption-report:${productionId}`]
+    );
+  }
+
+  const existingReports = await listDocuments('ProductionConsumptionReport', {
+    filters: { production_id: productionId },
+    limit: 10
+  }, executor);
+  const existingReport = existingReports.find((report) => (
+    String(report?.status || '').trim().toLowerCase() !== 'reversed'
+  )) || existingReports[0] || null;
+
+  if (!existingReport?.id) {
+    return createDocument('ProductionConsumptionReport', reportPayload, executor);
+  }
+
+  const reportNumber = existingReport.report_number || reportPayload.report_number;
+  const originalReportNumber = String(reportPayload.report_number || '');
+  const originalReportName = String(reportPayload.report_name || '');
+  const reportName = originalReportNumber && originalReportName.startsWith(`${originalReportNumber} ·`)
+    ? `${reportNumber} ·${originalReportName.slice(originalReportNumber.length + 2)}`
+    : originalReportName || existingReport.report_name || `${reportNumber} · Production Consumption`;
+
+  return updateDocument('ProductionConsumptionReport', existingReport.id, {
+    ...reportPayload,
+    report_number: reportNumber,
+    report_name: reportName,
+    reversed_at: null,
+    reversed_by: null,
+    reversed_by_name: null,
+    reversal_reason: null
+  }, executor);
+}
+
 export function buildStockDeductionQuantitySummary({
   remainingToDeduct = 0,
   requestedQuantity = 0,
@@ -3489,7 +3534,7 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
   const reportYieldedWeightGrams = positiveNumber(totalYieldedWeightGrams)
     ?? positiveNumber(completionProduction.expected_finished_weight_grams)
     ?? manifestYieldedWeightGrams;
-  const report = await createDocument('ProductionConsumptionReport', {
+  const report = await saveProductionConsumptionReportForCompletion({
     report_number: reportNumber,
     report_name: reportName,
     production_id: production.id,
