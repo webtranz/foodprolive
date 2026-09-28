@@ -285,12 +285,14 @@ export default function MenuPlanning() {
   });
 
   const weekStartKey = format(currentWeekStart, 'yyyy-MM-dd');
+  const weekPlanQueryKey = ['menuPlansByWeek', selectedSite, weekStartKey, selectedMenuCuisine, selectedMenuCategory];
+  const selectedPlanQueryKey = ['menuPlanByDate', selectedSite, selectedDate, selectedMenuCuisine, selectedMenuCategory];
   const {
     data: weekPlanResponse,
     isLoading: menuPlansLoading,
     error: menuPlansError
   } = useQuery({
-    queryKey: ['menuPlansByWeek', selectedSite, weekStartKey, selectedMenuCuisine, selectedMenuCategory],
+    queryKey: weekPlanQueryKey,
     queryFn: () => base44.menuPlanning.getWeek(selectedSite, weekStartKey, {
       cuisine_type: selectedMenuCuisine,
       menu_category: selectedMenuCategory
@@ -303,7 +305,7 @@ export default function MenuPlanning() {
     isLoading: selectedPlanLoading,
     error: selectedPlanError
   } = useQuery({
-    queryKey: ['menuPlanByDate', selectedSite, selectedDate, selectedMenuCuisine, selectedMenuCategory],
+    queryKey: selectedPlanQueryKey,
     queryFn: () => base44.menuPlanning.getByDate(selectedSite, selectedDate, {
       cuisine_type: selectedMenuCuisine,
       menu_category: selectedMenuCategory
@@ -330,9 +332,59 @@ export default function MenuPlanning() {
   const autoLinkedBudget = selectedPlanResponse?.linked_budget || null;
   const budgetCandidates = Array.isArray(selectedPlanResponse?.budget_candidates) ? selectedPlanResponse.budget_candidates : [];
 
+  const extractSavedMenuPlan = (result) => (
+    result?.plan
+    || result?.data?.plan
+    || (result?.data?.id ? result.data : null)
+    || (result?.id ? result : null)
+  );
+
+  const updateCurrentMenuPlanCache = (plan) => {
+    queryClient.setQueryData(selectedPlanQueryKey, (current = {}) => ({
+      ...(current || {}),
+      plan,
+      data: {
+        ...(current?.data || {}),
+        plan
+      }
+    }));
+
+    queryClient.setQueryData(weekPlanQueryKey, (current = {}) => {
+      const currentPlans = Array.isArray(current?.plans) ? current.plans : [];
+      const nextPlans = plan
+        ? (() => {
+            const existingIndex = currentPlans.findIndex((entry) => entry.id === plan.id);
+            if (existingIndex >= 0) {
+              return currentPlans.map((entry, index) => (index === existingIndex ? plan : entry));
+            }
+            return [...currentPlans, plan];
+          })()
+        : currentPlans.filter((entry) => !(
+            String(entry?.site_id || '') === String(selectedSite || '')
+            && String(entry?.plan_date || '').slice(0, 10) === String(selectedDate || '')
+            && normalizeMenuCuisine(entry?.cuisine_type ?? entry?.menu_type, 'general') === normalizeMenuCuisine(selectedMenuCuisine, 'general')
+            && normalizeMenuCategory(entry?.menu_category, 'senior') === normalizeMenuCategory(selectedMenuCategory, 'senior')
+          ));
+
+      return {
+        ...(current || {}),
+        plans: nextPlans,
+        data: current?.data ? {
+          ...current.data,
+          plans: nextPlans
+        } : current?.data
+      };
+    });
+  };
+
   const createMutation = useMutation({
     mutationFn: (payload) => base44.menuPlanning.create(payload),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      const savedPlan = extractSavedMenuPlan(result);
+      if (savedPlan) {
+        updateCurrentMenuPlanCache(savedPlan);
+        setFormData(buildDailyMenuState(savedPlan));
+      }
       queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlansByWeek'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
@@ -343,7 +395,12 @@ export default function MenuPlanning() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }) => base44.menuPlanning.update(id, payload),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      const savedPlan = extractSavedMenuPlan(result);
+      if (savedPlan) {
+        updateCurrentMenuPlanCache(savedPlan);
+        setFormData(buildDailyMenuState(savedPlan));
+      }
       queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlansByWeek'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
@@ -355,6 +412,7 @@ export default function MenuPlanning() {
   const deleteMutation = useMutation({
     mutationFn: (id) => base44.menuPlanning.delete(id),
     onSuccess: () => {
+      updateCurrentMenuPlanCache(null);
       queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlansByWeek'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });

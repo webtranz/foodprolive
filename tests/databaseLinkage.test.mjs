@@ -481,6 +481,13 @@ const cases = [
       assert.match(menuPlanningSource, /const selectableMenuSites = useMemo/);
       assert.match(menuPlanningSource, /selectableMenuSites\.map\(\(site\) =>/);
       assert.match(menuPlanningSource, /Select store \/ warehouse/);
+      assert.match(menuPlanningSource, /const selectedPlanQueryKey = \['menuPlanByDate'/);
+      assert.match(menuPlanningSource, /const weekPlanQueryKey = \['menuPlansByWeek'/);
+      assert.match(menuPlanningSource, /function extractSavedMenuPlan|const extractSavedMenuPlan =/);
+      assert.match(menuPlanningSource, /function updateCurrentMenuPlanCache|const updateCurrentMenuPlanCache =/);
+      assert.match(menuPlanningSource, /queryClient\.setQueryData\(selectedPlanQueryKey/);
+      assert.match(menuPlanningSource, /queryClient\.setQueryData\(weekPlanQueryKey/);
+      assert.match(menuPlanningSource, /updateCurrentMenuPlanCache\(null\)/);
 
       assert.match(entityPreparationSource, /function collectActiveDescendantStores/);
       assert.match(entityPreparationSource, /descendantStores\.length === 1/);
