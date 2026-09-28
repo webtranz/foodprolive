@@ -186,6 +186,40 @@ const cases = [
     }
   },
   {
+    name: 'preserves selected menu rows when recipe filtering cannot see the recipe',
+    run() {
+      const meals = buildMenuPlanMeals(
+        {
+          breakfast: [{ recipe_id: 'recipe-offsite', expected_servings: '25' }],
+          lunch: [{ recipe_id: '', expected_servings: '' }],
+          dinner: [{ recipe_id: '', expected_servings: '' }]
+        },
+        sampleRecipes,
+        sampleIngredients,
+        {
+          meals: [
+            {
+              meal_type: 'breakfast',
+              recipe_id: 'recipe-offsite',
+              recipe_code: 'RCP-OFFSITE',
+              recipe_name: 'Existing Linked Recipe',
+              expected_servings: 10,
+              cost_per_serving: 2.5,
+              total_cost: 25
+            }
+          ]
+        }
+      );
+
+      assert.equal(meals.length, 1);
+      assert.equal(meals[0].recipe_id, 'recipe-offsite');
+      assert.equal(meals[0].recipe_code, 'RCP-OFFSITE');
+      assert.equal(meals[0].recipe_name, 'Existing Linked Recipe');
+      assert.equal(meals[0].expected_servings, 25);
+      assert.equal(meals[0].total_cost, 62.5);
+    }
+  },
+  {
     name: 'creates a draggable meal row from a recipe',
     run() {
       assert.deepEqual(

@@ -204,6 +204,12 @@ export function hasMenuCalendarChanges(formState, plan = null) {
 export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], existingPlan = null) {
   const preservedMeals = (Array.isArray(existingPlan?.meals) ? existingPlan.meals : [])
     .filter((meal) => !CORE_MENU_MEAL_TYPES.includes(meal.meal_type));
+  const existingMeals = Array.isArray(existingPlan?.meals) ? existingPlan.meals : [];
+  const findExistingMeal = (mealType, row = {}) => existingMeals.find((meal) => (
+    String(meal?.meal_type || '').trim().toLowerCase() === mealType
+      && String(meal?.recipe_id || '').trim()
+      && String(meal.recipe_id).trim() === String(row.recipe_id || '').trim()
+  ));
 
   const nextMeals = CORE_MENU_MEAL_TYPES.flatMap((mealType) => (
     (Array.isArray(formState?.[mealType]) ? formState[mealType] : [])
@@ -219,7 +225,31 @@ export function buildMenuPlanMeals(formState, recipes = [], ingredients = [], ex
 
         const recipe = recipes.find((entry) => entry.id === row.recipe_id);
         if (!recipe) {
-          return [];
+          const existingMeal = findExistingMeal(mealType, row);
+          const priorServings = safeNumber(existingMeal?.expected_servings, 0);
+          const preservedCostPerServing = safeNumber(
+            existingMeal?.cost_per_serving,
+            priorServings > 0 ? safeNumber(existingMeal?.total_cost, 0) / priorServings : 0
+          );
+          return [{
+            meal_type: mealType,
+            recipe_id: row.recipe_id,
+            recipe_code: row.recipe_code || existingMeal?.recipe_code || '',
+            recipe_name: row.recipe_name || existingMeal?.recipe_name || '',
+            expected_servings: servings,
+            cost_per_serving: roundRecipeCost(preservedCostPerServing),
+            total_cost: roundRecipeCost(preservedCostPerServing * servings),
+            calories_per_serving: safeNumber(existingMeal?.calories_per_serving, 0),
+            protein_per_serving: safeNumber(existingMeal?.protein_per_serving, 0),
+            carbs_per_serving: safeNumber(existingMeal?.carbs_per_serving, 0),
+            fat_per_serving: safeNumber(existingMeal?.fat_per_serving, 0),
+            sodium_per_serving: safeNumber(existingMeal?.sodium_per_serving, 0),
+            sugar_per_serving: safeNumber(existingMeal?.sugar_per_serving, 0),
+            allergens: Array.isArray(existingMeal?.allergens) ? existingMeal.allergens : [],
+            ...(row.recipe_link_status || existingMeal?.recipe_link_status ? {
+              recipe_link_status: row.recipe_link_status || existingMeal?.recipe_link_status
+            } : {})
+          }];
         }
 
         const costSnapshot = calculateRecipeCostSnapshot(recipe, ingredients, recipes);
