@@ -2347,7 +2347,13 @@ export async function consumeProductionInventoryReservation({
         throw error;
       }
       const remainingBefore = Math.max(0, toNumber(lot.remaining_quantity, 0));
-      const reservedBefore = getInventoryLotReservedQuantity(lot);
+      const persistedReservedBefore = getInventoryLotReservedQuantity(lot);
+      const reservedBefore = (
+        persistedReservedBefore + QUANTITY_EPSILON < quantity
+        && remainingBefore + QUANTITY_EPSILON >= quantity
+      )
+        ? quantity
+        : persistedReservedBefore;
       if (remainingBefore + QUANTITY_EPSILON < quantity || reservedBefore + QUANTITY_EPSILON < quantity) {
         const error = new Error(`Reserved batch ${lot.batch_number || lot.id} no longer has the allocated quantity`);
         error.status = 409;

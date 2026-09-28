@@ -3267,6 +3267,7 @@ CREATE TABLE IF NOT EXISTS inventory_lots (
   expiry_date DATE,
   original_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
   remaining_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  reserved_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
   unit TEXT NOT NULL,
   unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
@@ -4639,6 +4640,10 @@ ALTER TABLE warehouses DROP COLUMN IF EXISTS payload;
 ALTER TABLE ingredients DROP COLUMN IF EXISTS payload;
 ALTER TABLE warehouse_inventory DROP COLUMN IF EXISTS payload;
 ALTER TABLE inventory_lots DROP COLUMN IF EXISTS payload;
+ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS reserved_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0;
+ALTER TABLE inventory_lots ALTER COLUMN reserved_quantity SET DEFAULT 0;
+UPDATE inventory_lots SET reserved_quantity = 0 WHERE reserved_quantity IS NULL;
+ALTER TABLE inventory_lots ALTER COLUMN reserved_quantity SET NOT NULL;
 ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS warehouse_name TEXT;
 ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS ingredient_name TEXT;
 ALTER TABLE inventory_transactions ADD COLUMN IF NOT EXISTS item_code TEXT;

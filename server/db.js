@@ -1258,6 +1258,11 @@ function rowToInventoryLot(row = {}) {
     expiry_date: toDateOnlyOrNull(row.expiry_date),
     original_quantity: Number(row.original_quantity || 0),
     remaining_quantity: Number(row.remaining_quantity || 0),
+    reserved_quantity: Number(row.reserved_quantity || 0),
+    available_quantity: Math.max(
+      0,
+      Number(row.remaining_quantity || 0) - Number(row.reserved_quantity || 0)
+    ),
     unit: row.unit,
     unit_cost: Number(row.unit_cost || 0),
     status: row.status || 'active',
@@ -4750,9 +4755,9 @@ const normalizedSimpleConfigs = {
     select: 'SELECT * FROM inventory_lots',
     insertSql: `INSERT INTO inventory_lots (
       lot_id, inventory_id, warehouse_id, ingredient_id, batch_number, received_date, stock_date,
-      expiry_date, original_quantity, remaining_quantity, unit, unit_cost, status, source_name,
-      created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      expiry_date, original_quantity, remaining_quantity, reserved_quantity, unit, unit_cost,
+      status, source_name, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
     values(record) {
       return [
         record.id,
@@ -4765,6 +4770,7 @@ const normalizedSimpleConfigs = {
         toDateOnlyOrNull(record.expiry_date),
         toNumberOrZero(record.original_quantity ?? record.quantity),
         toNumberOrZero(record.remaining_quantity ?? record.quantity),
+        toNumberOrZero(record.reserved_quantity),
         record.unit || 'EA',
         toNumberOrZero(record.unit_cost ?? record.cost_per_unit),
         record.status || 'active',
@@ -4776,12 +4782,12 @@ const normalizedSimpleConfigs = {
     updateSql: `UPDATE inventory_lots SET
       inventory_id = $2, warehouse_id = $3, ingredient_id = $4, batch_number = $5,
       received_date = $6, stock_date = $7, expiry_date = $8, original_quantity = $9,
-      remaining_quantity = $10, unit = $11, unit_cost = $12, status = $13,
-      source_name = $14, updated_at = $15
+      remaining_quantity = $10, reserved_quantity = $11, unit = $12, unit_cost = $13,
+      status = $14, source_name = $15, updated_at = $16
       WHERE lot_id = $1`,
     updateValues(record) {
       const values = this.values(record);
-      return [values[0], ...values.slice(1, 14), record.updated_date || nowIso()];
+      return [values[0], ...values.slice(1, 15), record.updated_date || nowIso()];
     }
   },
   InventoryTransaction: {

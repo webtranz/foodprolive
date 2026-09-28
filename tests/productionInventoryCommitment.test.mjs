@@ -328,6 +328,8 @@ test('start gate requires a complete current reservation and rejects shortages o
 
 test('approval reserves without a physical transaction and start consumes exactly once', () => {
   const inventorySource = source('server/inventory.js');
+  const databaseSource = source('server/db.js');
+  const schemaSource = source('server/sql/init.sql');
   const reserveBlock = sourceBlock(
     inventorySource,
     'async function reserveStockWithExecutor({',
@@ -351,8 +353,15 @@ test('approval reserves without a physical transaction and start consumes exactl
   assert.match(inventorySource, /function sanitizeProductionAllocationLayers/);
   assert.match(inventorySource, /const \{ production_id: _productionId, \.\.\.safeLayer \}/);
   assert.match(inventorySource, /sanitizeProductionAllocationLayers\(issued\.movement_layers\)/);
+  assert.match(databaseSource, /reserved_quantity: Number\(row\.reserved_quantity \|\| 0\)/);
+  assert.match(databaseSource, /remaining_quantity, reserved_quantity, unit/);
+  assert.match(databaseSource, /remaining_quantity = \$10, reserved_quantity = \$11, unit = \$12/);
+  assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS inventory_lots[\s\S]*reserved_quantity NUMERIC\(18, 6\) NOT NULL DEFAULT 0/);
+  assert.match(schemaSource, /ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS reserved_quantity NUMERIC\(18, 6\) NOT NULL DEFAULT 0/);
 
   assert.match(consumeBlock, /if \(\['consumed', 'partially_consumed'\]\.includes\(currentStatus\)\)[\s\S]*mutated: false/);
+  assert.match(consumeBlock, /persistedReservedBefore = getInventoryLotReservedQuantity\(lot\)/);
+  assert.match(consumeBlock, /persistedReservedBefore \+ QUANTITY_EPSILON < quantity[\s\S]*\? quantity[\s\S]*: persistedReservedBefore/);
   assert.match(consumeBlock, /remaining_quantity: remainingAfter,[\s\S]*reserved_quantity: reservedAfter/);
   assert.match(consumeBlock, /transaction_type: 'production_use'/);
   assert.match(consumeBlock, /source: 'production_start'/);
