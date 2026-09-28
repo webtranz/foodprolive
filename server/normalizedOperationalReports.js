@@ -106,64 +106,8 @@ export async function loadNormalizedFoodCostReport({
     menuType
   ];
 
-  const confirmedSql = `
+  const productionSql = `
     WITH location_dim AS (${locationDimensionSql}),
-    reversed_consumptions AS (
-      SELECT DISTINCT reverses_consumption_id
-      FROM meal_service_consumptions
-      WHERE reverses_consumption_id IS NOT NULL
-        AND status NOT IN ('voided', 'cancelled')
-    )
-    SELECT
-      msc.service_date::text AS date,
-      COALESCE(location_dim.warehouse_code, location_dim.warehouse_name, msh.warehouse_id, pe.warehouse_id, pob.warehouse_id, 'Unassigned') AS location,
-      msc.meal_period AS meal_type,
-      COALESCE(msh.menu_type, pe.menu_type, 'general') AS menu_type,
-      COALESCE(msh.menu_category, pe.menu_category, rv.menu_category, '-') AS category,
-      COALESCE(rv.display_name, pml.item_name, 'Meal Service') AS recipe,
-      COALESCE(msc.consumed_servings, 0) AS servings,
-      COALESCE(msh.serving_size_grams, 0) AS portion_size_g,
-      COALESCE(msc.consumed_weight_grams, 0) AS served_weight_grams,
-      COALESCE(
-        NULLIF(msc.cost, 0),
-        CASE
-          WHEN pob.initial_weight_grams > 0
-          THEN COALESCE(msc.consumed_weight_grams, 0) * COALESCE(pob.total_cost, 0) / pob.initial_weight_grams
-          ELSE 0
-        END
-      ) AS total_cost
-    FROM meal_service_consumptions msc
-    LEFT JOIN meal_service_headers msh ON msh.meal_service_id = msc.meal_service_id
-    LEFT JOIN produced_output_batches pob ON pob.output_batch_id = msc.output_batch_id
-    LEFT JOIN production_events pe ON pe.production_id = COALESCE(msc.production_id, pob.production_id)
-    LEFT JOIN production_manifest_lines pml ON pml.production_line_id = pob.production_line_id
-    LEFT JOIN recipe_versions rv ON rv.recipe_version_id = COALESCE(msc.recipe_version_id, pob.recipe_version_id, pml.recipe_version_id)
-    LEFT JOIN location_dim ON location_dim.warehouse_id = COALESCE(msh.warehouse_id, pe.warehouse_id, pob.warehouse_id)
-    LEFT JOIN reversed_consumptions reversed ON reversed.reverses_consumption_id = msc.meal_consumption_id
-    WHERE msc.service_date BETWEEN $1::date AND $2::date
-      AND msc.status NOT IN ('reversed', 'voided', 'cancelled')
-      AND COALESCE(msc.movement_type, 'consumption') NOT IN ('reversal', 'plate_waste_adjustment')
-      AND reversed.reverses_consumption_id IS NULL
-      AND COALESCE(pe.status, '') NOT IN ('reversed', 'voided', 'cancelled')
-      AND COALESCE(pob.status, '') NOT IN ('reversed', 'voided', 'cancelled')
-      AND ${buildLocationScopePredicate('location_dim', 3)}
-      AND ${buildLocationFilterPredicate('location_dim', 4)}
-      AND ($5::text IS NULL OR LOWER(COALESCE(msh.menu_category, pe.menu_category, rv.menu_category, '')) = $5)
-      AND ($6::text IS NULL OR LOWER(COALESCE(msc.meal_period, msh.meal_period, pe.meal_period, '')) = $6)
-      AND ($7::text IS NULL OR LOWER(COALESCE(msh.menu_type, pe.menu_type, 'general')) = $7)
-    ORDER BY msc.service_date DESC, location ASC, meal_type ASC, category ASC, recipe ASC
-  `;
-
-  const pendingSql = `
-    WITH location_dim AS (${locationDimensionSql}),
-    served_productions AS (
-      SELECT DISTINCT COALESCE(msc.production_id, pob.production_id) AS production_id
-      FROM meal_service_consumptions msc
-      LEFT JOIN produced_output_batches pob ON pob.output_batch_id = msc.output_batch_id
-      WHERE msc.status NOT IN ('reversed', 'voided', 'cancelled')
-        AND COALESCE(msc.movement_type, 'consumption') NOT IN ('reversal', 'plate_waste_adjustment')
-        AND COALESCE(msc.consumed_weight_grams, 0) > 0
-    ),
     production_totals AS (
       SELECT
         pe.production_id,
@@ -184,21 +128,73 @@ export async function loadNormalizedFoodCostReport({
       COALESCE(pe.menu_category, '-') AS category,
       COALESCE(production_totals.production_name, 'Production') AS production,
       COALESCE(production_totals.produced_weight_grams, 0) AS produced_weight_grams,
-      COALESCE(production_totals.produced_servings, 0) AS production_servings,
-      COALESCE(production_totals.production_cost, 0) AS production_cost
+      COALESCE(production_totals.produced_servings, pe.produced_servings, pe.expected_yield_servings, pe.target_servings, 0) AS production_servings,
+      COALESCE(NULLIF(production_totals.production_cost, 0), pe.production_cost_total, pe.ingredient_cost_total, 0) AS production_cost
     FROM production_events pe
     LEFT JOIN production_totals ON production_totals.production_id = pe.production_id
-    LEFT JOIN served_productions ON served_productions.production_id = pe.production_id
     LEFT JOIN location_dim ON location_dim.warehouse_id = pe.warehouse_id
     WHERE pe.production_date BETWEEN $1::date AND $2::date
       AND pe.status = 'completed'
-      AND served_productions.production_id IS NULL
       AND ${buildLocationScopePredicate('location_dim', 3)}
       AND ${buildLocationFilterPredicate('location_dim', 4)}
       AND ($5::text IS NULL OR LOWER(COALESCE(pe.menu_category, '')) = $5)
       AND ($6::text IS NULL OR LOWER(COALESCE(pe.meal_period, '')) = $6)
       AND ($7::text IS NULL OR LOWER(COALESCE(pe.menu_type, 'general')) = $7)
     ORDER BY pe.production_date DESC, location ASC, meal_type ASC, category ASC, production ASC
+  `;
+
+  const consumedSql = `
+    WITH location_dim AS (${locationDimensionSql}),
+    reversed_consumptions AS (
+      SELECT DISTINCT reverses_consumption_id
+      FROM meal_service_consumptions
+      WHERE reverses_consumption_id IS NOT NULL
+        AND status NOT IN ('voided', 'cancelled')
+        AND COALESCE(movement_type, 'consumption') = 'reversal'
+    )
+    SELECT
+      msc.service_date::text AS date,
+      COALESCE(location_dim.warehouse_code, location_dim.warehouse_name, msh.warehouse_id, pe.warehouse_id, pob.warehouse_id, 'Unassigned') AS location,
+      COALESCE(msc.meal_period, msh.meal_period, pe.meal_period) AS meal_type,
+      COALESCE(msc.menu_type, msh.menu_type, pe.menu_type, 'general') AS menu_type,
+      COALESCE(msc.menu_category, msh.menu_category, pe.menu_category, rv.menu_category, '-') AS category,
+      COALESCE(rv.display_name, pml.item_name, msc.recipe_name, 'Meal Service') AS recipe,
+      COALESCE(msc.movement_type, 'consumption') AS movement_type,
+      CASE
+        WHEN COALESCE(msc.movement_type, 'consumption') = 'plate_waste_adjustment'
+          THEN 0
+        ELSE COALESCE(msc.consumed_servings, 0)
+      END AS servings,
+      COALESCE(msh.serving_size_grams, msc.portion_size_grams, 0) AS portion_size_g,
+      COALESCE(msc.consumed_weight_grams, 0) AS served_weight_grams,
+      COALESCE(
+        NULLIF(msc.cost, 0),
+        CASE
+          WHEN pob.initial_weight_grams > 0
+          THEN COALESCE(msc.consumed_weight_grams, 0) * COALESCE(pob.total_cost, 0) / pob.initial_weight_grams
+          ELSE 0
+        END
+      ) AS total_cost
+    FROM meal_service_consumptions msc
+    LEFT JOIN meal_service_headers msh ON msh.meal_service_id = msc.meal_service_id
+    LEFT JOIN produced_output_batches pob ON pob.output_batch_id = msc.output_batch_id
+    LEFT JOIN production_events pe ON pe.production_id = COALESCE(msc.production_id, pob.production_id)
+    LEFT JOIN production_manifest_lines pml ON pml.production_line_id = pob.production_line_id
+    LEFT JOIN recipe_versions rv ON rv.recipe_version_id = COALESCE(msc.recipe_version_id, pob.recipe_version_id, pml.recipe_version_id)
+    LEFT JOIN location_dim ON location_dim.warehouse_id = COALESCE(msh.warehouse_id, pe.warehouse_id, pob.warehouse_id)
+    LEFT JOIN reversed_consumptions reversed ON reversed.reverses_consumption_id = msc.meal_consumption_id
+    WHERE msc.service_date BETWEEN $1::date AND $2::date
+      AND msc.status NOT IN ('reversed', 'voided', 'cancelled')
+      AND COALESCE(msc.movement_type, 'consumption') <> 'reversal'
+      AND reversed.reverses_consumption_id IS NULL
+      AND COALESCE(pe.status, '') NOT IN ('reversed', 'voided', 'cancelled')
+      AND COALESCE(pob.status, '') NOT IN ('reversed', 'voided', 'cancelled')
+      AND ${buildLocationScopePredicate('location_dim', 3)}
+      AND ${buildLocationFilterPredicate('location_dim', 4)}
+      AND ($5::text IS NULL OR LOWER(COALESCE(msc.menu_category, msh.menu_category, pe.menu_category, rv.menu_category, '')) = $5)
+      AND ($6::text IS NULL OR LOWER(COALESCE(msc.meal_period, msh.meal_period, pe.meal_period, '')) = $6)
+      AND ($7::text IS NULL OR LOWER(COALESCE(msc.menu_type, msh.menu_type, pe.menu_type, 'general')) = $7)
+    ORDER BY msc.service_date DESC, location ASC, meal_type ASC, category ASC, recipe ASC, movement_type ASC
   `;
 
   const optionsSql = `
@@ -218,15 +214,38 @@ export async function loadNormalizedFoodCostReport({
     ) DISTINCT_MENU_TYPE
   `;
 
-  const [confirmedResult, pendingResult, optionsResult] = await Promise.all([
-    executor.query(confirmedSql, params),
-    executor.query(pendingSql, params),
+  const [productionResult, consumedResult, optionsResult] = await Promise.all([
+    executor.query(productionSql, params),
+    executor.query(consumedSql, params),
     executor.query(optionsSql, [])
   ]);
 
-  const confirmedRows = confirmedResult.rows.map((row) => {
+  const productionRows = productionResult.rows.map((row) => {
+    const servings = safeFoodCostNumber(row.production_servings);
+    const totalCost = roundFoodCostNumber(row.production_cost);
+    return {
+      date: row.date,
+      location: row.location,
+      meal_type: titleCaseFoodCost(row.meal_type || 'unspecified'),
+      menu_type: titleCaseFoodCost(row.menu_type || 'general'),
+      production: normalizeProductionDisplayTitle(row.production),
+      category: row.category || '-',
+      produced_output_kg: roundFoodCostNumber(safeFoodCostNumber(row.produced_weight_grams) / 1000, 3),
+      servings: roundFoodCostNumber(servings, 3),
+      total_cost: totalCost,
+      cost_per_serving: Number((servings > 0 ? totalCost / servings : 0).toFixed(2)),
+      source: 'Production completed'
+    };
+  }).filter((row) => (
+    Math.abs(safeFoodCostNumber(row.produced_output_kg)) > 0.000001
+    || Math.abs(safeFoodCostNumber(row.servings)) > 0.000001
+    || Math.abs(safeFoodCostNumber(row.total_cost)) > 0.000001
+  ));
+
+  const consumedRows = consumedResult.rows.map((row) => {
     const servings = safeFoodCostNumber(row.servings);
     const totalCost = roundFoodCostNumber(row.total_cost);
+    const movementType = String(row.movement_type || 'consumption').toLowerCase();
     return {
       date: row.date,
       location: row.location,
@@ -234,12 +253,13 @@ export async function loadNormalizedFoodCostReport({
       menu_type: titleCaseFoodCost(row.menu_type || 'general'),
       recipe: normalizeProductionDisplayTitle(row.recipe),
       category: row.category || '-',
+      movement: movementType === 'plate_waste_adjustment' ? 'Plate Waste Deduction' : 'Meal Service Consumed',
       servings: roundFoodCostNumber(servings, 3),
       portion_size_g: roundFoodCostNumber(row.portion_size_g, 2),
       served_weight_kg: roundFoodCostNumber(safeFoodCostNumber(row.served_weight_grams) / 1000, 3),
       total_cost: totalCost,
       cost_per_serving: Number((servings > 0 ? totalCost / servings : 0).toFixed(2)),
-      source: 'Meal Service confirmed'
+      source: movementType === 'plate_waste_adjustment' ? 'Plate Waste' : 'Meal Service confirmed'
     };
   }).filter((row) => (
     Math.abs(safeFoodCostNumber(row.servings)) > 0.000001
@@ -247,20 +267,13 @@ export async function loadNormalizedFoodCostReport({
     || Math.abs(safeFoodCostNumber(row.total_cost)) > 0.000001
   ));
 
-  const rows = groupFoodCostRows(confirmedRows, filters.view);
-  const pendingProductionRows = pendingResult.rows.map((row) => ({
-    date: row.date,
-    location: row.location,
-    meal_type: titleCaseFoodCost(row.meal_type || 'unspecified'),
-    menu_type: titleCaseFoodCost(row.menu_type || 'general'),
-    production: normalizeProductionDisplayTitle(row.production),
-    category: row.category || '-',
-    produced_output_kg: roundFoodCostNumber(safeFoodCostNumber(row.produced_weight_grams) / 1000, 3),
-    production_servings: roundFoodCostNumber(row.production_servings, 3),
-    production_cost: roundFoodCostNumber(row.production_cost),
-    status: 'Pending Meal Service'
-  }));
+  const rows = groupFoodCostRows(productionRows, filters.view, { source: 'Production completed' });
+  const consumedRowsForView = groupFoodCostRows(consumedRows, filters.view, { source: 'Meal Service consumed' });
   const summary = rows.reduce((totals, row) => ({
+    total_cost: totals.total_cost + safeFoodCostNumber(row.total_cost),
+    servings: totals.servings + safeFoodCostNumber(row.servings ?? row.total_servings)
+  }), { total_cost: 0, servings: 0 });
+  const consumedSummary = consumedRowsForView.reduce((totals, row) => ({
     total_cost: totals.total_cost + safeFoodCostNumber(row.total_cost),
     servings: totals.servings + safeFoodCostNumber(row.servings ?? row.total_servings)
   }), { total_cost: 0, servings: 0 });
@@ -270,12 +283,21 @@ export async function loadNormalizedFoodCostReport({
   return {
     filters,
     rows,
-    pending_production_rows: pendingProductionRows,
+    production_rows: rows,
+    consumed_rows: consumedRowsForView,
+    pending_production_rows: [],
     summary: {
       total_cost: roundFoodCostNumber(summary.total_cost),
       servings: roundFoodCostNumber(summary.servings, 3),
       average_cost_per_serving: summary.servings > 0
         ? roundFoodCostNumber(summary.total_cost / summary.servings)
+        : 0
+    },
+    consumed_summary: {
+      total_cost: roundFoodCostNumber(consumedSummary.total_cost),
+      servings: roundFoodCostNumber(consumedSummary.servings, 3),
+      average_cost_per_serving: consumedSummary.servings > 0
+        ? roundFoodCostNumber(consumedSummary.total_cost / consumedSummary.servings)
         : 0
     },
     categories,

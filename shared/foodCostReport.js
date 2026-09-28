@@ -377,9 +377,55 @@ export function buildPendingProductionRows({
     });
 }
 
-export function groupFoodCostRows(rows = [], view = 'detail') {
+export function buildProductionFoodCostRows({
+  productions = [],
+  recipes = [],
+  ingredients = []
+} = {}) {
+  const indexes = buildFoodCostIndexes({ productions, producedItemBatches: [], ingredients });
+  const recipeMap = new Map(
+    (Array.isArray(recipes) ? recipes : [])
+      .filter((recipe) => recipe?.id)
+      .map((recipe) => [String(recipe.id), recipe])
+  );
+
+  return (Array.isArray(productions) ? productions : [])
+    .filter((production) => String(production.status || '').toLowerCase() === 'completed')
+    .map((production) => {
+      const recipe = recipeMap.get(String(production.recipe_id || '')) || {};
+      const outputWeightGrams = getProductionOutputWeightGrams(production);
+      const producedServings = firstPositive([
+        production.produced_servings,
+        production.actual_servings,
+        production.expected_yield_servings,
+        production.target_servings
+      ]);
+      const totalCost = roundFoodCostNumber(getProductionOutputCost(production, indexes.ingredientMap));
+      return {
+        date: production.production_date,
+        location: production.site_name,
+        meal_type: titleCaseFoodCost(production.meal_type || 'unspecified'),
+        menu_type: titleCaseFoodCost(production.menu_type || production.cuisine_type || recipe.menu_type || recipe.cuisine_type || 'General'),
+        production: production.recipe_name,
+        category: production.menu_category || recipe.category || '-',
+        produced_output_kg: roundFoodCostNumber(outputWeightGrams / 1000, 3),
+        servings: roundFoodCostNumber(producedServings, 3),
+        total_cost: totalCost,
+        cost_per_serving: Number((producedServings > 0 ? totalCost / producedServings : 0).toFixed(2)),
+        source: 'Production completed'
+      };
+    })
+    .filter((row) => (
+      Math.abs(safeFoodCostNumber(row.produced_output_kg)) > EPSILON
+      || Math.abs(safeFoodCostNumber(row.servings)) > EPSILON
+      || Math.abs(safeFoodCostNumber(row.total_cost)) > EPSILON
+    ));
+}
+
+export function groupFoodCostRows(rows = [], view = 'detail', options = {}) {
   if (view === 'detail') return rows;
 
+  const source = options.source || rows.find((row) => row?.source)?.source || 'Meal Service confirmed';
   const grouped = {};
   rows.forEach((row) => {
     const key = view === 'daily'
@@ -398,7 +444,7 @@ export function groupFoodCostRows(rows = [], view = 'detail') {
       };
     }
     grouped[key].total_servings += safeFoodCostNumber(row.servings);
-    grouped[key].total_weight_kg += safeFoodCostNumber(row.served_weight_kg);
+    grouped[key].total_weight_kg += safeFoodCostNumber(row.served_weight_kg ?? row.produced_output_kg);
     grouped[key].total_cost += safeFoodCostNumber(row.total_cost);
   });
 
@@ -408,6 +454,6 @@ export function groupFoodCostRows(rows = [], view = 'detail') {
     total_weight_kg: roundFoodCostNumber(row.total_weight_kg, 3),
     total_cost: roundFoodCostNumber(row.total_cost),
     cost_per_serving: Number((row.total_servings > 0 ? row.total_cost / row.total_servings : 0).toFixed(2)),
-    source: 'Meal Service confirmed'
+    source
   }));
 }

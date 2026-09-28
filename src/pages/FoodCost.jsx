@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { downloadCSV, downloadExcel, downloadPDF } from '@/components/utils/exportData';
-import { CircleDollarSign, Download, TrendingUp, UtensilsCrossed } from 'lucide-react';
+import { CircleDollarSign, Download, TrendingDown, TrendingUp, UtensilsCrossed } from 'lucide-react';
 import { formatCurrency, SAR_NAME } from '@/lib/currency';
 import {
   safeFoodCostNumber,
@@ -27,6 +27,78 @@ const REPORT_DATA_QUERY_OPTIONS = {
   staleTime: 60 * 1000,
   gcTime: 10 * 60 * 1000
 };
+
+const COLUMN_LABELS = {
+  date: 'Date',
+  location: 'Location',
+  meal_type: 'Meal Type',
+  menu_type: 'Menu Type',
+  production: 'Production',
+  recipe: 'Recipe',
+  category: 'Meal Category',
+  movement: 'Movement',
+  produced_output_kg: 'Produced Weight kg',
+  served_weight_kg: 'Consumed Weight kg',
+  servings: 'Servings',
+  total_servings: 'Servings',
+  production_servings: 'Production Servings',
+  portion_size_g: 'Portion Size g',
+  total_weight_kg: 'Weight kg',
+  total_cost: 'Total Cost',
+  cost_per_serving: 'Cost / Serving',
+  source: 'Source',
+  section: 'Section'
+};
+
+const reportColumnLabel = (column) => COLUMN_LABELS[column] || column.replace(/_/g, ' ');
+
+const formatReportValue = (column, value) => {
+  if (column.includes('cost')) return formatCurrency(value);
+  if (['produced_output_kg', 'served_weight_kg', 'total_weight_kg'].includes(column)) {
+    return `${safeFoodCostNumber(value).toFixed(3)} kg`;
+  }
+  if (column === 'portion_size_g') return `${safeFoodCostNumber(value).toFixed(2)} g`;
+  if (['servings', 'total_servings', 'production_servings'].includes(column)) {
+    const numericValue = safeFoodCostNumber(value);
+    return Number.isInteger(numericValue) ? numericValue.toFixed(0) : numericValue.toFixed(3);
+  }
+  return value ?? '—';
+};
+
+function ReportTable({ rows, emptyLabel }) {
+  const columns = rows.length ? Object.keys(rows[0]) : [];
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          {columns.length ? columns.map((column) => (
+            <TableHead key={column}>{reportColumnLabel(column)}</TableHead>
+          )) : (
+            <TableHead>Report</TableHead>
+          )}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.length === 0 ? (
+          <TableRow>
+            <TableCell className="py-10 text-center text-slate-500">
+              {emptyLabel}
+            </TableCell>
+          </TableRow>
+        ) : rows.map((row, index) => (
+          <TableRow key={`${row.date || row.meal_type || row.production || row.recipe || 'row'}-${index}`}>
+            {columns.map((column) => (
+              <TableCell key={column}>
+                {formatReportValue(column, row[column])}
+              </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
 
 export default function FoodCost() {
   const [filters, setFilters] = useState({
@@ -63,8 +135,8 @@ export default function FoodCost() {
 
   const categories = foodCostReport.categories || [];
   const menuTypes = foodCostReport.menu_types || [];
-  const filteredRows = foodCostReport.rows || [];
-  const pendingProductionRows = foodCostReport.pending_production_rows || [];
+  const productionRows = foodCostReport.rows || [];
+  const consumedRows = foodCostReport.consumed_rows || [];
 
   const summary = useMemo(() => {
     const serverSummary = foodCostReport.summary || {};
@@ -80,7 +152,24 @@ export default function FoodCost() {
     };
   }, [foodCostReport.summary]);
 
-  const exportRows = filteredRows.map((row) => ({
+  const consumedSummary = useMemo(() => {
+    const serverSummary = foodCostReport.consumed_summary || {};
+    const totalCost = safeFoodCostNumber(serverSummary.total_cost);
+    const servings = safeFoodCostNumber(serverSummary.servings);
+    return {
+      totalCost,
+      servings,
+      averageCostPerServing: safeFoodCostNumber(
+        serverSummary.average_cost_per_serving,
+        servings > 0 ? totalCost / servings : 0
+      )
+    };
+  }, [foodCostReport.consumed_summary]);
+
+  const exportRows = [
+    ...productionRows.map((row) => ({ section: 'Food Cost - Production', ...row })),
+    ...consumedRows.map((row) => ({ section: 'Consumed Cost - Meal Service', ...row }))
+  ].map((row) => ({
     ...row,
     total_cost: safeFoodCostNumber(row.total_cost),
     cost_per_serving: safeFoodCostNumber(row.cost_per_serving)
@@ -101,11 +190,20 @@ export default function FoodCost() {
       subtitle: `Date: ${filters.startDate} to ${filters.endDate} | Meal type: ${filters.mealType === 'all' ? 'All' : titleCaseFoodCost(filters.mealType)} | View: ${titleCaseFoodCost(filters.view)}`,
       sections: [
         {
-          heading: 'Summary',
+          heading: 'Food Cost Summary',
           lines: [
-            `Total cost: ${formatCurrency(summary.totalCost)}`,
-            `Confirmed covers: ${summary.servings.toFixed(0)}`,
-            `Average cost per serving: ${formatCurrency(summary.averageCostPerServing)}`
+            `Production food cost: ${formatCurrency(summary.totalCost)}`,
+            `Production servings: ${summary.servings.toFixed(0)}`,
+            `Average production cost per serving: ${formatCurrency(summary.averageCostPerServing)}`
+          ]
+        },
+        {
+          heading: 'Consumed Cost Summary',
+          lines: [
+            `Consumed cost: ${formatCurrency(consumedSummary.totalCost)}`,
+            `Consumed covers: ${consumedSummary.servings.toFixed(0)}`,
+            `Average consumed cost per serving: ${formatCurrency(consumedSummary.averageCostPerServing)}`,
+            'Plate waste rows are shown as deductions from consumed cost.'
           ]
         },
         {
@@ -122,7 +220,7 @@ export default function FoodCost() {
       <div className="max-w-[1680px] mx-auto space-y-6">
         <PageHeader
           title="Food Cost"
-          description={`Confirmed Meal Service ${SAR_NAME} food cost reporting with production-only rows kept separate until covers are saved`}
+          description={`${SAR_NAME} production cost reporting from completed production, with Meal Service consumption shown separately as Consumed Cost`}
         >
           <Button variant="outline" onClick={() => handleExport('csv')}>
             <Download className="w-4 h-4 mr-2" />
@@ -140,8 +238,8 @@ export default function FoodCost() {
 
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard title="Total Food Cost" value={formatCurrency(summary.totalCost)} icon={CircleDollarSign} iconBg="bg-amber-50" iconColor="text-amber-600" />
-          <StatCard title="Confirmed Covers" value={summary.servings.toFixed(0)} icon={UtensilsCrossed} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
-          <StatCard title="Avg. Cost / Serving" value={formatCurrency(summary.averageCostPerServing)} icon={TrendingUp} iconBg="bg-blue-50" iconColor="text-blue-600" />
+          <StatCard title="Production Servings" value={summary.servings.toFixed(0)} icon={UtensilsCrossed} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+          <StatCard title="Avg. Production Cost / Serving" value={formatCurrency(summary.averageCostPerServing)} icon={TrendingUp} iconBg="bg-blue-50" iconColor="text-blue-600" />
         </div>
 
         <Card className="border-slate-200 shadow-sm">
@@ -219,79 +317,38 @@ export default function FoodCost() {
 
         <Card className="border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Confirmed Meal Cost Report</CardTitle>
+            <CardTitle>Production Food Cost Report</CardTitle>
             <p className="text-sm text-slate-500">
-              These figures are populated only after Meal Service commits covers and a serving size for the selected menu scope.
+              These figures are populated as soon as production is completed. Meal Service is not required for this Food Cost total.
             </p>
           </CardHeader>
           <CardContent className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {filteredRows.length ? Object.keys(filteredRows[0]).map((column) => (
-                    <TableHead key={column}>{column.replace(/_/g, ' ')}</TableHead>
-                  )) : (
-                    <TableHead>Report</TableHead>
-                  )}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredRows.length === 0 ? (
-                  <TableRow>
-                    <TableCell className="py-10 text-center text-slate-500">
-                      No confirmed Meal Service food cost is available for this filter range.
-                    </TableCell>
-                  </TableRow>
-                ) : filteredRows.map((row, index) => (
-                  <TableRow key={`${row.date || row.meal_type || 'row'}-${index}`}>
-                    {Object.keys(filteredRows[0]).map((column) => (
-                      <TableCell key={column}>
-                        {column.includes('cost') ? formatCurrency(row[column]) : row[column]}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <ReportTable
+              rows={productionRows}
+              emptyLabel="No completed production food cost is available for this filter range."
+            />
           </CardContent>
         </Card>
 
         <Card className="border-slate-200 shadow-sm">
-          <CardHeader>
-            <CardTitle>Production Data Pending Meal Service</CardTitle>
-            <p className="text-sm text-slate-500">
-              These completed productions are informational only. They do not affect Food Cost totals until Meal Service saves the actual covers and portion size.
-            </p>
+          <CardHeader className="space-y-4">
+            <div>
+              <CardTitle>Consumed Cost</CardTitle>
+              <p className="text-sm text-slate-500">
+                These figures are populated after Meal Service commits covers and serving size. Plate waste is shown as a deduction from Consumed Cost.
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <StatCard title="Total Consumed Cost" value={formatCurrency(consumedSummary.totalCost)} icon={CircleDollarSign} iconBg="bg-rose-50" iconColor="text-rose-600" />
+              <StatCard title="Consumed Covers" value={consumedSummary.servings.toFixed(0)} icon={UtensilsCrossed} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+              <StatCard title="Avg. Consumed Cost / Serving" value={formatCurrency(consumedSummary.averageCostPerServing)} icon={TrendingDown} iconBg="bg-blue-50" iconColor="text-blue-600" />
+            </div>
           </CardHeader>
           <CardContent className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {pendingProductionRows.length ? Object.keys(pendingProductionRows[0]).map((column) => (
-                    <TableHead key={column}>{column.replace(/_/g, ' ')}</TableHead>
-                  )) : (
-                    <TableHead>Production</TableHead>
-                  )}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pendingProductionRows.length === 0 ? (
-                  <TableRow>
-                    <TableCell className="py-8 text-center text-slate-500">
-                      No production-only rows are waiting for Meal Service under the current filters.
-                    </TableCell>
-                  </TableRow>
-                ) : pendingProductionRows.map((row, index) => (
-                  <TableRow key={`${row.date || 'production'}-${index}`}>
-                    {Object.keys(pendingProductionRows[0]).map((column) => (
-                      <TableCell key={column}>
-                        {column.includes('cost') ? formatCurrency(row[column]) : row[column]}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <ReportTable
+              rows={consumedRows}
+              emptyLabel="No Meal Service consumed cost is available for this filter range."
+            />
           </CardContent>
         </Card>
       </div>

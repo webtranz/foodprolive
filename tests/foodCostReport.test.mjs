@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   buildConfirmedFoodCostRows,
   buildPendingProductionRows,
+  buildProductionFoodCostRows,
   groupFoodCostRows
 } from '../shared/foodCostReport.js';
 
@@ -175,6 +176,26 @@ assert.equal(groupedRows.length, 1);
 assert.equal(groupedRows[0].total_servings, 40);
 assert.equal(groupedRows[0].total_cost, 70);
 assert.equal(groupedRows[0].cost_per_serving, 1.75);
+assert.equal(groupedRows[0].source, 'Meal Service confirmed');
+
+const productionRows = buildProductionFoodCostRows({
+  productions
+});
+
+assert.equal(productionRows.length, 2);
+assert.equal(
+  productionRows.reduce((total, row) => total + row.total_cost, 0),
+  1100
+);
+assert.equal(productionRows[0].source, 'Production completed');
+
+const groupedProductionRows = groupFoodCostRows(productionRows, 'meal_type', { source: 'Production completed' });
+assert.equal(groupedProductionRows.length, 2);
+assert.equal(
+  groupedProductionRows.reduce((total, row) => total + row.total_cost, 0),
+  1100
+);
+assert.equal(groupedProductionRows[0].source, 'Production completed');
 
 const pendingRows = buildPendingProductionRows({
   consumptions,
