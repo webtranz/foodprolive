@@ -478,6 +478,8 @@ const cases = [
       assert.match(dbSource, /normalized_record\.fulfillment_store_id = ANY\(\$\{parameter\}::text\[\]\)/);
       assert.match(dbSource, /\[record\.site_id, record\.requesting_site_id, record\.fulfillment_store_id\]/);
       assert.match(dbSource, /if \(entity === 'MaterialRequest'\) return siteIds\.some\(\(siteId\) => allowed\.has\(siteId\)\)/);
+      assert.match(dbSource, /SELECT \$\{idColumn\} FROM \$\{config\.table\} WHERE \$\{idColumn\} = \$1 LIMIT 1 FOR UPDATE/);
+      assert.match(dbSource, /SELECT \* FROM \(\$\{select\}\) normalized_record WHERE \$\{idColumn\} = \$1 LIMIT 1 \$\{lockClause\}/);
     }
   },
   {

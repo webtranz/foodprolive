@@ -6940,7 +6940,20 @@ async function findNormalizedDocument(entity, id, executor = pool, lock = false)
   const idColumn = normalizedIdColumn(entity);
   const mapper = normalizedMapper(entity);
   if (!select || !idColumn || !mapper) return null;
-  const lockClause = lock && entity !== 'Site' ? 'FOR UPDATE' : '';
+  let lockClause = '';
+  if (lock && entity !== 'Site') {
+    const config = normalizedSimpleConfigs[entity];
+    if (config?.table) {
+      const lockResult = await query(
+        `SELECT ${idColumn} FROM ${config.table} WHERE ${idColumn} = $1 LIMIT 1 FOR UPDATE`,
+        [id],
+        executor
+      );
+      if (!lockResult.rowCount) return null;
+    } else {
+      lockClause = 'FOR UPDATE';
+    }
+  }
   const result = await query(
     `SELECT * FROM (${select}) normalized_record WHERE ${idColumn} = $1 LIMIT 1 ${lockClause}`,
     [id],
