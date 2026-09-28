@@ -1463,7 +1463,8 @@ function rowToMenuPlan(row = {}) {
 }
 
 function rowToProduction(row = {}) {
-  const manifestLines = Array.isArray(row.manifest_lines) ? row.manifest_lines : [];
+  const manifestLines = rowJsonArray(row.manifest_lines);
+  const ingredientLines = rowJsonArray(row.ingredient_lines);
   return withPayload(row, {
     __entity: 'Production',
     id: row.production_id,
@@ -1535,6 +1536,7 @@ function rowToProduction(row = {}) {
     reversed_at: rowTimestamp(row.reversed_at),
     reversal_reason: row.reversal_reason || null,
     source_name: row.source_name || null,
+    ingredients_used: ingredientLines,
     manifest_lines: manifestLines,
     menu_issue_items: manifestLines
   });
@@ -5079,7 +5081,50 @@ function normalizedSelectForEntity(entity) {
                      )
                      FROM production_manifest_lines line
                      WHERE line.production_id = event.production_id
-                   ), '[]'::jsonb) AS manifest_lines
+                   ), '[]'::jsonb) AS manifest_lines,
+                   COALESCE((
+                     SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'id', consumption.consumption_line_id,
+                         'line_id', consumption.consumption_line_id,
+                         'production_line_id', consumption.production_line_id,
+                         'ingredient_id', consumption.ingredient_id,
+                         'item_code', COALESCE(ingredient.item_code, ingredient.ingredient_code, ingredient.sku, ingredient.d365_item_id),
+                         'ingredient_name', COALESCE(ingredient.name, manifest.ingredient_name),
+                         'planned_quantity', consumption.quantity,
+                         'required_quantity', consumption.quantity,
+                         'raw_quantity', consumption.quantity,
+                         'yield_adjusted_quantity', consumption.quantity,
+                         'yielded_quantity', consumption.quantity,
+                         'actual_quantity', NULL,
+                         'unit', consumption.unit,
+                         'inventory_unit', consumption.unit,
+                         'raw_weight_grams', consumption.raw_weight_grams,
+                         'yielded_weight_grams', consumption.yielded_weight_grams,
+                         'estimated_cost', consumption.cost,
+                         'cost', consumption.cost,
+                         'source_recipe_names', CASE
+                           WHEN COALESCE(BTRIM(manifest.item_name), '') <> '' THEN jsonb_build_array(manifest.item_name)
+                           ELSE '[]'::jsonb
+                         END,
+                         'source_menu_plan_item_key', manifest.source_menu_plan_item_key,
+                         'source_menu_plan_item_keys', CASE
+                           WHEN COALESCE(BTRIM(manifest.source_menu_plan_item_key), '') <> ''
+                             THEN jsonb_build_array(manifest.source_menu_plan_item_key)
+                           ELSE '[]'::jsonb
+                         END,
+                         'status', consumption.status,
+                         'source_name', consumption.source_name
+                       )
+                       ORDER BY consumption.created_at, consumption.consumption_line_id
+                     )
+                     FROM production_consumption_lines consumption
+                     LEFT JOIN ingredients ingredient
+                       ON ingredient.ingredient_id = consumption.ingredient_id
+                     LEFT JOIN production_manifest_lines manifest
+                       ON manifest.production_line_id = consumption.production_line_id
+                     WHERE consumption.production_id = event.production_id
+                   ), '[]'::jsonb) AS ingredient_lines
             FROM production_events event`;
   }
   if (entity === 'ProductionConsumptionReport') {
@@ -7596,6 +7641,104 @@ async function replaceProductionManifestLines(record, executor = pool) {
   }
 }
 
+function productionConsumptionQuantity(line = {}) {
+  return toNumberOrZero(
+    line.raw_quantity
+    ?? line.required_quantity
+    ?? line.planned_quantity
+    ?? line.quantity
+    ?? line.cost_quantity
+  );
+}
+
+function productionConsumptionLineKeys(line = {}) {
+  return [
+    line.production_line_id,
+    line.manifest_item_key,
+    line.item_key,
+    line.source_menu_plan_item_key,
+    ...(Array.isArray(line.source_menu_plan_item_keys) ? line.source_menu_plan_item_keys : []),
+    line.recipe_id,
+    line.recipe_version_id
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+}
+
+async function replaceProductionConsumptionLines(record, executor = pool) {
+  if (!Array.isArray(record.ingredients_used)) return;
+
+  await query('DELETE FROM production_consumption_lines WHERE production_id = $1', [record.id], executor);
+  const sourceLines = record.ingredients_used;
+  if (!sourceLines.length) return;
+
+  const manifestResult = await query(
+    `SELECT production_line_id, item_key, source_menu_plan_item_key, recipe_version_id
+       FROM production_manifest_lines
+      WHERE production_id = $1
+      ORDER BY line_number, production_line_id`,
+    [record.id],
+    executor
+  );
+  const manifestLines = manifestResult.rows || [];
+  if (!manifestLines.length) return;
+
+  const firstManifestLineId = manifestLines[0].production_line_id;
+  const manifestLineByKey = new Map();
+  manifestLines.forEach((line) => {
+    [
+      line.production_line_id,
+      line.item_key,
+      line.source_menu_plan_item_key,
+      line.recipe_version_id
+    ].map((value) => String(value || '').trim()).filter(Boolean).forEach((key) => {
+      if (!manifestLineByKey.has(key)) manifestLineByKey.set(key, line.production_line_id);
+    });
+  });
+
+  const createdAt = record.created_date || nowIso();
+  const updatedAt = record.updated_date || nowIso();
+  for (const [index, sourceLine] of sourceLines.entries()) {
+    const ingredientId = String(sourceLine?.ingredient_id || '').trim();
+    const quantity = productionConsumptionQuantity(sourceLine);
+    if (!ingredientId || quantity <= 0) continue;
+    const productionLineId = productionConsumptionLineKeys(sourceLine)
+      .map((key) => manifestLineByKey.get(key))
+      .find(Boolean) || firstManifestLineId;
+    if (!productionLineId) continue;
+    const lineNumber = index + 1;
+    await query(
+      `INSERT INTO production_consumption_lines (
+        consumption_line_id, production_id, production_line_id, ingredient_id,
+        inventory_id, lot_id, quantity, unit, raw_weight_grams, yielded_weight_grams,
+        cost, status, source_name, created_at, updated_at
+      ) VALUES (
+        $1,$2,$3,$4,
+        (SELECT inventory_id FROM warehouse_inventory WHERE inventory_id = NULLIF($5::text, '') LIMIT 1),
+        (SELECT lot_id FROM inventory_lots WHERE lot_id = NULLIF($6::text, '') LIMIT 1),
+        $7,$8,$9,$10,
+        $11,$12,$13,$14,$15
+      )`,
+      [
+        sourceLine?.consumption_line_id || lineNumberedId('consumption', record.id, lineNumber),
+        record.id,
+        productionLineId,
+        ingredientId,
+        sourceLine?.inventory_id || null,
+        sourceLine?.lot_id || sourceLine?.inventory_lot_id || null,
+        quantity,
+        sourceLine?.unit || sourceLine?.inventory_unit || 'unit',
+        toNumberOrNull(sourceLine?.raw_weight_grams),
+        toNumberOrNull(sourceLine?.yielded_weight_grams),
+        toNumberOrZero(sourceLine?.estimated_cost ?? sourceLine?.cost),
+        sourceLine?.status || 'planned',
+        sourceLine?.source_name || record.source_name || null,
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+}
+
 async function replaceProductionConsumptionReportLines(record, executor = pool) {
   await query('DELETE FROM production_consumption_report_lines WHERE report_id = $1', [record.id], executor);
   const sourceLines = Array.isArray(record.ingredient_lines) ? record.ingredient_lines : [];
@@ -8736,6 +8879,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
       executor
     );
     await replaceProductionManifestLines(record, executor);
+    await replaceProductionConsumptionLines(record, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'ProductionConsumptionReport') {

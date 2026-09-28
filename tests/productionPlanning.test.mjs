@@ -253,6 +253,51 @@ assert.equal(groupedMenuDashboard.shortages.length, 1);
 assert.deepEqual(groupedMenuDashboard.shortages[0].recipe_names, ['Rice A', 'Rice B']);
 assert.equal(groupedMenuDashboard.shortages[0].shortage_quantity, 2);
 
+const manifestFallbackDashboard = buildProductionPlanningDashboard({
+  productions: [{
+    id: 'breakfast-manifest-fallback',
+    site_id: 'site-a',
+    site_name: 'Main Kitchen',
+    production_date: '2026-08-16',
+    recipe_name: 'Breakfast / General / Labor',
+    meal_type: 'breakfast',
+    menu_type: 'general',
+    menu_category: 'labor',
+    target_servings: 10,
+    status: 'pending_approval',
+    production_issue_grouped: true,
+    production_issue_dish_count: 2,
+    manifest_lines: [
+      {
+        key: 'bread',
+        item_name: 'Arabic Bread',
+        recipe_name: 'Arabic Bread',
+        meal_type: 'breakfast',
+        production_covers: 4,
+        expected_finished_weight_grams: 400,
+        estimated_cost: 12
+      },
+      {
+        key: 'tea',
+        item_name: 'Tea',
+        recipe_name: 'Tea',
+        meal_type: 'breakfast',
+        production_covers: 6,
+        expected_finished_weight_grams: 600,
+        estimated_cost: 8
+      }
+    ]
+  }],
+  recipes,
+  ingredients,
+  inventory: []
+});
+const manifestFallbackItem = manifestFallbackDashboard.items.find((item) => item.id === 'breakfast-manifest-fallback');
+assert.equal(manifestFallbackItem.estimated_batch_cost, 20);
+assert.equal(manifestFallbackItem.portion_size.is_complete, true);
+assert.equal(manifestFallbackItem.portion_size.grams, 100);
+assert.equal(manifestFallbackDashboard.summary.total_batch_cost, 20);
+
 const legacyMenuReviewDashboard = buildProductionPlanningDashboard({
   productions: [
     {

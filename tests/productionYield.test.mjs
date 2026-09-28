@@ -309,6 +309,10 @@ assert.equal(groupedMenuProduction.recipe_id, undefined);
 assert.equal(groupedMenuProduction.manifest_lines.length, 1);
 assert.equal(groupedMenuProduction.menu_issue_items[0].production_quantity, 2);
 assert.equal(groupedMenuProduction.ingredients_used[0].ingredient_name, 'Test Protein');
+assert.equal(groupedMenuProduction.production_cost_total, 5);
+assert.equal(groupedMenuProduction.ingredient_cost_total, 5);
+assert.equal(groupedMenuProduction.estimated_batch_cost, 5);
+assert.equal(groupedMenuProduction.portion_size_grams, 25);
 
 const upgradedLegacyProduction = await prepareEntityPayload(
   {},

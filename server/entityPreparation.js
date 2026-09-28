@@ -1165,7 +1165,19 @@ export async function prepareEntityPayload(user, entity, payload = {}, existing 
     }
 
     if (isGroupedMenuProduction && hasLockedProductionSnapshot(productionRecord)) {
-      return productionRecord;
+      const targetServings = Math.max(0, Number(productionRecord.target_servings) || 0);
+      if (targetServings <= 0) {
+        const error = new Error('Production target servings must be greater than zero.');
+        error.status = 400;
+        throw error;
+      }
+      const ingredientCatalog = context.ingredientCatalog || await listDocuments('Ingredient', { limit: 10000 });
+      return prepareLockedProductionSnapshot(
+        productionRecord,
+        { name: productionRecord.recipe_name || '' },
+        ingredientCatalog,
+        targetServings
+      );
     }
 
     if (!shouldRecalculate || !productionRecord.recipe_id) {

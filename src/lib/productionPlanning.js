@@ -283,6 +283,20 @@ function resolveProductionCost(production, ingredientMap) {
 
   if (calculated > 0) return round(calculated);
 
+  const manifestCost = (Array.isArray(production?.manifest_lines)
+    ? production.manifest_lines
+    : (Array.isArray(production?.menu_issue_items) ? production.menu_issue_items : [])
+  ).reduce((sum, line) => (
+    sum + numberValue(
+      line?.estimated_batch_cost
+        ?? line?.estimated_cost
+        ?? line?.actual_cost,
+      0
+    )
+  ), 0);
+
+  if (manifestCost > 0) return round(manifestCost);
+
   const persistedCost = [
     production?.estimated_batch_cost,
     production?.production_cost_total,
@@ -293,6 +307,54 @@ function resolveProductionCost(production, ingredientMap) {
   ].find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
 
   return round(persistedCost || 0);
+}
+
+function resolveManifestPortionSize(production = {}) {
+  const manifestLines = Array.isArray(production?.manifest_lines)
+    ? production.manifest_lines
+    : (Array.isArray(production?.menu_issue_items) ? production.menu_issue_items : []);
+  if (!manifestLines.length) return null;
+
+  const directPortionSize = manifestLines
+    .map((line) => numberValue(line?.portion_size_grams, NaN))
+    .find((value) => Number.isFinite(value) && value > 0);
+  if (directPortionSize) {
+    return {
+      label: `${formatRecipeQuantity(directPortionSize, 'g')} g`,
+      grams: round(directPortionSize),
+      is_complete: true,
+      warnings: []
+    };
+  }
+
+  const totalFinishedWeight = manifestLines.reduce((sum, line) => (
+    sum + numberValue(
+      line?.expected_finished_weight_grams
+        ?? line?.yielded_weight_grams
+        ?? line?.produced_weight_grams
+        ?? line?.requested_weight_grams,
+      0
+    )
+  ), 0);
+  const totalServings = manifestLines.reduce((sum, line) => (
+    sum + numberValue(
+      line?.expected_yield_servings
+        ?? line?.production_covers
+        ?? line?.expected_servings
+        ?? line?.requested_servings
+        ?? line?.produced_servings,
+      0
+    )
+  ), 0);
+  if (totalFinishedWeight <= 0 || totalServings <= 0) return null;
+  const grams = totalFinishedWeight / totalServings;
+  if (!Number.isFinite(grams) || grams <= 0) return null;
+  return {
+    label: `${formatRecipeQuantity(grams, 'g')} g`,
+    grams: round(grams),
+    is_complete: true,
+    warnings: []
+  };
 }
 
 function resolvePortionSize(production, recipe, recipes, ingredients) {
@@ -320,6 +382,9 @@ function resolvePortionSize(production, recipe, recipes, ingredients) {
   if (explicitLabel) {
     return { label: explicitLabel, grams: null, is_complete: true, warnings: [] };
   }
+
+  const manifestPortionSize = resolveManifestPortionSize(production);
+  if (manifestPortionSize) return manifestPortionSize;
 
   const servingWeight = recipe
     ? calculateRecipeServingWeight(recipe, recipes, ingredients)

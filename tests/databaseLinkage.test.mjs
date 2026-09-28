@@ -517,6 +517,10 @@ const cases = [
       assert.match(productionSource, /Ingredient details are not ready/);
       assert.match(productionSource, /production_cost_total:\s*estimatedBatchCost/);
       assert.match(entityPreparationSource, /production_cost_total:\s*Number\(estimatedBatchCost\.toFixed\(2\)\)/);
+      const dbSource = await fs.readFile(new URL('../server/db.js', import.meta.url), 'utf8');
+      assert.match(dbSource, /ingredients_used:\s*ingredientLines/);
+      assert.match(dbSource, /replaceProductionConsumptionLines/);
+      assert.match(dbSource, /INSERT INTO production_consumption_lines/);
     }
   }
 ];
