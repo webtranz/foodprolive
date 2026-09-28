@@ -60,7 +60,10 @@ await listDocuments('Inventory', {
   limit: 25,
   lock: true
 }, inventoryExecutor);
-assert.match(inventoryExecutor.calls[0].text, /FROM \(SELECT \* FROM warehouse_inventory\) normalized_record/);
+assert.match(inventoryExecutor.calls[0].text, /FROM \(SELECT inventory\.\*/);
+assert.match(inventoryExecutor.calls[0].text, /LEFT JOIN warehouses warehouse/);
+assert.match(inventoryExecutor.calls[0].text, /LEFT JOIN ingredients ingredient/);
+assert.match(inventoryExecutor.calls[0].text, /ingredient\.name AS ingredient_name/);
 assert.match(inventoryExecutor.calls[0].text, /normalized_record\.ingredient_id/);
 assert.match(inventoryExecutor.calls[0].text, /normalized_record\.warehouse_id/);
 assert.match(inventoryExecutor.calls[0].text, /FOR UPDATE/);

@@ -320,9 +320,11 @@ function resolveIngredientByValue(ingredients, value) {
 }
 
 function withResolvedItemCode(record, ingredientById) {
+  const ingredient = ingredientById.get(record?.ingredient_id);
   return {
     ...record,
-    item_code: getItemCodeFromRecords([ingredientById.get(record?.ingredient_id), record])
+    item_code: getItemCodeFromRecords([ingredient, record]),
+    ingredient_name: record?.ingredient_name || ingredient?.name || record?.item_name || ''
   };
 }
 

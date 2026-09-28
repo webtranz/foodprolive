@@ -998,7 +998,15 @@ function rowToInventory(row = {}) {
     __entity: 'Inventory',
     id: row.inventory_id,
     site_id: row.warehouse_id,
+    warehouse_id: row.warehouse_id,
+    site_name: row.warehouse_name || row.site_name || null,
+    warehouse_name: row.warehouse_name || row.site_name || null,
     ingredient_id: row.ingredient_id,
+    ingredient_name: row.ingredient_name || row.item_name || null,
+    item_code: row.item_code || row.ingredient_code || row.sku || row.d365_item_id || null,
+    ingredient_code: row.ingredient_code || null,
+    sku: row.sku || null,
+    d365_item_id: row.d365_item_id || null,
     available_quantity: Number(row.available_quantity || 0),
     reserved_quantity: Number(row.reserved_quantity || 0),
     on_hand_quantity: Number(row.on_hand_quantity || 0),
@@ -1006,6 +1014,7 @@ function rowToInventory(row = {}) {
     average_unit_cost: Number(row.average_unit_cost || 0),
     last_unit_cost: Number(row.last_unit_cost || 0),
     unit: row.stock_unit,
+    stock_unit: row.stock_unit,
     status: row.status || 'active',
     source_name: row.source_name || null,
     created_date: rowTimestamp(row.created_at),
@@ -4588,7 +4597,18 @@ const normalizedSimpleConfigs = {
     table: 'warehouse_inventory',
     idColumn: 'inventory_id',
     mapper: rowToInventory,
-    select: 'SELECT * FROM warehouse_inventory',
+    select: `SELECT inventory.*,
+                warehouse.name AS warehouse_name,
+                ingredient.name AS ingredient_name,
+                ingredient.item_code,
+                ingredient.ingredient_code,
+                ingredient.sku,
+                ingredient.d365_item_id
+           FROM warehouse_inventory inventory
+           LEFT JOIN warehouses warehouse
+             ON warehouse.warehouse_id = inventory.warehouse_id
+           LEFT JOIN ingredients ingredient
+             ON ingredient.ingredient_id = inventory.ingredient_id`,
     insertSql: `INSERT INTO warehouse_inventory (
       inventory_id, warehouse_id, ingredient_id, available_quantity, reserved_quantity,
       on_hand_quantity, average_unit_cost, last_unit_cost, stock_unit, status,
@@ -5454,7 +5474,14 @@ function normalizedSqlColumnForField(entity, field) {
       inventory_id: 'inventory_id',
       site_id: 'warehouse_id',
       warehouse_id: 'warehouse_id',
+      site_name: 'warehouse_name',
+      warehouse_name: 'warehouse_name',
       ingredient_id: 'ingredient_id',
+      ingredient_name: 'ingredient_name',
+      item_code: 'item_code',
+      ingredient_code: 'ingredient_code',
+      sku: 'sku',
+      d365_item_id: 'd365_item_id',
       available_quantity: 'available_quantity',
       reserved_quantity: 'reserved_quantity',
       on_hand_quantity: 'on_hand_quantity',
@@ -5462,7 +5489,8 @@ function normalizedSqlColumnForField(entity, field) {
       average_unit_cost: 'average_unit_cost',
       last_unit_cost: 'last_unit_cost',
       unit: 'stock_unit',
-      stock_unit: 'stock_unit'
+      stock_unit: 'stock_unit',
+      source_name: 'source_name'
     },
     InventoryLot: {
       lot_id: 'lot_id',
