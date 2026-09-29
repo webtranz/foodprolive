@@ -1825,6 +1825,8 @@ function rowToMealServiceAttendance(row = {}) {
 
 function rowToMealServiceConsumption(row = {}) {
   const allocations = Array.isArray(row.allocations) ? row.allocations : [];
+  const resolvedMenuType = row.resolved_menu_type || row.menu_type || null;
+  const resolvedMenuCategory = row.resolved_menu_category || row.menu_category || null;
   return withPayload(row, {
     __entity: 'MealServiceConsumption',
     id: row.meal_consumption_id,
@@ -1839,9 +1841,9 @@ function rowToMealServiceConsumption(row = {}) {
     movement_type: row.movement_type || 'consumption',
     service_date: toDateOnlyOrNull(row.service_date),
     meal_type: row.meal_period || null,
-    menu_type: row.menu_type || null,
-    cuisine_type: row.menu_type || null,
-    menu_category: row.menu_category || null,
+    menu_type: resolvedMenuType,
+    cuisine_type: resolvedMenuType,
+    menu_category: resolvedMenuCategory,
     consumed_weight_grams: Number(row.consumed_weight_grams || 0),
     consumed_servings: Number(row.consumed_servings || 0),
     menu_plan_id: row.menu_plan_id || null,
@@ -5488,8 +5490,8 @@ function normalizedSelectForEntity(entity) {
   }
   if (entity === 'MealServiceConsumption') {
     return `SELECT consumption.*, header.warehouse_id,
-                   COALESCE(consumption.menu_type, header.menu_type) AS menu_type,
-                   COALESCE(consumption.menu_category, header.menu_category) AS menu_category,
+                   COALESCE(consumption.menu_type, header.menu_type) AS resolved_menu_type,
+                   COALESCE(consumption.menu_category, header.menu_category) AS resolved_menu_category,
                    COALESCE((
                      SELECT jsonb_agg(
                        jsonb_build_object(
@@ -6056,9 +6058,9 @@ function normalizedSqlColumnForField(entity, field) {
       service_date: 'service_date',
       meal_type: 'meal_period',
       meal_period: 'meal_period',
-      menu_type: 'menu_type',
-      cuisine_type: 'menu_type',
-      menu_category: 'menu_category',
+      menu_type: 'resolved_menu_type',
+      cuisine_type: 'resolved_menu_type',
+      menu_category: 'resolved_menu_category',
       consumed_weight_grams: 'consumed_weight_grams',
       consumed_servings: 'consumed_servings',
       menu_plan_id: 'menu_plan_id',

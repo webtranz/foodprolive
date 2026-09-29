@@ -1115,6 +1115,12 @@ test('report retrieval applies indexed server-side date ranges and pages every e
   assert.match(sqlSource, /idx_meal_service_consumptions_report/);
   assert.match(sqlSource, /idx_produced_output_batches_report/);
   assert.match(sqlSource, /idx_produced_output_batches_fifo/);
+
+  const dbSource = source('server/db.js');
+  assert.match(dbSource, /COALESCE\(consumption\.menu_type, header\.menu_type\) AS resolved_menu_type/);
+  assert.match(dbSource, /COALESCE\(consumption\.menu_category, header\.menu_category\) AS resolved_menu_category/);
+  assert.match(dbSource, /MealServiceConsumption:\s*\{[\s\S]*menu_type: 'resolved_menu_type'[\s\S]*menu_category: 'resolved_menu_category'/);
+  assert.doesNotMatch(dbSource, /COALESCE\(consumption\.menu_type, header\.menu_type\) AS menu_type/);
 });
 
 test('meal-service entities are scoped/read-permission protected and cannot bypass service mutations', () => {
