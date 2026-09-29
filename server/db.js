@@ -2916,6 +2916,17 @@ function rowToMaterialRequest(row = {}) {
     acknowledged_by: row.acknowledged_by || null,
     acknowledged_by_name: row.acknowledged_by_name || null,
     acknowledged_at: rowTimestamp(row.acknowledged_at),
+    acknowledgement_job_id: row.acknowledgement_job_id || null,
+    acknowledgement_job_status: row.acknowledgement_job_status || null,
+    acknowledgement_job_progress: toNumberOrZero(row.acknowledgement_job_progress),
+    acknowledgement_job_message: row.acknowledgement_job_message || null,
+    acknowledgement_job_error: row.acknowledgement_job_error || null,
+    acknowledgement_job_requested_at: rowTimestamp(row.acknowledgement_job_requested_at),
+    acknowledgement_job_started_at: rowTimestamp(row.acknowledgement_job_started_at),
+    acknowledgement_job_completed_at: rowTimestamp(row.acknowledgement_job_completed_at),
+    acknowledgement_job_updated_at: rowTimestamp(row.acknowledgement_job_updated_at),
+    acknowledgement_job_requested_by: row.acknowledgement_job_requested_by || null,
+    acknowledgement_job_requested_by_name: row.acknowledgement_job_requested_by_name || null,
     procurement_notes: row.procurement_notes || null,
     notes: row.notes || null,
     status: row.status || 'pending_procurement_ack',
@@ -3376,9 +3387,14 @@ const normalizedSimpleConfigs = {
       fulfillment_store_id, fulfillment_store_name, request_date, period_start, period_end,
       total_estimated_cost, source_type, source_production_id, source_production_name,
       created_by, created_by_name, acknowledged_by, acknowledged_by_name, acknowledged_at,
+      acknowledgement_job_id, acknowledgement_job_status, acknowledgement_job_progress,
+      acknowledgement_job_message, acknowledgement_job_error, acknowledgement_job_requested_at,
+      acknowledgement_job_started_at, acknowledgement_job_completed_at, acknowledgement_job_updated_at,
+      acknowledgement_job_requested_by, acknowledgement_job_requested_by_name,
       procurement_notes, notes, status, source_name, created_at, updated_at
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+      $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37
     )`,
     values(record) {
       return [
@@ -3402,6 +3418,17 @@ const normalizedSimpleConfigs = {
         record.acknowledged_by || null,
         record.acknowledged_by_name || null,
         record.acknowledged_at || null,
+        record.acknowledgement_job_id || null,
+        record.acknowledgement_job_status || null,
+        toNumberOrNull(record.acknowledgement_job_progress),
+        record.acknowledgement_job_message || null,
+        record.acknowledgement_job_error || null,
+        record.acknowledgement_job_requested_at || null,
+        record.acknowledgement_job_started_at || null,
+        record.acknowledgement_job_completed_at || null,
+        record.acknowledgement_job_updated_at || null,
+        record.acknowledgement_job_requested_by || null,
+        record.acknowledgement_job_requested_by_name || null,
         record.procurement_notes || null,
         record.notes || null,
         record.status || 'pending_procurement_ack',
@@ -3419,12 +3446,18 @@ const normalizedSimpleConfigs = {
       source_production_id = $14, source_production_name = $15,
       created_by = $16, created_by_name = $17, acknowledged_by = $18,
       acknowledged_by_name = $19, acknowledged_at = $20,
-      procurement_notes = $21, notes = $22, status = $23,
-      source_name = $24, updated_at = $25
+      acknowledgement_job_id = $21, acknowledgement_job_status = $22,
+      acknowledgement_job_progress = $23, acknowledgement_job_message = $24,
+      acknowledgement_job_error = $25, acknowledgement_job_requested_at = $26,
+      acknowledgement_job_started_at = $27, acknowledgement_job_completed_at = $28,
+      acknowledgement_job_updated_at = $29, acknowledgement_job_requested_by = $30,
+      acknowledgement_job_requested_by_name = $31,
+      procurement_notes = $32, notes = $33, status = $34,
+      source_name = $35, updated_at = $36
       WHERE id = $1`,
     updateValues(record) {
       const values = this.values(record);
-      return [values[0], ...values.slice(1, 24), record.updated_date || nowIso()];
+      return [values[0], ...values.slice(1, 35), record.updated_date || nowIso()];
     },
     afterSave: replaceMaterialRequestItems
   },

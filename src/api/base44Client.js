@@ -558,8 +558,10 @@ export const base44 = {
     }
   },
   materialRequests: {
-    list() {
-      return apiRequest('/api/material-requests');
+    list(options = {}) {
+      return apiRequest(`/api/material-requests${buildQueryString({
+        limit: options.limit
+      })}`);
     },
     createFromProduction(productionId, data = {}) {
       return apiRequest(`/api/material-requests/from-production/${productionId}`, {
@@ -645,6 +647,12 @@ export const base44 = {
     },
     runPRGeneration(data) {
       return apiRequest('/api/menu-plans/pr-generation/run', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    repeatCycle(data) {
+      return apiRequest('/api/menu-plans/repeat-cycle', {
         method: 'POST',
         body: JSON.stringify(data)
       });

@@ -848,59 +848,6 @@ export default function MenuPlanning() {
     await createMutation.mutateAsync(payload);
   };
 
-  const copyMealForRepeat = (meal = {}) => {
-    const {
-      id,
-      menu_plan_id,
-      menu_plan_line_id,
-      production_id,
-      production_plan_id,
-      production_request_id,
-      production_status,
-      created_at,
-      created_by,
-      updated_at,
-      updated_by,
-      ...mealPayload
-    } = meal || {};
-    return mealPayload;
-  };
-
-  const buildRepeatedMenuPlanPayload = (sourcePlan = {}, targetDate, existingTargetPlan = null) => {
-    const meals = (Array.isArray(sourcePlan.meals) ? sourcePlan.meals : []).map(copyMealForRepeat);
-    const summary = summarizeMenuPlanMeals(meals);
-    const sourceUsesManualBudget = sourcePlan.budget_source === 'manual';
-    const targetUsesManualBudget = existingTargetPlan?.budget_source === 'manual' || (!existingTargetPlan && sourceUsesManualBudget);
-    return {
-      site_id: selectedSiteRecord.id,
-      site_name: selectedSiteRecord.name,
-      plan_date: targetDate,
-      cuisine_type: selectedMenuCuisine,
-      menu_category: selectedMenuCategory,
-      meals,
-      status: existingTargetPlan?.status || sourcePlan.status || 'planned',
-      total_expected_servings: summary.total_expected_servings,
-      total_calories: summary.total_calories,
-      total_planned_cost: summary.total_planned_cost,
-      budget_source: targetUsesManualBudget ? 'manual' : 'linked',
-      budget_id: targetUsesManualBudget ? null : (existingTargetPlan?.budget_id || null),
-      budget_name: targetUsesManualBudget ? null : (existingTargetPlan?.budget_name || null),
-      manual_budget_name: targetUsesManualBudget
-        ? (existingTargetPlan?.manual_budget_name || sourcePlan.manual_budget_name || 'Manual Budget')
-        : null,
-      budget_amount: targetUsesManualBudget
-        ? Number(existingTargetPlan?.budget_amount || sourcePlan.budget_amount || 0)
-        : Number(existingTargetPlan?.budget_amount || 0),
-      meal_budget_limits: existingTargetPlan?.meal_budget_limits || sourcePlan.meal_budget_limits || {
-        breakfast: 0,
-        lunch: 0,
-        dinner: 0
-      },
-      remaining_budget: 0,
-      exceeded_budget_by: 0
-    };
-  };
-
   const handleRepeatMenuCycle = async () => {
     setMessage('');
 
@@ -938,55 +885,18 @@ export default function MenuPlanning() {
     const targetEnd = repeatMenuTargets[repeatMenuTargets.length - 1].target_date;
     setIsRepeatingMenuCycle(true);
     try {
-      const existingTargets = await base44.entities.MenuPlan.filter(
-        { site_id: selectedSite },
-        'plan_date',
-        Math.max(1000, repeatMenuTargets.length + 25),
-        {
-          rangeFilters: {
-            plan_date: {
-              gte: targetStart,
-              lte: targetEnd
-            }
-          }
-        }
-      );
-      const existingByDate = new Map(
-        (Array.isArray(existingTargets) ? existingTargets : [])
-          .filter(isOperationalMenuPlan)
-          .filter((plan) => menuPlanMatchesCurrentScope(
-            plan,
-            selectedSite,
-            String(plan.plan_date || '').slice(0, 10),
-            selectedMenuCuisine,
-            selectedMenuCategory
-          ))
-          .map((plan) => [String(plan.plan_date || '').slice(0, 10), plan])
-      );
-
-      let createdCount = 0;
-      let updatedCount = 0;
-      for (const target of repeatMenuTargets) {
-        const existingTarget = existingByDate.get(target.target_date) || null;
-        const payload = buildRepeatedMenuPlanPayload(target.source_plan, target.target_date, existingTarget);
-        const result = existingTarget?.id
-          ? await base44.menuPlanning.update(existingTarget.id, payload)
-          : await base44.menuPlanning.create(payload);
-        const savedPlan = extractSavedMenuPlan(result);
-        if (savedPlan) {
-          existingByDate.set(target.target_date, savedPlan);
-        }
-        if (existingTarget?.id) {
-          updatedCount += 1;
-        } else {
-          createdCount += 1;
-        }
-      }
-
+      const result = await base44.menuPlanning.repeatCycle({
+        site_id: selectedSiteRecord.id,
+        site_name: selectedSiteRecord.name,
+        week_start: weekStartKey,
+        repeat_days: repeatMenuDayCount,
+        cuisine_type: selectedMenuCuisine,
+        menu_category: selectedMenuCategory
+      });
       queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlansByWeek'] });
       queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
-      setMessage(`Repeated menu cycle for ${repeatMenuTargets.length} saved day${repeatMenuTargets.length === 1 ? '' : 's'} (${createdCount} created, ${updatedCount} updated).`);
+      setMessage(result?.message || `Menu repeat queued from ${weekStartKey} into ${targetStart} to ${targetEnd}. Refresh the target week after a moment to see the copied menu.`);
     } catch (error) {
       setMessage(error.message || 'Failed to repeat menu cycle.');
     } finally {

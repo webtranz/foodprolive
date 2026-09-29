@@ -2247,6 +2247,17 @@ CREATE TABLE IF NOT EXISTS material_requests (
   acknowledged_by TEXT,
   acknowledged_by_name TEXT,
   acknowledged_at TIMESTAMPTZ,
+  acknowledgement_job_id TEXT,
+  acknowledgement_job_status TEXT,
+  acknowledgement_job_progress NUMERIC(5, 2),
+  acknowledgement_job_message TEXT,
+  acknowledgement_job_error TEXT,
+  acknowledgement_job_requested_at TIMESTAMPTZ,
+  acknowledgement_job_started_at TIMESTAMPTZ,
+  acknowledgement_job_completed_at TIMESTAMPTZ,
+  acknowledgement_job_updated_at TIMESTAMPTZ,
+  acknowledgement_job_requested_by TEXT,
+  acknowledgement_job_requested_by_name TEXT,
   procurement_notes TEXT,
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'pending_procurement_ack',
@@ -2274,6 +2285,17 @@ ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS created_by_name TEXT;
 ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledged_by TEXT;
 ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledged_by_name TEXT;
 ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_id TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_status TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_progress NUMERIC(5, 2);
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_message TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_error TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_requested_at TIMESTAMPTZ;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_started_at TIMESTAMPTZ;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_completed_at TIMESTAMPTZ;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_updated_at TIMESTAMPTZ;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_requested_by TEXT;
+ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS acknowledgement_job_requested_by_name TEXT;
 ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS procurement_notes TEXT;
 ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_procurement_ack';

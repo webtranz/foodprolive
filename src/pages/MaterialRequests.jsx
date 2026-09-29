@@ -20,6 +20,8 @@ import { getItemCode } from '../../shared/itemCode.js';
 const STATUS_CONFIG = {
   awaiting_production_approval: { color: 'bg-slate-100 text-slate-700', label: 'Awaiting Production Approval' },
   pending_procurement_ack: { color: 'bg-amber-100 text-amber-700', label: 'Pending Procurement Acknowledgement' },
+  acknowledgement_queued: { color: 'bg-blue-100 text-blue-700', label: 'Acknowledgement Queued' },
+  acknowledgement_processing: { color: 'bg-indigo-100 text-indigo-700', label: 'Acknowledgement Processing' },
   acknowledged: { color: 'bg-emerald-100 text-emerald-700', label: 'Acknowledged' },
   cancelled: { color: 'bg-red-100 text-red-700', label: 'Cancelled' },
   rejected: { color: 'bg-rose-100 text-rose-700', label: 'Rejected' }
@@ -39,7 +41,7 @@ export default function MaterialRequests() {
 
   const { data: materialRequests = [], isLoading, error: requestsError } = useQuery({
     queryKey: ['materialRequestsWorkflow'],
-    queryFn: () => base44.materialRequests.list(),
+    queryFn: () => base44.materialRequests.list({ limit: 300 }),
     refetchInterval: 60000
   });
 
@@ -81,12 +83,13 @@ export default function MaterialRequests() {
 
   const acknowledgeMutation = useMutation({
     mutationFn: ({ id, notes: procurementNotes }) => base44.materialRequests.acknowledge(id, { notes: procurementNotes }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'] });
       queryClient.invalidateQueries({ queryKey: ['productions'] });
       setSelectedRequest(null);
       setNotes('');
       setActionError('');
+      setActionNotice(result?.message || 'MR to Store acknowledgement queued. Stock reservation will finish in the background.');
     },
     onError: (error) => {
       setActionNotice('');
@@ -313,6 +316,12 @@ export default function MaterialRequests() {
             </div>
           </CardContent>
         </Card>
+
+        {actionNotice ? (
+          <Card className="border-emerald-200 bg-emerald-50">
+            <CardContent className="py-3 text-sm text-emerald-700">{actionNotice}</CardContent>
+          </Card>
+        ) : null}
 
         {requestsError ? (
           <Card className="border-red-200 bg-red-50">

@@ -4012,6 +4012,396 @@ app.post('/api/menu-plans/pr-generation/run', requireAuth, requirePermission('ge
   }
 });
 
+const MENU_REPEAT_QUEUE_ACTIVE_KEYS = new Set();
+const menuRepeatQueue = [];
+let menuRepeatRunning = false;
+
+function addMenuRepeatUtcDays(dateOnly, days) {
+  const date = new Date(`${dateOnly}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function menuRepeatDateOffset(startDate, targetDate) {
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const target = new Date(`${targetDate}T00:00:00.000Z`);
+  return Math.round((target.getTime() - start.getTime()) / 86400000);
+}
+
+function stripMenuRepeatRuntimeFields(meal = {}) {
+  const {
+    id,
+    menu_plan_id,
+    menu_plan_line_id,
+    production_id,
+    production_plan_id,
+    production_request_id,
+    production_status,
+    created_at,
+    created_by,
+    updated_at,
+    updated_by,
+    ...mealPayload
+  } = meal || {};
+  return mealPayload;
+}
+
+function buildMenuRepeatTargetsFromSourcePlans({
+  sourcePlans = [],
+  cycleStartDate,
+  repeatDays,
+  cycleLengthDays = 7
+} = {}) {
+  const sourceByOffset = new Map();
+  (Array.isArray(sourcePlans) ? sourcePlans : []).forEach((plan) => {
+    const sourceDate = normalizeDateOnly(plan?.plan_date);
+    if (!sourceDate) return;
+    const offset = menuRepeatDateOffset(cycleStartDate, sourceDate);
+    if (offset < 0 || offset >= cycleLengthDays || sourceByOffset.has(offset)) return;
+    sourceByOffset.set(offset, plan);
+  });
+
+  return Array.from({ length: repeatDays }, (_, index) => {
+    const sourceOffset = index % cycleLengthDays;
+    const sourcePlan = sourceByOffset.get(sourceOffset);
+    if (!sourcePlan) return null;
+    return {
+      source_plan: sourcePlan,
+      source_date: normalizeDateOnly(sourcePlan.plan_date),
+      target_date: addMenuRepeatUtcDays(cycleStartDate, cycleLengthDays + index),
+      cycle_day_offset: sourceOffset
+    };
+  }).filter(Boolean);
+}
+
+function buildRepeatedMenuPlanPayloadFromSource({
+  sourcePlan,
+  targetDate,
+  existingTargetPlan = null,
+  siteId,
+  siteName,
+  cuisineType,
+  menuCategory
+}) {
+  const meals = (Array.isArray(sourcePlan?.meals) ? sourcePlan.meals : [])
+    .map(stripMenuRepeatRuntimeFields);
+  const summary = summarizeMenuPlanMeals(meals);
+  const sourceUsesManualBudget = sourcePlan?.budget_source === 'manual';
+  const targetUsesManualBudget = existingTargetPlan?.budget_source === 'manual'
+    || (!existingTargetPlan && sourceUsesManualBudget);
+  return {
+    site_id: siteId,
+    site_name: siteName || sourcePlan?.site_name || null,
+    plan_date: targetDate,
+    cuisine_type: cuisineType,
+    menu_category: menuCategory,
+    meals,
+    status: existingTargetPlan?.status || sourcePlan?.status || 'planned',
+    total_expected_servings: summary.total_expected_servings,
+    total_calories: summary.total_calories,
+    total_planned_cost: summary.total_planned_cost,
+    budget_source: targetUsesManualBudget ? 'manual' : 'linked',
+    budget_id: targetUsesManualBudget ? null : (existingTargetPlan?.budget_id || null),
+    budget_name: targetUsesManualBudget ? null : (existingTargetPlan?.budget_name || null),
+    manual_budget_name: targetUsesManualBudget
+      ? (existingTargetPlan?.manual_budget_name || sourcePlan?.manual_budget_name || 'Manual Budget')
+      : null,
+    budget_amount: targetUsesManualBudget
+      ? Number(existingTargetPlan?.budget_amount || sourcePlan?.budget_amount || 0)
+      : Number(existingTargetPlan?.budget_amount || 0),
+    meal_budget_limits: existingTargetPlan?.meal_budget_limits || sourcePlan?.meal_budget_limits || {
+      breakfast: 0,
+      lunch: 0,
+      dinner: 0
+    },
+    remaining_budget: 0,
+    exceeded_budget_by: 0
+  };
+}
+
+async function resolveMenuRepeatPlan(requestUser, payload = {}) {
+  const siteId = String(payload.site_id || '').trim();
+  const requestedWeekStart = normalizeDateOnly(payload.week_start || payload.cycle_start_date || payload.source_start_date);
+  const weekRange = buildMenuPlanWeekRange(requestedWeekStart);
+  const repeatDays = Math.floor(Number(payload.repeat_days || payload.days || 0));
+  const cuisineType = normalizeMenuCuisine(payload.cuisine_type, 'general');
+  const menuCategory = normalizeMenuCategory(payload.menu_category, 'senior');
+
+  if (!siteId) {
+    const error = new Error('Select a Store / Warehouse before repeating a menu cycle.');
+    error.status = 400;
+    throw error;
+  }
+  if (!weekRange) {
+    const error = new Error('Select a valid source week before repeating a menu cycle.');
+    error.status = 400;
+    throw error;
+  }
+  if (!Number.isFinite(repeatDays) || repeatDays <= 0) {
+    const error = new Error('Enter the number of future days to repeat.');
+    error.status = 400;
+    throw error;
+  }
+  if (repeatDays > 365) {
+    const error = new Error('Repeat range is limited to 365 days at a time.');
+    error.status = 400;
+    throw error;
+  }
+
+  const sourceWeek = await listScopedOperationalMenuPlansForWeek(requestUser, siteId, weekRange.start_date, {
+    cuisine_type: cuisineType,
+    menu_category: menuCategory
+  });
+  const sourcePlans = (sourceWeek?.plans || [])
+    .filter((plan) => Array.isArray(plan.meals) && plan.meals.length > 0);
+  const targets = buildMenuRepeatTargetsFromSourcePlans({
+    sourcePlans,
+    cycleStartDate: weekRange.start_date,
+    repeatDays
+  });
+  if (targets.length === 0) {
+    const error = new Error('No saved menu plans are available in this source week to repeat.');
+    error.status = 409;
+    throw error;
+  }
+  const targetStart = targets[0].target_date;
+  const targetEnd = targets[targets.length - 1].target_date;
+  const sourceSiteName = sourcePlans.find((plan) => String(plan.site_id || '') === siteId)?.site_name || payload.site_name || null;
+  return {
+    siteId,
+    siteName: sourceSiteName,
+    weekStart: weekRange.start_date,
+    weekEnd: weekRange.end_date,
+    repeatDays,
+    cuisineType,
+    menuCategory,
+    targetStart,
+    targetEnd,
+    targets: targets.map((target) => ({
+      source_date: target.source_date,
+      target_date: target.target_date,
+      cycle_day_offset: target.cycle_day_offset
+    }))
+  };
+}
+
+async function applyMenuRepeatPlan(requestUser, repeatPlan) {
+  const scope = await getLocationScope(requestUser);
+  const sourceWeek = await listScopedOperationalMenuPlansForWeek(requestUser, repeatPlan.siteId, repeatPlan.weekStart, {
+    cuisine_type: repeatPlan.cuisineType,
+    menu_category: repeatPlan.menuCategory
+  });
+  const sourcePlans = (sourceWeek?.plans || [])
+    .filter((plan) => Array.isArray(plan.meals) && plan.meals.length > 0);
+  const targets = buildMenuRepeatTargetsFromSourcePlans({
+    sourcePlans,
+    cycleStartDate: repeatPlan.weekStart,
+    repeatDays: repeatPlan.repeatDays
+  });
+  if (targets.length === 0) {
+    const error = new Error('No saved menu plans are available in this source week to repeat.');
+    error.status = 409;
+    throw error;
+  }
+
+  return withTransaction(async (client) => {
+    const existingTargets = await listDocuments('MenuPlan', {
+      filters: { site_id: repeatPlan.siteId },
+      rangeFilters: {
+        plan_date: {
+          gte: repeatPlan.targetStart,
+          lte: repeatPlan.targetEnd
+        }
+      },
+      sort: 'plan_date',
+      limit: Math.max(1000, targets.length + 25)
+    }, client);
+    const scopedExistingTargets = await scopeEntityRecords(
+      requestUser,
+      'MenuPlan',
+      (Array.isArray(existingTargets) ? existingTargets : [])
+        .filter(isOperationalMenuPlan)
+        .filter((plan) => normalizeMenuCuisine(plan.cuisine_type ?? plan.menu_type, 'general') === repeatPlan.cuisineType)
+        .filter((plan) => normalizeMenuCategory(plan.menu_category, 'senior') === repeatPlan.menuCategory)
+    );
+    const existingByDate = new Map(scopedExistingTargets.map((plan) => [
+      String(plan.plan_date || '').slice(0, 10),
+      plan
+    ]));
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    const savedDates = [];
+    for (const target of targets) {
+      const existingTarget = existingByDate.get(target.target_date) || null;
+      const lockedExisting = existingTarget?.id
+        ? await findDocument('MenuPlan', existingTarget.id, client, true)
+        : null;
+      const payload = buildRepeatedMenuPlanPayloadFromSource({
+        sourcePlan: target.source_plan,
+        targetDate: target.target_date,
+        existingTargetPlan: lockedExisting,
+        siteId: repeatPlan.siteId,
+        siteName: repeatPlan.siteName,
+        cuisineType: repeatPlan.cuisineType,
+        menuCategory: repeatPlan.menuCategory
+      });
+      const writePayload = buildMenuPlanWritePayload(payload, lockedExisting);
+      const errors = validateMenuPlanPayload(writePayload);
+      if (errors.length) {
+        const error = new Error(errors[0]);
+        error.status = 400;
+        error.errors = errors;
+        throw error;
+      }
+      const preparedPayload = await prepareEntityPayload(requestUser, 'MenuPlan', writePayload, lockedExisting, { scope });
+      const selectedBudget = await validateMenuPlanBudgetSelection(requestUser, preparedPayload);
+      if (selectedBudget) {
+        preparedPayload.budget_name = selectedBudget.name;
+        preparedPayload.budget_amount = numericMatch(selectedBudget.budget_amount, 0);
+        preparedPayload.remaining_budget = Math.max(0, preparedPayload.budget_amount - numericMatch(preparedPayload.total_planned_cost, 0));
+        preparedPayload.exceeded_budget_by = Math.max(0, numericMatch(preparedPayload.total_planned_cost, 0) - preparedPayload.budget_amount);
+      } else if (!preparedPayload.budget_id) {
+        preparedPayload.budget_name = null;
+        preparedPayload.budget_amount = 0;
+        preparedPayload.remaining_budget = 0;
+        preparedPayload.exceeded_budget_by = 0;
+      }
+
+      if (lockedExisting?.id) {
+        assertMenuPlanScopeUnchanged(lockedExisting, preparedPayload);
+        authorizeEntityAction(requestUser, 'MenuPlan', 'update', preparedPayload, lockedExisting);
+        await updateDocument('MenuPlan', lockedExisting.id, preparedPayload, client);
+        updatedCount += 1;
+      } else {
+        authorizeEntityAction(requestUser, 'MenuPlan', 'create', preparedPayload);
+        await createDocument('MenuPlan', preparedPayload, client);
+        createdCount += 1;
+      }
+      savedDates.push({
+        source_date: target.source_date,
+        target_date: target.target_date
+      });
+    }
+
+    return {
+      created_count: createdCount,
+      updated_count: updatedCount,
+      target_count: targets.length,
+      source_start: repeatPlan.weekStart,
+      source_end: repeatPlan.weekEnd,
+      target_start: repeatPlan.targetStart,
+      target_end: repeatPlan.targetEnd,
+      copied_dates: savedDates
+    };
+  });
+}
+
+function scheduleMenuRepeatQueueDrain() {
+  if (menuRepeatRunning) return;
+  setImmediate(async () => {
+    if (menuRepeatRunning) return;
+    const work = menuRepeatQueue.shift();
+    if (!work) return;
+    menuRepeatRunning = true;
+    try {
+      const result = await applyMenuRepeatPlan(work.user, work.repeatPlan);
+      recordChanged('MenuPlan');
+      await auditAction({
+        user: work.user,
+        action: 'MENU_PLAN_REPEAT_COMPLETED',
+        entity: 'MenuPlan',
+        entityId: `${work.repeatPlan.siteId}:${work.repeatPlan.weekStart}`,
+        details: {
+          ...result,
+          job_id: work.jobId,
+          copy_key: work.copyKey
+        }
+      });
+    } catch (error) {
+      await auditAction({
+        user: work.user,
+        action: 'MENU_PLAN_REPEAT_FAILED',
+        entity: 'MenuPlan',
+        entityId: `${work.repeatPlan.siteId}:${work.repeatPlan.weekStart}`,
+        details: {
+          message: error?.message || 'Menu repeat failed.',
+          job_id: work.jobId,
+          copy_key: work.copyKey,
+          source_start: work.repeatPlan.weekStart,
+          source_end: work.repeatPlan.weekEnd,
+          target_start: work.repeatPlan.targetStart,
+          target_end: work.repeatPlan.targetEnd
+        }
+      }).catch((auditError) => {
+        console.error('Unable to audit failed menu repeat job', auditError);
+      });
+    } finally {
+      MENU_REPEAT_QUEUE_ACTIVE_KEYS.delete(work.copyKey);
+      menuRepeatRunning = false;
+      if (menuRepeatQueue.length > 0) {
+        scheduleMenuRepeatQueueDrain();
+      }
+    }
+  });
+}
+
+app.post('/api/menu-plans/repeat-cycle', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+  try {
+    const repeatPlan = await resolveMenuRepeatPlan(request.user, request.body || {});
+    const copyKey = [
+      repeatPlan.siteId,
+      repeatPlan.weekStart,
+      repeatPlan.repeatDays,
+      repeatPlan.cuisineType,
+      repeatPlan.menuCategory
+    ].join('::');
+    const alreadyQueued = MENU_REPEAT_QUEUE_ACTIVE_KEYS.has(copyKey);
+    const jobId = alreadyQueued ? null : randomUUID();
+    if (!alreadyQueued) {
+      MENU_REPEAT_QUEUE_ACTIVE_KEYS.add(copyKey);
+      menuRepeatQueue.push({
+        jobId,
+        copyKey,
+        user: request.user,
+        repeatPlan
+      });
+      scheduleMenuRepeatQueueDrain();
+      await auditAction({
+        user: request.user,
+        action: 'MENU_PLAN_REPEAT_QUEUED',
+        entity: 'MenuPlan',
+        entityId: `${repeatPlan.siteId}:${repeatPlan.weekStart}`,
+        details: {
+          job_id: jobId,
+          copy_key: copyKey,
+          source_start: repeatPlan.weekStart,
+          source_end: repeatPlan.weekEnd,
+          target_start: repeatPlan.targetStart,
+          target_end: repeatPlan.targetEnd,
+          target_count: repeatPlan.targets.length
+        }
+      });
+    }
+    return response.status(202).json({
+      queued: true,
+      already_queued: alreadyQueued,
+      job_id: jobId,
+      source_start: repeatPlan.weekStart,
+      source_end: repeatPlan.weekEnd,
+      target_start: repeatPlan.targetStart,
+      target_end: repeatPlan.targetEnd,
+      target_count: repeatPlan.targets.length,
+      copied_dates: repeatPlan.targets,
+      message: alreadyQueued
+        ? `Menu repeat is already queued for ${repeatPlan.targetStart} to ${repeatPlan.targetEnd}.`
+        : `Menu repeat queued for ${repeatPlan.targetStart} to ${repeatPlan.targetEnd}.`
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.post('/api/menu-plans', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
   try {
     const payload = buildMenuPlanWritePayload(request.body || {});
@@ -7443,6 +7833,18 @@ function buildMaterialRequestItemIssues({
 
 async function enrichMaterialRequestsWithReservableStock(records = [], scope) {
   if (!Array.isArray(records) || records.length === 0) return records;
+  const activeRequestStatuses = new Set([
+    'pending_procurement_ack',
+    'acknowledgement_queued',
+    'acknowledgement_processing'
+  ]);
+  const recordsNeedingLiveStock = records.filter((record) => (
+    activeRequestStatuses.has(String(record?.status || '').toLowerCase())
+    && Array.isArray(record.items)
+    && record.items.length > 0
+  ));
+  if (recordsNeedingLiveStock.length === 0) return records;
+
   const [ingredients, inventoryRows, lots] = await Promise.all([
     listDocuments('Ingredient', { limit: 10000 }),
     listDocuments('Inventory', { limit: 10000, location: scope }),
@@ -7460,7 +7862,7 @@ async function enrichMaterialRequestsWithReservableStock(records = [], scope) {
     lotsByKey.get(key).push(lot);
   });
 
-  return records.map((record) => {
+  const enrichedById = new Map(recordsNeedingLiveStock.map((record) => {
     const stockSiteId = String(record.fulfillment_store_id || record.site_id || '');
     const stockCheckDate = stockCheckDateForMaterialRequest(record);
     const nextItems = (Array.isArray(record.items) ? record.items : []).map((item) => {
@@ -7499,8 +7901,9 @@ async function enrichMaterialRequestsWithReservableStock(records = [], scope) {
         repairable_issue_count: validationIssues.filter((issue) => issue.repairable).length
       };
     });
-    return { ...record, items: nextItems };
-  });
+    return [String(record.id || ''), { ...record, items: nextItems }];
+  }));
+  return records.map((record) => enrichedById.get(String(record?.id || '')) || record);
 }
 
 async function repairMaterialRequestUnitIssues({ materialRequestId, ingredientId = null, scope }) {
@@ -7768,6 +8171,415 @@ app.post('/api/material-requests/from-production/:id', requireAuth, requirePermi
   }
 });
 
+const MATERIAL_REQUEST_ACK_WORKFLOW_ACTIVE_STATUSES = new Set([
+  'acknowledgement_queued',
+  'acknowledgement_processing'
+]);
+const MATERIAL_REQUEST_ACK_JOB_ACTIVE_STATUSES = new Set(['queued', 'processing']);
+const MATERIAL_REQUEST_ACK_JOB_FINAL_STATUSES = new Set(['completed', 'failed']);
+const materialRequestAcknowledgementQueue = [];
+const materialRequestAcknowledgementActiveIds = new Set();
+let materialRequestAcknowledgementRunningCount = 0;
+const materialRequestAcknowledgementConcurrency = Math.max(
+  1,
+  Math.min(
+    8,
+    Number.parseInt(process.env.MATERIAL_REQUEST_ACKNOWLEDGEMENT_WORKERS || '2', 10) || 2
+  )
+);
+
+function normalizeMaterialRequestAcknowledgementJobStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (MATERIAL_REQUEST_ACK_JOB_ACTIVE_STATUSES.has(normalized)) return normalized;
+  if (MATERIAL_REQUEST_ACK_JOB_FINAL_STATUSES.has(normalized)) return normalized;
+  return '';
+}
+
+function clampMaterialRequestAcknowledgementProgress(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function serializeMaterialRequestAcknowledgementJob(materialRequest = {}, overrides = {}) {
+  let status = normalizeMaterialRequestAcknowledgementJobStatus(
+    overrides.status ?? materialRequest.acknowledgement_job_status
+  );
+  const requestStatus = String(overrides.request_status ?? materialRequest.status ?? '').trim().toLowerCase();
+  if (requestStatus === 'acknowledged' && status !== 'failed') {
+    status = 'completed';
+  }
+  const id = String(overrides.id ?? materialRequest.acknowledgement_job_id ?? '').trim();
+  if (!id && !status) return null;
+  return {
+    id,
+    material_request_id: String(overrides.material_request_id ?? materialRequest.id ?? '').trim(),
+    source_production_id: String(overrides.source_production_id ?? materialRequest.source_production_id ?? '').trim(),
+    status: status || 'queued',
+    progress: clampMaterialRequestAcknowledgementProgress(
+      overrides.progress ?? materialRequest.acknowledgement_job_progress,
+      status === 'completed' ? 100 : 0
+    ),
+    message: String(overrides.message ?? materialRequest.acknowledgement_job_message ?? '').trim(),
+    error: String(overrides.error ?? materialRequest.acknowledgement_job_error ?? '').trim(),
+    requested_at: overrides.requested_at ?? materialRequest.acknowledgement_job_requested_at ?? null,
+    started_at: overrides.started_at ?? materialRequest.acknowledgement_job_started_at ?? null,
+    completed_at: overrides.completed_at ?? materialRequest.acknowledgement_job_completed_at ?? null,
+    requested_by: String(overrides.requested_by ?? materialRequest.acknowledgement_job_requested_by ?? '').trim(),
+    requested_by_name: String(overrides.requested_by_name ?? materialRequest.acknowledgement_job_requested_by_name ?? '').trim(),
+    request_status: requestStatus
+  };
+}
+
+function materialRequestAcknowledgementJobPatch(jobId, status, fields = {}) {
+  const now = new Date().toISOString();
+  const patch = {
+    acknowledgement_job_id: jobId,
+    acknowledgement_job_status: status,
+    acknowledgement_job_updated_at: now,
+    ...fields
+  };
+  if (typeof patch.acknowledgement_job_progress !== 'undefined') {
+    patch.acknowledgement_job_progress = clampMaterialRequestAcknowledgementProgress(
+      patch.acknowledgement_job_progress
+    );
+  }
+  return patch;
+}
+
+function assertMaterialRequestAcknowledgementReady({
+  materialRequest,
+  production,
+  sourceProductionId,
+  scope,
+  allowedStatuses
+}) {
+  if (!materialRequest || !filterRowsByAccessibleSites([materialRequest], scope).length) {
+    const error = new Error('MR to Store record is outside your assigned Store scope');
+    error.status = 403;
+    throw error;
+  }
+  if (String(materialRequest.source_production_id || '').trim() !== sourceProductionId) {
+    const error = new Error('MR to Store source changed while it was being reviewed. Refresh and try again.');
+    error.status = 409;
+    throw error;
+  }
+  const materialRequestStatus = String(materialRequest.status || '').toLowerCase();
+  if (!allowedStatuses.has(materialRequestStatus)) {
+    const error = new Error('Only an MR to Store record awaiting Store / Procurement acknowledgement can be approved');
+    error.status = 409;
+    throw error;
+  }
+  const isLegacyApprovedWithoutArea = Boolean(
+    production
+    && normalizeProductionStatus(production.status) === 'approved'
+    && requiresAreaProductionApproval(production)
+  );
+  if (materialRequest.source_type === 'production' && !materialRequest.source_production_id) {
+    const error = new Error('Production MR to Store record is missing its source production link');
+    error.status = 409;
+    throw error;
+  }
+  if (materialRequest.source_production_id && String(materialRequest.source_type || '').toLowerCase() !== 'production') {
+    const error = new Error('Linked production MR to Store record has an invalid source type');
+    error.status = 409;
+    throw error;
+  }
+  if (
+    materialRequest.source_production_id
+    && (!production || (
+      normalizeProductionStatus(production.status) !== 'pending_procurement'
+      && !isLegacyApprovedWithoutArea
+    ))
+  ) {
+    const error = new Error('The linked production request is not awaiting Store / Procurement action');
+    error.status = 409;
+    throw error;
+  }
+  let fulfillmentStore = null;
+  if (production) {
+    fulfillmentStore = resolveProductionFulfillmentStore(production, scope.sites);
+    if (
+      production.linked_material_request_id
+      && String(production.linked_material_request_id) !== String(materialRequest.id)
+    ) {
+      const error = new Error('MR to Store record does not match the Production linked request');
+      error.status = 409;
+      throw error;
+    }
+    if (String(materialRequest.site_id || '') !== String(fulfillmentStore.id)) {
+      const error = new Error('MR to Store record is not routed to the Production fulfillment Store');
+      error.status = 409;
+      throw error;
+    }
+    if (
+      materialRequest.requesting_site_id
+      && String(materialRequest.requesting_site_id) !== String(production.site_id)
+    ) {
+      const error = new Error('MR to Store Project does not match the linked Production Project');
+      error.status = 409;
+      throw error;
+    }
+    if (
+      materialRequest.fulfillment_store_id
+      && String(materialRequest.fulfillment_store_id) !== String(fulfillmentStore.id)
+    ) {
+      const error = new Error('MR to Store fulfillment Store does not match the linked Production');
+      error.status = 409;
+      throw error;
+    }
+  }
+  return { fulfillmentStore };
+}
+
+function scheduleMaterialRequestAcknowledgementQueueDrain() {
+  setImmediate(() => {
+    while (
+      materialRequestAcknowledgementRunningCount < materialRequestAcknowledgementConcurrency
+      && materialRequestAcknowledgementQueue.length > 0
+    ) {
+      const work = materialRequestAcknowledgementQueue.shift();
+      materialRequestAcknowledgementRunningCount += 1;
+      runMaterialRequestAcknowledgementWork(work).finally(() => {
+        materialRequestAcknowledgementRunningCount = Math.max(0, materialRequestAcknowledgementRunningCount - 1);
+        materialRequestAcknowledgementActiveIds.delete(String(work.materialRequestId));
+        if (materialRequestAcknowledgementQueue.length > 0) {
+          scheduleMaterialRequestAcknowledgementQueueDrain();
+        }
+      });
+    }
+  });
+}
+
+function enqueueMaterialRequestAcknowledgementWork(work) {
+  const materialRequestId = String(work.materialRequestId || '').trim();
+  if (!materialRequestId || materialRequestAcknowledgementActiveIds.has(materialRequestId)) {
+    return false;
+  }
+  materialRequestAcknowledgementActiveIds.add(materialRequestId);
+  materialRequestAcknowledgementQueue.push(work);
+  scheduleMaterialRequestAcknowledgementQueueDrain();
+  return true;
+}
+
+async function completeQueuedMaterialRequestAcknowledgement({ materialRequestId, jobId, actor, notes }) {
+  const scope = await getLocationScope(actor);
+  const scopedRequest = await findDocument('MaterialRequest', materialRequestId);
+  if (!scopedRequest || !filterRowsByAccessibleSites([scopedRequest], scope).length) {
+    const error = new Error('MR to Store record not found');
+    error.status = 404;
+    throw error;
+  }
+  const sourceProductionId = String(scopedRequest.source_production_id || '').trim();
+  const acknowledgementNotes = String(notes || scopedRequest.procurement_notes || '').trim();
+  return withTransaction(async (client) => {
+    // Keep the same Production -> MaterialRequest lock order used by Area approval.
+    const production = sourceProductionId
+      ? await findDocument('Production', sourceProductionId, client, true)
+      : null;
+    const materialRequest = await findDocument('MaterialRequest', materialRequestId, client, true);
+    if (String(materialRequest?.status || '').toLowerCase() === 'acknowledged') {
+      return {
+        acknowledged: materialRequest,
+        production,
+        inventoryMutated: false,
+        alreadyAcknowledged: true
+      };
+    }
+    if (
+      jobId
+      && materialRequest.acknowledgement_job_id
+      && String(materialRequest.acknowledgement_job_id) !== String(jobId)
+    ) {
+      const error = new Error('MR to Store acknowledgement job changed while it was running. Refresh and try again.');
+      error.status = 409;
+      throw error;
+    }
+    const { fulfillmentStore } = assertMaterialRequestAcknowledgementReady({
+      materialRequest,
+      production,
+      sourceProductionId,
+      scope,
+      allowedStatuses: new Set([
+        'pending_procurement_ack',
+        ...MATERIAL_REQUEST_ACK_WORKFLOW_ACTIVE_STATUSES
+      ])
+    });
+    const acknowledgedAt = new Date().toISOString();
+    const acknowledged = await updateDocument('MaterialRequest', materialRequestId, {
+      status: 'acknowledged',
+      acknowledged_by: actor.email,
+      acknowledged_by_name: actor.full_name || actor.email,
+      acknowledged_at: acknowledgedAt,
+      procurement_notes: acknowledgementNotes || materialRequest.procurement_notes || null,
+      ...materialRequestAcknowledgementJobPatch(jobId, 'completed', {
+        acknowledgement_job_progress: 100,
+        acknowledgement_job_message: 'MR to Store acknowledged and stock reservation completed.',
+        acknowledgement_job_completed_at: acknowledgedAt,
+        acknowledgement_job_error: ''
+      })
+    }, client);
+    let productionRecord = null;
+    let inventoryMutated = false;
+    if (production) {
+      const productionForReservation = {
+        ...production,
+        status: 'approved',
+        material_request_status: 'acknowledged',
+        linked_material_request_id: materialRequest.id,
+        linked_material_request_number: materialRequest.request_number || null,
+        fulfillment_store_id: fulfillmentStore.id,
+        fulfillment_store_name: fulfillmentStore.name || null
+      };
+      const commitmentResult = await reconcileProductionInventoryForWorkflow({
+        production: productionForReservation,
+        user: actor,
+        executor: client,
+        fulfillmentStore,
+        operation: 'store_procurement_approval',
+        reason: acknowledgementNotes
+          || 'Yield-adjusted inventory reserved when Store / Procurement approved production.'
+      });
+      inventoryMutated = commitmentResult.mutated;
+      productionRecord = await updateDocument('Production', production.id, {
+        ...commitmentResult.production_patch,
+        status: 'approved',
+        material_request_status: 'acknowledged',
+        procurement_approved_by: actor.email,
+        procurement_approved_by_name: actor.full_name || actor.email,
+        procurement_approved_at: acknowledgedAt,
+        area_approval_status: null,
+        area_approved_by: null,
+        area_approved_by_name: null,
+        area_approved_at: null,
+        linked_material_request_id: materialRequest.id,
+        linked_material_request_number: materialRequest.request_number || null,
+        fulfillment_store_id: fulfillmentStore.id,
+        fulfillment_store_name: fulfillmentStore.name || null,
+        last_review_action: 'procurement_acknowledged',
+        approval_history: appendProductionApprovalHistory(production, {
+          action: 'procurement_acknowledged',
+          stage: 'store_procurement',
+          from_status: normalizeProductionStatus(production.status),
+          to_status: 'approved',
+          actor_id: actor.id || null,
+          actor_email: actor.email || null,
+          actor_name: actor.full_name || actor.email || null,
+          reason: acknowledgementNotes || null,
+          note: acknowledgementNotes || null,
+          timestamp: acknowledgedAt
+        })
+      }, client);
+    }
+    return { acknowledged, production: productionRecord, inventoryMutated };
+  });
+}
+
+async function markMaterialRequestAcknowledgementFailed({ materialRequestId, jobId, error }) {
+  const errorMessage = error?.message || 'MR to Store acknowledgement failed.';
+  return withTransaction(async (client) => {
+    const materialRequest = await findDocument('MaterialRequest', materialRequestId, client, true);
+    if (!materialRequest || String(materialRequest.status || '').toLowerCase() === 'acknowledged') {
+      return { materialRequest, production: null };
+    }
+    const currentStatus = String(materialRequest.status || '').toLowerCase();
+    const failedAt = new Date().toISOString();
+    const failedRequest = await updateDocument('MaterialRequest', materialRequestId, {
+      status: ['cancelled', 'rejected'].includes(currentStatus)
+        ? materialRequest.status
+        : 'pending_procurement_ack',
+      ...materialRequestAcknowledgementJobPatch(jobId, 'failed', {
+        acknowledgement_job_progress: 100,
+        acknowledgement_job_message: errorMessage,
+        acknowledgement_job_error: errorMessage,
+        acknowledgement_job_completed_at: failedAt
+      })
+    }, client);
+    let productionRecord = null;
+    const sourceProductionId = String(materialRequest.source_production_id || '').trim();
+    if (sourceProductionId) {
+      const production = await findDocument('Production', sourceProductionId, client, true);
+      const productionStatus = normalizeProductionStatus(production?.status);
+      if (
+        production
+        && !['approved', 'cancelled', 'rejected', 'completed'].includes(productionStatus)
+      ) {
+        productionRecord = await updateDocument('Production', production.id, {
+          material_request_status: 'pending_procurement_ack',
+          last_review_action: 'procurement_acknowledgement_failed'
+        }, client);
+      }
+    }
+    return { materialRequest: failedRequest, production: productionRecord };
+  });
+}
+
+async function runMaterialRequestAcknowledgementWork(work) {
+  const materialRequestId = String(work.materialRequestId || '').trim();
+  const jobId = work.jobId || randomUUID();
+  const actor = work.actor || {};
+  try {
+    await updateDocument('MaterialRequest', materialRequestId, {
+      status: 'acknowledgement_processing',
+      ...materialRequestAcknowledgementJobPatch(jobId, 'processing', {
+        acknowledgement_job_progress: 20,
+        acknowledgement_job_message: 'Reserving stock for the acknowledged MR to Store.',
+        acknowledgement_job_started_at: new Date().toISOString(),
+        acknowledgement_job_error: ''
+      })
+    });
+    recordChanged('MaterialRequest');
+    const result = await completeQueuedMaterialRequestAcknowledgement({
+      materialRequestId,
+      jobId,
+      actor,
+      notes: work.notes
+    });
+    recordChanged('MaterialRequest');
+    recordChanged('Production');
+    if (result.inventoryMutated) {
+      recordChanged('Inventory');
+      recordChanged('InventoryLot');
+      recordChanged('InventoryTransaction');
+    }
+    await auditAction({
+      user: actor,
+      action: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGED',
+      entity: 'MaterialRequest',
+      entityId: result.acknowledged.id,
+      details: {
+        saved_record: result.acknowledged,
+        production_record: result.production,
+        notes: work.notes || null,
+        background_job_id: jobId
+      }
+    });
+  } catch (error) {
+    const failed = await markMaterialRequestAcknowledgementFailed({
+      materialRequestId,
+      jobId,
+      error
+    }).catch((updateError) => {
+      console.error('Unable to mark MR to Store acknowledgement job as failed', updateError);
+      return null;
+    });
+    recordChanged('MaterialRequest');
+    if (failed?.production) recordChanged('Production');
+    await auditAction({
+      user: actor,
+      action: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGEMENT_FAILED',
+      entity: 'MaterialRequest',
+      entityId: materialRequestId,
+      details: {
+        message: error?.message || 'MR to Store acknowledgement failed.',
+        background_job_id: jobId
+      }
+    }).catch((auditError) => {
+      console.error('Unable to audit failed MR to Store acknowledgement job', auditError);
+    });
+  }
+}
+
 app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermission('acknowledge_material_request'), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
@@ -7776,167 +8588,104 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
       return response.status(404).json({ message: 'MR to Store record not found' });
     }
     const sourceProductionId = String(scopedRequest.source_production_id || '').trim();
-    const updated = await withTransaction(async (client) => {
+    const requestedNotes = String(request.body?.notes || '').trim();
+    const queued = await withTransaction(async (client) => {
       // Keep the same Production -> MaterialRequest lock order used by Area approval.
       const production = sourceProductionId
         ? await findDocument('Production', sourceProductionId, client, true)
         : null;
       const materialRequest = await findDocument('MaterialRequest', request.params.id, client, true);
-      if (!materialRequest || !filterRowsByAccessibleSites([materialRequest], scope).length) {
-        const error = new Error('MR to Store record is outside your assigned Store scope');
-        error.status = 403;
-        throw error;
-      }
-      if (String(materialRequest.source_production_id || '').trim() !== sourceProductionId) {
-        const error = new Error('MR to Store source changed while it was being reviewed. Refresh and try again.');
-        error.status = 409;
-        throw error;
-      }
-      if (String(materialRequest?.status || '').toLowerCase() !== 'pending_procurement_ack') {
-        const error = new Error('Only an MR to Store record awaiting Store / Procurement acknowledgement can be approved');
-        error.status = 409;
-        throw error;
-      }
-      const isLegacyApprovedWithoutArea = Boolean(
-        production
-        && normalizeProductionStatus(production.status) === 'approved'
-        && requiresAreaProductionApproval(production)
-      );
-      if (materialRequest.source_type === 'production' && !materialRequest.source_production_id) {
-        const error = new Error('Production MR to Store record is missing its source production link');
-        error.status = 409;
-        throw error;
-      }
-      if (materialRequest.source_production_id && String(materialRequest.source_type || '').toLowerCase() !== 'production') {
-        const error = new Error('Linked production MR to Store record has an invalid source type');
-        error.status = 409;
-        throw error;
-      }
+      const { fulfillmentStore } = assertMaterialRequestAcknowledgementReady({
+        materialRequest,
+        production,
+        sourceProductionId,
+        scope,
+        allowedStatuses: new Set([
+          'pending_procurement_ack',
+          ...MATERIAL_REQUEST_ACK_WORKFLOW_ACTIVE_STATUSES
+        ])
+      });
+      const existingJob = serializeMaterialRequestAcknowledgementJob(materialRequest);
+      const materialRequestStatus = String(materialRequest.status || '').toLowerCase();
       if (
-        materialRequest.source_production_id
-        && (!production || (
-          normalizeProductionStatus(production.status) !== 'pending_procurement'
-          && !isLegacyApprovedWithoutArea
-        ))
+        MATERIAL_REQUEST_ACK_WORKFLOW_ACTIVE_STATUSES.has(materialRequestStatus)
+        && existingJob
+        && MATERIAL_REQUEST_ACK_JOB_ACTIVE_STATUSES.has(existingJob.status)
       ) {
-        const error = new Error('The linked production request is not awaiting Store / Procurement action');
-        error.status = 409;
-        throw error;
+        return {
+          materialRequest,
+          production,
+          job: existingJob,
+          queued: true,
+          alreadyQueued: true
+        };
       }
-      let fulfillmentStore = null;
-      if (production) {
-        fulfillmentStore = resolveProductionFulfillmentStore(production, scope.sites);
-        if (
-          production.linked_material_request_id
-          && String(production.linked_material_request_id) !== String(materialRequest.id)
-        ) {
-          const error = new Error('MR to Store record does not match the Production linked request');
-          error.status = 409;
-          throw error;
-        }
-        if (String(materialRequest.site_id || '') !== String(fulfillmentStore.id)) {
-          const error = new Error('MR to Store record is not routed to the Production fulfillment Store');
-          error.status = 409;
-          throw error;
-        }
-        if (
-          materialRequest.requesting_site_id
-          && String(materialRequest.requesting_site_id) !== String(production.site_id)
-        ) {
-          const error = new Error('MR to Store Project does not match the linked Production Project');
-          error.status = 409;
-          throw error;
-        }
-        if (
-          materialRequest.fulfillment_store_id
-          && String(materialRequest.fulfillment_store_id) !== String(fulfillmentStore.id)
-        ) {
-          const error = new Error('MR to Store fulfillment Store does not match the linked Production');
-          error.status = 409;
-          throw error;
-        }
-      }
-      const acknowledgedAt = new Date().toISOString();
-      const acknowledged = await updateDocument('MaterialRequest', request.params.id, {
-        status: 'acknowledged',
-        acknowledged_by: request.user.email,
-        acknowledged_by_name: request.user.full_name || request.user.email,
-        acknowledged_at: acknowledgedAt,
-        procurement_notes: request.body?.notes || materialRequest.procurement_notes || null
+      const jobId = randomUUID();
+      const now = new Date().toISOString();
+      const queuedMaterialRequest = await updateDocument('MaterialRequest', request.params.id, {
+        status: 'acknowledgement_queued',
+        procurement_notes: requestedNotes || materialRequest.procurement_notes || null,
+        ...materialRequestAcknowledgementJobPatch(jobId, 'queued', {
+          acknowledgement_job_progress: 5,
+          acknowledgement_job_message: 'MR to Store acknowledgement queued. Stock reservation will complete in the background.',
+          acknowledgement_job_requested_at: now,
+          acknowledgement_job_started_at: null,
+          acknowledgement_job_completed_at: null,
+          acknowledgement_job_error: '',
+          acknowledgement_job_requested_by: request.user.email || request.user.id || '',
+          acknowledgement_job_requested_by_name: request.user.full_name || request.user.email || ''
+        })
       }, client);
       let productionRecord = null;
-      let inventoryMutated = false;
       if (production) {
-        const productionForReservation = {
-          ...production,
-          status: 'approved',
-          material_request_status: 'acknowledged',
-          linked_material_request_id: materialRequest.id,
-          linked_material_request_number: materialRequest.request_number || null,
-          fulfillment_store_id: fulfillmentStore.id,
-          fulfillment_store_name: fulfillmentStore.name || null
-        };
-        const commitmentResult = await reconcileProductionInventoryForWorkflow({
-          production: productionForReservation,
-          user: request.user,
-          executor: client,
-          fulfillmentStore,
-          operation: 'store_procurement_approval',
-          reason: String(request.body?.notes || '').trim()
-            || 'Yield-adjusted inventory reserved when Store / Procurement approved production.'
-        });
-        inventoryMutated = commitmentResult.mutated;
         productionRecord = await updateDocument('Production', production.id, {
-          ...commitmentResult.production_patch,
-          status: 'approved',
-          material_request_status: 'acknowledged',
-          procurement_approved_by: request.user.email,
-          procurement_approved_by_name: request.user.full_name || request.user.email,
-          procurement_approved_at: acknowledgedAt,
-          area_approval_status: null,
-          area_approved_by: null,
-          area_approved_by_name: null,
-          area_approved_at: null,
+          material_request_status: 'acknowledgement_queued',
           linked_material_request_id: materialRequest.id,
           linked_material_request_number: materialRequest.request_number || null,
           fulfillment_store_id: fulfillmentStore.id,
           fulfillment_store_name: fulfillmentStore.name || null,
-          last_review_action: 'procurement_acknowledged',
-          approval_history: appendProductionApprovalHistory(production, {
-            action: 'procurement_acknowledged',
-            stage: 'store_procurement',
-            from_status: normalizeProductionStatus(production.status),
-            to_status: 'approved',
-            actor_id: request.user.id || null,
-            actor_email: request.user.email || null,
-            actor_name: request.user.full_name || request.user.email || null,
-            reason: String(request.body?.notes || '').trim() || null,
-            note: String(request.body?.notes || '').trim() || null,
-            timestamp: acknowledgedAt
-          })
+          last_review_action: 'procurement_acknowledgement_queued'
         }, client);
       }
-      return { acknowledged, production: productionRecord, inventoryMutated };
+      return {
+        materialRequest: queuedMaterialRequest,
+        production: productionRecord,
+        job: serializeMaterialRequestAcknowledgementJob(queuedMaterialRequest),
+        queued: true,
+        alreadyQueued: false
+      };
+    });
+    enqueueMaterialRequestAcknowledgementWork({
+      materialRequestId: queued.materialRequest.id,
+      jobId: queued.job?.id || queued.materialRequest.acknowledgement_job_id,
+      actor: request.user,
+      notes: requestedNotes
     });
     recordChanged('MaterialRequest');
     recordChanged('Production');
-    if (updated.inventoryMutated) {
-      recordChanged('Inventory');
-      recordChanged('InventoryLot');
-      recordChanged('InventoryTransaction');
+    if (!queued.alreadyQueued) {
+      await auditAction({
+        user: request.user,
+        action: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGEMENT_QUEUED',
+        entity: 'MaterialRequest',
+        entityId: queued.materialRequest.id,
+        details: {
+          saved_record: queued.materialRequest,
+          production_record: queued.production,
+          notes: requestedNotes || null,
+          background_job_id: queued.job?.id || null
+        }
+      });
     }
-    await auditAction({
-      user: request.user,
-      action: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGED',
-      entity: 'MaterialRequest',
-      entityId: updated.acknowledged.id,
-      details: {
-        saved_record: updated.acknowledged,
-        production_record: updated.production,
-        notes: request.body?.notes || null
-      }
+    response.status(202).json({
+      ...queued.materialRequest,
+      queued: true,
+      acknowledgement_job: queued.job,
+      job: queued.job,
+      message: queued.alreadyQueued
+        ? 'MR to Store acknowledgement is already running in the background.'
+        : 'MR to Store acknowledgement queued. Stock reservation will complete in the background.'
     });
-    response.json(updated.acknowledged);
   } catch (error) {
     next(error);
   }

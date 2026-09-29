@@ -173,6 +173,8 @@ const cases = [
       const areaApprovalStart = serverSource.indexOf("app.post('/api/productions/:id/area-approve'");
       const activationBlock = serverSource.slice(activationStart, acknowledgeStart);
       const acknowledgementBlock = serverSource.slice(acknowledgeStart, areaApprovalStart);
+      const acknowledgementValidatorStart = serverSource.indexOf('function assertMaterialRequestAcknowledgementReady');
+      const acknowledgementValidatorBlock = serverSource.slice(acknowledgementValidatorStart, acknowledgeStart);
 
       assert.ok(activationStart >= 0 && acknowledgeStart > activationStart);
       assert.match(activationBlock, /withTransaction\(async \(client\)/);
@@ -188,7 +190,11 @@ const cases = [
       const materialRequestLock = acknowledgementBlock.indexOf("findDocument('MaterialRequest', request.params.id, client, true)");
       assert.ok(productionLock >= 0, 'acknowledgement should lock the linked Production');
       assert.ok(materialRequestLock > productionLock, 'acknowledgement must lock Production before MaterialRequest');
-      assert.match(acknowledgementBlock, /source changed while it was being reviewed/);
+      assert.match(acknowledgementValidatorBlock, /source changed while it was being reviewed/);
+      assert.match(acknowledgementBlock, /PRODUCTION_PROCUREMENT_ACKNOWLEDGEMENT_QUEUED/);
+      assert.match(acknowledgementBlock, /enqueueMaterialRequestAcknowledgementWork/);
+      assert.match(acknowledgementBlock, /response\.status\(202\)\.json/);
+      assert.doesNotMatch(acknowledgementBlock, /reconcileProductionInventoryForWorkflow\(\{/);
     }
   },
   {
