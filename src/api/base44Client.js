@@ -971,8 +971,11 @@ export const base44 = {
     listLots(filters = {}) {
       return apiRequest(`/api/inventory/lots${buildQueryString(filters)}`);
     },
-    getStockOnHand() {
-      return apiRequest('/api/inventory/reports/stock-on-hand');
+    getStockOnHand(filters = {}) {
+      return apiRequest(`/api/inventory/reports/stock-on-hand${buildQueryString({
+        site_id: filters.site_id ?? filters.siteId,
+        location_id: filters.location_id ?? filters.locationId
+      })}`);
     },
     getMovements(filters = {}) {
       return apiRequest(`/api/inventory/reports/movements${buildQueryString(filters)}`);

@@ -5724,13 +5724,16 @@ async function repairProductionReversalBalance(productionId, actor, options = {}
   );
 }
 
-async function getStockOnHandReport({ location = null } = {}) {
+async function getStockOnHandReport({ location = null, siteId = null } = {}) {
+  const filters = {};
+  if (siteId) filters.site_id = siteId;
   const inventoryPromise = (async () => {
     const records = [];
     const pageSize = 200;
     let offset = 0;
     while (true) {
       const page = await listDocumentsPage('Inventory', {
+        filters,
         sort: 'ingredient_name',
         limit: pageSize,
         offset,
@@ -5744,7 +5747,7 @@ async function getStockOnHandReport({ location = null } = {}) {
   })();
   const [inventory, lots] = await Promise.all([
     inventoryPromise,
-    listInventoryLots({ includeEmpty: true, location })
+    listInventoryLots({ siteId, includeEmpty: true, location })
   ]);
   const lotsByInventoryKey = new Map();
   for (const lot of lots) {

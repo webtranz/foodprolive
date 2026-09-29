@@ -10816,13 +10816,14 @@ app.get('/api/inventory/lots', requireAuth, requireAnyPermission(['view_inventor
 app.get('/api/inventory/reports/stock-on-hand', requireAuth, requireAnyPermission(['view_inventory', 'manage_inventory']), async (request, response, next) => {
   try {
     const { scope, location } = await getEntityLocationContext(request.user, 'Inventory');
+    const siteId = String(request.query.site_id || request.query.location_id || '').trim();
     const body = await withReadCache({
       bucket: 'stock-on-hand',
       entities: ['Inventory', 'InventoryLot', 'InventoryTransaction'],
       ttlMs: reportCacheTtlMs,
-      keyParts: [userReadCacheScopeKey(request.user, scope)],
+      keyParts: [userReadCacheScopeKey(request.user, scope), siteId || 'all'],
       loader: async () => {
-        const report = await getStockOnHandReport({ location });
+        const report = await getStockOnHandReport({ location, siteId: siteId || null });
         return scope ? filterRowsByAccessibleSites(report, scope) : report;
       }
     });

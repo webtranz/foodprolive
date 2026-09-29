@@ -119,7 +119,7 @@ assert.match(foodWastePage, /predicate: \(query\)/);
 assert.match(foodWastePage, /'mealServiceAvailability', 'mealServiceHistory'/);
 assert.match(foodWastePage, /invalidateCurrentWasteScope\(\{ inventory: true, mealService: true \}\)/);
 assert.match(productionPage, /invalidateCurrentProductionScope/);
-assert.match(productionPage, /foodWasteForProduction', selectedDate/);
+assert.match(productionPage, /foodWasteForProduction', productionLoadDate/);
 assert.match(productionPage, /productionCompletionJob/);
 assert.match(productionPage, /refetchInterval: shouldPollCompletionJob \? 1500 : false/);
 assert.match(productionPage, /completionProduction\?\.id[\s\S]*isActiveProductionCompletionJob\(completionJobForPolling\)/);

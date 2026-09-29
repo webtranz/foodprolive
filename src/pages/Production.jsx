@@ -1533,6 +1533,7 @@ export default function Production() {
   const [formOpen, setFormOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState('all');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [productionLoadDate, setProductionLoadDate] = useState(selectedDate);
   const [formData, setFormData] = useState({
     site_id: '',
     production_date: format(new Date(), 'yyyy-MM-dd'),
@@ -1587,6 +1588,13 @@ export default function Production() {
   const [issueAdminReissueEnabled, setIssueAdminReissueEnabled] = useState(false);
 
   const queryClient = useQueryClient();
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setProductionLoadDate(selectedDate);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [selectedDate]);
+
   const invalidateCurrentProductionScope = useCallback(({
     approvalQueue = false,
     inventory = false,
@@ -1594,9 +1602,9 @@ export default function Production() {
     output = false
   } = {}) => {
     const activeExact = { exact: true, refetchType: 'active' };
-    queryClient.invalidateQueries({ queryKey: ['productions', selectedDate], ...activeExact });
-    queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights', selectedDate], ...activeExact });
-    queryClient.invalidateQueries({ queryKey: ['foodWasteForProduction', selectedDate], ...activeExact });
+    queryClient.invalidateQueries({ queryKey: ['productions', productionLoadDate], ...activeExact });
+    queryClient.invalidateQueries({ queryKey: ['productionHistoryForWasteInsights', productionLoadDate], ...activeExact });
+    queryClient.invalidateQueries({ queryKey: ['foodWasteForProduction', productionLoadDate], ...activeExact });
     if (approvalQueue) {
       queryClient.invalidateQueries({ queryKey: ['productionAreaApprovalQueue'], ...activeExact });
     }
@@ -1604,7 +1612,7 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'], ...activeExact });
     }
     if (inventory) {
-      queryClient.invalidateQueries({ queryKey: ['inventory'], ...activeExact });
+      queryClient.invalidateQueries({ queryKey: ['inventory'], refetchType: 'active' });
       queryClient.invalidateQueries({ queryKey: ['inventoryLots'], ...activeExact });
       queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'], ...activeExact });
       queryClient.invalidateQueries({ queryKey: ['inventoryMovements'], ...activeExact });
@@ -1613,7 +1621,7 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['productionConsumptionReports'], ...activeExact });
       queryClient.invalidateQueries({ queryKey: ['producedItemBatches'], ...activeExact });
     }
-  }, [queryClient, selectedDate]);
+  }, [productionLoadDate, queryClient]);
 
   const resetIssueDialogState = () => {
     setIssueSource(null);
@@ -1646,19 +1654,19 @@ export default function Production() {
   });
 
   const { data: productions = [], isLoading, error: productionsError } = useQuery({
-    queryKey: ['productions', selectedDate],
+    queryKey: ['productions', productionLoadDate],
     queryFn: () => base44.entities.Production.filter({
-      production_date: selectedDate
+      production_date: productionLoadDate
     }, '-production_date'),
-    enabled: Boolean(selectedDate),
+    enabled: Boolean(productionLoadDate),
     refetchInterval: 300000,
     ...OPERATIONAL_QUERY_OPTIONS
   });
 
   const { data: productionHistory = [] } = useQuery({
-    queryKey: ['productionHistoryForWasteInsights', selectedDate],
-    queryFn: () => base44.entities.Production.filter({ production_date: selectedDate }, '-production_date', 500),
-    enabled: Boolean(selectedDate),
+    queryKey: ['productionHistoryForWasteInsights', productionLoadDate],
+    queryFn: () => base44.entities.Production.filter({ production_date: productionLoadDate }, '-production_date', 500),
+    enabled: Boolean(productionLoadDate),
     ...OPERATIONAL_QUERY_OPTIONS
   });
 
@@ -1670,13 +1678,13 @@ export default function Production() {
   });
 
   const { data: foodWaste = [] } = useQuery({
-    queryKey: ['foodWasteForProduction', selectedDate],
+    queryKey: ['foodWasteForProduction', productionLoadDate],
     queryFn: () => base44.foodWaste.list({
-      start_date: selectedDate,
-      end_date: selectedDate,
+      start_date: productionLoadDate,
+      end_date: productionLoadDate,
       limit: 1000
     }),
-    enabled: can('manage_waste') && Boolean(selectedDate),
+    enabled: can('manage_waste') && Boolean(productionLoadDate),
     ...OPERATIONAL_QUERY_OPTIONS
   });
 
@@ -1765,10 +1773,15 @@ export default function Production() {
     }
   });
 
+  const productionInventorySiteFilter = selectedSite && selectedSite !== 'all' ? selectedSite : '';
   const { data: inventory = [], error: inventoryError, isFetching: inventoryLoading } = useQuery({
-    queryKey: ['inventory'],
-    queryFn: () => base44.inventory.getStockOnHand(),
-    refetchInterval: 300000
+    queryKey: ['inventory', 'stock-on-hand', productionInventorySiteFilter || 'all'],
+    queryFn: () => base44.inventory.getStockOnHand(
+      productionInventorySiteFilter ? { site_id: productionInventorySiteFilter } : {}
+    ),
+    refetchInterval: 300000,
+    retry: 1,
+    ...OPERATIONAL_QUERY_OPTIONS
   });
 
   const {
@@ -1844,7 +1857,7 @@ export default function Production() {
       queryClient.invalidateQueries({ queryKey: ['materialRequestsWorkflow'], exact: true, refetchType: 'active' });
     });
     const unsubscribeInventory = base44.entities.Inventory.subscribe(() => {
-      queryClient.invalidateQueries({ queryKey: ['inventory'], exact: true, refetchType: 'active' });
+      queryClient.invalidateQueries({ queryKey: ['inventory'], refetchType: 'active' });
     });
     return () => {
       unsubscribeProduction();
@@ -2306,7 +2319,7 @@ export default function Production() {
     const matchesSite = selectedSite === 'all'
       || p.site_id === selectedSite
       || p.fulfillment_store_id === selectedSite;
-    const matchesDate = p.production_date === selectedDate;
+    const matchesDate = p.production_date === productionLoadDate;
     return matchesSite && matchesDate;
   });
 
@@ -3684,8 +3697,10 @@ export default function Production() {
     );
   };
 
+  const isProductionDateSettling = selectedDate !== productionLoadDate;
+  const isProductionPlanLoading = isLoading || isProductionDateSettling;
   const loadError = actionError
-    || productionsError?.message
+    || (isProductionDateSettling ? '' : productionsError?.message)
     || sitesError?.message
     || recipesError?.message
     || ingredientsError?.message
@@ -3958,7 +3973,7 @@ export default function Production() {
         onDateChange={setSelectedDate}
         onSiteChange={setSelectedSite}
         materialRequestMap={materialRequestMap}
-        isLoading={isLoading}
+        isLoading={isProductionPlanLoading}
         errorMessage={loadError}
         canCreate={can('create_production_request')}
         onNewProduction={() => {
