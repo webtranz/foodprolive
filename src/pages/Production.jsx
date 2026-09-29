@@ -227,6 +227,41 @@ function sumReportLineCosts(lines = []) {
   return Number(costs.reduce((sum, value) => sum + toNumber(value, 0), 0).toFixed(2));
 }
 
+function hasPostedReportQuantity(line = {}) {
+  return firstPositivePresent(
+    line.issued_quantity,
+    line.stock_issued_quantity,
+    line.consumed_quantity,
+    line.actual_quantity,
+    line.actual_requested_quantity,
+    line.accounting_quantity,
+    line.movement_quantity,
+    line.raw_weight_grams,
+    line.yielded_weight_grams
+  ) !== null;
+}
+
+function sumPostedReportLineCosts(lines = []) {
+  return sumReportLineCosts(arrayValue(lines).filter(hasPostedReportQuantity));
+}
+
+function strictPostedReportLineCost(line = {}) {
+  return firstPositivePresent(
+    line.posted_cost,
+    line.accounting_total_cost,
+    sumReportLineLayerCost(line)
+  ) ?? 0;
+}
+
+function sumStrictPostedReportLineCosts(lines = []) {
+  const costs = arrayValue(lines)
+    .filter(hasPostedReportQuantity)
+    .map((line) => strictPostedReportLineCost(line))
+    .filter((value) => positiveOptionalNumber(value) !== null);
+  if (costs.length === 0) return null;
+  return Number(costs.reduce((sum, value) => sum + toNumber(value, 0), 0).toFixed(2));
+}
+
 function sumManifestItemWeight(item = {}, field) {
   const direct = positiveOptionalNumber(item[field]);
   if (direct !== null) return direct;
@@ -272,8 +307,18 @@ function manifestItemCost(item = {}) {
   return sumReportLineCosts(item.ingredients_used);
 }
 
+function manifestItemDirectPostedCost(item = {}) {
+  const direct = firstPositivePresent(
+    item.posted_cost,
+    item.accounting_total_cost,
+    item.consumed_cost
+  );
+  if (direct !== null) return direct;
+  return sumStrictPostedReportLineCosts(item.ingredients_used);
+}
+
 function manifestItemPostedCost(item = {}, reportLines = []) {
-  return sumReportLineCosts(reportLines) ?? manifestItemCost(item);
+  return sumPostedReportLineCosts(reportLines) ?? manifestItemDirectPostedCost(item);
 }
 
 function sumManifestItemsCost(items = []) {
@@ -356,17 +401,19 @@ function getManifestItemReportLines(item = {}, lines = []) {
     item.ingredient_name,
     item.original_recipe_name
   ].map(normalizedReportText).filter(Boolean));
+  const hasRecipeIdentity = Boolean(item.recipe_id || item.source_recipe_id || item.recipe_code);
   const ingredientId = String(item.ingredient_id || item.source_ingredient_id || '').trim();
   const itemCode = normalizedReportText(item.item_code || item.recipe_code || item.ingredient_code);
+  const allowIngredientIdentityMatch = !hasRecipeIdentity && ingredientId;
   return arrayValue(lines).filter((line) => {
     const sourceNames = arrayValue(line?.source_recipe_names)
       .map(normalizedReportText)
       .filter(Boolean);
-    if (sourceNames.length === 1 && itemNames.has(sourceNames[0])) return true;
+    if (sourceNames.some((sourceName) => itemNames.has(sourceName))) return true;
     const usedIn = normalizedReportText(line.used_in || line.recipe_name || line.production_name);
     if (usedIn && itemNames.has(usedIn)) return true;
-    if (ingredientId && String(line.ingredient_id || line.source_ingredient_id || '').trim() === ingredientId) return true;
-    if (itemCode && normalizedReportText(line.item_code || line.recipe_code || line.ingredient_code) === itemCode) return true;
+    if (allowIngredientIdentityMatch && String(line.ingredient_id || line.source_ingredient_id || '').trim() === ingredientId) return true;
+    if (allowIngredientIdentityMatch && itemCode && normalizedReportText(line.item_code || line.recipe_code || line.ingredient_code) === itemCode) return true;
     return false;
   });
 }
@@ -403,11 +450,15 @@ function formatManifestRawIssue(item = {}, reportLines = []) {
   if (fixedQuantity !== null && fixedUnit) {
     return formatReportLineQuantityTotal(
       reportLines,
-      ['issued_quantity', 'actual_requested_quantity', 'planned_quantity', 'recipe_quantity'],
-      ['inventory_unit', 'unit', 'recipe_unit']
+      ['issued_quantity', 'stock_issued_quantity', 'consumed_quantity', 'actual_quantity', 'actual_requested_quantity'],
+      ['inventory_unit', 'unit', 'actual_unit', 'quantity_unit']
     ) || formatReportQuantity(fixedQuantity, fixedUnit);
   }
-  return formatReportWeightFromGrams(getManifestDisplayWeight(item, 'raw_weight_grams', reportLines));
+  return formatReportLineQuantityTotal(
+    reportLines,
+    ['issued_quantity', 'stock_issued_quantity', 'consumed_quantity', 'actual_quantity', 'actual_requested_quantity'],
+    ['inventory_unit', 'unit', 'actual_unit', 'quantity_unit']
+  ) || formatReportWeightFromGrams(getManifestDisplayWeight(item, 'raw_weight_grams', reportLines));
 }
 
 function formatManifestYieldedOutput(item = {}, reportLines = []) {
@@ -3439,7 +3490,11 @@ export default function Production() {
       const report = await base44.entities.ProductionConsumptionReport.get(reportId);
       setSelectedConsumptionReport(mergeConsumptionReportWithProduction(report, production));
     } catch (error) {
-      setActionError(error.message || 'Unable to load the production consumption report.');
+      const rawMessage = String(error?.message || '').trim();
+      const friendlyMessage = /request failed|failed to fetch|network/i.test(rawMessage)
+        ? 'Unable to load the production consumption report right now. Please refresh and try again; if it repeats, the saved PCR may still be unavailable from the server.'
+        : rawMessage || 'Unable to load the production consumption report.';
+      setActionError(friendlyMessage);
     } finally {
       setReportLoadingId('');
     }
