@@ -188,8 +188,8 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(reportMergeBlock, /mergeManifestItems\(reportMenuItems,\s*productionMenuItems\)/);
   assert.match(reportMergeBlock, /sumManifestItemsWeight\(menuIssueItems,\s*'raw_weight_grams'\)/);
   assert.match(reportMergeBlock, /sumManifestItemsWeight\(menuIssueItems,\s*'yielded_weight_grams'\)/);
-  assert.match(reportMergeBlock, /total_consumption_cost:[\s\S]*sumReportLineCosts\(ingredientLines\)/);
   assert.match(reportMergeBlock, /total_consumption_cost:[\s\S]*sumManifestItemsCost\(menuIssueItems\)/);
+  assert.match(reportMergeBlock, /sumManifestItemsCost\(menuIssueItems\)[\s\S]*sumReportLineCosts\(ingredientLines\)/);
 
   const ingredientSectionStart = productionPage.indexOf('>Ingredient Consumption</h3>');
   const ingredientSectionEnd = productionPage.indexOf('>Inventory Lots Consumed</h3>', ingredientSectionStart);
@@ -221,15 +221,17 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(productionPage, /sourceNames\.some\(\(sourceName\) => itemNames\.has\(sourceName\)\)/);
   assert.match(productionPage, /allowIngredientIdentityMatch/);
   assert.match(productionPage, /Unable to load the production consumption report right now/);
-  assert.match(productionPage, />Booked Production<\/TableHead>/);
+  assert.match(productionPage, />Booked<\/TableHead>/);
   assert.match(productionPage, />Line Cost<\/TableHead>/);
-  assert.match(productionPage, />Raw \/ Issued Qty<\/TableHead>/);
-  assert.match(productionPage, />Yielded \/ Output Qty<\/TableHead>/);
+  assert.match(productionPage, />Raw \/ Issued<\/TableHead>/);
+  assert.match(productionPage, />Yielded \/ Output<\/TableHead>/);
   assert.match(ingredientSection, /formatCurrency\(reportLineCost\(line\)\)/);
 
   const dbSource = source('server/db.js');
+  assert.match(dbSource, /function sumProductionReportMenuItemCosts/);
   assert.match(dbSource, /item\?\.production_time_cost/);
   assert.match(dbSource, /item\?\.planned_total_cost/);
+  assert.match(dbSource, /totalConsumptionCost/);
 
   const lotSection = productionPage.slice(ingredientSectionEnd);
   assertItemCodeBeforeItemName(lotSection, 'inventory-lot consumption');

@@ -523,6 +523,14 @@ function resolveProductionTimeManifestCost(item = {}) {
   );
 }
 
+function sumProductionTimeManifestCosts(items = []) {
+  const costs = (Array.isArray(items) ? items : [])
+    .map((item) => resolveProductionTimeManifestCost(item))
+    .filter((value) => value !== null);
+  if (costs.length === 0) return null;
+  return Number(costs.reduce((sum, value) => sum + toNumber(value, 0), 0).toFixed(2));
+}
+
 function enrichCompletedMenuIssueItems({
   production = {},
   completionProduction = {},
@@ -3639,6 +3647,8 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     ingredientCatalog,
     recipeCatalog
   });
+  const manifestTotalConsumptionCost = sumProductionTimeManifestCosts(menuIssueItems);
+  const completionTotalConsumptionCost = manifestTotalConsumptionCost ?? Number(totalProductionCost.toFixed(2));
   const manifestRawWeightGrams = sumPositiveLineWeight(menuIssueItems, 'raw_weight_grams');
   const manifestYieldedWeightGrams = sumPositiveLineWeight(menuIssueItems, 'yielded_weight_grams');
   const reportRawWeightGrams = positiveNumber(totalRawConsumptionWeightGrams)
@@ -3686,7 +3696,7 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     total_yielded_weight_grams: roundOptionalQuantity(reportYieldedWeightGrams, 3),
     portion_size_grams: completionProduction.portion_size_grams,
     expected_yield_servings: completionProduction.expected_yield_servings,
-    total_consumption_cost: Number(totalProductionCost.toFixed(2)),
+    total_consumption_cost: completionTotalConsumptionCost,
     total_shortage_cost: Number(totalShortageCost.toFixed(2)),
     shortage_line_count: shortageLines.length,
     shortage_totals_by_unit: shortageTotalsByUnit,
@@ -3741,9 +3751,9 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     completed_date: completedAt,
     completed_by: actor.email,
     completed_by_name: actor.full_name || actor.email,
-    ingredient_cost_total: Number(totalProductionCost.toFixed(2)),
-    production_cost_total: Number(totalProductionCost.toFixed(2)),
-    cost_per_serving: Number((totalProductionCost / servings).toFixed(2)),
+    ingredient_cost_total: completionTotalConsumptionCost,
+    production_cost_total: completionTotalConsumptionCost,
+    cost_per_serving: Number((completionTotalConsumptionCost / servings).toFixed(2)),
     total_shortage_quantity: Number(totalShortageQuantity.toFixed(3)),
     shortage_totals_by_unit: shortageTotalsByUnit,
     completion_lines: consumptionSummary,

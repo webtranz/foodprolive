@@ -5538,6 +5538,25 @@ BEGIN
     FROM menu_rows
     ON CONFLICT (report_menu_item_id) DO NOTHING;
 
+    WITH manifest_totals AS (
+      SELECT
+        item.report_id,
+        SUM(
+          COALESCE(
+            CASE WHEN item.actual_cost > 0 THEN item.actual_cost END,
+            CASE WHEN item.estimated_cost > 0 THEN item.estimated_cost END,
+            0
+          )
+        ) AS total_cost
+      FROM production_consumption_report_menu_items item
+      GROUP BY item.report_id
+    )
+    UPDATE production_consumption_reports report
+       SET total_consumption_cost = manifest_totals.total_cost
+      FROM manifest_totals
+     WHERE report.report_id = manifest_totals.report_id
+       AND manifest_totals.total_cost > 0;
+
     WITH unit_rows AS (
       SELECT report.report_id, totals.key AS unit, totals.value AS quantity
       FROM production_consumption_reports report

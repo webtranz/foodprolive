@@ -1558,9 +1558,32 @@ function rowToProduction(row = {}) {
   });
 }
 
+function productionReportMenuItemCost(item = {}) {
+  return firstPositiveNumber([
+    item.actual_cost,
+    item.production_time_cost,
+    item.posted_cost,
+    item.consumed_cost,
+    item.accounting_total_cost,
+    item.total_cost,
+    item.estimated_cost,
+    item.estimated_batch_cost,
+    item.planned_total_cost
+  ]);
+}
+
+function sumProductionReportMenuItemCosts(items = []) {
+  const costs = (Array.isArray(items) ? items : [])
+    .map((item) => productionReportMenuItemCost(item))
+    .filter((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+  if (!costs.length) return 0;
+  return Number(costs.reduce((sum, value) => sum + Number(value), 0).toFixed(2));
+}
+
 function rowToProductionConsumptionReport(row = {}) {
   const ingredientLines = rowJsonArray(row.ingredient_lines);
   const menuIssueItems = rowJsonArray(row.menu_issue_items);
+  const manifestTotalConsumptionCost = sumProductionReportMenuItemCosts(menuIssueItems);
   const partialReversalHistory = rowJsonArray(row.partial_reversal_history);
   return hydrateDerivedFields('ProductionConsumptionReport', {
     id: row.report_id,
@@ -1604,7 +1627,7 @@ function rowToProductionConsumptionReport(row = {}) {
     total_yielded_weight_grams: toNumberOrNull(row.total_yielded_weight_grams),
     portion_size_grams: toNumberOrNull(row.portion_size_grams),
     expected_yield_servings: toNumberOrNull(row.expected_yield_servings),
-    total_consumption_cost: Number(row.total_consumption_cost || 0),
+    total_consumption_cost: manifestTotalConsumptionCost || Number(row.total_consumption_cost || 0),
     total_shortage_cost: Number(row.total_shortage_cost || 0),
     shortage_line_count: Number(row.shortage_line_count || 0),
     shortage_totals_by_unit: rowJsonObject(row.shortage_totals_by_unit),
@@ -5293,6 +5316,7 @@ function normalizedSelectForEntity(entity) {
                          'estimated_cost', item.estimated_cost,
                          'estimated_batch_cost', item.estimated_cost,
                          'actual_cost', item.actual_cost,
+                         'production_time_cost', item.actual_cost,
                          'status', item.status,
                          'source_name', item.source_name
                        )
@@ -9059,6 +9083,12 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'ProductionConsumptionReport') {
+    const manifestTotalConsumptionCost = sumProductionReportMenuItemCosts(record.menu_issue_items);
+    const totalConsumptionCost = manifestTotalConsumptionCost || firstPositiveNumber([
+      record.total_consumption_cost,
+      record.production_cost_total,
+      record.ingredient_cost_total
+    ]);
     await query(
       `INSERT INTO production_consumption_reports (
         report_id, report_number, report_name, production_id, warehouse_id, warehouse_name,
@@ -9165,7 +9195,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
         toNumberOrNull(record.total_yielded_weight_grams),
         toNumberOrNull(record.portion_size_grams),
         toNumberOrNull(record.expected_yield_servings),
-        toNumberOrZero(record.total_consumption_cost),
+        totalConsumptionCost,
         toNumberOrZero(record.total_shortage_cost),
         toNumberOrZero(record.shortage_line_count),
         toNumberOrZero(record.ingredient_line_count ?? (Array.isArray(record.ingredient_lines) ? record.ingredient_lines.length : 0)),

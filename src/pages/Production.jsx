@@ -726,12 +726,12 @@ function mergeConsumptionReportWithProduction(report = {}, production = {}) {
       production.expected_yield_servings
     ) ?? null,
     total_consumption_cost: firstPositivePresent(
+      sumManifestItemsCost(menuIssueItems),
       report.total_consumption_cost,
       production.total_consumption_cost,
       production.production_cost_total,
       production.ingredient_cost_total,
-      sumReportLineCosts(ingredientLines),
-      sumManifestItemsCost(menuIssueItems)
+      sumReportLineCosts(ingredientLines)
     ) ?? 0,
     output_calculation_source: report.output_calculation_source || production.output_calculation_source || null,
     quantity_basis: report.quantity_basis || production.quantity_basis || null,
@@ -3960,11 +3960,11 @@ export default function Production() {
     ?? sumReportWeights(reportIngredientLines, 'yielded_weight_grams')
     ?? sumManifestItemsWeight(reportManifestItems, 'yielded_weight_grams');
   const reportTotalConsumptionCost = firstPositivePresent(
+    sumManifestItemsCost(reportManifestItems),
     selectedConsumptionReport?.total_consumption_cost,
     selectedConsumptionReport?.production_cost_total,
     selectedConsumptionReport?.ingredient_cost_total,
-    sumReportLineCosts(reportIngredientLines),
-    sumManifestItemsCost(reportManifestItems)
+    sumReportLineCosts(reportIngredientLines)
   ) ?? 0;
   const partialReverseManifestItems = useMemo(
     () => getPartialReversalManifestItems(partialReverseProduction),
@@ -5751,15 +5751,15 @@ export default function Production() {
               ) : null}
               {reportManifestItems.length > 0 ? (
                 <div className="rounded-xl border border-slate-200">
-                  <Table className="min-w-[1120px]">
+                  <Table className="w-full table-fixed text-sm">
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="min-w-[260px]">Manifest Item</TableHead>
-                        <TableHead className="whitespace-nowrap">Booked Production</TableHead>
-                        <TableHead className="whitespace-nowrap">Line Cost</TableHead>
-                        <TableHead className="whitespace-nowrap">Snapshot Lines</TableHead>
-                        <TableHead className="whitespace-nowrap">Raw / Issued Qty</TableHead>
-                        <TableHead className="whitespace-nowrap">Yielded / Output Qty</TableHead>
+                        <TableHead className="w-[32%]">Manifest Item</TableHead>
+                        <TableHead className="w-[14%]">Booked</TableHead>
+                        <TableHead className="w-[12%]">Line Cost</TableHead>
+                        <TableHead className="w-[10%]">Lines</TableHead>
+                        <TableHead className="w-[16%]">Raw / Issued</TableHead>
+                        <TableHead className="w-[16%]">Yielded / Output</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -5771,12 +5771,12 @@ export default function Production() {
                           : matchedReportLines.length || '—';
                         return (
                           <TableRow key={item.key || `${item.recipe_id || 'item'}-${index}`}>
-                            <TableCell className="min-w-[260px] font-medium text-slate-900">{item.recipe_name || 'Planned item'}</TableCell>
-                            <TableCell className="whitespace-nowrap">{getManifestProductionQuantityLabel(item)}</TableCell>
+                            <TableCell className="break-words font-medium text-slate-900">{item.recipe_name || 'Planned item'}</TableCell>
+                            <TableCell className="break-words">{getManifestProductionQuantityLabel(item)}</TableCell>
                             <TableCell className="whitespace-nowrap">{postedCost === null ? '—' : formatCurrency(postedCost)}</TableCell>
                             <TableCell className="whitespace-nowrap">{snapshotLineCount}</TableCell>
-                            <TableCell className="whitespace-nowrap">{formatManifestRawIssue(item, matchedReportLines)}</TableCell>
-                            <TableCell className="whitespace-nowrap">{formatManifestYieldedOutput(item, matchedReportLines)}</TableCell>
+                            <TableCell className="break-words">{formatManifestRawIssue(item, matchedReportLines)}</TableCell>
+                            <TableCell className="break-words">{formatManifestYieldedOutput(item, matchedReportLines)}</TableCell>
                           </TableRow>
                         );
                       })}
