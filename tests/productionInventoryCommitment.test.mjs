@@ -436,30 +436,36 @@ test('approval reserves without a physical transaction and start consumes exactl
   assert.doesNotMatch(consumeBlock, /transaction_type: 'production_commitment'/);
 });
 
-test('server start transition reserves or validates first, then consumes in the same transaction', () => {
+test('server start transition queues stock consumption and completion outside the button request', () => {
   const serverSource = source('server/index.js');
   const schemaSource = source('server/sql/init.sql');
   const databaseSource = source('server/db.js');
-  assert.match(serverSource, /consumeProductionInventoryReservation,/);
   assert.match(serverSource, /queueProductionCompletionForRecord/);
   const startBlock = sourceBlock(
     serverSource,
     "normalizeProductionStatus(request.body?.status) === 'in_progress'",
     'let saved = await updateDocument(entity, request.params.id, transactionPayload, client);'
   );
-  const reconcileIndex = startBlock.indexOf('reconcileProductionInventoryForWorkflow({');
-  const consumeIndex = startBlock.indexOf('consumeProductionInventoryReservation({');
-  assert.ok(reconcileIndex >= 0, 'start must establish or validate a reservation');
-  assert.ok(consumeIndex > reconcileIndex, 'physical consumption must follow reservation validation');
-  assert.match(startBlock, /production: reservationReadyProduction/);
-  assert.match(startBlock, /consumptionResult\.inventory_mutated/);
-  assert.match(startBlock, /\.\.\.commitmentResult\.production_patch,[\s\S]*\.\.\.consumptionResult\.production_patch/);
+  assert.match(startBlock, /assertProductionStartPrerequisites\(lockedExisting, client, request\.user\)/);
+  assert.match(startBlock, /productionCompletionJobPatch\(startCompletionJobId, 'queued'/);
+  assert.match(startBlock, /Stock consumption and automatic completion have been queued/);
+  assert.doesNotMatch(startBlock, /reconcileProductionInventoryForWorkflow\(\{/);
+  assert.doesNotMatch(startBlock, /consumeProductionInventoryReservation\(\{/);
   assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS production_events[\s\S]*completion_job_status TEXT/);
   assert.match(schemaSource, /ALTER TABLE production_events ADD COLUMN IF NOT EXISTS completion_job_status TEXT/);
   assert.match(databaseSource, /completion_job_status: row\.completion_job_status/);
   assert.match(databaseSource, /\['completion_job_status', record\.completion_job_status/);
 
   const inventorySource = source('server/inventory.js');
+  const completionBlock = sourceBlock(
+    inventorySource,
+    'async function completeProductionWithExecutor(',
+    'async function completeProduction('
+  );
+  const consumeIndex = completionBlock.indexOf('consumeProductionInventoryReservation({');
+  const reconciliationIndex = completionBlock.indexOf("operation: 'completion_reconciliation'");
+  assert.ok(consumeIndex >= 0, 'completion job must own reserved stock consumption');
+  assert.ok(reconciliationIndex > consumeIndex, 'completion reconciliation must follow reserved stock consumption');
   assert.match(
     inventorySource,
     /isCurrentProductionReservation\(current\)[\s\S]*String\(current\.site_id\) !== String\(stockSite\.id\)[\s\S]*different fulfillment Store/

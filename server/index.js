@@ -69,7 +69,6 @@ import {
   canCancelProduction,
   hasAcknowledgedMaterialRequest,
   hasAreaProductionApproval,
-  hasStartableProductionInventory,
   hasAuthoritativeNoMaterialRequirement,
   normalizeProductionStatus,
   requiresAreaProductionApproval
@@ -138,7 +137,6 @@ import {
   partialReverseCompletedProduction,
   getProductionReversalBlockers,
   repairProductionReversalBalance,
-  consumeProductionInventoryReservation,
   reconcileProductionInventoryCommitment,
   releaseProductionInventoryCommitment,
   hasProductionInventoryCommitment,
@@ -1131,9 +1129,8 @@ function applyProductionWorkflowMetadata(user, payload, existing = null, workflo
 }
 
 async function assertProductionStartPrerequisites(production, executor = null, user = null) {
-  // Existing approved records may predate reservation support. The atomic
-  // start transaction repairs/reserves those records immediately before it
-  // consumes stock, while current records must already pass the shared gate.
+  // Starting production stays quick for the UI. The heavier stock consumption
+  // and finished-output posting are queued after this validation succeeds.
   if (!hasAreaProductionApproval(production) || !hasAcknowledgedMaterialRequest(production)) {
     const error = new Error('Production cannot start until Store / Procurement has acknowledged the MR to Store record and inventory is fully reserved.');
     error.status = 409;
@@ -5778,48 +5775,26 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
           && normalizeProductionStatus(lockedExisting.status) !== 'in_progress'
         ) {
           const fulfillmentStore = await assertProductionStartPrerequisites(lockedExisting, client, request.user);
-          const commitmentResult = await reconcileProductionInventoryForWorkflow({
-            production: lockedExisting,
-            user: request.user,
-            executor: client,
-            fulfillmentStore,
-            operation: hasProductionInventoryCommitment(lockedExisting)
-              ? 'start_validation'
-              : 'legacy_start_reservation',
-            reason: hasProductionInventoryCommitment(lockedExisting)
-              ? 'Validated Area Manager inventory reservation before production start.'
-              : 'Reserved inventory for a legacy approved production before start.'
-          });
-          const reservationReadyProduction = {
-            ...lockedExisting,
-            ...commitmentResult.production_patch,
-            fulfillment_store_id: fulfillmentStore.id,
-            fulfillment_store_name: fulfillmentStore.name || null
-          };
-          if (!hasStartableProductionInventory(reservationReadyProduction)) {
-            const error = new Error(
-              'Production cannot start until its yield-adjusted inventory requirement is fully reserved.'
-            );
-            error.status = 409;
-            throw error;
-          }
-          const consumptionResult = await consumeProductionInventoryReservation({
-            production: reservationReadyProduction,
-            actor: request.user,
-            reason: `Reserved inventory consumed when production started: ${lockedExisting.recipe_name || lockedExisting.id}`
-          }, client);
-          productionInventoryMutated = productionInventoryMutated
-            || commitmentResult.mutated
-            || consumptionResult.inventory_mutated;
+          const startCompletionJobId = randomUUID();
+          const startCompletionMessage = 'Production started. Stock consumption and automatic completion have been queued.';
           transactionPayload = {
             ...transactionPayload,
-            ...commitmentResult.production_patch,
-            ...consumptionResult.production_patch,
             fulfillment_store_id: fulfillmentStore.id,
-            fulfillment_store_name: fulfillmentStore.name || null
+            fulfillment_store_name: fulfillmentStore.name || null,
+            ...productionCompletionJobPatch(startCompletionJobId, 'queued', {
+              completion_job_progress: 5,
+              completion_job_message: startCompletionMessage,
+              completion_job_requested_at: new Date().toISOString(),
+              completion_job_started_at: null,
+              completion_job_completed_at: null,
+              completion_job_error: '',
+              completion_job_requested_by: request.user.email || request.user.id || '',
+              completion_job_requested_by_name: request.user.full_name || request.user.email || ''
+            })
           };
           autoCompleteStartedProduction = {
-            fulfillmentStoreId: fulfillmentStore.id
+            fulfillmentStoreId: fulfillmentStore.id,
+            jobId: startCompletionJobId
           };
         }
         let saved = await updateDocument(entity, request.params.id, transactionPayload, client);
@@ -5850,7 +5825,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
         request.user,
         autoCompleteStartedProduction.fulfillmentStoreId,
         {
-          message: 'Production started and automatic completion has been queued.'
+          message: 'Production started. Stock consumption and automatic completion have been queued.'
         }
       );
       updated = {
@@ -9735,7 +9710,7 @@ async function runProductionCompletionWork(work) {
   try {
     await updateProductionCompletionJob(productionId, productionCompletionJobPatch(jobId, 'processing', {
       completion_job_progress: 20,
-      completion_job_message: 'Reconciling approved ingredients and preparing finished output.',
+      completion_job_message: 'Consuming reserved stock and preparing finished output.',
       completion_job_started_at: new Date().toISOString(),
       completion_job_error: ''
     }));

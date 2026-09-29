@@ -1694,10 +1694,9 @@ export default function Production() {
         }
         return { mode: 'updated', records: [updated] };
       }
-      const created = [];
-      for (const group of mealGroups) {
-        created.push(await base44.entities.Production.create(buildMenuIssueSubmitData(group, status)));
-      }
+      const created = await Promise.all(
+        mealGroups.map((group) => base44.entities.Production.create(buildMenuIssueSubmitData(group, status)))
+      );
       return { mode: 'created', records: created };
     },
     onSuccess: (result) => {
@@ -2029,7 +2028,7 @@ export default function Production() {
         if (isActiveProductionCompletionJob(job)) {
           setCompletionProduction(result);
           invalidateCurrentProductionScope({ inventory: true, output: true });
-          setActionMessage(job.message || 'Production started; automatic completion is running.');
+          setActionMessage(job.message || 'Production started; stock consumption and automatic completion are running.');
           setActionError('');
           return;
         }
@@ -2038,7 +2037,7 @@ export default function Production() {
           return;
         }
         invalidateCurrentProductionScope({ inventory: true, output: true });
-        setActionMessage('Production started and completed automatically.');
+        setActionMessage('Production stock was consumed and production completed automatically.');
       } else {
         invalidateCurrentProductionScope();
       }
@@ -3548,7 +3547,7 @@ export default function Production() {
           title={!canStartApprovedProduction(production) ? startBlockReason : undefined}
           className="justify-center whitespace-normal text-xs leading-snug"
         >
-          {isStatusActionPending(production, 'in_progress') ? 'Starting, Consuming & Completing...' : startActionLabel}
+          {isStatusActionPending(production, 'in_progress') ? 'Queuing Production...' : startActionLabel}
         </Button>
       ) : null}
       {production.status === 'approved' && (can('adjust_approved_production') || can('approve_production')) ? (
