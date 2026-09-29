@@ -59,7 +59,7 @@ async function apiRequest(path, options = {}) {
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(payload.message || 'Request failed');
+    const error = new Error(extractApiErrorMessage(payload, 'Request failed'));
     error.status = response.status;
     error.data = payload;
     throw error;
@@ -85,12 +85,30 @@ async function apiBlobRequest(path, options = {}) {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    const error = new Error(payload.message || 'Download failed');
+    const error = new Error(extractApiErrorMessage(payload, 'Download failed'));
     error.status = response.status;
     error.data = payload;
     throw error;
   }
   return response.blob();
+}
+
+function extractApiErrorMessage(payload, fallback) {
+  if (typeof payload === 'string' && payload.trim()) return payload.trim();
+  if (!payload || typeof payload !== 'object') return fallback;
+
+  const details = payload.details;
+  const candidates = [
+    payload.message,
+    payload.error,
+    payload.detail,
+    typeof details === 'string' ? details : '',
+    details && typeof details === 'object' ? details.message : ''
+  ];
+
+  return candidates
+    .map((value) => String(value || '').trim())
+    .find(Boolean) || fallback;
 }
 
 const entityCacheKey = (entity) => `entity:${entity}`;
@@ -583,6 +601,12 @@ export const base44 = {
     }
   },
   productionWorkflow: {
+    issueMenuProduction(data = {}) {
+      return apiRequest('/api/productions/menu-issue', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
     start(id, data = {}) {
       return apiRequest(`/api/entities/Production/${id}`, {
         method: 'PATCH',

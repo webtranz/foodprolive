@@ -4367,7 +4367,7 @@ app.post('/api/menu-plans/repeat-cycle', requireAuth, requirePermission('manage_
         repeatPlan
       });
       scheduleMenuRepeatQueueDrain();
-      await auditAction({
+      queueAuditAction('menu repeat queued', {
         user: request.user,
         action: 'MENU_PLAN_REPEAT_QUEUED',
         entity: 'MenuPlan',
@@ -6081,6 +6081,381 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
   } catch (error) {
     next(error);
   }
+});
+
+const MENU_PRODUCTION_ISSUE_ACTIVE_STATUSES = new Set(['queued', 'processing']);
+const MENU_PRODUCTION_ISSUE_FINAL_STATUSES = new Set(['completed', 'failed']);
+const menuProductionIssueQueue = [];
+const menuProductionIssueJobs = new Map();
+const menuProductionIssueActiveKeys = new Map();
+let menuProductionIssueRunningCount = 0;
+const menuProductionIssueConcurrency = Math.max(
+  1,
+  Math.min(
+    6,
+    Number.parseInt(process.env.MENU_PRODUCTION_ISSUE_WORKERS || '2', 10) || 2
+  )
+);
+
+function queueAuditAction(label, payload) {
+  setImmediate(() => {
+    auditAction(payload).catch((error) => {
+      console.error(`Unable to audit ${label}`, error);
+    });
+  });
+}
+
+function normalizeMenuProductionIssueJobStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (MENU_PRODUCTION_ISSUE_ACTIVE_STATUSES.has(normalized)) return normalized;
+  if (MENU_PRODUCTION_ISSUE_FINAL_STATUSES.has(normalized)) return normalized;
+  return '';
+}
+
+function clampMenuProductionIssueProgress(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function serializeMenuProductionIssueJob(job = {}, overrides = {}) {
+  const status = normalizeMenuProductionIssueJobStatus(overrides.status ?? job.status) || 'queued';
+  const id = String(overrides.id ?? job.id ?? '').trim();
+  return {
+    id,
+    status,
+    progress: clampMenuProductionIssueProgress(
+      overrides.progress ?? job.progress,
+      status === 'completed' || status === 'failed' ? 100 : 0
+    ),
+    total: Number(overrides.total ?? job.total ?? 0) || 0,
+    created_count: Number(overrides.created_count ?? job.created_count ?? 0) || 0,
+    skipped_count: Number(overrides.skipped_count ?? job.skipped_count ?? 0) || 0,
+    failed_count: Number(overrides.failed_count ?? job.failed_count ?? 0) || 0,
+    message: String(overrides.message ?? job.message ?? '').trim(),
+    error: String(overrides.error ?? job.error ?? '').trim(),
+    requested_at: overrides.requested_at ?? job.requested_at ?? null,
+    started_at: overrides.started_at ?? job.started_at ?? null,
+    completed_at: overrides.completed_at ?? job.completed_at ?? null
+  };
+}
+
+function updateMenuProductionIssueJob(jobId, patch = {}) {
+  const existing = menuProductionIssueJobs.get(jobId) || { id: jobId };
+  const updated = {
+    ...existing,
+    ...patch,
+    id: jobId,
+    updated_at: new Date().toISOString()
+  };
+  menuProductionIssueJobs.set(jobId, updated);
+  return serializeMenuProductionIssueJob(updated);
+}
+
+function buildMenuProductionIssueJobKey(productions = []) {
+  const keys = productions.map((production) => {
+    const sourceItemKeys = Array.isArray(production.source_menu_plan_item_keys)
+      ? production.source_menu_plan_item_keys
+      : [];
+    const itemKey = sourceItemKeys.length
+      ? sourceItemKeys.join(',')
+      : (production.source_menu_plan_item_key || production.production_issue_group_key || '');
+    return [
+      production.source_menu_plan_id || production.menu_plan_id || production.source_event_id || '',
+      production.production_date || '',
+      production.site_id || production.warehouse_id || '',
+      production.fulfillment_store_id || '',
+      production.source_menu_plan_meal_type || production.meal_type || '',
+      production.menu_type || production.cuisine_type || '',
+      production.menu_category || '',
+      production.status || '',
+      itemKey
+    ].map((value) => String(value || '').trim().toLowerCase()).join('|');
+  }).sort();
+  return keys.join('||');
+}
+
+function buildMenuProductionIssueRecordKey(production = {}) {
+  const sourceItemKeys = Array.isArray(production.source_menu_plan_item_keys)
+    ? production.source_menu_plan_item_keys
+    : [];
+  const itemKey = sourceItemKeys.length
+    ? sourceItemKeys.join(',')
+    : (
+        production.source_menu_plan_item_key
+        || production.production_issue_group_key
+        || production.source_menu_plan_item_index
+        || ''
+      );
+  const reissueKey = production.production_issue_admin_reissue
+    ? (production.production_issue_reissue_run_id || 'admin-reissue')
+    : '';
+  return [
+    'menu-issue',
+    production.source_menu_plan_id || production.menu_plan_id || production.source_event_id || '',
+    production.production_date || '',
+    production.fulfillment_store_id || production.site_id || production.warehouse_id || '',
+    production.meal_type || production.source_menu_plan_meal_type || '',
+    production.menu_type || production.cuisine_type || '',
+    production.menu_category || '',
+    itemKey,
+    reissueKey
+  ].map((value) => String(value || '').trim().toLowerCase()).join('::');
+}
+
+function isActiveMenuIssueProductionStatus(status) {
+  return !['cancelled', 'voided', 'reversed'].includes(normalizeProductionStatus(status));
+}
+
+async function findExistingMenuIssueProduction(payload = {}, executor = null) {
+  const issueGroupKey = String(payload.issue_group_key || '').trim();
+  const productionDate = String(payload.production_date || '').slice(0, 10);
+  const siteId = String(payload.fulfillment_store_id || payload.site_id || payload.warehouse_id || '').trim();
+  const mealType = String(payload.meal_type || payload.source_menu_plan_meal_type || '').trim().toLowerCase();
+  const candidates = await listDocuments('Production', {
+    filters: {
+      ...(siteId ? { site_id: siteId } : {}),
+      ...(productionDate ? { production_date: productionDate } : {}),
+      ...(mealType ? { meal_type: mealType } : {})
+    },
+    limit: 300
+  }, executor || undefined);
+  return (Array.isArray(candidates) ? candidates : []).find((candidate) => {
+    if (!isActiveMenuIssueProductionStatus(candidate.status)) return false;
+    if (issueGroupKey && String(candidate.issue_group_key || '').trim() === issueGroupKey) return true;
+    return (
+      String(candidate.source_menu_plan_id || candidate.menu_plan_id || '') === String(payload.source_menu_plan_id || payload.menu_plan_id || '')
+      && String(candidate.production_issue_group_key || '') === String(payload.production_issue_group_key || '')
+      && String(candidate.meal_type || '').toLowerCase() === mealType
+      && String(candidate.menu_type || candidate.cuisine_type || '').toLowerCase() === String(payload.menu_type || payload.cuisine_type || '').toLowerCase()
+      && String(candidate.menu_category || '').toLowerCase() === String(payload.menu_category || '').toLowerCase()
+    );
+  }) || null;
+}
+
+function scheduleMenuProductionIssueQueueDrain() {
+  setImmediate(() => {
+    while (
+      menuProductionIssueRunningCount < menuProductionIssueConcurrency
+      && menuProductionIssueQueue.length > 0
+    ) {
+      const work = menuProductionIssueQueue.shift();
+      menuProductionIssueRunningCount += 1;
+      runMenuProductionIssueWork(work).finally(() => {
+        menuProductionIssueRunningCount = Math.max(0, menuProductionIssueRunningCount - 1);
+        if (work.key) menuProductionIssueActiveKeys.delete(work.key);
+        if (menuProductionIssueQueue.length > 0) {
+          scheduleMenuProductionIssueQueueDrain();
+        }
+      });
+    }
+  });
+}
+
+function enqueueMenuProductionIssueWork(work) {
+  const key = String(work.key || '').trim();
+  if (key && menuProductionIssueActiveKeys.has(key)) {
+    return {
+      queued: false,
+      existingJobId: menuProductionIssueActiveKeys.get(key)
+    };
+  }
+  const jobId = work.jobId || randomUUID();
+  const requestedAt = new Date().toISOString();
+  menuProductionIssueJobs.set(jobId, {
+    id: jobId,
+    key,
+    status: 'queued',
+    progress: 5,
+    total: work.productions.length,
+    created_count: 0,
+    failed_count: 0,
+    message: 'Menu production issue queued.',
+    requested_at: requestedAt,
+    requested_by: work.actor?.email || work.actor?.id || '',
+    requested_by_name: work.actor?.full_name || work.actor?.email || ''
+  });
+  if (key) menuProductionIssueActiveKeys.set(key, jobId);
+  menuProductionIssueQueue.push({ ...work, jobId });
+  scheduleMenuProductionIssueQueueDrain();
+  return {
+    queued: true,
+    jobId
+  };
+}
+
+async function createMenuIssueProductionRecord(actor, payload = {}) {
+  const issuePayload = {
+    ...payload,
+    issue_group_key: String(payload.issue_group_key || '').trim() || buildMenuProductionIssueRecordKey(payload)
+  };
+  authorizeEntityAction(actor, 'Production', 'create', issuePayload);
+  const existing = await findExistingMenuIssueProduction(issuePayload);
+  if (existing) {
+    return {
+      record: existing,
+      duplicatePrevented: true
+    };
+  }
+  let preparedPayload = await prepareEntityPayload(actor, 'Production', issuePayload);
+  preparedPayload = applyProductionWorkflowMetadata(actor, preparedPayload, null, issuePayload);
+  return withTransaction(async (client) => {
+    const lockedExisting = await findExistingMenuIssueProduction(issuePayload, client);
+    if (lockedExisting) {
+      return {
+        record: lockedExisting,
+        duplicatePrevented: true
+      };
+    }
+    let created = await createDocument('Production', preparedPayload, client);
+    if (['draft', 'planned', 'pending_approval', 'changes_requested'].includes(String(created.status || ''))) {
+      await syncMaterialRequestForProduction(actor, created, 'draft', client);
+      created = await findDocument('Production', created.id, client);
+    }
+    return {
+      record: created,
+      duplicatePrevented: false
+    };
+  });
+}
+
+async function runMenuProductionIssueWork(work) {
+  const jobId = work.jobId;
+  const actor = work.actor || {};
+  const productions = Array.isArray(work.productions) ? work.productions : [];
+  const createdRecords = [];
+  const skippedRecords = [];
+  const failures = [];
+  updateMenuProductionIssueJob(jobId, {
+    status: 'processing',
+    progress: 10,
+    started_at: new Date().toISOString(),
+    message: `Issuing ${productions.length} menu production request${productions.length === 1 ? '' : 's'} in the background.`
+  });
+
+  for (const [index, payload] of productions.entries()) {
+    const label = [
+      payload?.meal_type,
+      payload?.menu_type || payload?.cuisine_type,
+      payload?.menu_category
+    ].filter(Boolean).join(' / ') || `meal ${index + 1}`;
+    try {
+      const result = await createMenuIssueProductionRecord(actor, payload);
+      const record = result.record;
+      if (result.duplicatePrevented) {
+        skippedRecords.push(record);
+      } else {
+        createdRecords.push(record);
+        invalidateEntityAccessCaches('Production');
+        recordChanged('Production');
+        recordChanged('MaterialRequest');
+        queueAuditAction('menu production issue create', {
+          user: actor,
+          action: 'PRODUCTION_CREATE',
+          entity: 'Production',
+          entityId: record.id,
+          details: {
+            input: payload,
+            created_record: record,
+            background_job_id: jobId
+          }
+        });
+      }
+    } catch (error) {
+      failures.push({
+        label,
+        message: error?.message || 'Unable to issue this meal production request.'
+      });
+    }
+    updateMenuProductionIssueJob(jobId, {
+      progress: Math.round(10 + (((index + 1) / Math.max(1, productions.length)) * 85)),
+      created_count: createdRecords.length,
+      skipped_count: skippedRecords.length,
+      failed_count: failures.length,
+      message: `Issued ${createdRecords.length} and skipped ${skippedRecords.length} duplicate menu production request${productions.length === 1 ? '' : 's'}.`
+    });
+  }
+
+  const failed = failures.length > 0;
+  const completedAt = new Date().toISOString();
+  updateMenuProductionIssueJob(jobId, {
+    status: failed ? 'failed' : 'completed',
+    progress: 100,
+    created_count: createdRecords.length,
+    skipped_count: skippedRecords.length,
+    failed_count: failures.length,
+    completed_at: completedAt,
+    message: failed
+      ? `Menu production issue finished with ${failures.length} failed meal request${failures.length === 1 ? '' : 's'}.`
+      : skippedRecords.length > 0
+        ? `Menu production issue completed. ${skippedRecords.length} duplicate request${skippedRecords.length === 1 ? '' : 's'} skipped.`
+        : 'Menu production requests have been issued.',
+    error: failures.map((failure) => `${failure.label}: ${failure.message}`).join('\n')
+  });
+  queueAuditAction(failed ? 'menu production issue failed' : 'menu production issue completed', {
+    user: actor,
+    action: failed ? 'MENU_PRODUCTION_ISSUE_FAILED' : 'MENU_PRODUCTION_ISSUE_COMPLETED',
+    entity: 'Production',
+    entityId: createdRecords[0]?.id || jobId,
+    details: {
+      background_job_id: jobId,
+      created_count: createdRecords.length,
+      skipped_count: skippedRecords.length,
+      failed_count: failures.length,
+      failures
+    }
+  });
+  setTimeout(() => {
+    menuProductionIssueJobs.delete(jobId);
+  }, 60 * 60 * 1000).unref?.();
+}
+
+app.post('/api/productions/menu-issue', requireAuth, async (request, response, next) => {
+  try {
+    const productions = Array.isArray(request.body?.productions)
+      ? request.body.productions.filter((item) => item && typeof item === 'object')
+      : [];
+    if (productions.length === 0) {
+      return response.status(400).json({ message: 'Select at least one meal review before issuing production.' });
+    }
+    if (productions.length > 12) {
+      return response.status(400).json({ message: 'Issue no more than 12 meal production requests in one background job.' });
+    }
+    productions.forEach((payload) => {
+      authorizeEntityAction(request.user, 'Production', 'create', payload || {});
+    });
+    const key = buildMenuProductionIssueJobKey(productions);
+    const enqueueResult = enqueueMenuProductionIssueWork({
+      key,
+      actor: { ...request.user },
+      productions
+    });
+    if (!enqueueResult.queued) {
+      const existingJob = menuProductionIssueJobs.get(enqueueResult.existingJobId);
+      return response.status(202).json({
+        queued: true,
+        alreadyQueued: true,
+        job: serializeMenuProductionIssueJob(existingJob),
+        message: 'Menu production issue is already running in the background for this same scope.'
+      });
+    }
+    const job = serializeMenuProductionIssueJob(menuProductionIssueJobs.get(enqueueResult.jobId));
+    return response.status(202).json({
+      queued: true,
+      job,
+      message: `Menu production issue queued. ${productions.length} meal review${productions.length === 1 ? '' : 's'} will be created in the background.`
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/productions/menu-issue/:jobId', requireAuth, requirePermission('manage_production'), async (request, response) => {
+  const job = menuProductionIssueJobs.get(request.params.jobId);
+  if (!job) {
+    return response.status(404).json({ message: 'Menu production issue job was not found or has already expired.' });
+  }
+  return response.json({ job: serializeMenuProductionIssueJob(job) });
 });
 
 app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, next) => {
@@ -8664,7 +9039,7 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
     recordChanged('MaterialRequest');
     recordChanged('Production');
     if (!queued.alreadyQueued) {
-      await auditAction({
+      queueAuditAction('MR to Store acknowledgement queued', {
         user: request.user,
         action: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGEMENT_QUEUED',
         entity: 'MaterialRequest',
@@ -8677,7 +9052,7 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
         }
       });
     }
-    response.status(202).json({
+    return response.status(202).json({
       ...queued.materialRequest,
       queued: true,
       acknowledgement_job: queued.job,

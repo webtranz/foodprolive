@@ -1753,10 +1753,15 @@ export default function Production() {
         }
         return { mode: 'updated', records: [updated] };
       }
-      const created = await Promise.all(
-        mealGroups.map((group) => base44.entities.Production.create(buildMenuIssueSubmitData(group, status)))
-      );
-      return { mode: 'created', records: created };
+      const productions = mealGroups.map((group) => buildMenuIssueSubmitData(group, status));
+      const queued = await base44.productionWorkflow.issueMenuProduction({ productions });
+      return {
+        mode: 'queued',
+        records: [],
+        job: queued?.job || null,
+        mealCount: productions.length,
+        message: queued?.message || ''
+      };
     },
     onSuccess: (result) => {
       invalidateCurrentProductionScope({ materialRequests: true });
@@ -1764,6 +1769,11 @@ export default function Production() {
       resetIssueDialogState();
       setActionError('');
       const records = result?.records || [];
+      if (result?.mode === 'queued') {
+        const count = result?.mealCount || result?.job?.total || 0;
+        setActionMessage(result?.message || `Menu production issue queued. ${count} meal review${count === 1 ? '' : 's'} will be created in the background.`);
+        return;
+      }
       setActionMessage(result?.mode === 'updated'
         ? 'Menu production request updated.'
         : `${records.length} meal production request${records.length === 1 ? '' : 's'} issued from the menu plan.`);
@@ -1772,6 +1782,10 @@ export default function Production() {
       setActionError(error.message || 'Unable to issue production from the menu plan.');
     }
   });
+
+  const issueMutationStatus = String(issueProductionMutation.variables?.status || '').toLowerCase();
+  const isIssueDraftPending = issueProductionMutation.isPending && issueMutationStatus === 'draft';
+  const isIssueSubmitPending = issueProductionMutation.isPending && issueMutationStatus === 'pending_approval';
 
   const productionInventorySiteFilter = selectedSite && selectedSite !== 'all' ? selectedSite : '';
   const { data: inventory = [], error: inventoryError, isFetching: inventoryLoading } = useQuery({
@@ -4729,7 +4743,7 @@ export default function Production() {
                       disabled={issueProductionMutation.isPending || Boolean(issueSubmitDisabledReason)}
                       onClick={() => issueProductionMutation.mutate({ status: 'draft' })}
                     >
-                      {issueProductionMutation.isPending ? 'Saving...' : editingIssueProduction ? 'Save Draft' : 'Save Meal Drafts'}
+                      {isIssueDraftPending ? 'Queuing...' : editingIssueProduction ? 'Save Draft' : 'Save Meal Drafts'}
                     </Button>
                     <Button
                       type="button"
@@ -4739,8 +4753,8 @@ export default function Production() {
                       onClick={() => issueProductionMutation.mutate({ status: 'pending_approval' })}
                     >
                       <Factory className="mr-2 h-4 w-4" />
-                      {issueProductionMutation.isPending
-                        ? 'Submitting...'
+                      {isIssueSubmitPending
+                        ? 'Queuing...'
                         : editingIssueProduction
                           ? 'Save & Submit'
                           : `Issue & Submit ${selectedIssueMealGroups.length || ''} Meal Review${selectedIssueMealGroups.length === 1 ? '' : 's'}`}
