@@ -2052,6 +2052,101 @@ CREATE INDEX IF NOT EXISTS idx_document_object_fields_record
 CREATE INDEX IF NOT EXISTS idx_document_object_fields_field
   ON document_object_fields(entity_name, collection_key, field_name);
 
+CREATE TABLE IF NOT EXISTS background_jobs (
+  id TEXT PRIMARY KEY,
+  job_type TEXT NOT NULL,
+  idempotency_key TEXT,
+  status TEXT NOT NULL DEFAULT 'QUEUED',
+  priority INTEGER NOT NULL DEFAULT 0,
+  entity_name TEXT,
+  entity_id TEXT,
+  actor_id TEXT,
+  actor_email TEXT,
+  actor_name TEXT,
+  actor_role TEXT,
+  actor_role_access_level TEXT,
+  actor_role_is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  actor_is_custom_role BOOLEAN NOT NULL DEFAULT FALSE,
+  actor_site_id TEXT,
+  actor_site_name TEXT,
+  actor_visibility_scope TEXT,
+  actor_allowed_site_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+  actor_allowed_site_names TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+  actor_role_permissions TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+  result_entity_name TEXT,
+  result_entity_id TEXT,
+  result_count INTEGER NOT NULL DEFAULT 0,
+  progress NUMERIC(6, 2) NOT NULL DEFAULT 0,
+  message TEXT,
+  error TEXT,
+  queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS job_type TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'QUEUED';
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS entity_name TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS entity_id TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_id TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_email TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_name TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_role TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_role_access_level TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_role_is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_is_custom_role BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_site_id TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_site_name TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_visibility_scope TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_allowed_site_ids TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_allowed_site_names TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_role_permissions TEXT[] NOT NULL DEFAULT ARRAY[]::text[];
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS result_entity_name TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS result_entity_id TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS result_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS progress NUMERIC(6, 2) NOT NULL DEFAULT 0;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS message TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS error TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_background_jobs_status
+  ON background_jobs(job_type, status, queued_at ASC);
+CREATE INDEX IF NOT EXISTS idx_background_jobs_entity
+  ON background_jobs(entity_name, entity_id, queued_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_background_jobs_active_idempotency
+  ON background_jobs(job_type, idempotency_key)
+  WHERE idempotency_key IS NOT NULL AND status IN ('QUEUED', 'PROCESSING');
+
+CREATE TABLE IF NOT EXISTS background_job_items (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES background_jobs(id) ON DELETE CASCADE,
+  item_order INTEGER NOT NULL DEFAULT 0,
+  entity_name TEXT,
+  entity_id TEXT,
+  action_key TEXT,
+  idempotency_key TEXT,
+  status TEXT NOT NULL DEFAULT 'QUEUED',
+  progress NUMERIC(6, 2) NOT NULL DEFAULT 0,
+  message TEXT,
+  error TEXT,
+  result_entity_name TEXT,
+  result_entity_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_background_job_items_job
+  ON background_job_items(job_id, item_order ASC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_background_job_items_idempotency
+  ON background_job_items(job_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS erp_integration_configs (
   id TEXT PRIMARY KEY,
   provider_name TEXT NOT NULL DEFAULT 'Dynamics 365',

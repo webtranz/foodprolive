@@ -51,6 +51,17 @@ assert.match(server, /app\.get\('\/api\/inventory\/production\/:id\/completion-j
 assert.match(server, /app\.post\('\/api\/menu-plans\/repeat-cycle'/);
 assert.match(server, /app\.post\('\/api\/productions\/menu-issue'/);
 assert.match(server, /response\.status\(202\)\.json/);
+assert.match(schema, /CREATE TABLE IF NOT EXISTS background_jobs/);
+assert.match(schema, /CREATE TABLE IF NOT EXISTS background_job_items/);
+assert.match(schema, /idx_background_jobs_active_idempotency/);
+assert.match(schema, /actor_allowed_site_ids TEXT\[\]/);
+assert.match(schema, /result_entity_name TEXT/);
+assert.match(server, /createOperationalBackgroundJob/);
+assert.match(server, /createOperationalBackgroundJobItems/);
+assert.match(server, /updateOperationalBackgroundJobItem/);
+assert.doesNotMatch(schema, /CREATE TABLE IF NOT EXISTS background_jobs[\s\S]*payload JSONB[\s\S]*CREATE TABLE IF NOT EXISTS background_job_items/);
+assert.doesNotMatch(schema, /CREATE TABLE IF NOT EXISTS background_jobs[\s\S]*result JSONB[\s\S]*CREATE TABLE IF NOT EXISTS background_job_items/);
+assert.doesNotMatch(schema, /CREATE TABLE IF NOT EXISTS background_jobs[\s\S]*actor_snapshot JSONB[\s\S]*CREATE TABLE IF NOT EXISTS background_job_items/);
 assert.match(server, /PRODUCTION_PROCUREMENT_ACTIVATION_WORKERS \|\| '1'/);
 assert.match(server, /MATERIAL_REQUEST_ACKNOWLEDGEMENT_WORKERS \|\| '1'/);
 assert.match(server, /PRODUCTION_COMPLETION_WORKERS \|\| '1'/);

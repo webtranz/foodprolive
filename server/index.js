@@ -6105,6 +6105,320 @@ function queueAuditAction(label, payload) {
   });
 }
 
+const OPERATIONAL_BACKGROUND_JOB_ACTIVE_STATUSES = Object.freeze(['QUEUED', 'PROCESSING']);
+const OPERATIONAL_BACKGROUND_JOB_FINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'SKIPPED']);
+const OPERATIONAL_BACKGROUND_JOB_TYPES = Object.freeze({
+  MENU_PRODUCTION_ISSUE: 'menu_production_issue',
+  PRODUCTION_PROCUREMENT_ACTIVATION: 'production_procurement_activation',
+  MATERIAL_REQUEST_ACKNOWLEDGEMENT: 'material_request_acknowledgement',
+  PRODUCTION_COMPLETION: 'production_completion'
+});
+
+function normalizeOperationalBackgroundJobStatus(status, fallback = 'QUEUED') {
+  const normalized = String(status || '').trim().toUpperCase();
+  if (OPERATIONAL_BACKGROUND_JOB_ACTIVE_STATUSES.includes(normalized)) return normalized;
+  if (OPERATIONAL_BACKGROUND_JOB_FINAL_STATUSES.has(normalized)) return normalized;
+  return fallback;
+}
+
+function clampOperationalBackgroundJobProgress(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function normalizeOperationalBackgroundJobTextArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry || '').trim()).filter(Boolean);
+  }
+  if (value === null || typeof value === 'undefined') return [];
+  return [String(value || '').trim()].filter(Boolean);
+}
+
+function buildOperationalBackgroundJobActorFields(actor = {}) {
+  return {
+    id: actor.id || null,
+    email: actor.email || null,
+    full_name: actor.full_name || actor.email || null,
+    role: actor.role || null,
+    role_access_level: actor.role_access_level || null,
+    role_permissions: normalizeOperationalBackgroundJobTextArray(actor.role_permissions),
+    is_custom_role: actor.is_custom_role === true,
+    role_is_active: actor.role_is_active !== false,
+    site_id: actor.site_id || null,
+    site_name: actor.site_name || null,
+    visibility_scope: actor.visibility_scope || null,
+    allowed_site_ids: normalizeOperationalBackgroundJobTextArray(actor.allowed_site_ids),
+    allowed_site_names: normalizeOperationalBackgroundJobTextArray(actor.allowed_site_names)
+  };
+}
+
+function actorFromOperationalBackgroundJob(job = {}) {
+  return {
+    id: job.actor_id || null,
+    email: job.actor_email || null,
+    full_name: job.actor_name || job.actor_email || null,
+    role: job.actor_role || null,
+    role_access_level: job.actor_role_access_level || null,
+    role_permissions: normalizeOperationalBackgroundJobTextArray(job.actor_role_permissions),
+    is_custom_role: job.actor_is_custom_role === true,
+    role_is_active: job.actor_role_is_active !== false,
+    site_id: job.actor_site_id || null,
+    site_name: job.actor_site_name || null,
+    visibility_scope: job.actor_visibility_scope || null,
+    allowed_site_ids: normalizeOperationalBackgroundJobTextArray(job.actor_allowed_site_ids),
+    allowed_site_names: normalizeOperationalBackgroundJobTextArray(job.actor_allowed_site_names)
+  };
+}
+
+function normalizeOperationalBackgroundJobRow(row = {}) {
+  if (!row) return null;
+  return {
+    ...row,
+    status: normalizeOperationalBackgroundJobStatus(row.status),
+    progress: clampOperationalBackgroundJobProgress(row.progress),
+    actor_allowed_site_ids: normalizeOperationalBackgroundJobTextArray(row.actor_allowed_site_ids),
+    actor_allowed_site_names: normalizeOperationalBackgroundJobTextArray(row.actor_allowed_site_names),
+    actor_role_permissions: normalizeOperationalBackgroundJobTextArray(row.actor_role_permissions),
+    result_count: Number(row.result_count || 0)
+  };
+}
+
+async function getOperationalBackgroundJob(jobId) {
+  const id = String(jobId || '').trim();
+  if (!id) return null;
+  const result = await pool.query('SELECT * FROM background_jobs WHERE id = $1 LIMIT 1', [id]);
+  return result.rowCount ? normalizeOperationalBackgroundJobRow(result.rows[0]) : null;
+}
+
+async function findActiveOperationalBackgroundJob(jobType, idempotencyKey) {
+  const type = String(jobType || '').trim();
+  const key = String(idempotencyKey || '').trim();
+  if (!type || !key) return null;
+  const result = await pool.query(
+    `SELECT *
+       FROM background_jobs
+      WHERE job_type = $1
+        AND idempotency_key = $2
+        AND status = ANY($3::text[])
+      ORDER BY queued_at ASC
+      LIMIT 1`,
+    [type, key, OPERATIONAL_BACKGROUND_JOB_ACTIVE_STATUSES]
+  );
+  return result.rowCount ? normalizeOperationalBackgroundJobRow(result.rows[0]) : null;
+}
+
+async function createOperationalBackgroundJob({
+  id = randomUUID(),
+  jobType,
+  idempotencyKey = null,
+  actor = {},
+  entityName = null,
+  entityId = null,
+  message = '',
+  progress = 5
+} = {}) {
+  const type = String(jobType || '').trim();
+  if (!type) {
+    const error = new Error('Background job type is required.');
+    error.status = 500;
+    throw error;
+  }
+  const key = String(idempotencyKey || '').trim() || null;
+  if (key) {
+    const existing = await findActiveOperationalBackgroundJob(type, key);
+    if (existing) {
+      return { job: existing, alreadyQueued: true };
+    }
+  }
+  const actorFields = buildOperationalBackgroundJobActorFields(actor);
+  const requestedProgress = clampOperationalBackgroundJobProgress(progress, 5);
+  try {
+    const result = await pool.query(
+      `INSERT INTO background_jobs (
+         id, job_type, idempotency_key, status, entity_name, entity_id,
+         actor_id, actor_email, actor_name, actor_role, actor_role_access_level,
+         actor_role_is_active, actor_is_custom_role, actor_site_id, actor_site_name,
+         actor_visibility_scope, actor_allowed_site_ids, actor_allowed_site_names,
+         actor_role_permissions,
+         progress, message, queued_at, updated_at
+       ) VALUES (
+         $1, $2, $3, 'QUEUED', $4, $5,
+         $6, $7, $8, $9, $10,
+         $11, $12, $13, $14,
+         $15, $16::text[], $17::text[],
+         $18::text[],
+         $19, $20, NOW(), NOW()
+       )
+       RETURNING *`,
+      [
+        id,
+        type,
+        key,
+        entityName || null,
+        entityId || null,
+        actorFields.id,
+        actorFields.email,
+        actorFields.full_name,
+        actorFields.role,
+        actorFields.role_access_level,
+        actorFields.role_is_active,
+        actorFields.is_custom_role,
+        actorFields.site_id,
+        actorFields.site_name,
+        actorFields.visibility_scope,
+        actorFields.allowed_site_ids,
+        actorFields.allowed_site_names,
+        actorFields.role_permissions,
+        requestedProgress,
+        String(message || 'Background job queued.').trim() || 'Background job queued.'
+      ]
+    );
+    return { job: normalizeOperationalBackgroundJobRow(result.rows[0]), alreadyQueued: false };
+  } catch (error) {
+    if (error?.code === '23505' && key) {
+      const existing = await findActiveOperationalBackgroundJob(type, key);
+      if (existing) {
+        return { job: existing, alreadyQueued: true };
+      }
+    }
+    throw error;
+  }
+}
+
+async function createOperationalBackgroundJobItems(jobId, items = []) {
+  const id = String(jobId || '').trim();
+  const normalizedItems = (Array.isArray(items) ? items : [])
+    .map((item, index) => ({
+      id: item.id || randomUUID(),
+      job_id: id,
+      item_order: Number.isFinite(Number(item.item_order)) ? Number(item.item_order) : index,
+      entity_name: String(item.entity_name || '').trim() || null,
+      entity_id: String(item.entity_id || '').trim() || null,
+      action_key: String(item.action_key || '').trim() || null,
+      idempotency_key: String(item.idempotency_key || '').trim() || null,
+      status: normalizeOperationalBackgroundJobStatus(item.status, 'QUEUED'),
+      progress: clampOperationalBackgroundJobProgress(item.progress, 0),
+      message: String(item.message || '').trim() || null,
+      error: String(item.error || '').trim() || null
+    }))
+    .filter((item) => item.job_id);
+  if (!id || normalizedItems.length === 0) return [];
+
+  const values = [];
+  const placeholders = normalizedItems.map((item, index) => {
+    const offset = index * 11;
+    values.push(
+      item.id,
+      item.job_id,
+      item.item_order,
+      item.entity_name,
+      item.entity_id,
+      item.action_key,
+      item.idempotency_key,
+      item.status,
+      item.progress,
+      item.message,
+      item.error
+    );
+    return `(
+      $${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5},
+      $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11},
+      NOW(), NOW()
+    )`;
+  });
+
+  const result = await pool.query(
+    `INSERT INTO background_job_items (
+       id, job_id, item_order, entity_name, entity_id, action_key, idempotency_key,
+       status, progress, message, error, created_at, updated_at
+     ) VALUES ${placeholders.join(', ')}
+     ON CONFLICT (job_id, idempotency_key)
+       WHERE idempotency_key IS NOT NULL
+       DO NOTHING
+     RETURNING *`,
+    values
+  );
+  return result.rows;
+}
+
+async function updateOperationalBackgroundJobItem(jobId, idempotencyKey, patch = {}) {
+  const parentId = String(jobId || '').trim();
+  const key = String(idempotencyKey || '').trim();
+  if (!parentId || !key) return null;
+  const assignments = [];
+  const values = [];
+  const add = (column, value) => {
+    values.push(value);
+    assignments.push(`${column} = $${values.length}`);
+  };
+  if (Object.hasOwn(patch, 'status')) add('status', normalizeOperationalBackgroundJobStatus(patch.status, 'QUEUED'));
+  if (Object.hasOwn(patch, 'progress')) add('progress', clampOperationalBackgroundJobProgress(patch.progress));
+  if (Object.hasOwn(patch, 'message')) add('message', String(patch.message || '').trim());
+  if (Object.hasOwn(patch, 'error')) add('error', String(patch.error || '').trim());
+  if (Object.hasOwn(patch, 'entity_id')) add('entity_id', String(patch.entity_id || '').trim() || null);
+  if (Object.hasOwn(patch, 'result_entity_name')) add('result_entity_name', String(patch.result_entity_name || '').trim() || null);
+  if (Object.hasOwn(patch, 'result_entity_id')) add('result_entity_id', String(patch.result_entity_id || '').trim() || null);
+  if (!assignments.length) return null;
+  values.push(parentId, key);
+  const result = await pool.query(
+    `UPDATE background_job_items
+        SET ${assignments.join(', ')}, updated_at = NOW()
+      WHERE job_id = $${values.length - 1}
+        AND idempotency_key = $${values.length}
+      RETURNING *`,
+    values
+  );
+  return result.rows[0] || null;
+}
+
+async function updateOperationalBackgroundJob(jobId, patch = {}) {
+  const id = String(jobId || '').trim();
+  if (!id) return null;
+  const assignments = [];
+  const values = [];
+  const add = (column, value, transform = (entry) => entry, cast = '') => {
+    values.push(transform(value));
+    assignments.push(`${column} = $${values.length}${cast}`);
+  };
+  if (Object.hasOwn(patch, 'status')) add('status', normalizeOperationalBackgroundJobStatus(patch.status));
+  if (Object.hasOwn(patch, 'progress')) add('progress', clampOperationalBackgroundJobProgress(patch.progress));
+  if (Object.hasOwn(patch, 'message')) add('message', String(patch.message || '').trim());
+  if (Object.hasOwn(patch, 'error')) add('error', String(patch.error || '').trim());
+  if (Object.hasOwn(patch, 'result_entity_name')) add('result_entity_name', String(patch.result_entity_name || '').trim() || null);
+  if (Object.hasOwn(patch, 'result_entity_id')) add('result_entity_id', String(patch.result_entity_id || '').trim() || null);
+  if (Object.hasOwn(patch, 'result_count')) add('result_count', Math.max(0, Math.trunc(Number(patch.result_count) || 0)));
+  if (Object.hasOwn(patch, 'started_at')) add('started_at', patch.started_at);
+  if (Object.hasOwn(patch, 'completed_at')) add('completed_at', patch.completed_at);
+  if (!assignments.length) return getOperationalBackgroundJob(id);
+  values.push(id);
+  const result = await pool.query(
+    `UPDATE background_jobs
+        SET ${assignments.join(', ')}, updated_at = NOW()
+      WHERE id = $${values.length}
+      RETURNING *`,
+    values
+  );
+  return result.rowCount ? normalizeOperationalBackgroundJobRow(result.rows[0]) : null;
+}
+
+async function listRecoverableOperationalBackgroundJobs(jobTypes = []) {
+  const safeTypes = (Array.isArray(jobTypes) ? jobTypes : [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+  if (!safeTypes.length) return [];
+  const result = await pool.query(
+    `SELECT *
+       FROM background_jobs
+      WHERE job_type = ANY($1::text[])
+        AND status = ANY($2::text[])
+      ORDER BY queued_at ASC
+      LIMIT 200`,
+    [safeTypes, OPERATIONAL_BACKGROUND_JOB_ACTIVE_STATUSES]
+  );
+  return result.rows.map(normalizeOperationalBackgroundJobRow);
+}
+
 const PRODUCTION_PROCUREMENT_ACTIVATION_ACTIVE_STATUSES = new Set(['activation_queued', 'activation_processing']);
 const PRODUCTION_PROCUREMENT_ACTIVATION_COMPLETE_STATUSES = new Set([
   'pending_procurement_ack',
@@ -6158,6 +6472,7 @@ function enqueueProductionProcurementActivationWork(work) {
   productionProcurementActivationQueue.push({
     ...work,
     productionId,
+    jobId: work.jobId || null,
     requestedAt: work.requestedAt || new Date().toISOString()
   });
   scheduleProductionProcurementActivationQueueDrain();
@@ -6185,9 +6500,21 @@ async function markProductionProcurementActivationFailed({ productionId, error }
 
 async function runProductionProcurementActivationWork(work) {
   const productionId = String(work.productionId || '').trim();
+  const jobId = String(work.jobId || '').trim();
   const actor = work.actor || {};
   if (!productionId) return;
   try {
+    if (jobId) {
+      await updateOperationalBackgroundJob(jobId, {
+        status: 'PROCESSING',
+        progress: 20,
+        message: 'Activating Store / Procurement material request.',
+        started_at: new Date().toISOString(),
+        error: ''
+      }).catch((error) => {
+        console.error('Unable to mark Store / Procurement activation background job as processing', error);
+      });
+    }
     await updateDocument('Production', productionId, {
       material_request_status: 'activation_processing',
       last_review_action: 'procurement_activation_processing'
@@ -6241,6 +6568,20 @@ async function runProductionProcurementActivationWork(work) {
     });
     recordChanged('Production');
     recordChanged('MaterialRequest');
+    if (jobId) {
+      await updateOperationalBackgroundJob(jobId, {
+        status: result.skipped ? 'SKIPPED' : 'COMPLETED',
+        progress: 100,
+        message: result.message,
+        result_entity_name: result.materialRequest ? 'MaterialRequest' : 'Production',
+        result_entity_id: result.materialRequest?.id || result.production?.id || productionId,
+        result_count: result.materialRequest ? 1 : 0,
+        completed_at: new Date().toISOString(),
+        error: ''
+      }).catch((error) => {
+        console.error('Unable to mark Store / Procurement activation background job as completed', error);
+      });
+    }
     queueAuditAction('production procurement activation completed', {
       user: actor,
       action: result.skipped
@@ -6264,6 +6605,17 @@ async function runProductionProcurementActivationWork(work) {
       return null;
     });
     recordChanged('Production');
+    if (jobId) {
+      await updateOperationalBackgroundJob(jobId, {
+        status: 'FAILED',
+        progress: 100,
+        message: error?.message || 'Store / Procurement material request activation failed.',
+        error: error?.message || 'Store / Procurement material request activation failed.',
+        completed_at: new Date().toISOString()
+      }).catch((updateError) => {
+        console.error('Unable to mark Store / Procurement activation background job as failed', updateError);
+      });
+    }
     await auditAction({
       user: actor,
       action: 'PRODUCTION_PROCUREMENT_ACTIVATION_FAILED',
@@ -6313,6 +6665,31 @@ function serializeMenuProductionIssueJob(job = {}, overrides = {}) {
     started_at: overrides.started_at ?? job.started_at ?? null,
     completed_at: overrides.completed_at ?? job.completed_at ?? null
   };
+}
+
+function serializeMenuProductionIssueBackgroundJob(job = {}) {
+  const operationalStatus = normalizeOperationalBackgroundJobStatus(job.status);
+  const status = operationalStatus === 'FAILED'
+    ? 'failed'
+    : OPERATIONAL_BACKGROUND_JOB_FINAL_STATUSES.has(operationalStatus)
+      ? 'completed'
+      : operationalStatus === 'PROCESSING'
+        ? 'processing'
+        : 'queued';
+  return serializeMenuProductionIssueJob({
+    id: job.id,
+    status,
+    progress: job.progress,
+    total: job.result_count || 0,
+    created_count: job.result_count || 0,
+    skipped_count: operationalStatus === 'SKIPPED' ? 1 : 0,
+    failed_count: operationalStatus === 'FAILED' ? 1 : 0,
+    message: job.message,
+    error: job.error,
+    requested_at: job.queued_at,
+    started_at: job.started_at,
+    completed_at: job.completed_at
+  });
 }
 
 function updateMenuProductionIssueJob(jobId, patch = {}) {
@@ -6501,6 +6878,17 @@ async function runMenuProductionIssueWork(work) {
   const createdRecords = [];
   const skippedRecords = [];
   const failures = [];
+  if (jobId) {
+    await updateOperationalBackgroundJob(jobId, {
+      status: 'PROCESSING',
+      progress: 10,
+      message: `Issuing ${productions.length} menu production request${productions.length === 1 ? '' : 's'} in the background.`,
+      started_at: new Date().toISOString(),
+      error: ''
+    }).catch((error) => {
+      console.error('Unable to mark menu production issue background job as processing', error);
+    });
+  }
   updateMenuProductionIssueJob(jobId, {
     status: 'processing',
     progress: 10,
@@ -6509,12 +6897,22 @@ async function runMenuProductionIssueWork(work) {
   });
 
   for (const [index, payload] of productions.entries()) {
+    const itemKey = buildMenuProductionIssueRecordKey(payload);
     const label = [
       payload?.meal_type,
       payload?.menu_type || payload?.cuisine_type,
       payload?.menu_category
     ].filter(Boolean).join(' / ') || `meal ${index + 1}`;
     try {
+      if (jobId) {
+        updateOperationalBackgroundJobItem(jobId, itemKey, {
+          status: 'PROCESSING',
+          progress: 20,
+          message: `Issuing ${label}.`
+        }).catch((error) => {
+          console.error('Unable to mark menu production issue item as processing', error);
+        });
+      }
       const result = await createMenuIssueProductionRecord(actor, payload);
       const record = result.record;
       if (result.duplicatePrevented) {
@@ -6536,11 +6934,36 @@ async function runMenuProductionIssueWork(work) {
           }
         });
       }
+      if (jobId) {
+        updateOperationalBackgroundJobItem(jobId, itemKey, {
+          status: result.duplicatePrevented ? 'SKIPPED' : 'COMPLETED',
+          progress: 100,
+          message: result.duplicatePrevented
+            ? `${label} already has an active production request.`
+            : `${label} production request issued.`,
+          entity_id: record?.id || null,
+          result_entity_name: 'Production',
+          result_entity_id: record?.id || null,
+          error: ''
+        }).catch((error) => {
+          console.error('Unable to mark menu production issue item as completed', error);
+        });
+      }
     } catch (error) {
       failures.push({
         label,
         message: error?.message || 'Unable to issue this meal production request.'
       });
+      if (jobId) {
+        updateOperationalBackgroundJobItem(jobId, itemKey, {
+          status: 'FAILED',
+          progress: 100,
+          message: `Unable to issue ${label}.`,
+          error: error?.message || 'Unable to issue this meal production request.'
+        }).catch((updateError) => {
+          console.error('Unable to mark menu production issue item as failed', updateError);
+        });
+      }
     }
     updateMenuProductionIssueJob(jobId, {
       progress: Math.round(10 + (((index + 1) / Math.max(1, productions.length)) * 85)),
@@ -6549,6 +6972,14 @@ async function runMenuProductionIssueWork(work) {
       failed_count: failures.length,
       message: `Issued ${createdRecords.length} and skipped ${skippedRecords.length} duplicate menu production request${productions.length === 1 ? '' : 's'}.`
     });
+    if (jobId) {
+      updateOperationalBackgroundJob(jobId, {
+        progress: Math.round(10 + (((index + 1) / Math.max(1, productions.length)) * 85)),
+        message: `Issued ${createdRecords.length} and skipped ${skippedRecords.length} duplicate menu production request${productions.length === 1 ? '' : 's'}.`
+      }).catch((error) => {
+        console.error('Unable to update menu production issue background job progress', error);
+      });
+    }
   }
 
   const failed = failures.length > 0;
@@ -6567,6 +6998,24 @@ async function runMenuProductionIssueWork(work) {
         : 'Menu production requests have been issued.',
     error: failures.map((failure) => `${failure.label}: ${failure.message}`).join('\n')
   });
+  if (jobId) {
+    await updateOperationalBackgroundJob(jobId, {
+      status: failed ? 'FAILED' : 'COMPLETED',
+      progress: 100,
+      message: failed
+        ? `Menu production issue finished with ${failures.length} failed meal request${failures.length === 1 ? '' : 's'}.`
+        : skippedRecords.length > 0
+          ? `Menu production issue completed. ${skippedRecords.length} duplicate request${skippedRecords.length === 1 ? '' : 's'} skipped.`
+          : 'Menu production requests have been issued.',
+      error: failures.map((failure) => `${failure.label}: ${failure.message}`).join('\n'),
+      result_entity_name: 'Production',
+      result_entity_id: createdRecords[0]?.id || skippedRecords[0]?.id || null,
+      result_count: createdRecords.length + skippedRecords.length,
+      completed_at: completedAt
+    }).catch((error) => {
+      console.error('Unable to mark menu production issue background job as finished', error);
+    });
+  }
   queueAuditAction(failed ? 'menu production issue failed' : 'menu production issue completed', {
     user: actor,
     action: failed ? 'MENU_PRODUCTION_ISSUE_FAILED' : 'MENU_PRODUCTION_ISSUE_COMPLETED',
@@ -6600,8 +7049,46 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
       authorizeEntityAction(request.user, 'Production', 'create', payload || {});
     });
     const key = buildMenuProductionIssueJobKey(productions);
+    const backgroundJob = await createOperationalBackgroundJob({
+      jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.MENU_PRODUCTION_ISSUE,
+      idempotencyKey: `menu-production-issue:${key}`,
+      actor: request.user,
+      entityName: 'Production',
+      entityId: null,
+      message: `Menu production issue queued. ${productions.length} meal review${productions.length === 1 ? '' : 's'} will be created in the background.`,
+      progress: 5
+    });
+    if (backgroundJob.alreadyQueued) {
+      const existingJob = menuProductionIssueJobs.get(backgroundJob.job.id);
+      return response.status(202).json({
+        queued: true,
+        alreadyQueued: true,
+        job: existingJob
+          ? serializeMenuProductionIssueJob(existingJob)
+          : serializeMenuProductionIssueBackgroundJob(backgroundJob.job),
+        background_job_id: backgroundJob.job.id,
+        message: 'Menu production issue is already running in the background for this same scope.'
+      });
+    }
+    await createOperationalBackgroundJobItems(
+      backgroundJob.job.id,
+      productions.map((payload, index) => ({
+        item_order: index,
+        entity_name: 'Production',
+        action_key: [
+          payload?.meal_type,
+          payload?.menu_type || payload?.cuisine_type,
+          payload?.menu_category
+        ].filter(Boolean).join(' / ') || `meal ${index + 1}`,
+        idempotency_key: buildMenuProductionIssueRecordKey(payload),
+        status: 'QUEUED',
+        progress: 0,
+        message: 'Menu production request queued.'
+      }))
+    );
     const enqueueResult = enqueueMenuProductionIssueWork({
       key,
+      jobId: backgroundJob.job.id,
       actor: { ...request.user },
       productions
     });
@@ -6610,7 +7097,10 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
       return response.status(202).json({
         queued: true,
         alreadyQueued: true,
-        job: serializeMenuProductionIssueJob(existingJob),
+        job: existingJob
+          ? serializeMenuProductionIssueJob(existingJob)
+          : serializeMenuProductionIssueBackgroundJob(backgroundJob.job),
+        background_job_id: backgroundJob.job.id,
         message: 'Menu production issue is already running in the background for this same scope.'
       });
     }
@@ -6618,6 +7108,7 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
     return response.status(202).json({
       queued: true,
       job,
+      background_job_id: backgroundJob.job.id,
       message: `Menu production issue queued. ${productions.length} meal review${productions.length === 1 ? '' : 's'} will be created in the background.`
     });
   } catch (error) {
@@ -6628,7 +7119,11 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
 app.get('/api/productions/menu-issue/:jobId', requireAuth, requirePermission('manage_production'), async (request, response) => {
   const job = menuProductionIssueJobs.get(request.params.jobId);
   if (!job) {
-    return response.status(404).json({ message: 'Menu production issue job was not found or has already expired.' });
+    const backgroundJob = await getOperationalBackgroundJob(request.params.jobId);
+    if (!backgroundJob || backgroundJob.job_type !== OPERATIONAL_BACKGROUND_JOB_TYPES.MENU_PRODUCTION_ISSUE) {
+      return response.status(404).json({ message: 'Menu production issue job was not found or has already expired.' });
+    }
+    return response.json({ job: serializeMenuProductionIssueBackgroundJob(backgroundJob), background_job_id: backgroundJob.id });
   }
   return response.json({ job: serializeMenuProductionIssueJob(job) });
 });
@@ -6786,17 +7281,28 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       };
     }
     if (entity === 'Production' && procurementActivationQueuedProduction) {
+      const backgroundJob = await createOperationalBackgroundJob({
+        jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_PROCUREMENT_ACTIVATION,
+        idempotencyKey: `production:${procurementActivationQueuedProduction.id}:procurement-activation`,
+        actor: request.user,
+        entityName: 'Production',
+        entityId: procurementActivationQueuedProduction.id,
+        message: 'PM approval accepted. Store / Procurement material request activation is queued.',
+        progress: 5
+      });
       const queued = enqueueProductionProcurementActivationWork({
         productionId: procurementActivationQueuedProduction.id,
+        jobId: backgroundJob.job.id,
         actor: { ...request.user }
       });
       updated = {
         ...updated,
         queued: true,
         procurement_activation_queued: true,
-        message: queued
-          ? 'PM approval saved. Store / Procurement material request activation queued in the background.'
-          : 'PM approval saved. Store / Procurement material request activation is already queued.'
+        background_job_id: backgroundJob.job.id,
+        message: backgroundJob.alreadyQueued || !queued
+          ? 'PM approval saved. Store / Procurement material request activation is already queued.'
+          : 'PM approval saved. Store / Procurement material request activation queued in the background.'
       };
       queueAuditAction('production procurement activation queued', {
         user: request.user,
@@ -6806,7 +7312,8 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
         details: {
           production_record: procurementActivationQueuedProduction,
           background_job: true,
-          duplicate_prevented: !queued
+          background_job_id: backgroundJob.job.id,
+          duplicate_prevented: backgroundJob.alreadyQueued || !queued
         }
       });
     }
@@ -6821,7 +7328,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       recordChanged('InventoryTransaction');
     }
 
-    await auditAction({
+    const workflowAuditPayload = {
       user: request.user,
       action: entity === 'Production'
         ? getProductionWorkflowAuditAction(updated)
@@ -6829,7 +7336,12 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
       entity,
       entityId: updated.id,
       details: { before: existing, input: request.body || {}, after: updated }
-    });
+    };
+    if (entity === 'Production' && procurementActivationQueuedProduction) {
+      queueAuditAction('production workflow update', workflowAuditPayload);
+    } else {
+      await auditAction(workflowAuditPayload);
+    }
 
     return response.json((await decorateEntityRecords(entity, [updated], request.user))[0]);
   } catch (error) {
@@ -9104,6 +9616,15 @@ async function runMaterialRequestAcknowledgementWork(work) {
   const jobId = work.jobId || randomUUID();
   const actor = work.actor || {};
   try {
+    await updateOperationalBackgroundJob(jobId, {
+      status: 'PROCESSING',
+      progress: 20,
+      message: 'Reserving stock for the acknowledged MR to Store.',
+      started_at: new Date().toISOString(),
+      error: ''
+    }).catch((error) => {
+      console.error('Unable to mark MR to Store acknowledgement background job as processing', error);
+    });
     await updateDocument('MaterialRequest', materialRequestId, {
       status: 'acknowledgement_processing',
       ...materialRequestAcknowledgementJobPatch(jobId, 'processing', {
@@ -9127,6 +9648,20 @@ async function runMaterialRequestAcknowledgementWork(work) {
       recordChanged('InventoryLot');
       recordChanged('InventoryTransaction');
     }
+    await updateOperationalBackgroundJob(jobId, {
+      status: 'COMPLETED',
+      progress: 100,
+      message: result.alreadyAcknowledged
+        ? 'MR to Store was already acknowledged.'
+        : 'MR to Store acknowledged and stock reservation completed.',
+      result_entity_name: result.production ? 'Production' : 'MaterialRequest',
+      result_entity_id: result.production?.id || result.acknowledged?.id || materialRequestId,
+      result_count: 1,
+      completed_at: new Date().toISOString(),
+      error: ''
+    }).catch((error) => {
+      console.error('Unable to mark MR to Store acknowledgement background job as completed', error);
+    });
     await auditAction({
       user: actor,
       action: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGED',
@@ -9150,6 +9685,15 @@ async function runMaterialRequestAcknowledgementWork(work) {
     });
     recordChanged('MaterialRequest');
     if (failed?.production) recordChanged('Production');
+    await updateOperationalBackgroundJob(jobId, {
+      status: 'FAILED',
+      progress: 100,
+      message: error?.message || 'MR to Store acknowledgement failed.',
+      error: error?.message || 'MR to Store acknowledgement failed.',
+      completed_at: new Date().toISOString()
+    }).catch((updateError) => {
+      console.error('Unable to mark MR to Store acknowledgement background job as failed', updateError);
+    });
     await auditAction({
       user: actor,
       action: 'PRODUCTION_PROCUREMENT_ACKNOWLEDGEMENT_FAILED',
@@ -9240,6 +9784,19 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
         alreadyQueued: false
       };
     });
+    const backgroundJobId = queued.job?.id || queued.materialRequest.acknowledgement_job_id || randomUUID();
+    const backgroundJob = await createOperationalBackgroundJob({
+      id: backgroundJobId,
+      jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.MATERIAL_REQUEST_ACKNOWLEDGEMENT,
+      idempotencyKey: `material-request:${queued.materialRequest.id}:acknowledgement:${backgroundJobId}`,
+      actor: request.user,
+      entityName: 'MaterialRequest',
+      entityId: queued.materialRequest.id,
+      message: queued.alreadyQueued
+        ? 'MR to Store acknowledgement is already running in the background.'
+        : 'MR to Store acknowledgement queued. Stock reservation will complete in the background.',
+      progress: queued.job?.progress || 5
+    });
     enqueueMaterialRequestAcknowledgementWork({
       materialRequestId: queued.materialRequest.id,
       jobId: queued.job?.id || queued.materialRequest.acknowledgement_job_id,
@@ -9258,7 +9815,7 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
           saved_record: queued.materialRequest,
           production_record: queued.production,
           notes: requestedNotes || null,
-          background_job_id: queued.job?.id || null
+          background_job_id: backgroundJob.job.id || queued.job?.id || null
         }
       });
     }
@@ -9267,6 +9824,7 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
       queued: true,
       acknowledgement_job: queued.job,
       job: queued.job,
+      background_job_id: backgroundJob.job.id,
       message: queued.alreadyQueued
         ? 'MR to Store acknowledgement is already running in the background.'
         : 'MR to Store acknowledgement queued. Stock reservation will complete in the background.'
@@ -10998,6 +11556,18 @@ async function queueProductionCompletionForRecord(production, actor, fulfillment
   }
 
   if (existingJob && PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(existingJob.status)) {
+    await createOperationalBackgroundJob({
+      id: existingJob.id,
+      jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
+      idempotencyKey: `production:${production.id}:completion:${existingJob.id}`,
+      actor,
+      entityName: 'Production',
+      entityId: production.id,
+      message: existingJob.message || 'Production completion is already queued.',
+      progress: existingJob.progress || 5
+    }).catch((error) => {
+      console.error('Unable to create production completion background job for existing queue entry', error);
+    });
     enqueueProductionCompletionWork({
       productionId: production.id,
       jobId: existingJob.id,
@@ -11024,6 +11594,18 @@ async function queueProductionCompletionForRecord(production, actor, fulfillment
     completion_job_requested_by_name: actor.full_name || actor.email || ''
   }));
   const queuedJob = serializeProductionCompletionJob(queuedProduction);
+  await createOperationalBackgroundJob({
+    id: jobId,
+    jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
+    idempotencyKey: `production:${production.id}:completion:${jobId}`,
+    actor,
+    entityName: 'Production',
+    entityId: production.id,
+    message: queuedJob?.message || options.message || 'Production completion has been queued.',
+    progress: queuedJob?.progress || 5
+  }).catch((error) => {
+    console.error('Unable to create production completion background job', error);
+  });
   enqueueProductionCompletionWork({
     productionId: production.id,
     jobId,
@@ -11042,6 +11624,15 @@ async function runProductionCompletionWork(work) {
   const productionId = String(work.productionId || '').trim();
   const actor = work.actor || {};
   try {
+    await updateOperationalBackgroundJob(jobId, {
+      status: 'PROCESSING',
+      progress: 20,
+      message: 'Consuming reserved stock and preparing finished output.',
+      started_at: new Date().toISOString(),
+      error: ''
+    }).catch((error) => {
+      console.error('Unable to mark production completion background job as processing', error);
+    });
     await updateProductionCompletionJob(productionId, productionCompletionJobPatch(jobId, 'processing', {
       completion_job_progress: 20,
       completion_job_message: 'Consuming reserved stock and preparing finished output.',
@@ -11079,6 +11670,18 @@ async function runProductionCompletionWork(work) {
       completion_job_completed_at: new Date().toISOString(),
       completion_job_error: ''
     }));
+    await updateOperationalBackgroundJob(jobId, {
+      status: 'COMPLETED',
+      progress: 100,
+      message: 'Production completed and finished output is available.',
+      result_entity_name: 'Production',
+      result_entity_id: productionId,
+      result_count: 1,
+      completed_at: new Date().toISOString(),
+      error: ''
+    }).catch((updateError) => {
+      console.error('Unable to mark production completion background job as completed', updateError);
+    });
   } catch (error) {
     await updateProductionCompletionJob(productionId, productionCompletionJobPatch(jobId, 'failed', {
       completion_job_progress: 100,
@@ -11088,6 +11691,15 @@ async function runProductionCompletionWork(work) {
     })).catch((updateError) => {
       console.error('Unable to mark production completion job as failed', updateError);
     });
+    await updateOperationalBackgroundJob(jobId, {
+      status: 'FAILED',
+      progress: 100,
+      message: error.message || 'Production completion failed.',
+      error: error.message || 'Production completion failed.',
+      completed_at: new Date().toISOString()
+    }).catch((updateError) => {
+      console.error('Unable to mark production completion background job as failed', updateError);
+    });
   }
 }
 
@@ -11096,6 +11708,18 @@ app.get('/api/inventory/production/:id/completion-job', requireAuth, requirePerm
     const { production, productionInventorySite } = await resolveProductionCompletionRequest(request);
     const job = serializeProductionCompletionJob(production);
     if (job && PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(job.status)) {
+      await createOperationalBackgroundJob({
+        id: job.id,
+        jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
+        idempotencyKey: `production:${production.id}:completion:${job.id}`,
+        actor: request.user,
+        entityName: 'Production',
+        entityId: production.id,
+        message: job.message || 'Production completion is already queued.',
+        progress: job.progress || 5
+      }).catch((error) => {
+        console.error('Unable to create production completion background job while polling', error);
+      });
       enqueueProductionCompletionWork({
         productionId: production.id,
         jobId: job.id,
@@ -11136,6 +11760,18 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
     }
 
     if (existingJob && PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(existingJob.status)) {
+      await createOperationalBackgroundJob({
+        id: existingJob.id,
+        jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
+        idempotencyKey: `production:${production.id}:completion:${existingJob.id}`,
+        actor: request.user,
+        entityName: 'Production',
+        entityId: production.id,
+        message: existingJob.message || 'Production completion is already queued.',
+        progress: existingJob.progress || 5
+      }).catch((error) => {
+        console.error('Unable to create production completion background job for existing completion request', error);
+      });
       enqueueProductionCompletionWork({
         productionId: production.id,
         jobId: existingJob.id,
@@ -11164,6 +11800,18 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
       completion_job_requested_by_name: request.user.full_name || request.user.email || ''
     }));
     const queuedJob = serializeProductionCompletionJob(queuedProduction);
+    await createOperationalBackgroundJob({
+      id: jobId,
+      jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
+      idempotencyKey: `production:${production.id}:completion:${jobId}`,
+      actor: request.user,
+      entityName: 'Production',
+      entityId: production.id,
+      message: queuedJob?.message || 'Production completion has been queued.',
+      progress: queuedJob?.progress || 5
+    }).catch((error) => {
+      console.error('Unable to create production completion background job for manual completion', error);
+    });
     enqueueProductionCompletionWork({
       productionId: production.id,
       jobId,
