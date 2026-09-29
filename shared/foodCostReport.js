@@ -95,13 +95,19 @@ function calculateProductionLineCost(production = {}, ingredientMap = {}) {
 }
 
 export function getProductionOutputCost(production = {}, ingredientMap = {}) {
-  return firstPositive([
+  const postedCost = firstPositive([
     production.total_cost,
     production.production_cost_total,
     production.ingredient_cost_total,
     production.total_consumption_cost,
-    production.actual_cost,
-    calculateProductionLineCost(production, ingredientMap),
+    production.actual_cost
+  ]);
+  if (postedCost > EPSILON) return postedCost;
+
+  const lineCost = calculateProductionLineCost(production, ingredientMap);
+  if (lineCost > EPSILON) return lineCost;
+
+  return firstPositive([
     production.estimated_batch_cost,
     production.estimated_total_cost,
     production.yield_total_cost,

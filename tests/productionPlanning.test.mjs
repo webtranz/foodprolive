@@ -158,6 +158,9 @@ assert.deepEqual(
 assert.equal(dashboard.sections.find((section) => section.key === 'breakfast').total_portions, 60);
 assert.equal(dashboard.sections.find((section) => section.key === 'lunch').total_portions, 50);
 assert.equal(dashboard.sections.find((section) => section.key === 'dinner').total_portions, 18);
+assert.equal(dashboard.sections.find((section) => section.key === 'breakfast').total_batch_cost, 60);
+assert.equal(dashboard.sections.find((section) => section.key === 'lunch').total_batch_cost, 50);
+assert.equal(dashboard.sections.find((section) => section.key === 'dinner').total_batch_cost, 42);
 assert.equal(dashboard.summary.total_portions, 128);
 assert.equal(dashboard.summary.total_recipes, 3);
 assert.equal(dashboard.summary.total_batch_cost, 152);

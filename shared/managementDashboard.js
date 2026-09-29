@@ -178,7 +178,18 @@ function productionCountsAsSpend(production = {}) {
   return CLOSED_PRODUCTION_STATUSES.has(normalizeStatus(production.status));
 }
 
-function computeProductionCostByMenuCategory(productions = []) {
+function createProductionCostLookup(productions = []) {
+  const costByKey = new Map();
+  return (production = {}) => {
+    const key = String(production.id || '');
+    if (key && costByKey.has(key)) return costByKey.get(key);
+    const cost = productionCost(production);
+    if (key) costByKey.set(key, cost);
+    return cost;
+  };
+}
+
+function computeProductionCostByMenuCategory(productions = [], costOfProduction = productionCost) {
   const buckets = new Map();
   MENU_CATEGORY_ORDER.forEach((category) => {
     buckets.set(category, { meals: 0, spent: 0 });
@@ -192,7 +203,7 @@ function computeProductionCostByMenuCategory(productions = []) {
       if (!buckets.has(category)) buckets.set(category, { meals: 0, spent: 0 });
       const bucket = buckets.get(category);
       bucket.meals += producedServings(production);
-      bucket.spent += productionCost(production);
+      bucket.spent += costOfProduction(production);
     });
 
   return Object.fromEntries(
@@ -754,7 +765,7 @@ function createMetricPeriodContext(records, reportPeriod, rangeBudgetTotal) {
   };
 }
 
-function computeCoreMetrics(records, rangeStart, rangeEnd, operationalSiteCount, period = null) {
+function computeCoreMetrics(records, rangeStart, rangeEnd, operationalSiteCount, period = null, costOfProduction = productionCost) {
   const context = period || createPeriodContext(records, rangeStart, rangeEnd);
   const periodProduction = recordsInDateIndex(context.productionByDate);
   const periodWaste = recordsInDateIndex(context.wasteByDate);
@@ -766,7 +777,7 @@ function computeCoreMetrics(records, rangeStart, rangeEnd, operationalSiteCount,
   const totalMeals = periodProduction.reduce((sum, record) => sum + producedServings(record), 0);
   const spent = periodProduction
     .filter(productionCountsAsSpend)
-    .reduce((sum, record) => sum + productionCost(record), 0);
+    .reduce((sum, record) => sum + costOfProduction(record), 0);
   const wasteCost = periodWaste.reduce((sum, record) => (
     sum + Math.max(0, safeNumber(record.estimated_cost ?? record.waste_cost))
   ), 0);
@@ -792,7 +803,7 @@ function computeCoreMetrics(records, rangeStart, rangeEnd, operationalSiteCount,
   return {
     total_meals: round(totalMeals, 0),
     cost_per_meal: totalMeals > 0 ? round(spent / totalMeals, 2) : 0,
-    cost_per_meal_by_category: computeProductionCostByMenuCategory(periodProduction),
+    cost_per_meal_by_category: computeProductionCostByMenuCategory(periodProduction, costOfProduction),
     daily_budget: round(budget, 2),
     daily_spent: round(spent, 2),
     food_wastage_cost: round(wasteCost, 2),
@@ -945,7 +956,7 @@ function buildMealBudgetAllocation(records, targetDate, dailyBudget = 0, sources
   return roundedAllocations;
 }
 
-function buildMealRows(records, rangeStart, rangeEnd, period = null) {
+function buildMealRows(records, rangeStart, rangeEnd, period = null, costOfProduction = productionCost) {
   const context = period || createPeriodContext(records, rangeStart, rangeEnd);
   return MEAL_PERIODS.map((mealType) => {
     let planned = 0;
@@ -970,7 +981,7 @@ function buildMealRows(records, rangeStart, rangeEnd, period = null) {
       produced += production.reduce((sum, record) => sum + producedServings(record), 0);
       spent += production
         .filter(productionCountsAsSpend)
-        .reduce((sum, record) => sum + productionCost(record), 0);
+        .reduce((sum, record) => sum + costOfProduction(record), 0);
       wasteCost += waste.reduce((sum, record) => (
         sum + Math.max(0, safeNumber(record.estimated_cost ?? record.waste_cost))
       ), 0);
@@ -997,7 +1008,7 @@ function buildMealRows(records, rangeStart, rangeEnd, period = null) {
   });
 }
 
-function buildTrendRows(records, rangeStart, rangeEnd, helpers, period = null) {
+function buildTrendRows(records, rangeStart, rangeEnd, helpers, period = null, costOfProduction = productionCost) {
   const context = period || createPeriodContext(records, rangeStart, rangeEnd);
   const locationTotals = new Map();
   recordsInDateIndex(context.productionByDate)
@@ -1026,7 +1037,7 @@ function buildTrendRows(records, rangeStart, rangeEnd, helpers, period = null) {
       date: day,
       label: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`)),
       budget: round(MEAL_PERIODS.reduce((sum, mealType) => sum + mealBudgets[mealType], 0), 2),
-      spent: round(dayProduction.filter(productionCountsAsSpend).reduce((sum, record) => sum + productionCost(record), 0), 2),
+      spent: round(dayProduction.filter(productionCountsAsSpend).reduce((sum, record) => sum + costOfProduction(record), 0), 2),
       waste_cost: round(dayWaste.reduce((sum, record) => sum + Math.max(0, safeNumber(record.estimated_cost ?? record.waste_cost)), 0), 2),
       planned: round(dayProduction.reduce((sum, record) => sum + plannedServings(record), 0), 0),
       produced: round(dayProduction.reduce((sum, record) => sum + producedServings(record), 0), 0)
@@ -1042,7 +1053,7 @@ function buildTrendRows(records, rangeStart, rangeEnd, helpers, period = null) {
   return { rows, locationSeries };
 }
 
-function buildLocationRows(data, records, rangeStart, rangeEnd, helpers, selectedIds, reportPeriod) {
+function buildLocationRows(data, records, rangeStart, rangeEnd, helpers, selectedIds, reportPeriod, costOfProduction = productionCost) {
   const anchors = new Map();
   data.sites.forEach((site) => {
     if (selectedIds && !selectedIds.has(String(site.id))) return;
@@ -1063,7 +1074,7 @@ function buildLocationRows(data, records, rangeStart, rangeEnd, helpers, selecte
       reportPeriod,
       reportPeriod.rangeBudgetTotalsByGroup.get(siteId) || 0
     );
-    const metrics = computeCoreMetrics(scoped, rangeStart, rangeEnd, 1, period);
+    const metrics = computeCoreMetrics(scoped, rangeStart, rangeEnd, 1, period, costOfProduction);
     const highWaste = recordsInDateIndex(period.wasteByDate)
       .filter((record) => safeNumber(record.estimated_cost ?? record.waste_cost) >= HIGH_WASTE_COST_THRESHOLD)
       .length;
@@ -1172,17 +1183,19 @@ export function buildManagementDashboardSnapshot(input = {}) {
   const trendPeriod = trendStart === rangeStart && trendEnd === rangeEnd
     ? reportPeriod
     : createPeriodContext(records, trendStart, trendEnd);
+  const costOfProduction = createProductionCostLookup(records.production);
   const metrics = computeCoreMetrics(
     records,
     rangeStart,
     rangeEnd,
     Math.max(1, operationalAnchors.size),
-    reportPeriod
+    reportPeriod,
+    costOfProduction
   );
   metrics.open_exceptions = metrics.stock_risk + metrics.supplier_exceptions + metrics.attendance_gaps
     + metrics.approvals.waste + metrics.approvals.production;
 
-  const trend = buildTrendRows(records, trendStart, trendEnd, helpers, trendPeriod);
+  const trend = buildTrendRows(records, trendStart, trendEnd, helpers, trendPeriod, costOfProduction);
   const locations = buildLocationRows(
     data,
     records,
@@ -1190,7 +1203,8 @@ export function buildManagementDashboardSnapshot(input = {}) {
     rangeEnd,
     helpers,
     selectedIds,
-    reportPeriod
+    reportPeriod,
+    costOfProduction
   );
   const scopeTypes = availableScopeTypes(view);
   const availableScopes = data.sites
@@ -1226,7 +1240,7 @@ export function buildManagementDashboardSnapshot(input = {}) {
     },
     metrics,
     locations,
-    meals: buildMealRows(records, rangeStart, rangeEnd, reportPeriod),
+    meals: buildMealRows(records, rangeStart, rangeEnd, reportPeriod, costOfProduction),
     actions: buildActions(view, metrics, records, rangeStart, rangeEnd, reportPeriod),
     trends: trend.rows,
     location_series: trend.locationSeries,

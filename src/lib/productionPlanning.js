@@ -711,6 +711,7 @@ export function buildProductionPlanningDashboard({
       ...period,
       items: periodItems,
       total_portions: countedPeriodItems.reduce((sum, item) => sum + item.required_portions, 0),
+      total_batch_cost: round(countedPeriodItems.reduce((sum, item) => sum + item.estimated_batch_cost, 0)),
       total_items: countedPeriodItems.reduce((sum, item) => sum + item.item_count, 0),
       total_recipes: countedPeriodItems.reduce((sum, item) => sum + item.item_count, 0)
     };

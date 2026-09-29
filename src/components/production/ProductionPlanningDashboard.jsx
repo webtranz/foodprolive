@@ -426,8 +426,8 @@ function MealSection({ section, materialRequestMap, renderActions }) {
             </div>
           </div>
           <div className="text-right">
-            <p className="text-lg font-bold text-slate-950">{section.total_portions.toLocaleString()}</p>
-            <p className="text-[10px] uppercase tracking-wide text-slate-500">produced</p>
+            <p className="text-lg font-bold text-slate-950">{formatCurrency(section.total_batch_cost || 0)}</p>
+            <p className="text-[10px] uppercase tracking-wide text-slate-500">cost</p>
             <Badge className="mt-1 border border-emerald-200 bg-emerald-100 text-emerald-700 shadow-sm hover:bg-emerald-100">
               {sectionItemCount.toLocaleString()} planned
             </Badge>
@@ -463,26 +463,22 @@ function PlanSummary({ dashboard }) {
         <CardHeader className="pb-3"><CardTitle className="text-base">Production Summary</CardTitle></CardHeader>
         <CardContent className="space-y-2 text-sm">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <span className="font-medium text-slate-700">Total Produced</span>
-            <span className="text-xl font-bold text-sky-700">{dashboard.summary.total_portions.toLocaleString()}</span>
+            <span className="font-medium text-slate-700">Total Production Cost</span>
+            <span className="text-xl font-bold text-sky-700">{formatCurrency(dashboard.summary.total_batch_cost)}</span>
           </div>
           {corePeriods.map((period) => (
             <div key={period.key} className="flex justify-between text-slate-600">
-              <span>{period.label}</span><span className="font-medium text-slate-900">{period.total_portions.toLocaleString()}</span>
+              <span>{period.label}</span><span className="font-medium text-slate-900">{formatCurrency(period.total_batch_cost || 0)}</span>
             </div>
           ))}
           {otherPeriod ? (
             <div className="flex justify-between text-slate-600">
-              <span>{otherPeriod.label}</span><span className="font-medium text-slate-900">{otherPeriod.total_portions.toLocaleString()}</span>
+              <span>{otherPeriod.label}</span><span className="font-medium text-slate-900">{formatCurrency(otherPeriod.total_batch_cost || 0)}</span>
             </div>
           ) : null}
           <div className="mt-3 flex justify-between border-t border-slate-100 pt-3">
             <span className="font-medium text-slate-700">Total Items</span>
             <span className="font-semibold text-slate-950">{dashboard.summary.total_items ?? dashboard.summary.total_recipes}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="font-medium text-slate-700">Total Batch Cost</span>
-            <span className="font-semibold text-slate-950">{formatCurrency(dashboard.summary.total_batch_cost)}</span>
           </div>
         </CardContent>
       </Card>
@@ -814,7 +810,7 @@ export default function ProductionPlanningDashboard({
             </div>
             <div className="ml-auto flex items-center gap-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
               <span><strong className="text-slate-900">{dashboard.summary.total_recipes}</strong> recipes</span>
-              <span><strong className="text-slate-900">{dashboard.summary.total_portions.toLocaleString()}</strong> produced</span>
+              <span><strong className="text-slate-900">{formatCurrency(dashboard.summary.total_batch_cost)}</strong> production cost</span>
               {dashboard.summary.at_risk_count > 0 ? <span className="font-semibold text-red-600">{dashboard.summary.at_risk_count} at risk</span> : null}
             </div>
           </div>
