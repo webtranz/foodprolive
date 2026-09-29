@@ -215,8 +215,6 @@ function reportLineCost(line = {}) {
     line.accounting_total_cost,
     line.total_cost,
     line.cost,
-    line.estimated_cost,
-    line.estimated_batch_cost,
     sumReportLineLayerCost(line)
   ) ?? 0;
 }
@@ -263,16 +261,19 @@ function sumManifestItemsWeight(items = [], field) {
 
 function manifestItemCost(item = {}) {
   const direct = firstPositivePresent(
+    item.total_consumption_cost,
+    item.production_cost_total,
+    item.ingredient_cost_total,
     item.actual_cost,
     item.total_cost,
-    item.estimated_batch_cost,
-    item.estimated_cost,
-    item.planned_total_cost,
-    item.cost,
-    item.batch_cost
+    item.posted_cost
   );
   if (direct !== null) return direct;
   return sumReportLineCosts(item.ingredients_used);
+}
+
+function manifestItemPostedCost(item = {}, reportLines = []) {
+  return sumReportLineCosts(reportLines) ?? manifestItemCost(item);
 }
 
 function sumManifestItemsCost(items = []) {
@@ -5607,7 +5608,7 @@ export default function Production() {
                   <div>
                     <p className="font-semibold text-emerald-900">Full production manifest</p>
                     <p className="text-emerald-700">
-                      This production event contains every planned production line, including recipes and non-dish items.
+                      This production event contains every planned production line, including recipes and non-dish items. Posted Cost is actual stock consumption cost allocated from the saved report lines; planned estimates are not included in Total Consumption Cost.
                     </p>
                   </div>
                 </div>
@@ -5627,7 +5628,7 @@ export default function Production() {
                       <TableRow>
                         <TableHead className="min-w-[260px]">Manifest Item</TableHead>
                         <TableHead className="whitespace-nowrap">Booked Production</TableHead>
-                        <TableHead className="whitespace-nowrap">Estimated Cost</TableHead>
+                        <TableHead className="whitespace-nowrap">Posted Cost</TableHead>
                         <TableHead className="whitespace-nowrap">Snapshot Lines</TableHead>
                         <TableHead className="whitespace-nowrap">Raw / Issued Qty</TableHead>
                         <TableHead className="whitespace-nowrap">Yielded / Output Qty</TableHead>
@@ -5636,6 +5637,7 @@ export default function Production() {
                     <TableBody>
                       {reportManifestItems.map((item, index) => {
                         const matchedReportLines = getManifestItemReportLines(item, reportIngredientLines);
+                        const postedCost = manifestItemPostedCost(item, matchedReportLines);
                         const snapshotLineCount = Array.isArray(item.ingredients_used) && item.ingredients_used.length > 0
                           ? item.ingredients_used.length
                           : matchedReportLines.length || '—';
@@ -5643,7 +5645,7 @@ export default function Production() {
                           <TableRow key={item.key || `${item.recipe_id || 'item'}-${index}`}>
                             <TableCell className="min-w-[260px] font-medium text-slate-900">{item.recipe_name || 'Planned item'}</TableCell>
                             <TableCell className="whitespace-nowrap">{getManifestProductionQuantityLabel(item)}</TableCell>
-                            <TableCell className="whitespace-nowrap">{formatCurrency(manifestItemCost(item) || 0)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{postedCost === null ? '—' : formatCurrency(postedCost)}</TableCell>
                             <TableCell className="whitespace-nowrap">{snapshotLineCount}</TableCell>
                             <TableCell className="whitespace-nowrap">{formatManifestRawIssue(item, matchedReportLines)}</TableCell>
                             <TableCell className="whitespace-nowrap">{formatManifestYieldedOutput(item, matchedReportLines)}</TableCell>

@@ -176,6 +176,104 @@ assert.equal(productionCost({
   production_cost_total: null,
   ingredients_used: [{ planned_quantity: 4, unit_cost: 2.5 }]
 }), 10);
+assert.equal(productionCost({
+  estimated_batch_cost: 880,
+  estimated_cost: 120,
+  planned_total_cost: 50
+}), 0);
+
+const completedProductionOnlySpend = buildManagementDashboardSnapshot({
+  view: 'project_manager',
+  date: '2026-08-19',
+  selectedSiteId: 'project-a',
+  sites,
+  production: [
+    {
+      id: 'finished-breakfast',
+      site_id: 'project-a',
+      production_date: '2026-08-19',
+      meal_type: 'breakfast',
+      status: 'completed',
+      produced_servings: 10,
+      completion_lines: [{ total_cost: 25 }]
+    },
+    {
+      id: 'started-lunch',
+      site_id: 'project-a',
+      production_date: '2026-08-19',
+      meal_type: 'lunch',
+      status: 'started',
+      actual_servings: 999,
+      production_cost_total: 9999
+    },
+    {
+      id: 'in-progress-dinner',
+      site_id: 'project-a',
+      production_date: '2026-08-19',
+      meal_type: 'dinner',
+      status: 'in_progress',
+      produced_servings: 500,
+      estimated_batch_cost: 5000
+    }
+  ]
+});
+assert.equal(completedProductionOnlySpend.metrics.total_meals, 10);
+assert.equal(completedProductionOnlySpend.metrics.daily_spent, 25);
+assert.equal(completedProductionOnlySpend.metrics.cost_per_meal, 2.5);
+assert.equal(completedProductionOnlySpend.meals.find((row) => row.meal_type === 'lunch').produced, 0);
+assert.equal(completedProductionOnlySpend.meals.find((row) => row.meal_type === 'lunch').spent, 0);
+assert.equal(completedProductionOnlySpend.meals.find((row) => row.meal_type === 'dinner').produced, 0);
+assert.equal(completedProductionOnlySpend.meals.find((row) => row.meal_type === 'dinner').spent, 0);
+
+const categoryCostPerMeal = buildManagementDashboardSnapshot({
+  view: 'project_manager',
+  date: '2026-08-19',
+  selectedSiteId: 'project-a',
+  sites,
+  production: [
+    {
+      id: 'labor-production',
+      site_id: 'project-a',
+      production_date: '2026-08-19',
+      status: 'completed',
+      menu_category: 'Labor',
+      produced_servings: 10,
+      total_cost: 25
+    },
+    {
+      id: 'junior-production',
+      site_id: 'project-a',
+      production_date: '2026-08-19',
+      status: 'completed',
+      menu_category: 'Junior',
+      actual_servings: 5,
+      total_cost: 15
+    },
+    {
+      id: 'senior-production',
+      site_id: 'project-a',
+      production_date: '2026-08-19',
+      status: 'completed',
+      menu_category: 'Senior',
+      expected_yield_servings: 2,
+      total_cost: 6
+    },
+    {
+      id: 'ignored-open-labor-production',
+      site_id: 'project-a',
+      production_date: '2026-08-19',
+      status: 'in_progress',
+      menu_category: 'Labor',
+      produced_servings: 100,
+      total_cost: 1000
+    }
+  ]
+});
+assert.deepEqual(categoryCostPerMeal.metrics.cost_per_meal_by_category, {
+  labor: { meals: 10, spent: 25, cost_per_meal: 2.5 },
+  junior: { meals: 5, spent: 15, cost_per_meal: 3 },
+  senior: { meals: 2, spent: 6, cost_per_meal: 3 }
+});
 
 assert.equal(dailyBudgetAmount({ budget_amount: 3100, start_date: '2026-08-01', end_date: '2026-08-31' }, '2026-08-19'), 100);
 assert.deepEqual(computeAttendanceStats([], []), { attendance: null, attendance_gaps: 0 });

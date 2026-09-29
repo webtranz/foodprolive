@@ -3,8 +3,8 @@ import { SITE_HIERARCHY_TYPES, normalizeSiteType } from './siteHierarchy.js';
 import { requiresAreaProductionApproval } from './productionWorkflow.js';
 
 const MEAL_PERIODS = ['breakfast', 'lunch', 'dinner'];
+const MENU_CATEGORY_ORDER = ['labor', 'junior', 'senior'];
 const CLOSED_PRODUCTION_STATUSES = new Set(['completed', 'complete']);
-const ACTIVE_PRODUCTION_STATUSES = new Set(['completed', 'complete', 'in_progress', 'started']);
 const PENDING_APPROVAL_STATUSES = new Set([
   'pending',
   'pending_approval',
@@ -61,6 +61,22 @@ function normalizeStatus(value) {
 function normalizeMealType(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return MEAL_PERIODS.includes(normalized) ? normalized : 'other';
+}
+
+function normalizeMenuCategory(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (normalized === 'labour') return 'labor';
+  return normalized;
+}
+
+function productionMenuCategory(production = {}) {
+  return normalizeMenuCategory(
+    production.menu_category
+    ?? production.meal_category
+    ?? production.category
+    ?? production.customer_category
+    ?? production.service_category
+  );
 }
 
 function dateOnly(value) {
@@ -136,45 +152,78 @@ function firstFiniteValue(values = []) {
   ));
 }
 
+function productionLineCost(line = {}) {
+  const explicit = firstFiniteValue([
+    line.posted_cost,
+    line.total_cost,
+    line.accounting_total_cost,
+    line.actual_cost,
+    line.cost,
+    line.line_cost
+  ]);
+  if (explicit !== undefined) return Math.max(0, safeNumber(explicit));
+
+  return (Array.isArray(line.movement_layers) ? line.movement_layers : [])
+    .reduce((sum, layer) => {
+      const layerCost = firstFiniteValue([layer.accounting_total_cost, layer.total_cost, layer.cost]);
+      return layerCost === undefined ? sum : sum + Math.max(0, safeNumber(layerCost));
+    }, 0);
+}
+
 function productionCost(production = {}) {
   const explicit = firstFiniteValue([
+    production.total_consumption_cost,
     production.production_cost_total,
     production.ingredient_cost_total,
     production.actual_cost,
-    production.total_cost,
-    production.estimated_batch_cost,
-    production.estimated_cost
+    production.total_cost
   ]);
 
   if (explicit !== undefined) return Math.max(0, safeNumber(explicit));
 
+  const lineCost = [
+    ...(Array.isArray(production.completion_lines) ? production.completion_lines : []),
+    ...(Array.isArray(production.ingredient_lines) ? production.ingredient_lines : [])
+  ].reduce((sum, line) => sum + productionLineCost(line), 0);
+  if (lineCost > 0) return lineCost;
+
   return (Array.isArray(production.ingredients_used) ? production.ingredients_used : [])
     .reduce((sum, line) => {
-      const lineCost = firstFiniteValue([line.actual_cost, line.line_cost, line.estimated_cost]);
-      if (lineCost !== undefined) return sum + Math.max(0, safeNumber(lineCost));
+      const actualLineCost = firstFiniteValue([
+        line.posted_cost,
+        line.total_cost,
+        line.accounting_total_cost,
+        line.actual_cost,
+        line.line_cost
+      ]);
+      if (actualLineCost !== undefined) return sum + Math.max(0, safeNumber(actualLineCost));
       const quantity = safeNumber(
         line.actual_quantity
-        ?? line.planned_quantity
+        ?? line.stock_issued_quantity
+        ?? line.issued_quantity
+        ?? line.consumed_quantity
         ?? line.yield_adjusted_quantity
         ?? line.adjusted_quantity
-        ?? line.required_quantity
         ?? line.quantity
+        ?? line.planned_quantity
+        ?? line.required_quantity
       );
-      const unitCost = safeNumber(line.actual_unit_cost ?? line.unit_cost ?? line.cost_per_unit);
+      const unitCost = safeNumber(line.actual_unit_cost ?? line.accounting_unit_cost ?? line.unit_cost ?? line.cost_per_unit);
       return sum + Math.max(0, quantity * unitCost);
     }, 0);
 }
 
 function producedServings(production = {}) {
   const status = normalizeStatus(production.status);
+  if (!CLOSED_PRODUCTION_STATUSES.has(status)) return 0;
   const actualValue = firstFiniteValue([
     production.produced_servings,
-    production.actual_servings
+    production.actual_servings,
+    production.expected_yield_servings
   ]);
   const actual = actualValue === undefined ? Number.NaN : safeNumber(actualValue, Number.NaN);
   if (Number.isFinite(actual)) return Math.max(0, actual);
-  if (CLOSED_PRODUCTION_STATUSES.has(status)) return Math.max(0, safeNumber(production.target_servings));
-  return 0;
+  return Math.max(0, safeNumber(production.target_servings));
 }
 
 function plannedServings(production = {}) {
@@ -182,9 +231,47 @@ function plannedServings(production = {}) {
 }
 
 function productionCountsAsSpend(production = {}) {
-  const actualValue = firstFiniteValue([production.actual_servings]);
-  return ACTIVE_PRODUCTION_STATUSES.has(normalizeStatus(production.status))
-    || (actualValue !== undefined && safeNumber(actualValue, Number.NaN) >= 0);
+  return CLOSED_PRODUCTION_STATUSES.has(normalizeStatus(production.status));
+}
+
+function computeProductionCostByMenuCategory(productions = []) {
+  const buckets = new Map();
+  MENU_CATEGORY_ORDER.forEach((category) => {
+    buckets.set(category, { meals: 0, spent: 0 });
+  });
+
+  (Array.isArray(productions) ? productions : [])
+    .filter(productionCountsAsSpend)
+    .forEach((production) => {
+      const category = productionMenuCategory(production);
+      if (!category) return;
+      if (!buckets.has(category)) buckets.set(category, { meals: 0, spent: 0 });
+      const bucket = buckets.get(category);
+      bucket.meals += producedServings(production);
+      bucket.spent += productionCost(production);
+    });
+
+  return Object.fromEntries(
+    [...buckets.entries()]
+      .filter(([, value]) => value.meals > 0 || value.spent > 0)
+      .sort(([left], [right]) => {
+        const leftIndex = MENU_CATEGORY_ORDER.indexOf(left);
+        const rightIndex = MENU_CATEGORY_ORDER.indexOf(right);
+        if (leftIndex !== -1 || rightIndex !== -1) {
+          return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex)
+            - (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+        }
+        return left.localeCompare(right);
+      })
+      .map(([category, value]) => [
+        category,
+        {
+          meals: round(value.meals, 0),
+          spent: round(value.spent, 2),
+          cost_per_meal: value.meals > 0 ? round(value.spent / value.meals, 2) : 0
+        }
+      ])
+  );
 }
 
 function budgetCoversDate(budget = {}, targetDate) {
@@ -761,6 +848,7 @@ function computeCoreMetrics(records, rangeStart, rangeEnd, operationalSiteCount,
   return {
     total_meals: round(totalMeals, 0),
     cost_per_meal: totalMeals > 0 ? round(spent / totalMeals, 2) : 0,
+    cost_per_meal_by_category: computeProductionCostByMenuCategory(periodProduction),
     daily_budget: round(budget, 2),
     daily_spent: round(spent, 2),
     food_wastage_cost: round(wasteCost, 2),
@@ -1044,6 +1132,7 @@ function buildLocationRows(data, records, rangeStart, rangeEnd, helpers, selecte
       budget: metrics.daily_budget,
       spent: metrics.daily_spent,
       cost_per_meal: metrics.cost_per_meal,
+      cost_per_meal_by_category: metrics.cost_per_meal_by_category,
       waste_percent: metrics.waste_percent,
       waste_cost: metrics.food_wastage_cost,
       approvals: metrics.pending_approvals,

@@ -218,6 +218,26 @@ function displayStatus(value) {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+function costPerMealByCategorySubtitle(categoryMetrics = {}) {
+  const preferred = ['labor', 'junior', 'senior'];
+  const orderedKeys = [
+    ...preferred.filter((key) => categoryMetrics?.[key]),
+    ...Object.keys(categoryMetrics || {})
+      .filter((key) => !preferred.includes(key))
+      .sort()
+  ];
+  const parts = orderedKeys
+    .map((key) => {
+      const metrics = categoryMetrics[key] || {};
+      const meals = Number(metrics.meals) || 0;
+      const spent = Number(metrics.spent) || 0;
+      if (meals <= 0 && spent <= 0) return null;
+      return `${displayStatus(key)} ${formatCurrency(metrics.cost_per_meal)}`;
+    })
+    .filter(Boolean);
+  return parts.length ? parts.join(' · ') : '';
+}
+
 function actionPath(href) {
   if (!href) return '';
   return String(href).startsWith('/') ? String(href) : `/${String(href).replace(/\s+/g, '-')}`;
@@ -592,7 +612,14 @@ function AreaCharts({ locations, panelRef }) {
 function PrimaryMetrics({ metrics, view }) {
   const common = [
     { key: 'total_meals', label: 'Total Meals', value: number(metrics.total_meals), icon: UsersRound, tone: 'emerald' },
-    { key: 'cost_per_meal', label: 'Cost / Meal', value: formatCurrency(metrics.cost_per_meal), icon: Tag, tone: 'emerald' },
+    {
+      key: 'cost_per_meal',
+      label: 'Cost / Meal',
+      value: formatCurrency(metrics.cost_per_meal),
+      subtitle: costPerMealByCategorySubtitle(metrics.cost_per_meal_by_category),
+      icon: Tag,
+      tone: 'emerald'
+    },
     { key: 'daily_budget', label: 'Range Budget', value: compactCurrency(metrics.daily_budget), icon: WalletCards, tone: 'blue' },
     { key: 'daily_spent', label: 'Range Spent', value: compactCurrency(metrics.daily_spent), icon: ReceiptText, tone: 'blue' },
     { key: 'food_wastage_cost', label: 'Food Wastage Cost', value: compactCurrency(metrics.food_wastage_cost), icon: Trash2, tone: 'rose' }
