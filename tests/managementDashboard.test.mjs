@@ -177,10 +177,14 @@ assert.equal(productionCost({
   ingredients_used: [{ planned_quantity: 4, unit_cost: 2.5 }]
 }), 10);
 assert.equal(productionCost({
+  total_consumption_cost: 0,
+  production_cost_total: 37.5
+}), 37.5);
+assert.equal(productionCost({
   estimated_batch_cost: 880,
   estimated_cost: 120,
   planned_total_cost: 50
-}), 0);
+}), 880);
 
 const completedProductionOnlySpend = buildManagementDashboardSnapshot({
   view: 'project_manager',
@@ -224,6 +228,27 @@ assert.equal(completedProductionOnlySpend.meals.find((row) => row.meal_type === 
 assert.equal(completedProductionOnlySpend.meals.find((row) => row.meal_type === 'lunch').spent, 0);
 assert.equal(completedProductionOnlySpend.meals.find((row) => row.meal_type === 'dinner').produced, 0);
 assert.equal(completedProductionOnlySpend.meals.find((row) => row.meal_type === 'dinner').spent, 0);
+
+const foodCostAlignedSpend = buildManagementDashboardSnapshot({
+  view: 'project_manager',
+  date: '2026-08-19',
+  selectedSiteId: 'project-a',
+  sites,
+  production: [
+    {
+      id: 'food-cost-aligned',
+      site_id: 'project-a',
+      production_date: '2026-08-19',
+      meal_type: 'breakfast',
+      status: 'completed',
+      produced_servings: 4,
+      total_consumption_cost: 0,
+      production_cost_total: 37.5
+    }
+  ]
+});
+assert.equal(foodCostAlignedSpend.metrics.daily_spent, 37.5);
+assert.equal(foodCostAlignedSpend.meals.find((row) => row.meal_type === 'breakfast').spent, 37.5);
 
 const categoryCostPerMeal = buildManagementDashboardSnapshot({
   view: 'project_manager',

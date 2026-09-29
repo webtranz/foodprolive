@@ -10,6 +10,7 @@ import {
   getProductionEventItemCount
 } from '../../shared/productionLabels.js';
 import { resolveProductionFulfillmentStore } from '../../shared/productionFulfillment.js';
+import { getProductionOutputCost } from '../../shared/foodCostReport.js';
 import {
   getInventoryQuantities,
   getProductionInventoryState
@@ -68,6 +69,12 @@ function sumProductionLineCosts(lines = []) {
       const explicitCost = numberValue(line?.posted_cost ?? line?.total_cost ?? line?.actual_cost ?? line?.cost, 0);
       return sum + (explicitCost > 0 ? explicitCost : sumLineLayerCost(line));
     }, 0);
+}
+
+function firstPositiveNumber(values = []) {
+  return values
+    .map((value) => numberValue(value, NaN))
+    .find((value) => Number.isFinite(value) && value > 0);
 }
 
 function textValue(value) {
@@ -279,15 +286,11 @@ export function normalizeProductionMealType(value) {
     : 'other';
 }
 
-function resolveProductionCost(production, ingredientMap) {
+function resolveProductionCost(production, ingredientMap, ingredientCostIndex = {}) {
   const isCompleted = String(production?.status || '').toLowerCase() === 'completed';
   if (isCompleted) {
-    const postedCost = [
-      production?.production_cost_total,
-      production?.ingredient_cost_total,
-      production?.total_consumption_cost
-    ].find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
-    if (postedCost !== null && typeof postedCost !== 'undefined') {
+    const postedCost = getProductionOutputCost(production, ingredientCostIndex);
+    if (postedCost > 0) {
       return round(postedCost);
     }
   }
@@ -330,6 +333,20 @@ function resolveProductionCost(production, ingredientMap) {
   ].find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
 
   return round(persistedCost || 0);
+}
+
+function resolveProductionDisplayPortions(production = {}) {
+  const status = textValue(production?.status).toLowerCase();
+  if (status === 'completed') {
+    const produced = firstPositiveNumber([
+      production.produced_servings,
+      production.actual_servings,
+      production.expected_yield_servings
+    ]);
+    if (produced !== undefined) return produced;
+  }
+
+  return Math.max(0, numberValue(production?.target_servings, 0));
 }
 
 function resolveManifestPortionSize(production = {}) {
@@ -615,12 +632,17 @@ export function buildProductionPlanningDashboard({
 } = {}) {
   const recipeMap = new Map(recipes.map((recipe) => [String(recipe?.id || ''), recipe]));
   const ingredientMap = new Map(ingredients.map((ingredient) => [String(ingredient?.id || ''), ingredient]));
+  const ingredientCostIndex = Object.fromEntries(
+    ingredients
+      .filter((ingredient) => ingredient?.id)
+      .map((ingredient) => [String(ingredient.id), ingredient])
+  );
   const inventoryMap = buildInventoryMap(inventory, ingredientMap);
   const shortages = buildShortages(productions, ingredientMap, inventoryMap, sites);
 
   const items = productions.map((production) => {
     const recipe = recipeMap.get(String(production?.recipe_id || '')) || null;
-    const portions = Math.max(0, numberValue(production?.target_servings, 0));
+    const portions = resolveProductionDisplayPortions(production);
     const menuIssueItems = getMenuIssueItems(production);
     const itemCount = getProductionManifestItemCount(production);
     const batchYield = Math.max(1, numberValue(production?.batch_yield ?? recipe?.batch_yield ?? recipe?.servings, 1));
@@ -659,7 +681,7 @@ export function buildProductionPlanningDashboard({
         : 'legacy_v1'),
       batch_yield: batchYield,
       batches_required: menuIssueItems.length > 0 ? itemCount : (portions > 0 ? Math.ceil(portions / batchYield) : 0),
-      estimated_batch_cost: resolveProductionCost(production, ingredientMap),
+      estimated_batch_cost: resolveProductionCost(production, ingredientMap, ingredientCostIndex),
       station: production.kitchen_station
         || production.assigned_station
         || production.station

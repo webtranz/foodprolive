@@ -111,6 +111,7 @@ const productions = [
     recipe_name: 'Dinner Dessert',
     meal_type: 'dinner',
     target_servings: 20,
+    produced_servings: 18,
     kitchen_station: 'Pastry',
     status: 'completed',
     production_cost_total: 42,
@@ -156,8 +157,8 @@ assert.deepEqual(
 );
 assert.equal(dashboard.sections.find((section) => section.key === 'breakfast').total_portions, 60);
 assert.equal(dashboard.sections.find((section) => section.key === 'lunch').total_portions, 50);
-assert.equal(dashboard.sections.find((section) => section.key === 'dinner').total_portions, 20);
-assert.equal(dashboard.summary.total_portions, 130);
+assert.equal(dashboard.sections.find((section) => section.key === 'dinner').total_portions, 18);
+assert.equal(dashboard.summary.total_portions, 128);
 assert.equal(dashboard.summary.total_recipes, 3);
 assert.equal(dashboard.summary.total_batch_cost, 152);
 
@@ -179,6 +180,7 @@ assert.equal(lunch.station, 'Grill');
 assert.equal(lunch.prep_status.key, 'in_progress');
 
 const dinner = dashboard.items.find((item) => item.id === 'dinner-1');
+assert.equal(dinner.required_portions, 18);
 assert.equal(dinner.portion_size.label, '1 slice');
 assert.equal(dinner.estimated_batch_cost, 42);
 assert.equal(dinner.prep_status.key, 'complete');

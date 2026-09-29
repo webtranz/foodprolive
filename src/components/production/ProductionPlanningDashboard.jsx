@@ -427,7 +427,7 @@ function MealSection({ section, materialRequestMap, renderActions }) {
           </div>
           <div className="text-right">
             <p className="text-lg font-bold text-slate-950">{section.total_portions.toLocaleString()}</p>
-            <p className="text-[10px] uppercase tracking-wide text-slate-500">portions</p>
+            <p className="text-[10px] uppercase tracking-wide text-slate-500">produced</p>
             <Badge className="mt-1 border border-emerald-200 bg-emerald-100 text-emerald-700 shadow-sm hover:bg-emerald-100">
               {sectionItemCount.toLocaleString()} planned
             </Badge>
@@ -460,10 +460,10 @@ function PlanSummary({ dashboard }) {
   return (
     <aside className="production-plan-summary space-y-3 xl:sticky xl:top-4 xl:self-start">
       <Card className="border-slate-200 shadow-none">
-        <CardHeader className="pb-3"><CardTitle className="text-base">Plan Summary</CardTitle></CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Production Summary</CardTitle></CardHeader>
         <CardContent className="space-y-2 text-sm">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <span className="font-medium text-slate-700">Total Portions</span>
+            <span className="font-medium text-slate-700">Total Produced</span>
             <span className="text-xl font-bold text-sky-700">{dashboard.summary.total_portions.toLocaleString()}</span>
           </div>
           {corePeriods.map((period) => (
@@ -814,7 +814,7 @@ export default function ProductionPlanningDashboard({
             </div>
             <div className="ml-auto flex items-center gap-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
               <span><strong className="text-slate-900">{dashboard.summary.total_recipes}</strong> recipes</span>
-              <span><strong className="text-slate-900">{dashboard.summary.total_portions.toLocaleString()}</strong> portions</span>
+              <span><strong className="text-slate-900">{dashboard.summary.total_portions.toLocaleString()}</strong> produced</span>
               {dashboard.summary.at_risk_count > 0 ? <span className="font-semibold text-red-600">{dashboard.summary.at_risk_count} at risk</span> : null}
             </div>
           </div>

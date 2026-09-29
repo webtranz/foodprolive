@@ -1,6 +1,7 @@
 import { DASHBOARD_VIEWS } from './managementDashboardRoles.js';
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from './siteHierarchy.js';
 import { requiresAreaProductionApproval } from './productionWorkflow.js';
+import { getProductionOutputCost } from './foodCostReport.js';
 
 const MEAL_PERIODS = ['breakfast', 'lunch', 'dinner'];
 const MENU_CATEGORY_ORDER = ['labor', 'junior', 'senior'];
@@ -152,65 +153,8 @@ function firstFiniteValue(values = []) {
   ));
 }
 
-function productionLineCost(line = {}) {
-  const explicit = firstFiniteValue([
-    line.posted_cost,
-    line.total_cost,
-    line.accounting_total_cost,
-    line.actual_cost,
-    line.cost,
-    line.line_cost
-  ]);
-  if (explicit !== undefined) return Math.max(0, safeNumber(explicit));
-
-  return (Array.isArray(line.movement_layers) ? line.movement_layers : [])
-    .reduce((sum, layer) => {
-      const layerCost = firstFiniteValue([layer.accounting_total_cost, layer.total_cost, layer.cost]);
-      return layerCost === undefined ? sum : sum + Math.max(0, safeNumber(layerCost));
-    }, 0);
-}
-
 function productionCost(production = {}) {
-  const explicit = firstFiniteValue([
-    production.total_consumption_cost,
-    production.production_cost_total,
-    production.ingredient_cost_total,
-    production.actual_cost,
-    production.total_cost
-  ]);
-
-  if (explicit !== undefined) return Math.max(0, safeNumber(explicit));
-
-  const lineCost = [
-    ...(Array.isArray(production.completion_lines) ? production.completion_lines : []),
-    ...(Array.isArray(production.ingredient_lines) ? production.ingredient_lines : [])
-  ].reduce((sum, line) => sum + productionLineCost(line), 0);
-  if (lineCost > 0) return lineCost;
-
-  return (Array.isArray(production.ingredients_used) ? production.ingredients_used : [])
-    .reduce((sum, line) => {
-      const actualLineCost = firstFiniteValue([
-        line.posted_cost,
-        line.total_cost,
-        line.accounting_total_cost,
-        line.actual_cost,
-        line.line_cost
-      ]);
-      if (actualLineCost !== undefined) return sum + Math.max(0, safeNumber(actualLineCost));
-      const quantity = safeNumber(
-        line.actual_quantity
-        ?? line.stock_issued_quantity
-        ?? line.issued_quantity
-        ?? line.consumed_quantity
-        ?? line.yield_adjusted_quantity
-        ?? line.adjusted_quantity
-        ?? line.quantity
-        ?? line.planned_quantity
-        ?? line.required_quantity
-      );
-      const unitCost = safeNumber(line.actual_unit_cost ?? line.accounting_unit_cost ?? line.unit_cost ?? line.cost_per_unit);
-      return sum + Math.max(0, quantity * unitCost);
-    }, 0);
+  return Math.max(0, safeNumber(getProductionOutputCost(production)));
 }
 
 function producedServings(production = {}) {
