@@ -9,6 +9,7 @@ import AsyncStatePanel from '@/components/ui/AsyncStatePanel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -26,6 +27,7 @@ import {
 import { SITE_HIERARCHY_TYPES, normalizeSiteType } from '../../shared/siteHierarchy.js';
 import {
   buildDailyMenuState,
+  buildCyclicMenuRepeatTargets,
   buildMenuPlanMeals,
   calculateRecipeCostSnapshot,
   calculateRecipeNutritionSnapshot,
@@ -255,6 +257,9 @@ export default function MenuPlanning() {
     is_active: true
   });
   const [prScheduleNotes, setPrScheduleNotes] = useState('');
+  const [repeatMenuCycleEnabled, setRepeatMenuCycleEnabled] = useState(false);
+  const [repeatMenuDays, setRepeatMenuDays] = useState('7');
+  const [isRepeatingMenuCycle, setIsRepeatingMenuCycle] = useState(false);
   const [message, setMessage] = useState('');
 
   const {
@@ -633,6 +638,13 @@ export default function MenuPlanning() {
     end: addDays(currentWeekStart, 6)
   }), [currentWeekStart]);
 
+  const repeatMenuDayCount = Math.floor(Number(repeatMenuDays));
+  const repeatMenuTargets = useMemo(() => buildCyclicMenuRepeatTargets({
+    sourcePlans: operationalPlans.filter((plan) => Array.isArray(plan.meals) && plan.meals.length > 0),
+    cycleStartDate: weekStartKey,
+    repeatDays: Number.isFinite(repeatMenuDayCount) ? repeatMenuDayCount : 0
+  }), [operationalPlans, repeatMenuDayCount, weekStartKey]);
+
   const getPlanForDay = (date) => {
     const dayKey = format(date, 'yyyy-MM-dd');
     return operationalPlans.find((plan) => plan.plan_date === dayKey);
@@ -834,6 +846,152 @@ export default function MenuPlanning() {
     }
 
     await createMutation.mutateAsync(payload);
+  };
+
+  const copyMealForRepeat = (meal = {}) => {
+    const {
+      id,
+      menu_plan_id,
+      menu_plan_line_id,
+      production_id,
+      production_plan_id,
+      production_request_id,
+      production_status,
+      created_at,
+      created_by,
+      updated_at,
+      updated_by,
+      ...mealPayload
+    } = meal || {};
+    return mealPayload;
+  };
+
+  const buildRepeatedMenuPlanPayload = (sourcePlan = {}, targetDate, existingTargetPlan = null) => {
+    const meals = (Array.isArray(sourcePlan.meals) ? sourcePlan.meals : []).map(copyMealForRepeat);
+    const summary = summarizeMenuPlanMeals(meals);
+    const sourceUsesManualBudget = sourcePlan.budget_source === 'manual';
+    const targetUsesManualBudget = existingTargetPlan?.budget_source === 'manual' || (!existingTargetPlan && sourceUsesManualBudget);
+    return {
+      site_id: selectedSiteRecord.id,
+      site_name: selectedSiteRecord.name,
+      plan_date: targetDate,
+      cuisine_type: selectedMenuCuisine,
+      menu_category: selectedMenuCategory,
+      meals,
+      status: existingTargetPlan?.status || sourcePlan.status || 'planned',
+      total_expected_servings: summary.total_expected_servings,
+      total_calories: summary.total_calories,
+      total_planned_cost: summary.total_planned_cost,
+      budget_source: targetUsesManualBudget ? 'manual' : 'linked',
+      budget_id: targetUsesManualBudget ? null : (existingTargetPlan?.budget_id || null),
+      budget_name: targetUsesManualBudget ? null : (existingTargetPlan?.budget_name || null),
+      manual_budget_name: targetUsesManualBudget
+        ? (existingTargetPlan?.manual_budget_name || sourcePlan.manual_budget_name || 'Manual Budget')
+        : null,
+      budget_amount: targetUsesManualBudget
+        ? Number(existingTargetPlan?.budget_amount || sourcePlan.budget_amount || 0)
+        : Number(existingTargetPlan?.budget_amount || 0),
+      meal_budget_limits: existingTargetPlan?.meal_budget_limits || sourcePlan.meal_budget_limits || {
+        breakfast: 0,
+        lunch: 0,
+        dinner: 0
+      },
+      remaining_budget: 0,
+      exceeded_budget_by: 0
+    };
+  };
+
+  const handleRepeatMenuCycle = async () => {
+    setMessage('');
+
+    if (!repeatMenuCycleEnabled) {
+      setMessage('Tick Repeat menu cycle before copying the weekly menu.');
+      return;
+    }
+
+    if (!selectedSiteRecord) {
+      setMessage('Select a Store / Warehouse first.');
+      return;
+    }
+
+    if (hasUnsavedMenuChanges) {
+      setMessage('Save the current day first, then repeat the weekly cycle.');
+      return;
+    }
+
+    if (!Number.isFinite(repeatMenuDayCount) || repeatMenuDayCount <= 0) {
+      setMessage('Enter the number of future days to repeat.');
+      return;
+    }
+
+    if (repeatMenuDayCount > 365) {
+      setMessage('Repeat range is limited to 365 days at a time.');
+      return;
+    }
+
+    if (repeatMenuTargets.length === 0) {
+      setMessage('No saved menu plans are available in this visible week to repeat.');
+      return;
+    }
+
+    const targetStart = repeatMenuTargets[0].target_date;
+    const targetEnd = repeatMenuTargets[repeatMenuTargets.length - 1].target_date;
+    setIsRepeatingMenuCycle(true);
+    try {
+      const existingTargets = await base44.entities.MenuPlan.filter(
+        { site_id: selectedSite },
+        'plan_date',
+        Math.max(1000, repeatMenuTargets.length + 25),
+        {
+          rangeFilters: {
+            plan_date: {
+              gte: targetStart,
+              lte: targetEnd
+            }
+          }
+        }
+      );
+      const existingByDate = new Map(
+        (Array.isArray(existingTargets) ? existingTargets : [])
+          .filter(isOperationalMenuPlan)
+          .filter((plan) => menuPlanMatchesCurrentScope(
+            plan,
+            selectedSite,
+            String(plan.plan_date || '').slice(0, 10),
+            selectedMenuCuisine,
+            selectedMenuCategory
+          ))
+          .map((plan) => [String(plan.plan_date || '').slice(0, 10), plan])
+      );
+
+      let createdCount = 0;
+      let updatedCount = 0;
+      for (const target of repeatMenuTargets) {
+        const existingTarget = existingByDate.get(target.target_date) || null;
+        const payload = buildRepeatedMenuPlanPayload(target.source_plan, target.target_date, existingTarget);
+        const result = existingTarget?.id
+          ? await base44.menuPlanning.update(existingTarget.id, payload)
+          : await base44.menuPlanning.create(payload);
+        const savedPlan = extractSavedMenuPlan(result);
+        if (savedPlan) {
+          existingByDate.set(target.target_date, savedPlan);
+        }
+        if (existingTarget?.id) {
+          updatedCount += 1;
+        } else {
+          createdCount += 1;
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['menuPlans'] });
+      queryClient.invalidateQueries({ queryKey: ['menuPlansByWeek'] });
+      queryClient.invalidateQueries({ queryKey: ['menuPlanByDate'] });
+      setMessage(`Repeated menu cycle for ${repeatMenuTargets.length} saved day${repeatMenuTargets.length === 1 ? '' : 's'} (${createdCount} created, ${updatedCount} updated).`);
+    } catch (error) {
+      setMessage(error.message || 'Failed to repeat menu cycle.');
+    } finally {
+      setIsRepeatingMenuCycle(false);
+    }
   };
 
   const handleDownloadMenuCsv = async () => {
@@ -1113,15 +1271,53 @@ export default function MenuPlanning() {
                     <CardTitle className="text-lg">Calendar Planning View</CardTitle>
                     <p className="mt-1 text-sm text-slate-500">Select a date to create or edit Breakfast, Lunch, and Dinner for that day.</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" onClick={() => navigateWeek(-1)}>
-                      <ChevronLeft className="mr-1 h-4 w-4" />
-                      Previous
-                    </Button>
-                    <Button variant="outline" onClick={() => navigateWeek(1)}>
-                      Next
-                      <ChevronRight className="ml-1 h-4 w-4" />
-                    </Button>
+                  <div className="flex flex-col gap-3 xl:items-end">
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                      <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                        <Checkbox
+                          checked={repeatMenuCycleEnabled}
+                          onCheckedChange={(checked) => setRepeatMenuCycleEnabled(Boolean(checked))}
+                          aria-label="Repeat menu cycle"
+                        />
+                        Repeat menu cycle
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="repeatMenuDays" className="text-xs text-slate-500">Days</Label>
+                        <Input
+                          id="repeatMenuDays"
+                          type="number"
+                          min="1"
+                          max="365"
+                          className="h-9 w-20 bg-white"
+                          value={repeatMenuDays}
+                          onChange={(event) => setRepeatMenuDays(event.target.value)}
+                          disabled={!repeatMenuCycleEnabled || isRepeatingMenuCycle}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                        onClick={handleRepeatMenuCycle}
+                        disabled={!repeatMenuCycleEnabled || isRepeatingMenuCycle || repeatMenuTargets.length === 0}
+                      >
+                        {isRepeatingMenuCycle ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                        {isRepeatingMenuCycle ? 'Repeating…' : 'Repeat'}
+                      </Button>
+                      <p className="basis-full text-xs text-slate-500 xl:basis-auto">
+                        Uses the visible week cyclically: Sunday copies to the next Sunday.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" onClick={() => navigateWeek(-1)}>
+                        <ChevronLeft className="mr-1 h-4 w-4" />
+                        Previous
+                      </Button>
+                      <Button variant="outline" onClick={() => navigateWeek(1)}>
+                        Next
+                        <ChevronRight className="ml-1 h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </CardHeader>

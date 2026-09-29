@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildDailyMenuState,
+  buildCyclicMenuRepeatTargets,
   buildMenuPlanMeals,
   calculateRecipeCostSnapshot,
   computeBudgetComparison,
@@ -57,6 +58,33 @@ const sampleIngredients = [
 ];
 
 const cases = [
+  {
+    name: 'builds cyclic repeat targets from the visible weekly menu',
+    run() {
+      const plans = [
+        { id: 'monday', plan_date: '2026-09-07' },
+        { id: 'sunday', plan_date: '2026-09-13' }
+      ];
+
+      const targets = buildCyclicMenuRepeatTargets({
+        sourcePlans: plans,
+        cycleStartDate: '2026-09-07',
+        repeatDays: 8
+      });
+
+      assert.deepEqual(
+        targets.map((target) => ({
+          source: target.source_plan.id,
+          target: target.target_date
+        })),
+        [
+          { source: 'monday', target: '2026-09-14' },
+          { source: 'sunday', target: '2026-09-20' },
+          { source: 'monday', target: '2026-09-21' }
+        ]
+      );
+    }
+  },
   {
     name: 'creates an empty daily menu state',
     run() {

@@ -9,6 +9,60 @@ export const createMealEntryFromRecipe = (recipe) => ({
   expected_servings: '0'
 });
 
+function normalizeDateKey(value) {
+  const text = String(value || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return '';
+  const parsed = new Date(`${text}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text ? '' : text;
+}
+
+function addDateDays(dateKey, days) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function calendarDayOffset(startDate, targetDate) {
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const target = new Date(`${targetDate}T00:00:00.000Z`);
+  return Math.round((target.getTime() - start.getTime()) / 86400000);
+}
+
+export function buildCyclicMenuRepeatTargets({
+  sourcePlans = [],
+  cycleStartDate,
+  repeatDays,
+  cycleLengthDays = 7
+} = {}) {
+  const startDate = normalizeDateKey(cycleStartDate);
+  const normalizedRepeatDays = Math.floor(Number(repeatDays));
+  const normalizedCycleLength = Math.max(1, Math.floor(Number(cycleLengthDays) || 7));
+  if (!startDate || !Number.isFinite(normalizedRepeatDays) || normalizedRepeatDays <= 0) {
+    return [];
+  }
+
+  const sourceByOffset = new Map();
+  (Array.isArray(sourcePlans) ? sourcePlans : []).forEach((plan) => {
+    const sourceDate = normalizeDateKey(plan?.plan_date);
+    if (!sourceDate) return;
+    const offset = calendarDayOffset(startDate, sourceDate);
+    if (offset < 0 || offset >= normalizedCycleLength || sourceByOffset.has(offset)) return;
+    sourceByOffset.set(offset, plan);
+  });
+
+  return Array.from({ length: normalizedRepeatDays }, (_, index) => {
+    const sourceOffset = index % normalizedCycleLength;
+    const sourcePlan = sourceByOffset.get(sourceOffset);
+    if (!sourcePlan) return null;
+    return {
+      source_plan: sourcePlan,
+      source_date: normalizeDateKey(sourcePlan.plan_date),
+      target_date: addDateDays(startDate, normalizedCycleLength + index),
+      cycle_day_offset: sourceOffset
+    };
+  }).filter(Boolean);
+}
+
 function safeNumber(value, fallback = '') {
   if (value === null || value === undefined || value === '') return fallback;
   const numeric = Number(value);
