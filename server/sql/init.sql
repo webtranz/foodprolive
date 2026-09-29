@@ -5538,24 +5538,99 @@ BEGIN
     FROM menu_rows
     ON CONFLICT (report_menu_item_id) DO NOTHING;
 
-    WITH manifest_totals AS (
+    WITH report_item_costs AS (
+      SELECT
+        item.production_line_id,
+        MAX(NULLIF(item.estimated_cost, 0)) AS estimated_cost,
+        MAX(NULLIF(item.actual_cost, 0)) AS actual_cost
+      FROM production_consumption_report_menu_items item
+      WHERE item.production_line_id IS NOT NULL
+      GROUP BY item.production_line_id
+    )
+    UPDATE production_manifest_lines line
+       SET estimated_cost = COALESCE(NULLIF(line.estimated_cost, 0), report_item_costs.estimated_cost, line.estimated_cost),
+           actual_cost = COALESCE(NULLIF(line.actual_cost, 0), report_item_costs.actual_cost, report_item_costs.estimated_cost, line.actual_cost),
+           updated_at = NOW()
+      FROM report_item_costs
+     WHERE line.production_line_id = report_item_costs.production_line_id
+       AND (
+         line.estimated_cost = 0 AND report_item_costs.estimated_cost IS NOT NULL
+         OR line.actual_cost = 0 AND COALESCE(report_item_costs.actual_cost, report_item_costs.estimated_cost) IS NOT NULL
+       );
+
+    WITH menu_plan_costs AS (
+      SELECT
+        menu_plan_line_id,
+        MAX(NULLIF(estimated_cost, 0)) AS estimated_cost
+      FROM menu_plan_lines
+      GROUP BY menu_plan_line_id
+    )
+    UPDATE production_manifest_lines line
+       SET estimated_cost = COALESCE(NULLIF(line.estimated_cost, 0), menu_plan_costs.estimated_cost, line.estimated_cost),
+           actual_cost = COALESCE(NULLIF(line.actual_cost, 0), menu_plan_costs.estimated_cost, line.actual_cost),
+           updated_at = NOW()
+      FROM menu_plan_costs
+     WHERE line.menu_plan_line_id = menu_plan_costs.menu_plan_line_id
+       AND menu_plan_costs.estimated_cost IS NOT NULL
+       AND (line.estimated_cost = 0 OR line.actual_cost = 0);
+
+    UPDATE production_consumption_report_menu_items item
+       SET estimated_cost = COALESCE(NULLIF(item.estimated_cost, 0), NULLIF(line.estimated_cost, 0), item.estimated_cost),
+           actual_cost = COALESCE(NULLIF(item.actual_cost, 0), NULLIF(line.actual_cost, 0), NULLIF(line.estimated_cost, 0), item.actual_cost),
+           updated_at = NOW()
+      FROM production_manifest_lines line
+     WHERE item.production_line_id = line.production_line_id
+       AND (
+         item.estimated_cost = 0 AND line.estimated_cost > 0
+         OR item.actual_cost = 0 AND COALESCE(NULLIF(line.actual_cost, 0), NULLIF(line.estimated_cost, 0)) IS NOT NULL
+       );
+
+    WITH line_layer_totals AS (
+      SELECT
+        layer.report_line_id,
+        SUM(COALESCE(NULLIF(layer.accounting_total_cost, 0), NULLIF(layer.total_cost, 0), 0)) AS total_cost
+      FROM production_consumption_report_line_layers layer
+      GROUP BY layer.report_line_id
+    ),
+    line_totals AS (
+      SELECT
+        line.report_id,
+        SUM(COALESCE(NULLIF(line.posted_cost, 0), NULLIF(layer_total.total_cost, 0), 0)) AS total_cost
+      FROM production_consumption_report_lines line
+      LEFT JOIN line_layer_totals layer_total
+        ON layer_total.report_line_id = line.report_line_id
+      GROUP BY line.report_id
+    ),
+    manifest_totals AS (
       SELECT
         item.report_id,
         SUM(
           COALESCE(
             CASE WHEN item.actual_cost > 0 THEN item.actual_cost END,
-            CASE WHEN item.estimated_cost > 0 THEN item.estimated_cost END,
             0
           )
         ) AS total_cost
       FROM production_consumption_report_menu_items item
       GROUP BY item.report_id
+    ),
+    resolved_totals AS (
+      SELECT
+        report.report_id,
+        COALESCE(
+          NULLIF(line_totals.total_cost, 0),
+          NULLIF(manifest_totals.total_cost, 0)
+        ) AS total_cost
+      FROM production_consumption_reports report
+      LEFT JOIN line_totals
+        ON line_totals.report_id = report.report_id
+      LEFT JOIN manifest_totals
+        ON manifest_totals.report_id = report.report_id
     )
     UPDATE production_consumption_reports report
-       SET total_consumption_cost = manifest_totals.total_cost
-      FROM manifest_totals
-     WHERE report.report_id = manifest_totals.report_id
-       AND manifest_totals.total_cost > 0;
+       SET total_consumption_cost = resolved_totals.total_cost
+      FROM resolved_totals
+     WHERE report.report_id = resolved_totals.report_id
+       AND resolved_totals.total_cost > 0;
 
     WITH unit_rows AS (
       SELECT report.report_id, totals.key AS unit, totals.value AS quantity
@@ -5686,7 +5761,26 @@ BEGIN
            output_calculation_source = COALESCE(line.output_calculation_source, NULLIF(line.payload->>'output_calculation_source', '')),
            weight_calculation_source = COALESCE(line.weight_calculation_source, NULLIF(line.payload->>'weight_calculation_source', '')),
            yield_calculation_source = COALESCE(line.yield_calculation_source, NULLIF(COALESCE(line.payload->>'yield_calculation_source', line.payload->>'yield_source'), '')),
-           weight_snapshot_version = COALESCE(line.weight_snapshot_version, NULLIF(line.payload->>'weight_snapshot_version', '')::integer);
+           weight_snapshot_version = COALESCE(line.weight_snapshot_version, NULLIF(line.payload->>'weight_snapshot_version', '')::integer),
+           estimated_cost = COALESCE(
+             CASE WHEN line.estimated_cost > 0 THEN line.estimated_cost END,
+             CASE WHEN NULLIF(line.payload->>'estimated_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'estimated_cost', '')::numeric END,
+             CASE WHEN NULLIF(line.payload->>'estimated_batch_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'estimated_batch_cost', '')::numeric END,
+             CASE WHEN NULLIF(line.payload->>'planned_total_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'planned_total_cost', '')::numeric END,
+             line.estimated_cost
+           ),
+           actual_cost = COALESCE(
+             CASE WHEN line.actual_cost > 0 THEN line.actual_cost END,
+             CASE WHEN NULLIF(line.payload->>'actual_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'actual_cost', '')::numeric END,
+             CASE WHEN NULLIF(line.payload->>'production_time_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'production_time_cost', '')::numeric END,
+             CASE WHEN NULLIF(line.payload->>'posted_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'posted_cost', '')::numeric END,
+             CASE WHEN NULLIF(line.payload->>'consumed_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'consumed_cost', '')::numeric END,
+             CASE WHEN NULLIF(line.payload->>'total_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'total_cost', '')::numeric END,
+             CASE WHEN NULLIF(line.payload->>'estimated_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'estimated_cost', '')::numeric END,
+             CASE WHEN NULLIF(line.payload->>'estimated_batch_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'estimated_batch_cost', '')::numeric END,
+             CASE WHEN NULLIF(line.payload->>'planned_total_cost', '')::numeric > 0 THEN NULLIF(line.payload->>'planned_total_cost', '')::numeric END,
+             line.actual_cost
+           );
 
     ALTER TABLE production_manifest_lines DROP COLUMN payload;
   END IF;

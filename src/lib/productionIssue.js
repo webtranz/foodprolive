@@ -103,8 +103,9 @@ function resolveProductionLineUnitCost({ sourceLine = {}, ingredientData = {}, i
     ingredientData.standard_cost
   ];
   const savedLineCosts = [
-    sourceLine.unit_cost,
+    sourceLine.production_time_unit_cost,
     sourceLine.actual_unit_cost,
+    sourceLine.unit_cost,
     sourceLine.cost_per_unit,
     sourceLine.average_cost,
     sourceLine.last_cost
@@ -468,6 +469,7 @@ export function buildProductionIngredientLine({
     preferSelectedIngredientCost: isReplacementOverride || isAddedOverride
   });
   const estimatedCost = calculateIngredientCost(rawQuantity, unit, ingredientData, unitCost);
+  const productionTimeCost = Number(estimatedCost.toFixed(2));
   const line = {
     ...clearRecipeLineWeight(sourceLine),
     ...override,
@@ -509,7 +511,10 @@ export function buildProductionIngredientLine({
     retained_fraction: roundStandardDecimal(retainedFraction, 4),
     sufficient: availableStock >= requiredInventoryQty,
     unit_cost: Number(unitCost.toFixed(2)),
-    estimated_cost: Number(estimatedCost.toFixed(2)),
+    production_time_unit_cost: Number(unitCost.toFixed(2)),
+    estimated_cost: productionTimeCost,
+    production_time_cost: productionTimeCost,
+    actual_cost: productionTimeCost,
     cost_ingredient_id: ingredientId || null,
     original_ingredient_id: originalIngredientId || null,
     original_ingredient_name: originalIngredientName || null,
@@ -579,6 +584,8 @@ export function aggregateProductionIngredientLines(lines = [], {
       unit: targetUnit,
       ...recipeLineProcessingAidField(line),
       estimated_cost: 0,
+      production_time_cost: 0,
+      actual_cost: 0,
       source_recipe_names: new Set(),
       source_menu_plan_item_keys: new Set(),
       source_line_ids: new Set(),
@@ -587,7 +594,14 @@ export function aggregateProductionIngredientLines(lines = [], {
 
     current.raw_quantity += aggregateQuantity;
     accumulateRecipeLineWeight(current, line, ingredient, lineQuantity(line));
-    current.estimated_cost += finiteProductionNumber(line?.estimated_cost, 0);
+    const lineSnapshotCost = firstFiniteProductionNumber([
+      line?.production_time_cost,
+      line?.actual_cost,
+      line?.estimated_cost
+    ], 0);
+    current.estimated_cost += lineSnapshotCost;
+    current.production_time_cost += lineSnapshotCost;
+    current.actual_cost += lineSnapshotCost;
     current.aggregate_line_count += 1;
     current.source_line_ids.add(getProductionIngredientLineKey(line, index));
 
@@ -634,6 +648,8 @@ export function aggregateProductionIngredientLines(lines = [], {
     return {
       ...aggregateLine,
       estimated_cost: Number((group.estimated_cost || aggregateLine.estimated_cost || 0).toFixed(2)),
+      production_time_cost: Number((group.production_time_cost || aggregateLine.production_time_cost || aggregateLine.estimated_cost || 0).toFixed(2)),
+      actual_cost: Number((group.actual_cost || aggregateLine.actual_cost || aggregateLine.production_time_cost || aggregateLine.estimated_cost || 0).toFixed(2)),
       source_recipe_names: [...group.source_recipe_names],
       source_menu_plan_item_keys: [...group.source_menu_plan_item_keys],
       source_line_ids: [...group.source_line_ids],
@@ -706,7 +722,11 @@ export function buildMenuIssueMealGroups(items = [], {
       siteId
     });
     const estimatedBatchCost = snapshotLines.reduce(
-      (sum, line) => sum + finiteProductionNumber(line.estimated_cost, 0),
+      (sum, line) => sum + firstFiniteProductionNumber([
+        line.production_time_cost,
+        line.actual_cost,
+        line.estimated_cost
+      ], 0),
       0
     );
     const servingCount = Math.max(
@@ -863,7 +883,10 @@ export function buildProductionIngredientsForSubmit(lines = []) {
       cost_quantity: line.cost_quantity,
       cost_unit: line.cost_unit,
       unit_cost: line.unit_cost,
+      production_time_unit_cost: line.production_time_unit_cost ?? line.unit_cost,
       estimated_cost: line.estimated_cost,
+      production_time_cost: line.production_time_cost ?? line.actual_cost ?? line.estimated_cost,
+      actual_cost: line.actual_cost ?? line.production_time_cost ?? line.estimated_cost,
       cost_ingredient_id: line.cost_ingredient_id || line.ingredient_id || null,
       raw_weight_grams: line.raw_weight_grams ?? null,
       yielded_weight_grams: line.yielded_weight_grams ?? null,

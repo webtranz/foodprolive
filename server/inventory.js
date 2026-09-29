@@ -514,7 +514,15 @@ function resolveProductionTimeManifestCost(item = {}) {
       item.posted_cost,
       item.consumed_cost,
       item.accounting_total_cost,
-      item.total_cost,
+      item.total_cost
+    ),
+    2
+  );
+}
+
+function resolveLegacyIssueSnapshotCost(item = {}) {
+  return roundOptionalQuantity(
+    firstProductionCost(
       item.estimated_cost,
       item.estimated_batch_cost,
       item.planned_total_cost
@@ -594,9 +602,10 @@ function enrichCompletedMenuIssueItems({
       ?? positiveNumber(item.expected_finished_weight_grams)
       ?? positiveNumber(itemYieldSummary.expected_finished_weight_grams)
       ?? sumPositiveLineWeight(enrichedLines, 'yielded_weight_grams');
-    const productionTimeCost = resolveProductionTimeManifestCost(item);
+    const productionTimeCost = resolveProductionTimeManifestCost(item)
+      ?? resolveLegacyIssueSnapshotCost(item);
     const estimatedBatchCost = roundOptionalQuantity(
-      item.estimated_batch_cost ?? item.estimated_cost ?? item.planned_total_cost ?? productionTimeCost,
+      productionTimeCost ?? item.estimated_batch_cost ?? item.estimated_cost ?? item.planned_total_cost,
       2
     );
 
@@ -3647,8 +3656,14 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     ingredientCatalog,
     recipeCatalog
   });
+  const postedTotalConsumptionCost = Number(totalProductionCost.toFixed(2));
+  const hasPostedConsumptionCosts = consumptionSummary.some((line) => (
+    Number.isFinite(Number(line?.posted_cost))
+  ));
   const manifestTotalConsumptionCost = sumProductionTimeManifestCosts(menuIssueItems);
-  const completionTotalConsumptionCost = manifestTotalConsumptionCost ?? Number(totalProductionCost.toFixed(2));
+  const completionTotalConsumptionCost = hasPostedConsumptionCosts
+    ? postedTotalConsumptionCost
+    : manifestTotalConsumptionCost ?? postedTotalConsumptionCost;
   const manifestRawWeightGrams = sumPositiveLineWeight(menuIssueItems, 'raw_weight_grams');
   const manifestYieldedWeightGrams = sumPositiveLineWeight(menuIssueItems, 'yielded_weight_grams');
   const reportRawWeightGrams = positiveNumber(totalRawConsumptionWeightGrams)

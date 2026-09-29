@@ -188,8 +188,8 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(reportMergeBlock, /mergeManifestItems\(reportMenuItems,\s*productionMenuItems\)/);
   assert.match(reportMergeBlock, /sumManifestItemsWeight\(menuIssueItems,\s*'raw_weight_grams'\)/);
   assert.match(reportMergeBlock, /sumManifestItemsWeight\(menuIssueItems,\s*'yielded_weight_grams'\)/);
-  assert.match(reportMergeBlock, /total_consumption_cost:[\s\S]*sumManifestItemsCost\(menuIssueItems\)/);
-  assert.match(reportMergeBlock, /sumManifestItemsCost\(menuIssueItems\)[\s\S]*sumReportLineCosts\(ingredientLines\)/);
+  assert.match(reportMergeBlock, /total_consumption_cost:[\s\S]*sumManifestPostedCosts\(menuIssueItems,\s*ingredientLines\)/);
+  assert.match(reportMergeBlock, /sumManifestPostedCosts\(menuIssueItems,\s*ingredientLines\)[\s\S]*sumReportLineCosts\(ingredientLines\)[\s\S]*sumManifestItemsCost\(menuIssueItems\)/);
 
   const ingredientSectionStart = productionPage.indexOf('>Ingredient Consumption</h3>');
   const ingredientSectionEnd = productionPage.indexOf('>Inventory Lots Consumed</h3>', ingredientSectionStart);
@@ -215,7 +215,8 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   const directPostedCostBlock = productionPage.slice(directPostedCostStart, directPostedCostEnd);
   assert.match(directPostedCostBlock, /item\.actual_cost/);
   assert.match(directPostedCostBlock, /item\.production_time_cost/);
-  assert.match(directPostedCostBlock, /item\.estimated_batch_cost/);
+  assert.doesNotMatch(directPostedCostBlock, /item\.estimated_batch_cost/);
+  assert.doesNotMatch(directPostedCostBlock, /item\.planned_total_cost/);
   assert.match(directPostedCostBlock, /sumStrictPostedReportLineCosts\(item\.ingredients_used\)/);
   assert.doesNotMatch(directPostedCostBlock, /item\.(total_consumption_cost|production_cost_total|ingredient_cost_total)/);
   assert.match(productionPage, /sourceNames\.some\(\(sourceName\) => itemNames\.has\(sourceName\)\)/);
@@ -230,7 +231,10 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   const dbSource = source('server/db.js');
   assert.match(dbSource, /function sumProductionReportMenuItemCosts/);
   assert.match(dbSource, /item\?\.production_time_cost/);
-  assert.match(dbSource, /item\?\.planned_total_cost/);
+  const reportMenuItemCostStart = dbSource.indexOf('function productionReportMenuItemCost');
+  const reportMenuItemCostEnd = dbSource.indexOf('\nfunction productionReportLineLayerCost', reportMenuItemCostStart);
+  const reportMenuItemCostBlock = dbSource.slice(reportMenuItemCostStart, reportMenuItemCostEnd);
+  assert.doesNotMatch(reportMenuItemCostBlock, /estimated_batch_cost|planned_total_cost/);
   assert.match(dbSource, /totalConsumptionCost/);
 
   const lotSection = productionPage.slice(ingredientSectionEnd);

@@ -1565,11 +1565,42 @@ function productionReportMenuItemCost(item = {}) {
     item.posted_cost,
     item.consumed_cost,
     item.accounting_total_cost,
-    item.total_cost,
-    item.estimated_cost,
-    item.estimated_batch_cost,
-    item.planned_total_cost
+    item.total_cost
   ]);
+}
+
+function productionReportLineLayerCost(line = {}) {
+  return (Array.isArray(line?.movement_layers) ? line.movement_layers : [])
+    .reduce((sum, layer) => (
+      sum + toNumberOrZero(
+        layer?.accounting_total_cost
+        ?? layer?.total_cost
+        ?? layer?.line_cost
+        ?? layer?.cost
+      )
+    ), 0);
+}
+
+function productionReportLineCost(line = {}) {
+  const explicit = firstPositiveNumber([
+    line?.posted_cost,
+    line?.accounting_total_cost,
+    line?.consumed_cost,
+    line?.production_time_cost,
+    line?.total_cost,
+    line?.actual_cost,
+    line?.line_cost,
+    line?.cost
+  ]);
+  return explicit > 0 ? explicit : productionReportLineLayerCost(line);
+}
+
+function sumProductionReportLineCosts(lines = []) {
+  const costs = (Array.isArray(lines) ? lines : [])
+    .map((line) => productionReportLineCost(line))
+    .filter((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+  if (!costs.length) return 0;
+  return Number(costs.reduce((sum, value) => sum + Number(value), 0).toFixed(2));
 }
 
 function sumProductionReportMenuItemCosts(items = []) {
@@ -1583,6 +1614,7 @@ function sumProductionReportMenuItemCosts(items = []) {
 function rowToProductionConsumptionReport(row = {}) {
   const ingredientLines = rowJsonArray(row.ingredient_lines);
   const menuIssueItems = rowJsonArray(row.menu_issue_items);
+  const lineTotalConsumptionCost = sumProductionReportLineCosts(ingredientLines);
   const manifestTotalConsumptionCost = sumProductionReportMenuItemCosts(menuIssueItems);
   const partialReversalHistory = rowJsonArray(row.partial_reversal_history);
   return hydrateDerivedFields('ProductionConsumptionReport', {
@@ -1627,7 +1659,7 @@ function rowToProductionConsumptionReport(row = {}) {
     total_yielded_weight_grams: toNumberOrNull(row.total_yielded_weight_grams),
     portion_size_grams: toNumberOrNull(row.portion_size_grams),
     expected_yield_servings: toNumberOrNull(row.expected_yield_servings),
-    total_consumption_cost: manifestTotalConsumptionCost || Number(row.total_consumption_cost || 0),
+    total_consumption_cost: lineTotalConsumptionCost || manifestTotalConsumptionCost || Number(row.total_consumption_cost || 0),
     total_shortage_cost: Number(row.total_shortage_cost || 0),
     shortage_line_count: Number(row.shortage_line_count || 0),
     shortage_totals_by_unit: rowJsonObject(row.shortage_totals_by_unit),
@@ -7336,6 +7368,22 @@ async function insertOrUpdateNormalizedRecipe(record, existing = null, executor 
 async function ensureProductionManifestLine(record, executor = pool) {
   const lineId = record.production_line_id || record.source_event_recipe_id || `${record.id}:line:1`;
   const itemName = record.item_name || record.recipe_name || record.production_name || record.name || 'Production item';
+  const estimatedCost = firstPositiveNumber([
+    record.estimated_cost,
+    record.estimated_batch_cost,
+    record.planned_total_cost
+  ]);
+  const actualCost = firstPositiveNumber([
+    record.actual_cost,
+    record.production_time_cost,
+    record.posted_cost,
+    record.consumed_cost,
+    record.accounting_total_cost,
+    record.total_cost,
+    record.production_cost_total,
+    record.ingredient_cost_total,
+    estimatedCost
+  ]);
   const existingLine = await query(
     'SELECT production_line_id FROM production_manifest_lines WHERE production_line_id = $1 LIMIT 1',
     [lineId],
@@ -7406,8 +7454,8 @@ async function ensureProductionManifestLine(record, executor = pool) {
       record.weight_calculation_source || null,
       record.yield_calculation_source || record.yield_source || null,
       toNumberOrNull(record.weight_snapshot_version),
-      toNumberOrZero(record.estimated_cost || record.estimated_batch_cost),
-      toNumberOrZero(record.actual_cost || record.production_cost_total || record.total_cost),
+      estimatedCost,
+      actualCost,
       'active',
       record.source_name || null,
       record.created_date || nowIso(),
@@ -7700,6 +7748,20 @@ async function replaceProductionManifestLines(record, executor = pool) {
       error.status = 400;
       throw error;
     }
+    const estimatedCost = firstPositiveNumber([
+      sourceLine?.estimated_cost,
+      sourceLine?.estimated_batch_cost,
+      sourceLine?.planned_total_cost
+    ]);
+    const actualCost = firstPositiveNumber([
+      sourceLine?.actual_cost,
+      sourceLine?.production_time_cost,
+      sourceLine?.posted_cost,
+      sourceLine?.consumed_cost,
+      sourceLine?.accounting_total_cost,
+      sourceLine?.total_cost,
+      estimatedCost
+    ]);
     await query(
       `INSERT INTO production_manifest_lines (
         production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
@@ -7777,8 +7839,8 @@ async function replaceProductionManifestLines(record, executor = pool) {
         sourceLine?.weight_calculation_source || null,
         sourceLine?.yield_calculation_source || sourceLine?.yield_source || null,
         toNumberOrNull(sourceLine?.weight_snapshot_version),
-        toNumberOrZero(sourceLine?.estimated_cost),
-        toNumberOrZero(sourceLine?.actual_cost),
+        estimatedCost,
+        actualCost,
         sourceLine?.status || 'active',
         sourceLine?.source_name || record.source_name || null,
         createdAt,
@@ -9083,8 +9145,9 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'ProductionConsumptionReport') {
+    const lineTotalConsumptionCost = sumProductionReportLineCosts(record.ingredient_lines);
     const manifestTotalConsumptionCost = sumProductionReportMenuItemCosts(record.menu_issue_items);
-    const totalConsumptionCost = manifestTotalConsumptionCost || firstPositiveNumber([
+    const totalConsumptionCost = lineTotalConsumptionCost || manifestTotalConsumptionCost || firstPositiveNumber([
       record.total_consumption_cost,
       record.production_cost_total,
       record.ingredient_cost_total

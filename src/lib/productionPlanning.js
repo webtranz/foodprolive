@@ -59,16 +59,27 @@ function round(value, decimals = 2) {
 function sumLineLayerCost(line = {}) {
   return (Array.isArray(line?.movement_layers) ? line.movement_layers : [])
     .reduce((sum, layer) => (
-      sum + numberValue(layer?.accounting_total_cost ?? layer?.total_cost, 0)
+      sum + numberValue(layer?.accounting_total_cost ?? layer?.total_cost ?? layer?.line_cost ?? layer?.cost, 0)
     ), 0);
+}
+
+function productionLineCost(line = {}) {
+  const explicitCost = firstPositiveNumber([
+    line?.posted_cost,
+    line?.accounting_total_cost,
+    line?.consumed_cost,
+    line?.production_time_cost,
+    line?.total_cost,
+    line?.actual_cost,
+    line?.line_cost,
+    line?.cost
+  ]);
+  return explicitCost > 0 ? explicitCost : sumLineLayerCost(line);
 }
 
 function sumProductionLineCosts(lines = []) {
   return (Array.isArray(lines) ? lines : [])
-    .reduce((sum, line) => {
-      const explicitCost = numberValue(line?.posted_cost ?? line?.total_cost ?? line?.actual_cost ?? line?.cost, 0);
-      return sum + (explicitCost > 0 ? explicitCost : sumLineLayerCost(line));
-    }, 0);
+    .reduce((sum, line) => sum + productionLineCost(line), 0);
 }
 
 function firstPositiveNumber(values = []) {
@@ -289,9 +300,16 @@ export function normalizeProductionMealType(value) {
 function resolveProductionCost(production, ingredientMap, ingredientCostIndex = {}) {
   const isCompleted = String(production?.status || '').toLowerCase() === 'completed';
   if (isCompleted) {
-    const postedCost = getProductionOutputCost(production, ingredientCostIndex);
-    if (postedCost > 0) {
-      return round(postedCost);
+    const lineCost = sumProductionLineCosts(production?.completion_lines)
+      || sumProductionLineCosts(production?.ingredient_lines)
+      || sumProductionLineCosts(production?.ingredients_used);
+    if (lineCost > 0) {
+      return round(lineCost);
+    }
+
+    const outputCost = getProductionOutputCost(production, ingredientCostIndex);
+    if (outputCost > 0) {
+      return round(outputCost);
     }
   }
 
@@ -314,9 +332,13 @@ function resolveProductionCost(production, ingredientMap, ingredientCostIndex = 
     : (Array.isArray(production?.menu_issue_items) ? production.menu_issue_items : [])
   ).reduce((sum, line) => (
     sum + numberValue(
-      line?.estimated_batch_cost
-        ?? line?.estimated_cost
-        ?? line?.actual_cost,
+      line?.actual_cost
+        ?? line?.production_time_cost
+        ?? line?.posted_cost
+        ?? line?.consumed_cost
+        ?? line?.total_cost
+        ?? line?.estimated_batch_cost
+        ?? line?.estimated_cost,
       0
     )
   ), 0);
@@ -324,11 +346,12 @@ function resolveProductionCost(production, ingredientMap, ingredientCostIndex = 
   if (manifestCost > 0) return round(manifestCost);
 
   const persistedCost = [
-    production?.estimated_batch_cost,
+    production?.actual_cost,
+    production?.production_time_cost,
     production?.production_cost_total,
     production?.ingredient_cost_total,
-    production?.actual_cost,
     production?.total_cost,
+    production?.estimated_batch_cost,
     production?.estimated_cost
   ].find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
 

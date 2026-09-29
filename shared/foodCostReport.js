@@ -54,18 +54,26 @@ function ingredientMapFromRecords(records = []) {
 function getLineLayerCost(line = {}) {
   return (Array.isArray(line?.movement_layers) ? line.movement_layers : [])
     .reduce((sum, layer) => (
-      sum + safeFoodCostNumber(layer?.accounting_total_cost ?? layer?.total_cost)
+      sum + safeFoodCostNumber(layer?.accounting_total_cost ?? layer?.total_cost ?? layer?.line_cost ?? layer?.cost)
     ), 0);
 }
 
-function getLineCost(line = {}) {
+function getExplicitLineCost(line = {}) {
   const explicit = firstPositive([
     line.posted_cost,
+    line.accounting_total_cost,
+    line.consumed_cost,
+    line.production_time_cost,
     line.total_cost,
     line.actual_cost,
+    line.line_cost,
     line.cost
   ]);
   return explicit > EPSILON ? explicit : getLineLayerCost(line);
+}
+
+function getLineCost(line = {}) {
+  return getExplicitLineCost(line);
 }
 
 export function getProductionOutputWeightGrams(production = {}) {
@@ -94,15 +102,35 @@ function calculateProductionLineCost(production = {}, ingredientMap = {}) {
     ), 0);
 }
 
+function calculateExplicitProductionLineCost(production = {}) {
+  const completionLineCost = (Array.isArray(production.completion_lines) ? production.completion_lines : [])
+    .reduce((sum, line) => sum + getExplicitLineCost(line), 0);
+  if (completionLineCost > EPSILON) return completionLineCost;
+
+  const reportLineCost = (Array.isArray(production.ingredient_lines) ? production.ingredient_lines : [])
+    .reduce((sum, line) => sum + getExplicitLineCost(line), 0);
+  if (reportLineCost > EPSILON) return reportLineCost;
+
+  return (Array.isArray(production.ingredients_used) ? production.ingredients_used : [])
+    .reduce((sum, line) => sum + getExplicitLineCost(line), 0);
+}
+
 export function getProductionOutputCost(production = {}, ingredientMap = {}) {
+  const isCompleted = String(production?.status || '').trim().toLowerCase() === 'completed';
+  const explicitLineCost = calculateExplicitProductionLineCost(production);
+  if (isCompleted && explicitLineCost > EPSILON) return explicitLineCost;
+
   const postedCost = firstPositive([
+    production.actual_cost,
+    production.production_time_cost,
     production.total_cost,
     production.production_cost_total,
     production.ingredient_cost_total,
-    production.total_consumption_cost,
-    production.actual_cost
+    production.total_consumption_cost
   ]);
   if (postedCost > EPSILON) return postedCost;
+
+  if (explicitLineCost > EPSILON) return explicitLineCost;
 
   const lineCost = calculateProductionLineCost(production, ingredientMap);
   if (lineCost > EPSILON) return lineCost;

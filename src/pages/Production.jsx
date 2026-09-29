@@ -302,10 +302,7 @@ function manifestItemCost(item = {}) {
     item.actual_cost,
     item.production_time_cost,
     item.total_cost,
-    item.posted_cost,
-    item.estimated_cost,
-    item.estimated_batch_cost,
-    item.planned_total_cost
+    item.posted_cost
   );
   if (direct !== null) return direct;
   return sumReportLineCosts(item.ingredients_used);
@@ -318,10 +315,7 @@ function manifestItemDirectPostedCost(item = {}) {
     item.consumed_cost,
     item.actual_cost,
     item.production_time_cost,
-    item.total_cost,
-    item.estimated_cost,
-    item.estimated_batch_cost,
-    item.planned_total_cost
+    item.total_cost
   );
   if (direct !== null) return direct;
   return sumStrictPostedReportLineCosts(item.ingredients_used);
@@ -329,6 +323,14 @@ function manifestItemDirectPostedCost(item = {}) {
 
 function manifestItemPostedCost(item = {}, reportLines = []) {
   return sumPostedReportLineCosts(reportLines) ?? manifestItemDirectPostedCost(item);
+}
+
+function sumManifestPostedCosts(items = [], reportLines = []) {
+  const costs = arrayValue(items)
+    .map((item) => manifestItemPostedCost(item, getManifestItemReportLines(item, reportLines)))
+    .filter((value) => positiveOptionalNumber(value) !== null);
+  if (costs.length === 0) return null;
+  return Number(costs.reduce((sum, value) => sum + toNumber(value, 0), 0).toFixed(2));
 }
 
 function sumManifestItemsCost(items = []) {
@@ -589,17 +591,11 @@ function mergeManifestItem(reportItem = {}, fallbackItem = {}) {
     reportItem.posted_cost,
     reportItem.consumed_cost,
     reportItem.total_cost,
-    reportItem.estimated_cost,
-    reportItem.estimated_batch_cost,
-    reportItem.planned_total_cost,
     fallbackItem.actual_cost,
     fallbackItem.production_time_cost,
     fallbackItem.posted_cost,
     fallbackItem.consumed_cost,
-    fallbackItem.total_cost,
-    fallbackItem.estimated_cost,
-    fallbackItem.estimated_batch_cost,
-    fallbackItem.planned_total_cost
+    fallbackItem.total_cost
   );
   const estimatedBatchCost = firstPresent(
     reportItem.estimated_batch_cost,
@@ -726,12 +722,13 @@ function mergeConsumptionReportWithProduction(report = {}, production = {}) {
       production.expected_yield_servings
     ) ?? null,
     total_consumption_cost: firstPositivePresent(
-      sumManifestItemsCost(menuIssueItems),
+      sumManifestPostedCosts(menuIssueItems, ingredientLines),
+      sumReportLineCosts(ingredientLines),
       report.total_consumption_cost,
       production.total_consumption_cost,
       production.production_cost_total,
       production.ingredient_cost_total,
-      sumReportLineCosts(ingredientLines)
+      sumManifestItemsCost(menuIssueItems)
     ) ?? 0,
     output_calculation_source: report.output_calculation_source || production.output_calculation_source || null,
     quantity_basis: report.quantity_basis || production.quantity_basis || null,
@@ -2511,6 +2508,8 @@ export default function Production() {
       total_calories: nutritionSnapshot?.calories_per_serving
         ? nutritionSnapshot.calories_per_serving * Number(formData.target_servings)
         : 0,
+      production_time_cost: estimatedBatchCost,
+      actual_cost: estimatedBatchCost,
       estimated_batch_cost: estimatedBatchCost,
       estimated_cost_per_serving: estimatedCostPerServing,
       status
@@ -3122,7 +3121,12 @@ export default function Production() {
   };
 
   const getIssueItemSnapshotCost = (itemKey) => (
-    (issueSnapshots[itemKey] || []).reduce((sum, line) => sum + finiteProductionNumber(line.estimated_cost, 0), 0)
+    (issueSnapshots[itemKey] || []).reduce((sum, line) => (
+      sum + finiteProductionNumber(
+        line.production_time_cost ?? line.actual_cost ?? line.estimated_cost,
+        0
+      )
+    ), 0)
   );
 
   const buildOriginalSnapshot = (lines = []) => lines.map((line, index) => {
@@ -3179,6 +3183,8 @@ export default function Production() {
         planned_quantity_unit: item.planned_quantity_unit || '',
         planned_total_cost: item.planned_total_cost,
         estimated_batch_cost: itemBatchCost,
+        production_time_cost: itemBatchCost,
+        actual_cost: itemBatchCost,
         estimated_cost_per_serving: Number((itemBatchCost / itemServingCount).toFixed(2)),
         raw_weight_grams: itemRawWeightGrams,
         yielded_weight_grams: itemYieldedWeightGrams,
@@ -3217,6 +3223,8 @@ export default function Production() {
       expected_yield_servings: getIssueItemProductionTarget(item),
       estimated_cost: item.estimated_batch_cost,
       estimated_batch_cost: item.estimated_batch_cost,
+      production_time_cost: item.production_time_cost,
+      actual_cost: item.actual_cost,
       status: 'active'
     }));
     const productionOverrides = menuIssueItems.flatMap((item) => item.production_overrides || []);
@@ -3282,6 +3290,8 @@ export default function Production() {
       production_override_count: productionOverrides.length,
       ingredient_cost_total: estimatedBatchCost,
       production_cost_total: estimatedBatchCost,
+      production_time_cost: estimatedBatchCost,
+      actual_cost: estimatedBatchCost,
       cost_per_serving: Number((estimatedBatchCost / servingCount).toFixed(2)),
       total_calories: group.items.reduce((sum, item) => {
         const itemRecipe = recipes.find((entry) => String(entry.id) === String(item.recipe_id)) || {};
@@ -3960,11 +3970,12 @@ export default function Production() {
     ?? sumReportWeights(reportIngredientLines, 'yielded_weight_grams')
     ?? sumManifestItemsWeight(reportManifestItems, 'yielded_weight_grams');
   const reportTotalConsumptionCost = firstPositivePresent(
-    sumManifestItemsCost(reportManifestItems),
+    sumManifestPostedCosts(reportManifestItems, reportIngredientLines),
+    sumReportLineCosts(reportIngredientLines),
     selectedConsumptionReport?.total_consumption_cost,
     selectedConsumptionReport?.production_cost_total,
     selectedConsumptionReport?.ingredient_cost_total,
-    sumReportLineCosts(reportIngredientLines)
+    sumManifestItemsCost(reportManifestItems)
   ) ?? 0;
   const partialReverseManifestItems = useMemo(
     () => getPartialReversalManifestItems(partialReverseProduction),
@@ -4563,7 +4574,7 @@ export default function Production() {
                             </Badge>
                           </div>
                           <p className="mt-2 text-xs text-slate-500">
-                            Est. cost {issueInventoryReady ? formatCurrency(group.estimatedBatchCost) : '—'}
+                            Snapshot cost {issueInventoryReady ? formatCurrency(group.estimatedBatchCost) : '—'}
                           </p>
                         </div>
                       ))}
@@ -4650,7 +4661,7 @@ export default function Production() {
                                 {fixedQuantityItem
                                   ? `Planned ${formatReportQuantity(item.production_quantity || item.planned_quantity, productionUnit)}`
                                   : `Planned ${formatRecipeQuantity(item.expected_servings, 'servings')} servings`}
-                                {' '}· Est. cost {formatCurrency(itemCost || item.planned_total_cost)}
+                                {' '}· Snapshot cost {formatCurrency(itemCost || item.planned_total_cost)}
                               </p>
                               {item.production_blocked_reason ? (
                                 <p className="mt-1 text-xs font-medium text-amber-700">
@@ -5161,7 +5172,7 @@ export default function Production() {
                       <div key={item.key || `${item.recipe_id || 'item'}-${index}`} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-sm">
                         <p className="font-medium text-slate-900">{item.recipe_name || item.item_name || 'Planned item'}</p>
                         <p className="mt-1 text-xs text-slate-500">
-                          Covers {formatRecipeQuantity(item.production_covers ?? item.expected_servings ?? item.produced_servings ?? item.requested_servings, 'servings')} · Est. cost {formatCurrency(item.estimated_batch_cost || item.estimated_cost || 0)}
+                          Covers {formatRecipeQuantity(item.production_covers ?? item.expected_servings ?? item.produced_servings ?? item.requested_servings, 'servings')} · Snapshot cost {formatCurrency(item.production_time_cost ?? item.actual_cost ?? item.estimated_batch_cost ?? item.estimated_cost ?? 0)}
                         </p>
                       </div>
                     ))}
@@ -5673,7 +5684,7 @@ export default function Production() {
             if (!open) setSelectedConsumptionReport(null);
           }}
         >
-          <DialogContent className="max-h-[90vh] w-[96vw] max-w-[1400px] overflow-y-auto">
+          <DialogContent className="max-h-[90vh] w-[96vw] max-w-[1400px] overflow-y-auto overflow-x-hidden">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <FileText className="h-5 w-5 text-emerald-700" />
@@ -5743,9 +5754,9 @@ export default function Production() {
               ) : null}
               {showReportLegacyWarning ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  <p className="font-semibold">Legacy calculation warning</p>
+                  <p className="font-semibold">Cost mapping notice</p>
                   <p className="mt-1">
-                    This saved PCR appears to have been posted by an older fallback path. The stock rows may represent only the recipe shown under “Used In,” while the full production manifest is listed below for reverse troubleshooting.
+                    Some stock rows do not map one-to-one to every manifest item. Line Cost uses mapped posted stock cost first, then the frozen production-time cost saved on the PCR manifest row.
                   </p>
                 </div>
               ) : null}
@@ -5792,21 +5803,20 @@ export default function Production() {
                 Every row below is what the production posted to stock. Recipe quantities are shown beside the converted inventory quantity so unit changes are visible.
               </p>
               <div className="rounded-lg border border-slate-200">
-                <Table className="min-w-[1680px]">
+                <Table className="w-full table-fixed text-xs">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="min-w-[90px]">Item Code</TableHead>
-                      <TableHead className="min-w-[300px]">Item Name</TableHead>
-                      <TableHead className="min-w-[210px]">Used In</TableHead>
-                      <TableHead className="min-w-[100px] whitespace-nowrap">Recipe Qty</TableHead>
-                      <TableHead className="min-w-[110px] whitespace-nowrap">Inventory Qty</TableHead>
-                      <TableHead className="min-w-[110px] whitespace-nowrap">Stock Issued</TableHead>
-                      <TableHead className="min-w-[105px] whitespace-nowrap">Raw Weight</TableHead>
-                      <TableHead className="min-w-[75px] whitespace-nowrap">Yield</TableHead>
-                      <TableHead className="min-w-[115px] whitespace-nowrap">Yielded Weight</TableHead>
-                      <TableHead className="min-w-[100px] whitespace-nowrap">Shortage</TableHead>
-                      <TableHead className="min-w-[230px]">Unit / Conversion</TableHead>
-                      <TableHead className="min-w-[95px] text-right">Cost</TableHead>
+                      <TableHead className="w-[8%]">Item Code</TableHead>
+                      <TableHead className="w-[19%]">Item Name</TableHead>
+                      <TableHead className="w-[16%]">Used In</TableHead>
+                      <TableHead className="w-[9%]">Recipe</TableHead>
+                      <TableHead className="w-[9%]">Inv.</TableHead>
+                      <TableHead className="w-[9%]">Issued</TableHead>
+                      <TableHead className="w-[8%]">Raw</TableHead>
+                      <TableHead className="w-[6%]">Yield</TableHead>
+                      <TableHead className="w-[8%]">Output</TableHead>
+                      <TableHead className="w-[8%]">Short</TableHead>
+                      <TableHead className="w-[10%] text-right">Cost</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -5817,42 +5827,29 @@ export default function Production() {
                       const hasUnitIssue = unitStatus && unitStatus !== 'ok';
                       return (
                         <TableRow key={`${line.ingredient_id}-${index}`} className={hasUnitIssue ? 'bg-red-50/60' : ''}>
-                          <TableCell className="font-mono text-xs text-slate-600">{line.item_code || '—'}</TableCell>
-                          <TableCell className="min-w-[300px] font-medium">{line.ingredient_name}</TableCell>
-                          <TableCell className="min-w-[210px] text-xs text-slate-600">
+                          <TableCell className="break-words font-mono text-[11px] text-slate-600">{line.item_code || '—'}</TableCell>
+                          <TableCell className="break-words font-medium">{line.ingredient_name}</TableCell>
+                          <TableCell className="break-words text-[11px] text-slate-600">
                             {Array.isArray(line.source_recipe_names) && line.source_recipe_names.length > 0
                               ? line.source_recipe_names.join(', ')
                               : reportEventTitle}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap">{formatReportQuantity(line.recipe_quantity ?? line.planned_recipe_quantity ?? line.planned_quantity, recipeUnit)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{formatReportQuantity(line.actual_requested_quantity, inventoryUnit)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{formatReportQuantity(line.issued_quantity, inventoryUnit)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{formatReportWeightFromGrams(line.raw_weight_grams)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{formatReportPercent(line.yield_percent)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{formatReportWeightFromGrams(line.yielded_weight_grams)}</TableCell>
-                          <TableCell className={`whitespace-nowrap ${Number(line.shortage_quantity) > 0 ? 'font-semibold text-red-600' : ''}`}>
+                          <TableCell className="break-words">{formatReportQuantity(line.recipe_quantity ?? line.planned_recipe_quantity ?? line.planned_quantity, recipeUnit)}</TableCell>
+                          <TableCell className="break-words">{formatReportQuantity(line.actual_requested_quantity, inventoryUnit)}</TableCell>
+                          <TableCell className="break-words">{formatReportQuantity(line.issued_quantity, inventoryUnit)}</TableCell>
+                          <TableCell className="break-words">{formatReportWeightFromGrams(line.raw_weight_grams)}</TableCell>
+                          <TableCell className="break-words">{formatReportPercent(line.yield_percent)}</TableCell>
+                          <TableCell className="break-words">{formatReportWeightFromGrams(line.yielded_weight_grams)}</TableCell>
+                          <TableCell className={`break-words ${Number(line.shortage_quantity) > 0 ? 'font-semibold text-red-600' : ''}`}>
                             {formatReportQuantity(line.shortage_quantity, inventoryUnit)}
                           </TableCell>
-                          <TableCell className="min-w-[230px]">
-                            <Badge
-                              variant="outline"
-                              className={hasUnitIssue
-                                ? 'border-red-200 bg-red-50 text-red-700'
-                                : 'border-emerald-200 bg-emerald-50 text-emerald-700'}
-                            >
-                              {hasUnitIssue ? 'Issue' : 'OK'}
-                            </Badge>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {line.conversion_note || formatReportSource(line.quantity_basis)}
-                            </p>
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-right">{formatCurrency(reportLineCost(line))}</TableCell>
+                          <TableCell className="break-words text-right font-medium">{formatCurrency(reportLineCost(line))}</TableCell>
                         </TableRow>
                       );
                     })}
                     {reportIngredientLines.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={12} className="py-6 text-center text-sm text-slate-500">
+                        <TableCell colSpan={11} className="py-6 text-center text-sm text-slate-500">
                           No ingredient consumption lines were stored for this report.
                         </TableCell>
                       </TableRow>
