@@ -154,7 +154,9 @@ export function buildMealServiceAvailabilitySnapshot(scope = {}, batches = []) {
   const scopeKey = buildMealServiceScopeKey(scope);
   const state = (Array.isArray(batches) ? batches : []).map((batch) => ({
     id: normalizeText(batch.id),
-    recipe_id: normalizeText(batch.recipe_id),
+    recipe_id: getMealServiceBatchDishId(batch),
+    source_recipe_id: normalizeText(batch.recipe_id),
+    production_line_id: normalizeText(batch.production_line_id),
     batch_number: normalizeText(batch.batch_number),
     completed_at: normalizeText(batch.completed_at),
     status: normalizeText(batch.status).toLowerCase(),
@@ -201,6 +203,24 @@ function getStoredServicePortionSize(batch = {}) {
   return value > 0 ? normalizeManualMealPortionSize(value) : null;
 }
 
+function firstPositiveNumber(values = []) {
+  for (const value of values) {
+    const numeric = number(value, 0);
+    if (numeric > QUANTITY_EPSILON) return numeric;
+  }
+  return null;
+}
+
+function getMealServiceBatchDishId(batch = {}) {
+  return normalizeText(
+    batch.recipe_id
+      || batch.prepared_item_id
+      || batch.production_line_id
+      || batch.ingredient_id
+      || batch.id
+  );
+}
+
 function normalizeProducedItemBatchIds(payload = {}) {
   const values = [
     ...(Array.isArray(payload.produced_item_batch_ids) ? payload.produced_item_batch_ids : []),
@@ -244,7 +264,8 @@ export function groupMealServiceProducedDishes(batches = []) {
     && getBatchAvailableWeight(batch) > QUANTITY_EPSILON
     && number(batch.portion_size_grams, 0) > 0
   )).sort(compareBatchFifo).forEach((batch) => {
-    const recipeId = normalizeText(batch.recipe_id);
+    const sourceRecipeId = normalizeText(batch.recipe_id);
+    const recipeId = getMealServiceBatchDishId(batch);
     if (!recipeId) return;
     const productionName = formatProductionEventTitle(batch, {
       fallback: batch.production_name || batch.recipe_name || recipeId
@@ -252,6 +273,9 @@ export function groupMealServiceProducedDishes(batches = []) {
     if (!grouped.has(recipeId)) {
       grouped.set(recipeId, {
         recipe_id: recipeId,
+        source_recipe_id: sourceRecipeId || null,
+        production_line_id: normalizeText(batch.production_line_id) || null,
+        ingredient_id: normalizeText(batch.ingredient_id) || null,
         recipe_name: productionName,
         meal_type: batch.meal_type || null,
         menu_type: batch.menu_type || null,
@@ -296,6 +320,7 @@ export function groupMealServiceProducedDishes(batches = []) {
       id: batch.id,
       batch_number: batch.batch_number,
       production_id: batch.production_id,
+      production_line_id: batch.production_line_id || null,
       production_name: productionName,
       consumption_report_id: batch.consumption_report_id || null,
       consumption_report_number: batch.consumption_report_number || null,
@@ -726,6 +751,240 @@ function productionFinishedWeight(production = {}, recipe = {}, recipes = [], in
   return portionSize > 0 && servings > 0 ? roundQuantity(portionSize * servings) : 0;
 }
 
+function lineIdentityParts(line = {}) {
+  return [
+    line.production_line_id,
+    line.id,
+    line.key,
+    line.manifest_item_key,
+    line.source_menu_plan_item_key,
+    line.original_source_menu_plan_item_key,
+    line.recipe_id,
+    line.recipe_version_id,
+    line.recipe_code,
+    line.recipe_name,
+    line.item_name
+  ].map(normalizeText).filter(Boolean);
+}
+
+function mergeCompletedProductionLine(manifestLine = {}, menuIssueItems = [], index = 0) {
+  const manifestKeys = new Set(lineIdentityParts(manifestLine));
+  const menuMatch = (Array.isArray(menuIssueItems) ? menuIssueItems : []).find((item, itemIndex) => {
+    if (itemIndex === index) return true;
+    return lineIdentityParts(item).some((key) => manifestKeys.has(key));
+  }) || {};
+  return {
+    ...manifestLine,
+    ...menuMatch,
+    production_line_id: manifestLine.production_line_id || manifestLine.id || menuMatch.production_line_id || menuMatch.id || null,
+    id: manifestLine.id || manifestLine.production_line_id || menuMatch.id || menuMatch.production_line_id || null,
+    line_number: manifestLine.line_number || menuMatch.line_number || index + 1,
+    recipe_id: manifestLine.recipe_id || manifestLine.recipe_version_id || menuMatch.recipe_id || menuMatch.recipe_version_id || null,
+    recipe_name: manifestLine.recipe_name || menuMatch.recipe_name || menuMatch.name || manifestLine.item_name || menuMatch.item_name || null,
+    item_name: manifestLine.item_name || menuMatch.item_name || menuMatch.recipe_name || menuMatch.name || manifestLine.recipe_name || null,
+    ingredients_used: Array.isArray(menuMatch.ingredients_used)
+      ? menuMatch.ingredients_used
+      : Array.isArray(manifestLine.ingredients_used)
+        ? manifestLine.ingredients_used
+        : []
+  };
+}
+
+function shouldBuildLineOutputBatches(production = {}, lines = []) {
+  return Array.isArray(lines)
+    && lines.length > 0
+    && (
+      lines.length > 1
+      || production.production_issue_grouped === true
+      || !normalizeText(production.recipe_id)
+    );
+}
+
+function lineBatchNumber(baseBatchNumber, productionLineId) {
+  const lineToken = crypto
+    .createHash('sha256')
+    .update(normalizeText(productionLineId) || crypto.randomBytes(4).toString('hex'))
+    .digest('hex')
+    .slice(0, 8)
+    .toUpperCase();
+  return `${baseBatchNumber}-${lineToken}`;
+}
+
+function buildProductionLineOutputSnapshot({
+  production = {},
+  line = {},
+  recipeCatalog = [],
+  ingredientCatalog = [],
+  completedAt = nowIso(),
+  actor = {}
+} = {}) {
+  const productionId = normalizeText(production.id);
+  const productionLineId = normalizeText(line.production_line_id || line.id)
+    || `${productionId}:line:${number(line.line_number, 1)}`;
+  const itemName = normalizeText(line.item_name || line.recipe_name || line.name)
+    || `Production line ${number(line.line_number, 1)}`;
+  const producedWeight = firstPositiveNumber([
+    line.produced_weight_grams,
+    line.yielded_weight_grams,
+    line.expected_finished_weight_grams,
+    line.actual_finished_weight_grams,
+    line.requested_weight_grams,
+    line.raw_weight_grams
+  ]);
+  const lineServings = firstPositiveNumber([
+    line.produced_servings,
+    line.expected_yield_servings,
+    line.production_covers,
+    line.requested_servings,
+    line.produced_quantity,
+    line.requested_quantity
+  ]);
+  const portionSize = firstPositiveNumber([
+    line.portion_size_grams,
+    producedWeight && lineServings ? producedWeight / lineServings : null,
+    production.portion_size_grams
+  ]);
+  if (!producedWeight || !portionSize) return null;
+  const expectedServings = lineServings || producedWeight / portionSize;
+  if (!expectedServings || expectedServings <= QUANTITY_EPSILON) return null;
+
+  const recipeId = normalizeText(line.recipe_id || line.recipe_version_id);
+  const recipe = recipeCatalog.find((candidate) => normalizeText(candidate?.id) === recipeId) || {
+    id: recipeId || null,
+    name: itemName,
+    servings: expectedServings,
+    portion_size_grams: portionSize,
+    ingredients: []
+  };
+  const lineProduction = {
+    ...production,
+    production_line_id: productionLineId,
+    recipe_id: recipeId || null,
+    recipe_name: itemName,
+    production_name: itemName,
+    target_servings: roundQuantity(expectedServings),
+    expected_yield_servings: roundQuantity(expectedServings),
+    expected_finished_weight_grams: roundQuantity(producedWeight),
+    actual_finished_weight_grams: roundQuantity(producedWeight),
+    produced_weight_grams: roundQuantity(producedWeight),
+    portion_size_grams: roundQuantity(portionSize),
+    production_issue_grouped: production.production_issue_grouped === true,
+    production_issue_item_count: 1,
+    production_issue_dish_count: 1,
+    menu_issue_items: [line],
+    manifest_lines: [line],
+    ingredients_used: Array.isArray(line.ingredients_used) ? line.ingredients_used : []
+  };
+  const snapshot = buildProducedItemBatchSnapshot({
+    production: lineProduction,
+    recipe,
+    recipes: recipeCatalog,
+    ingredients: ingredientCatalog,
+    completedAt,
+    actor
+  });
+  return {
+    ...snapshot,
+    production_line_id: productionLineId,
+    prepared_item_id: recipeId || productionLineId,
+    batch_number: lineBatchNumber(snapshot.batch_number, productionLineId),
+    recipe_name: itemName,
+    original_recipe_name: line.recipe_name || itemName,
+    item_name: itemName,
+    production_issue_grouped: production.production_issue_grouped === true,
+    production_issue_item_count: 1,
+    production_issue_dish_count: 1,
+    total_cost: number(line.actual_cost ?? line.estimated_cost ?? line.estimated_batch_cost ?? line.planned_total_cost, 0)
+  };
+}
+
+function buildProducedItemBatchSnapshotsForProduction({
+  production = {},
+  recipeCatalog = [],
+  ingredientCatalog = [],
+  completedAt = nowIso(),
+  actor = {}
+} = {}) {
+  const manifestLines = Array.isArray(production.manifest_lines) ? production.manifest_lines : [];
+  const menuIssueItems = Array.isArray(production.menu_issue_items) ? production.menu_issue_items : [];
+  if (shouldBuildLineOutputBatches(production, manifestLines)) {
+    return manifestLines
+      .map((line, index) => mergeCompletedProductionLine(line, menuIssueItems, index))
+      .map((line) => buildProductionLineOutputSnapshot({
+        production,
+        line,
+        recipeCatalog,
+        ingredientCatalog,
+        completedAt,
+        actor
+      }))
+      .filter(Boolean);
+  }
+
+  const recipe = recipeCatalog.find((candidate) => (
+    normalizeText(candidate?.id) === normalizeText(production.recipe_id)
+  ));
+  if (!recipe) return [];
+  const actualFinishedWeightGrams = productionFinishedWeight(
+    production,
+    recipe,
+    recipeCatalog,
+    ingredientCatalog
+  );
+  if (actualFinishedWeightGrams <= 0) return [];
+  return [buildProducedItemBatchSnapshot({
+    production,
+    recipe,
+    recipes: recipeCatalog,
+    ingredients: ingredientCatalog,
+    actualFinishedWeightGrams,
+    completedAt,
+    actor
+  })];
+}
+
+function canRepairUntouchedProducedBatch(batch = {}) {
+  return batch
+    && normalizeText(batch.status).toLowerCase() !== 'voided'
+    && number(batch.served_weight_grams, 0) <= QUANTITY_EPSILON
+    && number(batch.wasted_weight_grams, 0) <= QUANTITY_EPSILON
+    && number(batch.served_servings, 0) <= QUANTITY_EPSILON
+    && number(batch.wasted_servings, 0) <= QUANTITY_EPSILON;
+}
+
+async function findCompletionReportForProduction(production = {}, executor = null, location = null) {
+  const reportId = normalizeText(production.consumption_report_id);
+  if (reportId) {
+    const report = await findDocument('ProductionConsumptionReport', reportId, executor || undefined);
+    if (report) return report;
+  }
+  const reports = await listDocuments('ProductionConsumptionReport', {
+    filters: { production_id: production.id },
+    sort: '-created_date',
+    limit: 5,
+    location
+  }, executor || undefined);
+  return reports.find((report) => normalizeText(report.status).toLowerCase() !== 'reversed')
+    || reports[0]
+    || null;
+}
+
+function withCompletionReportManifest(production = {}, report = null) {
+  const reportLines = Array.isArray(report?.manifest_lines) && report.manifest_lines.length
+    ? report.manifest_lines
+    : Array.isArray(report?.menu_issue_items) && report.menu_issue_items.length
+      ? report.menu_issue_items
+      : [];
+  if (!reportLines.length) return production;
+  return {
+    ...production,
+    consumption_report_id: normalizeText(report.id) || production.consumption_report_id || null,
+    consumption_report_number: report.report_number || production.consumption_report_number || null,
+    manifest_lines: reportLines,
+    menu_issue_items: reportLines
+  };
+}
+
 export async function backfillProducedItemBatchesForCompletedProductions({
   siteId,
   productionSiteIds = null,
@@ -746,6 +1005,11 @@ export async function backfillProducedItemBatchesForCompletedProductions({
   const existingProductionIds = new Set(
     batches.map((batch) => normalizeText(batch.production_id)).filter(Boolean)
   );
+  const existingByProductionLineId = new Map(
+    batches
+      .filter((batch) => normalizeText(batch.production_line_id))
+      .map((batch) => [normalizeText(batch.production_line_id), batch])
+  );
   const completedProductions = await listMealServiceCompletedProductionsForSites({
     siteIds: resolvedProductionSiteIds,
     serviceDate,
@@ -758,8 +1022,13 @@ export async function backfillProducedItemBatchesForCompletedProductions({
   });
   const missingProductions = completedProductions.filter((production) => (
     normalizeText(production.id)
-    && normalizeText(production.recipe_id)
-    && !existingProductionIds.has(normalizeText(production.id))
+    && (
+      !existingProductionIds.has(normalizeText(production.id))
+      || shouldBuildLineOutputBatches(
+        production,
+        Array.isArray(production.manifest_lines) ? production.manifest_lines : []
+      )
+    )
   ));
   if (missingProductions.length === 0) return batches;
 
@@ -767,32 +1036,52 @@ export async function backfillProducedItemBatchesForCompletedProductions({
     listDocuments('Recipe', { limit: 10000, location }, executor || undefined),
     listDocuments('Ingredient', { limit: 10000, location }, executor || undefined)
   ]);
-  const recipeMap = new Map(recipeCatalog.map((recipe) => [String(recipe.id), recipe]));
 
   for (const production of missingProductions) {
-    const recipe = recipeMap.get(String(production.recipe_id));
-    if (!recipe) continue;
-    const actualFinishedWeightGrams = productionFinishedWeight(
+    const completionReport = shouldBuildLineOutputBatches(
       production,
-      recipe,
+      Array.isArray(production.manifest_lines) ? production.manifest_lines : []
+    )
+      ? await findCompletionReportForProduction(production, executor, location)
+      : null;
+    const productionForBackfill = withCompletionReportManifest(production, completionReport);
+    const snapshots = buildProducedItemBatchSnapshotsForProduction({
+      production: productionForBackfill,
       recipeCatalog,
-      ingredientCatalog
-    );
-    if (actualFinishedWeightGrams <= 0) continue;
+      ingredientCatalog,
+      completedAt: productionForBackfill.completed_date || productionForBackfill.completed_at || nowIso(),
+      actor: {
+        email: productionForBackfill.completed_by,
+        full_name: productionForBackfill.completed_by_name || productionForBackfill.completed_by
+      }
+    });
+    if (!snapshots.length) continue;
     try {
-      const snapshot = buildProducedItemBatchSnapshot({
-        production,
-        recipe,
-        recipes: recipeCatalog,
-        ingredients: ingredientCatalog,
-        actualFinishedWeightGrams,
-        completedAt: production.completed_date || production.completed_at || nowIso(),
-        actor: {
-          email: production.completed_by,
-          full_name: production.completed_by_name || production.completed_by
+      for (const snapshot of snapshots) {
+        try {
+          const lineId = normalizeText(snapshot.production_line_id);
+          const existingLineBatch = lineId ? existingByProductionLineId.get(lineId) : null;
+          if (existingLineBatch) {
+            if (canRepairUntouchedProducedBatch(existingLineBatch)) {
+              const repaired = await updateDocument('ProducedItemBatch', existingLineBatch.id, {
+                ...snapshot,
+                id: existingLineBatch.id,
+                batch_number: existingLineBatch.batch_number || snapshot.batch_number,
+                service_portion_size_grams: existingLineBatch.service_portion_size_grams ?? snapshot.service_portion_size_grams,
+                service_portion_updated_by: existingLineBatch.service_portion_updated_by || snapshot.service_portion_updated_by,
+                service_portion_updated_by_name: existingLineBatch.service_portion_updated_by_name || snapshot.service_portion_updated_by_name,
+                service_portion_updated_at: existingLineBatch.service_portion_updated_at || snapshot.service_portion_updated_at
+              }, executor || undefined);
+              existingByProductionLineId.set(lineId, repaired);
+            }
+            continue;
+          }
+          const created = await createDocument('ProducedItemBatch', snapshot, executor || undefined);
+          if (lineId) existingByProductionLineId.set(lineId, created);
+        } catch (error) {
+          if (error?.code !== '23505') throw error;
         }
-      });
-      await createDocument('ProducedItemBatch', snapshot, executor || undefined);
+      }
     } catch (error) {
       if (error?.code !== '23505') {
         // A single legacy production with incomplete yield data should not hide
@@ -864,7 +1153,7 @@ export function buildMealServiceDemand({
   const recipeMap = new Map(recipes.map((recipe) => [String(recipe.id), recipe]));
   const allBatchesByRecipe = new Map();
   [...batches].sort(compareBatchFifo).forEach((batch) => {
-    const recipeId = String(batch.recipe_id || '');
+    const recipeId = getMealServiceBatchDishId(batch);
     if (!allBatchesByRecipe.has(recipeId)) allBatchesByRecipe.set(recipeId, []);
     allBatchesByRecipe.get(recipeId).push(batch);
   });
@@ -873,20 +1162,20 @@ export function buildMealServiceDemand({
     .filter((batch) => AVAILABLE_BATCH_STATUSES.has(String(batch.status || '').toLowerCase()))
     .sort(compareBatchFifo)
     .forEach((batch) => {
-      const recipeId = String(batch.recipe_id || '');
+      const recipeId = getMealServiceBatchDishId(batch);
       if (!batchesByRecipe.has(recipeId)) batchesByRecipe.set(recipeId, []);
       batchesByRecipe.get(recipeId).push(batch);
     });
 
   const demandItems = normalizedSelections.map((selection) => {
     const recipe = recipeMap.get(selection.recipe_id);
-    if (!recipe) throw httpError(`Recipe ${selection.recipe_id} was not found`, 404);
     const recipeBatches = batchesByRecipe.get(selection.recipe_id) || [];
     const allRecipeBatches = allBatchesByRecipe.get(selection.recipe_id) || [];
     const firstBatch = recipeBatches[0] || allRecipeBatches[0] || null;
+    if (!recipe && !firstBatch) throw httpError(`Prepared dish ${selection.recipe_id} was not found`, 404);
     const portionSize = selection.portion_size_grams;
     if (portionSize <= 0) {
-      throw httpError(`Enter a valid portion size for ${recipe.name || selection.recipe_id}`, 409);
+      throw httpError(`Enter a valid portion size for ${recipe?.name || firstBatch?.recipe_name || selection.recipe_id}`, 409);
     }
     const requiredServings = roundQuantity(count * selection.servings_per_attendee);
     const availableWeight = roundQuantity(
@@ -908,7 +1197,9 @@ export function buildMealServiceDemand({
     return {
       produced_item_batch_id: selection.produced_item_batch_id || firstBatch?.id || null,
       recipe_id: selection.recipe_id,
-      recipe_name: recipe.name || firstBatch?.recipe_name || selection.recipe_id,
+      source_recipe_id: firstBatch?.recipe_id || null,
+      production_line_id: firstBatch?.production_line_id || null,
+      recipe_name: recipe?.name || firstBatch?.recipe_name || selection.recipe_id,
       meal_plan_line_id: selection.meal_plan_line_id,
       portion_size_grams: roundQuantity(portionSize),
       manual_portion_size_grams: roundQuantity(portionSize),
@@ -954,7 +1245,7 @@ export function allocateMealServiceDemand(items = [], batches = []) {
 
     for (const batch of mutableBatches) {
       if (remainingDemand <= QUANTITY_EPSILON) break;
-      if (String(batch.recipe_id || '') !== String(item.recipe_id || '')) continue;
+      if (getMealServiceBatchDishId(batch) !== String(item.recipe_id || '')) continue;
       const batchPortionSize = number(batch.portion_size_grams, 0);
       const availableWeight = getBatchAvailableWeight(batch);
       const availableServings = getBatchAvailableServings(batch);

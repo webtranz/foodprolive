@@ -816,6 +816,30 @@ test('service portion is never inferred from the production or recipe portion', 
   assert.doesNotMatch(service, /batch\.service_portion_size_grams \?\? batch\.portion_size_grams/);
 });
 
+test('recipe-less grouped production lines remain selectable for Meal Service', () => {
+  const [dish] = groupMealServiceProducedDishes([
+    batch({
+      id: 'batch-bread',
+      recipe_id: null,
+      recipe_name: 'ARABIC BREAD',
+      production_line_id: 'production-breakfast:line:arabic-bread',
+      production_name: 'ARABIC BREAD',
+      portion_size_grams: 46,
+      service_portion_size_grams: 46,
+      produced_servings: 40,
+      produced_weight_grams: 1840,
+      remaining_servings: 40,
+      remaining_weight_grams: 1840
+    })
+  ]);
+  assert.equal(dish.recipe_id, 'production-breakfast:line:arabic-bread');
+  assert.equal(dish.source_recipe_id, null);
+  assert.equal(dish.production_line_id, 'production-breakfast:line:arabic-bread');
+  assert.equal(dish.recipe_name, 'ARABIC BREAD');
+  assert.equal(dish.available_covers, 40);
+  assert.equal(dish.batches[0].production_line_id, 'production-breakfast:line:arabic-bread');
+});
+
 test('service portion updates only the current untouched produced output', () => {
   const current = batch({ id: 'current-output' });
   const reversedHistory = batch({
