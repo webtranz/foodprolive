@@ -483,8 +483,13 @@ const cases = [
     name: 'routes MR to Store visibility through requesting project and fulfillment store',
     async run() {
       const dbSource = await fs.readFile(new URL('../server/db.js', import.meta.url), 'utf8');
+      const indexSource = await fs.readFile(new URL('../server/index.js', import.meta.url), 'utf8');
 
       assert.match(dbSource, /if \(entity === 'MaterialRequest'\) \{/);
+      assert.match(dbSource, /request_date: toDateOnlyOrNull\(row\.request_date\)/);
+      assert.match(dbSource, /period_start: toDateOnlyOrNull\(row\.period_start\)/);
+      assert.match(indexSource, /const productionRequestDate = normalizeDateOnly\(production\.production_date\)/);
+      assert.match(indexSource, /request_date: productionRequestDate/);
       assert.match(dbSource, /normalized_record\.site_id = ANY\(\$\{parameter\}::text\[\]\)/);
       assert.match(dbSource, /normalized_record\.requesting_site_id = ANY\(\$\{parameter\}::text\[\]\)/);
       assert.match(dbSource, /normalized_record\.fulfillment_store_id = ANY\(\$\{parameter\}::text\[\]\)/);

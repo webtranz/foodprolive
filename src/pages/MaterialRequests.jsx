@@ -27,6 +27,19 @@ const STATUS_CONFIG = {
   rejected: { color: 'bg-rose-100 text-rose-700', label: 'Rejected' }
 };
 
+function normalizeDateOnly(value) {
+  const match = String(value || '').trim().match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : '';
+}
+
+function formatDateOnly(value, pattern = 'MMM d, yyyy') {
+  const normalized = normalizeDateOnly(value);
+  if (!normalized) return '—';
+  const [year, month, day] = normalized.split('-').map((part) => Number(part));
+  if (!year || !month || !day) return '—';
+  return format(new Date(year, month - 1, day), pattern);
+}
+
 export default function MaterialRequests() {
   const queryClient = useQueryClient();
   const { can, isAdmin } = usePermissions();
@@ -73,7 +86,7 @@ export default function MaterialRequests() {
 
   const visibleRequests = useMemo(() => {
     return filteredBaseRequests.filter((request) => {
-      const matchesDate = !dateFilter || String(request.request_date || '').slice(0, 10) === dateFilter;
+      const matchesDate = !dateFilter || normalizeDateOnly(request.request_date) === dateFilter;
       const matchesProject = projectFilter === 'all'
         || (request.requesting_site_id || request.site_id) === projectFilter;
       const matchesStatus = statusFilter === 'all' || request.status === statusFilter;
@@ -369,7 +382,7 @@ export default function MaterialRequests() {
                           {request.request_date ? (
                             <>
                               <span>•</span>
-                              <span>{format(new Date(request.request_date), 'MMM d, yyyy')}</span>
+                              <span>{formatDateOnly(request.request_date)}</span>
                             </>
                           ) : null}
                         </div>

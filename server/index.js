@@ -1345,6 +1345,9 @@ async function syncMaterialRequestForProduction(
 
   const targetStatus = isDraftMode ? 'awaiting_production_approval' : 'pending_procurement_ack';
   const existingRequest = existingRequests.find((item) => !['cancelled', 'rejected'].includes(String(item.status || '').toLowerCase()));
+  const productionRequestDate = normalizeDateOnly(production.production_date)
+    || normalizeDateOnly(production.created_date)
+    || new Date().toISOString().slice(0, 10);
   const payload = {
     site_id: inventorySiteId || null,
     site_name: inventorySiteName || null,
@@ -1352,9 +1355,9 @@ async function syncMaterialRequestForProduction(
     requesting_site_name: production.site_name || productionSite?.name || null,
     fulfillment_store_id: fulfillmentStore?.id || null,
     fulfillment_store_name: fulfillmentStore?.name || null,
-    request_date: new Date().toISOString().slice(0, 10),
-    period_start: production.production_date || null,
-    period_end: production.production_date || null,
+    request_date: productionRequestDate,
+    period_start: productionRequestDate,
+    period_end: productionRequestDate,
     items: productionItems,
     total_estimated_cost: productionItems.reduce((sum, item) => sum + item.estimated_cost, 0),
     status: targetStatus,
