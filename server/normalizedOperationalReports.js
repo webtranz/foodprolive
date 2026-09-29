@@ -119,12 +119,39 @@ export async function loadNormalizedFoodCostReport({
       SELECT
         report.production_id,
         MAX(NULLIF(report.total_consumption_cost, 0)) AS report_total_cost,
-        SUM(COALESCE(NULLIF(line.posted_cost, 0), NULLIF(report_line_layer_totals.layer_cost, 0), 0)) AS report_line_cost
+        SUM(COALESCE(
+          NULLIF(line.posted_cost, 0),
+          NULLIF(report_line_layer_totals.layer_cost, 0),
+          NULLIF(
+            COALESCE(
+              NULLIF(line.issued_quantity, 0),
+              NULLIF(line.actual_requested_quantity, 0),
+              NULLIF(line.planned_quantity, 0),
+              0
+            ) * COALESCE(report_ingredient_detail.cost_per_unit, 0),
+            0
+          ),
+          0
+        )) AS report_line_cost
       FROM production_consumption_reports report
       LEFT JOIN production_consumption_report_lines line ON line.report_id = report.report_id
       LEFT JOIN report_line_layer_totals ON report_line_layer_totals.report_line_id = line.report_line_id
+      LEFT JOIN ingredient_details report_ingredient_detail ON report_ingredient_detail.ingredient_id = line.ingredient_id
       WHERE report.status <> 'reversed'
       GROUP BY report.production_id
+    ),
+    consumption_line_totals AS (
+      SELECT
+        pcl.production_id,
+        SUM(COALESCE(
+          NULLIF(pcl.cost, 0),
+          NULLIF(pcl.quantity * COALESCE(consumption_ingredient_detail.cost_per_unit, 0), 0),
+          0
+        )) AS consumption_line_cost
+      FROM production_consumption_lines pcl
+      LEFT JOIN ingredient_details consumption_ingredient_detail ON consumption_ingredient_detail.ingredient_id = pcl.ingredient_id
+      WHERE COALESCE(pcl.status, 'posted') NOT IN ('reversed', 'voided', 'cancelled')
+      GROUP BY pcl.production_id
     ),
     production_totals AS (
       SELECT
@@ -132,10 +159,12 @@ export async function loadNormalizedFoodCostReport({
         STRING_AGG(DISTINCT pml.item_name, ', ' ORDER BY pml.item_name) FILTER (WHERE COALESCE(pml.item_name, '') <> '') AS production_name,
         SUM(COALESCE(pob.initial_weight_grams, pml.produced_weight_grams, 0)) AS produced_weight_grams,
         SUM(COALESCE(pob.initial_servings, pml.produced_servings, 0)) AS produced_servings,
-        SUM(COALESCE(NULLIF(pob.total_cost, 0), pml.actual_cost, pml.estimated_cost, 0)) AS production_cost
+        SUM(COALESCE(NULLIF(pob.total_cost, 0), 0)) AS output_batch_cost,
+        SUM(COALESCE(NULLIF(pml.actual_cost, 0), NULLIF(pml.estimated_cost, 0), 0)) AS manifest_cost
       FROM production_events pe
       LEFT JOIN production_manifest_lines pml ON pml.production_id = pe.production_id
       LEFT JOIN produced_output_batches pob ON pob.production_line_id = pml.production_line_id
+      WHERE COALESCE(pml.status, 'active') NOT IN ('reversed', 'voided', 'cancelled')
       GROUP BY pe.production_id
     )
     SELECT
@@ -148,16 +177,19 @@ export async function loadNormalizedFoodCostReport({
       COALESCE(production_totals.produced_weight_grams, 0) AS produced_weight_grams,
       COALESCE(production_totals.produced_servings, pe.produced_servings, pe.expected_yield_servings, pe.target_servings, 0) AS production_servings,
       COALESCE(
-        NULLIF(production_totals.production_cost, 0),
         NULLIF(report_totals.report_total_cost, 0),
         NULLIF(report_totals.report_line_cost, 0),
-        pe.production_cost_total,
-        pe.ingredient_cost_total,
+        NULLIF(consumption_line_totals.consumption_line_cost, 0),
+        NULLIF(pe.production_cost_total, 0),
+        NULLIF(pe.ingredient_cost_total, 0),
+        NULLIF(production_totals.output_batch_cost, 0),
+        NULLIF(production_totals.manifest_cost, 0),
         0
       ) AS production_cost
     FROM production_events pe
     LEFT JOIN production_totals ON production_totals.production_id = pe.production_id
     LEFT JOIN report_totals ON report_totals.production_id = pe.production_id
+    LEFT JOIN consumption_line_totals ON consumption_line_totals.production_id = pe.production_id
     LEFT JOIN location_dim ON location_dim.warehouse_id = pe.warehouse_id
     WHERE pe.production_date BETWEEN $1::date AND $2::date
       AND pe.status = 'completed'

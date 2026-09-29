@@ -576,8 +576,9 @@ function buildShortages(productions, ingredientMap, inventoryMap, sites) {
 function resolvePrepStatus(production, hasShortage) {
   const status = textValue(production?.status).toLowerCase();
   if (isProductionReversedAuditRecord(production)) return { key: 'reversed', label: 'Reversed' };
+  if (status === 'cancelled') return { key: 'cancelled', label: 'Cancelled' };
   if (status === 'completed') return { key: 'complete', label: 'Complete' };
-  if (hasShortage || ['rejected', 'cancelled'].includes(status)) return { key: 'at_risk', label: 'At Risk' };
+  if (hasShortage || status === 'rejected') return { key: 'at_risk', label: 'At Risk' };
   if (status === 'in_progress') return { key: 'in_progress', label: 'In Progress' };
   return { key: 'pending', label: 'Pending' };
 }

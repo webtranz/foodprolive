@@ -185,6 +185,7 @@ assert.equal(dinner.prep_status.key, 'complete');
 
 const cancelled = dashboard.all_items.find((item) => item.id === 'cancelled-1');
 assert.equal(cancelled.batches_required, 0);
+assert.equal(cancelled.prep_status.key, 'cancelled');
 assert.equal(cancelled.counts_toward_plan, false);
 assert.equal(dashboard.items.some((item) => item.id === 'cancelled-1'), false);
 

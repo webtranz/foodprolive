@@ -184,6 +184,8 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(reportMergeBlock, /mergeManifestItems\(reportMenuItems,\s*productionMenuItems\)/);
   assert.match(reportMergeBlock, /sumManifestItemsWeight\(menuIssueItems,\s*'raw_weight_grams'\)/);
   assert.match(reportMergeBlock, /sumManifestItemsWeight\(menuIssueItems,\s*'yielded_weight_grams'\)/);
+  assert.match(reportMergeBlock, /total_consumption_cost:[\s\S]*sumReportLineCosts\(ingredientLines\)/);
+  assert.match(reportMergeBlock, /total_consumption_cost:[\s\S]*sumManifestItemsCost\(menuIssueItems\)/);
 
   const ingredientSectionStart = productionPage.indexOf('>Ingredient Consumption</h3>');
   const ingredientSectionEnd = productionPage.indexOf('>Inventory Lots Consumed</h3>', ingredientSectionStart);
@@ -191,6 +193,13 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.ok(ingredientSectionStart >= 0, 'production UI should render the ingredient-consumption section');
   assert.ok(ingredientSectionEnd > ingredientSectionStart, 'production UI should keep report sections distinct');
   assertItemCodeBeforeItemName(ingredientSection, 'ingredient consumption');
+  assert.match(productionPage, /function getManifestProductionQuantityLabel/);
+  assert.match(productionPage, /function formatManifestRawIssue/);
+  assert.match(productionPage, /function formatManifestYieldedOutput/);
+  assert.match(productionPage, />Booked Production<\/TableHead>/);
+  assert.match(productionPage, />Raw \/ Issued Qty<\/TableHead>/);
+  assert.match(productionPage, />Yielded \/ Output Qty<\/TableHead>/);
+  assert.match(ingredientSection, /formatCurrency\(reportLineCost\(line\)\)/);
 
   const lotSection = productionPage.slice(ingredientSectionEnd);
   assertItemCodeBeforeItemName(lotSection, 'inventory-lot consumption');

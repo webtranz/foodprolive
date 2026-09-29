@@ -192,6 +192,43 @@ function sumReportWeights(lines = [], field) {
   return usableLines.reduce((sum, line) => sum + toNumber(line[field], 0), 0);
 }
 
+function sumReportLineLayerCost(line = {}) {
+  const layers = arrayValue(line.movement_layers);
+  if (layers.length === 0) return null;
+  const total = layers.reduce((sum, layer) => (
+    sum + toNumber(
+      firstPresent(
+        layer?.accounting_total_cost,
+        layer?.total_cost,
+        layer?.cost,
+        layer?.line_cost
+      ),
+      0
+    )
+  ), 0);
+  return total > 0 ? Number(total.toFixed(2)) : null;
+}
+
+function reportLineCost(line = {}) {
+  return firstPositivePresent(
+    line.posted_cost,
+    line.accounting_total_cost,
+    line.total_cost,
+    line.cost,
+    line.estimated_cost,
+    line.estimated_batch_cost,
+    sumReportLineLayerCost(line)
+  ) ?? 0;
+}
+
+function sumReportLineCosts(lines = []) {
+  const costs = arrayValue(lines)
+    .map((line) => reportLineCost(line))
+    .filter((value) => positiveOptionalNumber(value) !== null);
+  if (costs.length === 0) return null;
+  return Number(costs.reduce((sum, value) => sum + toNumber(value, 0), 0).toFixed(2));
+}
+
 function sumManifestItemWeight(item = {}, field) {
   const direct = positiveOptionalNumber(item[field]);
   if (direct !== null) return direct;
@@ -222,6 +259,175 @@ function sumManifestItemsWeight(items = [], field) {
     .filter((value) => optionalNumber(value) !== null);
   if (values.length === 0) return null;
   return values.reduce((sum, value) => sum + toNumber(value, 0), 0);
+}
+
+function manifestItemCost(item = {}) {
+  const direct = firstPositivePresent(
+    item.actual_cost,
+    item.total_cost,
+    item.estimated_batch_cost,
+    item.estimated_cost,
+    item.planned_total_cost,
+    item.cost,
+    item.batch_cost
+  );
+  if (direct !== null) return direct;
+  return sumReportLineCosts(item.ingredients_used);
+}
+
+function sumManifestItemsCost(items = []) {
+  const costs = arrayValue(items)
+    .map((item) => manifestItemCost(item))
+    .filter((value) => positiveOptionalNumber(value) !== null);
+  if (costs.length === 0) return null;
+  return Number(costs.reduce((sum, value) => sum + toNumber(value, 0), 0).toFixed(2));
+}
+
+function getManifestFixedProductionQuantity(item = {}) {
+  return firstPositivePresent(
+    item.produced_quantity,
+    item.requested_quantity,
+    item.production_quantity,
+    item.planned_quantity,
+    item.fixed_quantity
+  );
+}
+
+function getManifestFixedProductionUnit(item = {}) {
+  return firstPresent(
+    item.produced_quantity_unit,
+    item.requested_quantity_unit,
+    item.production_unit,
+    item.planned_quantity_unit,
+    item.fixed_quantity_unit
+  );
+}
+
+function getManifestProductionQuantityLabel(item = {}) {
+  const fixedQuantity = getManifestFixedProductionQuantity(item);
+  const fixedUnit = getManifestFixedProductionUnit(item);
+  if (fixedQuantity !== null && fixedUnit) {
+    return formatReportQuantity(fixedQuantity, fixedUnit);
+  }
+  return formatReportQuantity(
+    firstPresent(
+      item.production_covers,
+      item.expected_servings,
+      item.produced_servings,
+      item.requested_servings,
+      item.target_servings
+    ),
+    'servings'
+  );
+}
+
+function sumReportLineQuantities(lines = [], quantityFields = [], unitFields = []) {
+  let total = 0;
+  let commonUnit = null;
+  let count = 0;
+  for (const line of arrayValue(lines)) {
+    const quantity = firstPositivePresent(...quantityFields.map((field) => line?.[field]));
+    const unit = firstPresent(...unitFields.map((field) => line?.[field]));
+    if (quantity === null || !unit) continue;
+    if (commonUnit && commonUnit !== unit) return null;
+    commonUnit = unit;
+    total += quantity;
+    count += 1;
+  }
+  if (count === 0 || !commonUnit) return null;
+  return {
+    quantity: Number(total.toFixed(4)),
+    unit: commonUnit
+  };
+}
+
+function formatReportLineQuantityTotal(lines = [], quantityFields = [], unitFields = []) {
+  const total = sumReportLineQuantities(lines, quantityFields, unitFields);
+  if (!total) return null;
+  return formatReportQuantity(total.quantity, total.unit);
+}
+
+function getManifestItemReportLines(item = {}, lines = []) {
+  const itemNames = new Set([
+    item.recipe_name,
+    item.name,
+    item.item_name,
+    item.ingredient_name,
+    item.original_recipe_name
+  ].map(normalizedReportText).filter(Boolean));
+  const ingredientId = String(item.ingredient_id || item.source_ingredient_id || '').trim();
+  const itemCode = normalizedReportText(item.item_code || item.recipe_code || item.ingredient_code);
+  return arrayValue(lines).filter((line) => {
+    const sourceNames = arrayValue(line?.source_recipe_names)
+      .map(normalizedReportText)
+      .filter(Boolean);
+    if (sourceNames.length === 1 && itemNames.has(sourceNames[0])) return true;
+    const usedIn = normalizedReportText(line.used_in || line.recipe_name || line.production_name);
+    if (usedIn && itemNames.has(usedIn)) return true;
+    if (ingredientId && String(line.ingredient_id || line.source_ingredient_id || '').trim() === ingredientId) return true;
+    if (itemCode && normalizedReportText(line.item_code || line.recipe_code || line.ingredient_code) === itemCode) return true;
+    return false;
+  });
+}
+
+function getManifestDisplayWeight(item = {}, field, reportLines = []) {
+  const matchedLineWeight = sumReportWeights(reportLines, field);
+  if (matchedLineWeight !== null) return matchedLineWeight;
+
+  const direct = sumManifestItemWeight(item, field);
+  if (direct === null) return null;
+
+  const fixedQuantity = getManifestFixedProductionQuantity(item);
+  const fixedUnit = getManifestFixedProductionUnit(item);
+  const hasFixedQuantity = fixedQuantity !== null && fixedQuantity > 1 && fixedUnit;
+  if (!hasFixedQuantity) return direct;
+
+  const explicitTotal = field === 'raw_weight_grams'
+    ? firstPositivePresent(item.total_raw_weight_grams, item.total_raw_consumption_weight_grams)
+    : firstPositivePresent(
+      item.total_yielded_weight_grams,
+      item.expected_finished_weight_grams,
+      item.actual_finished_weight_grams,
+      item.produced_weight_grams,
+      item.finished_weight_grams
+    );
+  if (explicitTotal !== null) return explicitTotal;
+
+  return Number((direct * fixedQuantity).toFixed(3));
+}
+
+function formatManifestRawIssue(item = {}, reportLines = []) {
+  const fixedQuantity = getManifestFixedProductionQuantity(item);
+  const fixedUnit = getManifestFixedProductionUnit(item);
+  if (fixedQuantity !== null && fixedUnit) {
+    return formatReportLineQuantityTotal(
+      reportLines,
+      ['issued_quantity', 'actual_requested_quantity', 'planned_quantity', 'recipe_quantity'],
+      ['inventory_unit', 'unit', 'recipe_unit']
+    ) || formatReportQuantity(fixedQuantity, fixedUnit);
+  }
+  return formatReportWeightFromGrams(getManifestDisplayWeight(item, 'raw_weight_grams', reportLines));
+}
+
+function formatManifestYieldedOutput(item = {}, reportLines = []) {
+  const fixedQuantity = firstPositivePresent(
+    item.produced_quantity,
+    item.requested_quantity,
+    item.production_quantity,
+    item.planned_quantity,
+    item.fixed_quantity
+  );
+  const fixedUnit = firstPresent(
+    item.produced_quantity_unit,
+    item.requested_quantity_unit,
+    item.production_unit,
+    item.planned_quantity_unit,
+    item.fixed_quantity_unit
+  );
+  if (fixedQuantity !== null && fixedUnit) {
+    return formatReportQuantity(fixedQuantity, fixedUnit);
+  }
+  return formatReportWeightFromGrams(getManifestDisplayWeight(item, 'yielded_weight_grams', reportLines));
 }
 
 function normalizedReportText(value) {
@@ -421,7 +627,20 @@ function mergeConsumptionReportWithProduction(report = {}, production = {}) {
     production_issue_item_count: itemCount,
     production_issue_dish_count: itemCount,
     menu_issue_items: menuIssueItems,
-    target_servings: firstPresent(report.target_servings, production.target_servings, production.produced_servings, 0),
+    target_servings: firstPositivePresent(
+      report.target_servings,
+      production.target_servings,
+      production.produced_servings,
+      production.expected_yield_servings
+    ) ?? null,
+    total_consumption_cost: firstPositivePresent(
+      report.total_consumption_cost,
+      production.total_consumption_cost,
+      production.production_cost_total,
+      production.ingredient_cost_total,
+      sumReportLineCosts(ingredientLines),
+      sumManifestItemsCost(menuIssueItems)
+    ) ?? 0,
     output_calculation_source: report.output_calculation_source || production.output_calculation_source || null,
     quantity_basis: report.quantity_basis || production.quantity_basis || null,
     recipe_raw_weight_grams: firstPositivePresent(report.recipe_raw_weight_grams, production.recipe_raw_weight_grams),
@@ -3611,6 +3830,13 @@ export default function Production() {
     ?? positiveOptionalNumber(selectedConsumptionReport?.produced_weight_grams)
     ?? sumReportWeights(reportIngredientLines, 'yielded_weight_grams')
     ?? sumManifestItemsWeight(reportManifestItems, 'yielded_weight_grams');
+  const reportTotalConsumptionCost = firstPositivePresent(
+    selectedConsumptionReport?.total_consumption_cost,
+    selectedConsumptionReport?.production_cost_total,
+    selectedConsumptionReport?.ingredient_cost_total,
+    sumReportLineCosts(reportIngredientLines),
+    sumManifestItemsCost(reportManifestItems)
+  ) ?? 0;
   const partialReverseManifestItems = useMemo(
     () => getPartialReversalManifestItems(partialReverseProduction),
     [partialReverseProduction]
@@ -5331,7 +5557,7 @@ export default function Production() {
               <div><p className="text-xs text-slate-500">Report Number</p><p className="font-semibold">{selectedConsumptionReport?.report_number}</p></div>
               <div><p className="text-xs text-slate-500">Project / Store</p><p className="font-semibold">{selectedConsumptionReport?.requesting_site_name || selectedConsumptionReport?.site_name} / {selectedConsumptionReport?.fulfillment_store_name || selectedConsumptionReport?.site_name}</p></div>
               <div><p className="text-xs text-slate-500">Completed By</p><p className="font-semibold">{selectedConsumptionReport?.completed_by_name || selectedConsumptionReport?.completed_by}</p></div>
-              <div><p className="text-xs text-slate-500">Total Consumption Cost</p><p className="font-semibold text-emerald-700">{formatCurrency(selectedConsumptionReport?.total_consumption_cost || 0)}</p></div>
+              <div><p className="text-xs text-slate-500">Total Consumption Cost</p><p className="font-semibold text-emerald-700">{formatCurrency(reportTotalConsumptionCost)}</p></div>
             </div>
 
             <section className="space-y-2">
@@ -5400,25 +5626,27 @@ export default function Production() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="min-w-[260px]">Manifest Item</TableHead>
-                        <TableHead className="whitespace-nowrap">Production Covers</TableHead>
+                        <TableHead className="whitespace-nowrap">Booked Production</TableHead>
                         <TableHead className="whitespace-nowrap">Estimated Cost</TableHead>
                         <TableHead className="whitespace-nowrap">Snapshot Lines</TableHead>
-                        <TableHead className="whitespace-nowrap">Raw Weight</TableHead>
-                        <TableHead className="whitespace-nowrap">Yielded Weight</TableHead>
+                        <TableHead className="whitespace-nowrap">Raw / Issued Qty</TableHead>
+                        <TableHead className="whitespace-nowrap">Yielded / Output Qty</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {reportManifestItems.map((item, index) => {
-                        const rawWeight = sumManifestItemWeight(item, 'raw_weight_grams');
-                        const yieldedWeight = sumManifestItemWeight(item, 'yielded_weight_grams');
+                        const matchedReportLines = getManifestItemReportLines(item, reportIngredientLines);
+                        const snapshotLineCount = Array.isArray(item.ingredients_used) && item.ingredients_used.length > 0
+                          ? item.ingredients_used.length
+                          : matchedReportLines.length || '—';
                         return (
                           <TableRow key={item.key || `${item.recipe_id || 'item'}-${index}`}>
                             <TableCell className="min-w-[260px] font-medium text-slate-900">{item.recipe_name || 'Planned item'}</TableCell>
-                            <TableCell className="whitespace-nowrap">{formatReportQuantity(item.production_covers ?? item.expected_servings, 'servings')}</TableCell>
-                            <TableCell className="whitespace-nowrap">{formatCurrency(item.estimated_batch_cost || 0)}</TableCell>
-                            <TableCell className="whitespace-nowrap">{Array.isArray(item.ingredients_used) ? item.ingredients_used.length : '—'}</TableCell>
-                            <TableCell className="whitespace-nowrap">{formatReportWeightFromGrams(rawWeight)}</TableCell>
-                            <TableCell className="whitespace-nowrap">{formatReportWeightFromGrams(yieldedWeight)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{getManifestProductionQuantityLabel(item)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{formatCurrency(manifestItemCost(item) || 0)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{snapshotLineCount}</TableCell>
+                            <TableCell className="whitespace-nowrap">{formatManifestRawIssue(item, matchedReportLines)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{formatManifestYieldedOutput(item, matchedReportLines)}</TableCell>
                           </TableRow>
                         );
                       })}
@@ -5488,7 +5716,7 @@ export default function Production() {
                               {line.conversion_note || formatReportSource(line.quantity_basis)}
                             </p>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-right">{formatCurrency(line.posted_cost || 0)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right">{formatCurrency(reportLineCost(line))}</TableCell>
                         </TableRow>
                       );
                     })}

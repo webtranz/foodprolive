@@ -54,6 +54,11 @@ assert.match(normalizedReports, /JOIN projects project ON project\.project_id = 
 assert.match(normalizedReports, /report_line_layer_totals AS/);
 assert.match(normalizedReports, /production_consumption_report_line_layers/);
 assert.match(normalizedReports, /report_totals\.report_line_cost/);
+assert.match(normalizedReports, /consumption_line_totals AS/);
+assert.match(normalizedReports, /production_consumption_lines pcl/);
+assert.match(normalizedReports, /NULLIF\(pml\.actual_cost, 0\)/);
+assert.match(normalizedReports, /NULLIF\(pml\.estimated_cost, 0\)/);
+assert.match(normalizedReports, /NULLIF\(pe\.production_cost_total, 0\)/);
 assert.match(normalizedReports, /getNormalizedDatabaseAudit/);
 assert.doesNotMatch(normalizedReports, /listDocuments\(/);
 assert.match(client, /getFoodCost/);

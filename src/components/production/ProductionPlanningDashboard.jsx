@@ -95,6 +95,11 @@ const PREP_STATUS = {
     badge: 'border-red-200 bg-red-50 text-red-700',
     dot: 'bg-red-500'
   },
+  cancelled: {
+    icon: AlertTriangle,
+    badge: 'border-red-200 bg-red-50 text-red-700',
+    dot: 'bg-red-500'
+  },
   reversed: {
     icon: RotateCcw,
     badge: 'border-slate-300 bg-slate-100 text-slate-700',
@@ -225,10 +230,14 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
   const manifestItemCount = Number(item.item_count || item.dish_count || item.menu_issue_items.length || 0);
   const prepStatusKey = item.prep_status?.key || 'pending';
   const isReversed = item.workflow_status === 'reversed' || prepStatusKey === 'reversed';
+  const isCancelled = item.workflow_status === 'cancelled' || prepStatusKey === 'cancelled';
+  const displayPrepStatus = isCancelled ? { key: 'cancelled', label: 'Cancelled' } : item.prep_status;
 
   return (
     <Card className={`overflow-hidden border shadow-sm ${
-      isReversed
+      isCancelled
+        ? 'border-slate-200 bg-slate-50/80'
+        : isReversed
         ? 'border-slate-400 bg-slate-100/80'
         : prepStatusKey === 'at_risk'
           ? 'border-red-400 bg-white'
@@ -240,14 +249,16 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
           <ProductionImage src={item.image_url} alt={item.recipe_name} />
           <div className="min-w-0 flex-1">
             <div className="min-w-0">
-              <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-slate-950" title={item.recipe_name}>{item.recipe_name}</h3>
+              <h3 className={`line-clamp-2 text-sm font-semibold leading-snug ${isCancelled ? 'text-slate-500' : 'text-slate-950'}`} title={item.recipe_name}>{item.recipe_name}</h3>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <PrepStatusBadge status={item.prep_status} />
-                <Badge variant="outline" className="max-w-full truncate text-[10px]">
-                  {requiresLegacyAreaReview
-                    ? 'Legacy approval - area review'
-                    : getProductionStatusLabel(item.workflow_status)}
-                </Badge>
+                <PrepStatusBadge status={displayPrepStatus} />
+                {!isCancelled ? (
+                  <Badge variant="outline" className="max-w-full truncate text-[10px]">
+                    {requiresLegacyAreaReview
+                      ? 'Legacy approval - area review'
+                      : getProductionStatusLabel(item.workflow_status)}
+                  </Badge>
+                ) : null}
                 {isMenuIssueGroup ? (
                   <Badge className="border border-emerald-200 bg-emerald-100 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100">
                     {manifestItemCount.toLocaleString()} Item{manifestItemCount === 1 ? '' : 's'}
@@ -259,6 +270,11 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
                   </Badge>
                 ) : null}
               </div>
+              {isCancelled ? (
+                <p className="mt-2 text-lg font-semibold leading-tight text-red-600">
+                  Cancelled
+                </p>
+              ) : null}
             </div>
           </div>
         </div>
@@ -283,104 +299,108 @@ function RecipeProductionCard({ item, materialRequest, renderActions }) {
           {productionOverrideCount > 0 ? (
             <ProductionDetailRow
               label="Recipe snapshot"
-              value={`${productionOverrideCount} production-only change${productionOverrideCount === 1 ? '' : 's'}`}
-              tone="purple"
-            />
-          ) : null}
-        </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-2 min-[1500px]:grid-cols-3">
-          <Metric icon={Users} label="Portions" value={formatRecipeQuantity(item.required_portions, 'servings')} />
-          <Metric icon={Scale} label="Portion" value={item.portion_size.label} title={portionTitle} />
-          <Metric
-            icon={Layers3}
-            label={isMenuIssueGroup ? 'Items' : 'Yield'}
-            value={isMenuIssueGroup ? manifestItemCount.toLocaleString() : `${formatRecipeQuantity(item.batch_yield, 'servings')} portions`}
+            value={`${productionOverrideCount} production-only change${productionOverrideCount === 1 ? '' : 's'}`}
+            tone="purple"
           />
-          <Metric
-            icon={Factory}
-            label={isMenuIssueGroup ? 'Meal review' : 'Batches'}
-            value={isMenuIssueGroup ? '1' : item.batches_required.toLocaleString()}
-          />
-          <Metric icon={WalletCards} label="Cost" value={formatCurrency(item.estimated_batch_cost)} />
-        </div>
-
-        {isMenuIssueGroup ? (
-          <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/70 px-2.5 py-2 text-xs">
-            <p className="font-semibold text-indigo-900">Production manifest items</p>
-            <ul className="mt-1.5 space-y-1 text-slate-700">
-              {item.menu_issue_items.slice(0, 5).map((menuItem, index) => (
-                <li key={menuItem.key || `${menuItem.recipe_id || 'item'}-${index}`} className="flex justify-between gap-3">
-                  <span className="min-w-0 truncate">{menuItem.recipe_name || 'Planned item'}</span>
-                  <span className="whitespace-nowrap text-slate-500">
-                    {formatRecipeQuantity(menuItem.production_covers ?? menuItem.expected_servings, 'servings')}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {item.menu_issue_items.length > 5 ? (
-              <p className="mt-1 text-slate-500">+{item.menu_issue_items.length - 5} more items</p>
-            ) : null}
-          </div>
         ) : null}
+        </div>
 
-        {item.shortages.length > 0 ? (
-          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-800">
-            <div className="flex items-center gap-1.5 font-semibold">
-              <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-              Ingredient shortage
+        {!isCancelled ? (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-2 min-[1500px]:grid-cols-3">
+              <Metric icon={Users} label="Portions" value={formatRecipeQuantity(item.required_portions, 'servings')} />
+              <Metric icon={Scale} label="Portion" value={item.portion_size.label} title={portionTitle} />
+              <Metric
+                icon={Layers3}
+                label={isMenuIssueGroup ? 'Items' : 'Yield'}
+                value={isMenuIssueGroup ? manifestItemCount.toLocaleString() : `${formatRecipeQuantity(item.batch_yield, 'servings')} portions`}
+              />
+              <Metric
+                icon={Factory}
+                label={isMenuIssueGroup ? 'Meal review' : 'Batches'}
+                value={isMenuIssueGroup ? '1' : item.batches_required.toLocaleString()}
+              />
+              <Metric icon={WalletCards} label="Cost" value={formatCurrency(item.estimated_batch_cost)} />
             </div>
-            <p className="mt-1 line-clamp-2">
-              {item.shortages.map((shortage) => {
-                const code = shortage.item_code && shortage.item_code !== '—' ? `${shortage.item_code} ` : '';
-                return `${code}${shortage.ingredient_name} ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit} short`;
-              }).join(' · ')}
-            </p>
-          </div>
-        ) : null}
 
-        <ProductionInventoryState production={item.production} />
+            {isMenuIssueGroup ? (
+              <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/70 px-2.5 py-2 text-xs">
+                <p className="font-semibold text-indigo-900">Production manifest items</p>
+                <ul className="mt-1.5 space-y-1 text-slate-700">
+                  {item.menu_issue_items.slice(0, 5).map((menuItem, index) => (
+                    <li key={menuItem.key || `${menuItem.recipe_id || 'item'}-${index}`} className="flex justify-between gap-3">
+                      <span className="min-w-0 truncate">{menuItem.recipe_name || 'Planned item'}</span>
+                      <span className="whitespace-nowrap text-slate-500">
+                        {formatRecipeQuantity(menuItem.production_covers ?? menuItem.expected_servings, 'servings')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {item.menu_issue_items.length > 5 ? (
+                  <p className="mt-1 text-slate-500">+{item.menu_issue_items.length - 5} more items</p>
+                ) : null}
+              </div>
+            ) : null}
 
-        {requiresAcknowledgement ? (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
-            {materialRequest
-              ? 'Procurement acknowledgement is required before production can start.'
-              : 'A linked MR to Store record is required before production can start.'}
-          </p>
-        ) : null}
+            {item.shortages.length > 0 ? (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-800">
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                  Ingredient shortage
+                </div>
+                <p className="mt-1 line-clamp-2">
+                  {item.shortages.map((shortage) => {
+                    const code = shortage.item_code && shortage.item_code !== '—' ? `${shortage.item_code} ` : '';
+                    return `${code}${shortage.ingredient_name} ${formatRecipeQuantity(shortage.shortage_quantity, shortage.unit)} ${shortage.unit} short`;
+                  }).join(' · ')}
+                </p>
+              </div>
+            ) : null}
 
-        {reviewNotice ? (
-          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-800">
-            <p className="font-semibold">{reviewNotice.label}</p>
-            <p className="mt-1"><span className="font-medium">Reason:</span> {reviewNotice.reason}</p>
-          </div>
-        ) : null}
+            <ProductionInventoryState production={item.production} />
 
-        {item.workflow_status === 'pending_procurement' && !reviewNotice ? (
-          <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2 text-xs text-sky-800">
-            PM approved. Waiting for Store Keeper / Procurement Officer acknowledgement.
-          </p>
-        ) : null}
+            {requiresAcknowledgement ? (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
+                {materialRequest
+                  ? 'Procurement acknowledgement is required before production can start.'
+                  : 'A linked MR to Store record is required before production can start.'}
+              </p>
+            ) : null}
 
-        {item.workflow_status === 'pending_production' ? (
-          <p className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-2 text-xs text-purple-800">
-            Legacy pending-production record. Store / Procurement approval now moves new requests directly to ready-to-start.
-          </p>
-        ) : null}
+            {reviewNotice ? (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-800">
+                <p className="font-semibold">{reviewNotice.label}</p>
+                <p className="mt-1"><span className="font-medium">Reason:</span> {reviewNotice.reason}</p>
+              </div>
+            ) : null}
 
-        {requiresLegacyAreaReview ? (
-          <p className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-2 text-xs text-purple-800">
-            This legacy record is not ready to start. Reconcile its Store / Procurement state so inventory can be reserved.
-          </p>
-        ) : null}
-        {isReversed ? (
-          <p className="mt-3 rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-700">
-            This production attempt was reversed and is locked for audit only. Create a new production run for the corrected manifest.
-          </p>
+            {item.workflow_status === 'pending_procurement' && !reviewNotice ? (
+              <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2 text-xs text-sky-800">
+                PM approved. Waiting for Store Keeper / Procurement Officer acknowledgement.
+              </p>
+            ) : null}
+
+            {item.workflow_status === 'pending_production' ? (
+              <p className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-2 text-xs text-purple-800">
+                Legacy pending-production record. Store / Procurement approval now moves new requests directly to ready-to-start.
+              </p>
+            ) : null}
+
+            {requiresLegacyAreaReview ? (
+              <p className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-2 text-xs text-purple-800">
+                This legacy record is not ready to start. Reconcile its Store / Procurement state so inventory can be reserved.
+              </p>
+            ) : null}
+            {isReversed ? (
+              <p className="mt-3 rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-700">
+                This production attempt was reversed and is locked for audit only. Create a new production run for the corrected manifest.
+              </p>
+            ) : null}
+          </>
         ) : null}
         </div>
 
-        {renderActions ? (
+        {renderActions && !isCancelled ? (
           <div className="production-plan-no-print mt-3 border-t border-slate-200 pt-3">
             {renderActions(item.production, materialRequest)}
           </div>
