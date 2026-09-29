@@ -229,6 +229,191 @@ function computeProductionCostByMenuCategory(productions = [], costOfProduction 
   );
 }
 
+function foodCostRowServings(row = {}) {
+  return Math.max(0, safeNumber(
+    row.servings
+    ?? row.total_servings
+    ?? row.production_servings
+    ?? row.produced_servings
+  ));
+}
+
+function foodCostRowCost(row = {}) {
+  return Math.max(0, safeNumber(
+    row.total_cost
+    ?? row.production_cost
+    ?? row.cost
+  ));
+}
+
+function normalizeFoodCostLocationKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function createFoodCostBucket() {
+  return {
+    meals: 0,
+    spent: 0
+  };
+}
+
+function addFoodCostBucketValue(map, key, row) {
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey) return;
+  const bucket = map.get(normalizedKey) || createFoodCostBucket();
+  bucket.meals += foodCostRowServings(row);
+  bucket.spent += foodCostRowCost(row);
+  map.set(normalizedKey, bucket);
+}
+
+function normalizeProductionFoodCostRows(rows = [], rangeStart = '', rangeEnd = '') {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      ...row,
+      date: dateOnly(row?.date || row?.production_date),
+      meal_type: normalizeMealType(row?.meal_type),
+      category: normalizeMenuCategory(row?.category || row?.menu_category),
+      location: String(row?.location || row?.site_name || row?.project_code || row?.site_id || '').trim(),
+      servings: foodCostRowServings(row),
+      total_cost: foodCostRowCost(row)
+    }))
+    .filter((row) => (
+      (!rangeStart || !rangeEnd || (row.date && row.date >= rangeStart && row.date <= rangeEnd))
+      && (row.servings > 0 || row.total_cost > 0)
+    ));
+}
+
+function summarizeProductionFoodCostRows(rows = []) {
+  const byMeal = new Map();
+  const byCategory = new Map();
+  const byLocation = new Map();
+  let meals = 0;
+  let spent = 0;
+
+  rows.forEach((row) => {
+    meals += foodCostRowServings(row);
+    spent += foodCostRowCost(row);
+    addFoodCostBucketValue(byMeal, normalizeMealType(row.meal_type), row);
+    addFoodCostBucketValue(byCategory, normalizeMenuCategory(row.category), row);
+    addFoodCostBucketValue(byLocation, normalizeFoodCostLocationKey(row.location), row);
+  });
+
+  return { meals, spent, byMeal, byCategory, byLocation };
+}
+
+function roundedCostPerMealBucket(bucket = createFoodCostBucket()) {
+  const meals = round(bucket.meals, 0);
+  const spent = round(bucket.spent, 2);
+  return {
+    meals,
+    spent,
+    cost_per_meal: bucket.meals > 0 ? round(bucket.spent / bucket.meals, 2) : 0
+  };
+}
+
+function costPerMealByCategoryFromFoodCostRows(summary) {
+  return Object.fromEntries(
+    [...summary.byCategory.entries()]
+      .filter(([category, bucket]) => category && category !== '-' && (bucket.meals > 0 || bucket.spent > 0))
+      .sort(([left], [right]) => {
+        const leftIndex = MENU_CATEGORY_ORDER.indexOf(left);
+        const rightIndex = MENU_CATEGORY_ORDER.indexOf(right);
+        if (leftIndex !== -1 || rightIndex !== -1) {
+          return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex)
+            - (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+        }
+        return left.localeCompare(right);
+      })
+      .map(([category, bucket]) => [category, roundedCostPerMealBucket(bucket)])
+  );
+}
+
+function applyProductionFoodCostMetrics(metrics, summary) {
+  const totalMeals = round(summary.meals, 0);
+  const totalCost = round(summary.spent, 2);
+  metrics.total_meals = totalMeals;
+  metrics.daily_spent = totalCost;
+  metrics.cost_per_meal = summary.meals > 0 ? round(summary.spent / summary.meals, 2) : 0;
+  metrics.cost_per_meal_by_category = costPerMealByCategoryFromFoodCostRows(summary);
+  metrics.waste_percent = totalCost > 0
+    ? round((safeNumber(metrics.food_wastage_cost) / totalCost) * 100, 1)
+    : 0;
+  return metrics;
+}
+
+function mealAction(planned, produced, foodCost, wasteCost) {
+  const variance = produced - planned;
+  if (planned > 0 && produced === 0) return 'Start production';
+  if (variance < 0) return 'Update forecast';
+  if (variance > Math.max(10, planned * 0.05)) return 'Review overproduction';
+  if (wasteCost > foodCost * 0.03 && wasteCost > 0) return 'Review waste';
+  return 'None';
+}
+
+function applyProductionFoodCostToMeals(meals = [], summary) {
+  return meals.map((meal) => {
+    const mealType = normalizeMealType(meal.meal_type);
+    const bucket = summary.byMeal.get(mealType);
+    if (!bucket) return meal;
+    const produced = round(bucket.meals, 0);
+    const spent = round(bucket.spent, 2);
+    const planned = safeNumber(meal.planned);
+    const wasteCost = safeNumber(meal.waste_cost);
+    const variance = round(produced - planned, 0);
+    return {
+      ...meal,
+      produced,
+      variance,
+      spent,
+      action: mealAction(planned, produced, spent, wasteCost)
+    };
+  });
+}
+
+function applyProductionFoodCostToTrendRows(rows = [], foodCostRows = []) {
+  const byDate = new Map();
+  foodCostRows.forEach((row) => addFoodCostBucketValue(byDate, row.date, row));
+  if (byDate.size === 0) return rows;
+  return rows.map((row) => {
+    const bucket = byDate.get(String(row.date || '').trim());
+    if (!bucket) return row;
+    return {
+      ...row,
+      spent: round(bucket.spent, 2)
+    };
+  });
+}
+
+function locationFoodCostKeys(location = {}) {
+  return [
+    location.name,
+    location.id,
+    location.project_code,
+    location.warehouse_code
+  ].map(normalizeFoodCostLocationKey).filter(Boolean);
+}
+
+function applyProductionFoodCostToLocations(locations = [], summary) {
+  if (!locations.length || summary.byLocation.size === 0) return locations;
+  const singleLocationBucket = locations.length === 1 && summary.byLocation.size === 1
+    ? [...summary.byLocation.values()][0]
+    : null;
+  return locations.map((location) => {
+    const bucket = locationFoodCostKeys(location)
+      .map((key) => summary.byLocation.get(key))
+      .find(Boolean) || singleLocationBucket;
+    if (!bucket) return location;
+    const meals = round(bucket.meals, 0);
+    const spent = round(bucket.spent, 2);
+    return {
+      ...location,
+      meals,
+      spent,
+      cost_per_meal: bucket.meals > 0 ? round(bucket.spent / bucket.meals, 2) : 0
+    };
+  });
+}
+
 function budgetCoversDate(budget = {}, targetDate) {
   const status = normalizeStatus(budget.status || 'active');
   if (['inactive', 'cancelled', 'canceled', 'closed'].includes(status)) return false;
@@ -1083,6 +1268,8 @@ function buildLocationRows(data, records, rangeStart, rangeEnd, helpers, selecte
     return {
       id: siteId,
       name: site.name || 'Location',
+      project_code: site.project_code || null,
+      warehouse_code: site.warehouse_code || null,
       meals: metrics.total_meals,
       budget: metrics.daily_budget,
       spent: metrics.daily_spent,
@@ -1184,6 +1371,14 @@ export function buildManagementDashboardSnapshot(input = {}) {
     ? reportPeriod
     : createPeriodContext(records, trendStart, trendEnd);
   const costOfProduction = createProductionCostLookup(records.production);
+  const productionFoodCostRows = normalizeProductionFoodCostRows(
+    input.productionFoodCostRows || input.production_food_cost_rows,
+    rangeStart,
+    rangeEnd
+  );
+  const productionFoodCostSummary = productionFoodCostRows.length > 0
+    ? summarizeProductionFoodCostRows(productionFoodCostRows)
+    : null;
   const metrics = computeCoreMetrics(
     records,
     rangeStart,
@@ -1192,20 +1387,32 @@ export function buildManagementDashboardSnapshot(input = {}) {
     reportPeriod,
     costOfProduction
   );
+  if (productionFoodCostSummary) applyProductionFoodCostMetrics(metrics, productionFoodCostSummary);
   metrics.open_exceptions = metrics.stock_risk + metrics.supplier_exceptions + metrics.attendance_gaps
     + metrics.approvals.waste + metrics.approvals.production;
 
   const trend = buildTrendRows(records, trendStart, trendEnd, helpers, trendPeriod, costOfProduction);
-  const locations = buildLocationRows(
-    data,
-    records,
-    rangeStart,
-    rangeEnd,
-    helpers,
-    selectedIds,
-    reportPeriod,
-    costOfProduction
-  );
+  const locations = productionFoodCostSummary
+    ? applyProductionFoodCostToLocations(buildLocationRows(
+      data,
+      records,
+      rangeStart,
+      rangeEnd,
+      helpers,
+      selectedIds,
+      reportPeriod,
+      costOfProduction
+    ), productionFoodCostSummary)
+    : buildLocationRows(
+      data,
+      records,
+      rangeStart,
+      rangeEnd,
+      helpers,
+      selectedIds,
+      reportPeriod,
+      costOfProduction
+    );
   const scopeTypes = availableScopeTypes(view);
   const availableScopes = data.sites
     .filter((site) => scopeTypes.has(normalizeSiteType(site.type)))
@@ -1240,9 +1447,13 @@ export function buildManagementDashboardSnapshot(input = {}) {
     },
     metrics,
     locations,
-    meals: buildMealRows(records, rangeStart, rangeEnd, reportPeriod, costOfProduction),
+    meals: productionFoodCostSummary
+      ? applyProductionFoodCostToMeals(buildMealRows(records, rangeStart, rangeEnd, reportPeriod, costOfProduction), productionFoodCostSummary)
+      : buildMealRows(records, rangeStart, rangeEnd, reportPeriod, costOfProduction),
     actions: buildActions(view, metrics, records, rangeStart, rangeEnd, reportPeriod),
-    trends: trend.rows,
+    trends: productionFoodCostSummary
+      ? applyProductionFoodCostToTrendRows(trend.rows, productionFoodCostRows)
+      : trend.rows,
     location_series: trend.locationSeries,
     data_quality: dataQuality
   };

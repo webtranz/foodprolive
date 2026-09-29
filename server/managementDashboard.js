@@ -2,6 +2,7 @@ import { buildManagementDashboardSnapshot } from '../shared/managementDashboard.
 import { DASHBOARD_VIEWS } from '../shared/managementDashboardRoles.js';
 import { listDocuments, pool } from './db.js';
 import { filterRecordsByLocation, getLocationScope } from './locationScope.js';
+import { loadNormalizedFoodCostReport } from './normalizedOperationalReports.js';
 import {
   assertManagementDashboardViewAccess,
   selectDefaultProjectScope
@@ -352,6 +353,33 @@ function inventoryRiskByLocation(riskRows, sites, locationId) {
   ), 0);
 }
 
+async function listProductionFoodCostRowsForDashboard({
+  selectedSiteIds,
+  rangeStart,
+  rangeEnd
+} = {}) {
+  try {
+    const report = await loadNormalizedFoodCostReport({
+      rawFilters: {
+        start_date: rangeStart,
+        end_date: rangeEnd,
+        location_id: 'all',
+        view: 'detail'
+      },
+      accessibleSiteIds: [...selectedSiteIds],
+      productionOnly: true
+    });
+    return Array.isArray(report?.production_rows)
+      ? report.production_rows
+      : Array.isArray(report?.rows)
+        ? report.rows
+        : [];
+  } catch (error) {
+    console.warn('Management dashboard Food Cost overlay unavailable:', error?.message || error);
+    return [];
+  }
+}
+
 function applyInventoryRiskCounts(snapshot, riskRows, sites) {
   const totalRisk = riskRows.reduce((sum, row) => sum + row.risk_count, 0);
   const oldTotal = Number(snapshot?.metrics?.stock_risk) || 0;
@@ -453,6 +481,7 @@ async function loadManagementDashboardSnapshot({
 
   const [
     productionRaw,
+    productionFoodCostRows,
     foodWasteRaw,
     inventoryRiskRows,
     budgetRaw,
@@ -472,6 +501,11 @@ async function loadManagementDashboardSnapshot({
       siteIds: selectedSiteIds,
       openStatusFields: ['status'],
       openStatuses: APPROVAL_OPEN_STATUSES
+    }),
+    listProductionFoodCostRowsForDashboard({
+      selectedSiteIds,
+      rangeStart,
+      rangeEnd
     }),
     listDatedDocuments({
       entity: 'FoodWaste',
@@ -572,7 +606,8 @@ async function loadManagementDashboardSnapshot({
     qualityControls,
     purchaseRequests,
     purchaseOrders,
-    goodsReceipts
+    goodsReceipts,
+    productionFoodCostRows
   });
   return applyInventoryRiskCounts(snapshot, inventoryRiskRows, accessibleSites);
 }

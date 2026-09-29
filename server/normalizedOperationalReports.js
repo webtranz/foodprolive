@@ -88,7 +88,8 @@ const locationDimensionSql = `
 export async function loadNormalizedFoodCostReport({
   rawFilters = {},
   accessibleSiteIds = null,
-  executor = pool
+  executor = pool,
+  productionOnly = false
 } = {}) {
   const filters = normalizeFoodCostFilters(rawFilters);
   const scopedIds = normalizeAccessibleIds(accessibleSiteIds);
@@ -272,11 +273,7 @@ export async function loadNormalizedFoodCostReport({
     ) DISTINCT_MENU_TYPE
   `;
 
-  const [productionResult, consumedResult, optionsResult] = await Promise.all([
-    executor.query(productionSql, params),
-    executor.query(consumedSql, params),
-    executor.query(optionsSql, [])
-  ]);
+  const productionResult = await executor.query(productionSql, params);
 
   const productionRows = productionResult.rows.map((row) => {
     const servings = safeFoodCostNumber(row.production_servings);
@@ -299,6 +296,43 @@ export async function loadNormalizedFoodCostReport({
     || Math.abs(safeFoodCostNumber(row.servings)) > 0.000001
     || Math.abs(safeFoodCostNumber(row.total_cost)) > 0.000001
   ));
+
+  const rows = groupFoodCostRows(productionRows, filters.view, { source: 'Production completed' });
+  const summary = rows.reduce((totals, row) => ({
+    total_cost: totals.total_cost + safeFoodCostNumber(row.total_cost),
+    servings: totals.servings + safeFoodCostNumber(row.servings ?? row.total_servings)
+  }), { total_cost: 0, servings: 0 });
+
+  if (productionOnly) {
+    return {
+      filters,
+      rows,
+      production_rows: rows,
+      consumed_rows: [],
+      pending_production_rows: [],
+      summary: {
+        total_cost: roundFoodCostNumber(summary.total_cost),
+        servings: roundFoodCostNumber(summary.servings, 3),
+        average_cost_per_serving: summary.servings > 0
+          ? roundFoodCostNumber(summary.total_cost / summary.servings)
+          : 0
+      },
+      consumed_summary: {
+        total_cost: 0,
+        servings: 0,
+        average_cost_per_serving: 0
+      },
+      categories: [],
+      menu_types: [],
+      source: 'normalized-relational',
+      generated_at: new Date().toISOString()
+    };
+  }
+
+  const [consumedResult, optionsResult] = await Promise.all([
+    executor.query(consumedSql, params),
+    executor.query(optionsSql, [])
+  ]);
 
   const consumedRows = consumedResult.rows.map((row) => {
     const servings = safeFoodCostNumber(row.servings);
@@ -325,12 +359,7 @@ export async function loadNormalizedFoodCostReport({
     || Math.abs(safeFoodCostNumber(row.total_cost)) > 0.000001
   ));
 
-  const rows = groupFoodCostRows(productionRows, filters.view, { source: 'Production completed' });
   const consumedRowsForView = groupFoodCostRows(consumedRows, filters.view, { source: 'Meal Service consumed' });
-  const summary = rows.reduce((totals, row) => ({
-    total_cost: totals.total_cost + safeFoodCostNumber(row.total_cost),
-    servings: totals.servings + safeFoodCostNumber(row.servings ?? row.total_servings)
-  }), { total_cost: 0, servings: 0 });
   const consumedSummary = consumedRowsForView.reduce((totals, row) => ({
     total_cost: totals.total_cost + safeFoodCostNumber(row.total_cost),
     servings: totals.servings + safeFoodCostNumber(row.servings ?? row.total_servings)

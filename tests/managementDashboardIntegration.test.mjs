@@ -45,7 +45,7 @@ assert.equal((managementUi.match(/max=\{MAX_DATE_VALUE\}/g) || []).length, 2);
 assert.match(managementUi, /const latestEndDate = shiftDateValue\(value, MAX_RANGE_OFFSET_DAYS\)/);
 assert.match(managementUi, /const earliestStartDate = shiftDateValue\(value, -MAX_RANGE_OFFSET_DAYS\)/);
 assert.match(managementUi, /Range Budget/);
-assert.match(managementUi, /Range Spent/);
+assert.match(managementUi, /Food Cost/);
 assert.match(managementUi, /aria-labelledby=\{scopeLabelId\}/);
 assert.match(managementUi, /Reset to last 7 days/);
 assert.match(managementUi, /Operational metrics, tables and trends use the selected date range; budgets are informational and do not stop production/);

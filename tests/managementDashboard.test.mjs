@@ -250,6 +250,56 @@ const foodCostAlignedSpend = buildManagementDashboardSnapshot({
 assert.equal(foodCostAlignedSpend.metrics.daily_spent, 37.5);
 assert.equal(foodCostAlignedSpend.meals.find((row) => row.meal_type === 'breakfast').spent, 37.5);
 
+const normalizedFoodCostOverlay = buildManagementDashboardSnapshot({
+  view: 'project_manager',
+  date: '2026-08-19',
+  selectedSiteId: 'project-a',
+  sites: [
+    { ...sites[2], project_code: 'KBR-384' },
+    sites[3]
+  ],
+  production: [
+    {
+      id: 'stale-dashboard-production',
+      site_id: 'kitchen-a',
+      production_date: '2026-08-19',
+      meal_type: 'breakfast',
+      status: 'completed',
+      produced_servings: 999,
+      production_cost_total: 999
+    }
+  ],
+  productionFoodCostRows: [
+    {
+      date: '2026-08-19',
+      location: 'KBR-384',
+      meal_type: 'Breakfast',
+      category: 'Labor',
+      servings: 10.4,
+      total_cost: 26
+    },
+    {
+      date: '2026-08-19',
+      location: 'KBR-384',
+      meal_type: 'Lunch',
+      category: 'Junior',
+      servings: 5,
+      total_cost: 15
+    }
+  ]
+});
+assert.equal(normalizedFoodCostOverlay.metrics.total_meals, 15);
+assert.equal(normalizedFoodCostOverlay.metrics.daily_spent, 41);
+assert.equal(normalizedFoodCostOverlay.metrics.cost_per_meal, 2.66);
+assert.deepEqual(normalizedFoodCostOverlay.metrics.cost_per_meal_by_category, {
+  labor: { meals: 10, spent: 26, cost_per_meal: 2.5 },
+  junior: { meals: 5, spent: 15, cost_per_meal: 3 }
+});
+assert.equal(normalizedFoodCostOverlay.locations[0].meals, 15);
+assert.equal(normalizedFoodCostOverlay.locations[0].spent, 41);
+assert.equal(normalizedFoodCostOverlay.meals.find((row) => row.meal_type === 'breakfast').spent, 26);
+assert.equal(normalizedFoodCostOverlay.trends.at(-1).spent, 41);
+
 const categoryCostPerMeal = buildManagementDashboardSnapshot({
   view: 'project_manager',
   date: '2026-08-19',

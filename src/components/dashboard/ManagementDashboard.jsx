@@ -251,7 +251,7 @@ function chartNumberFormatter(value) {
   return number(value, 0);
 }
 
-function MetricCard({ label, value, icon: Icon, tone = 'slate', subtitle }) {
+function MetricCard({ label, value, icon: Icon, tone = 'slate', subtitle, loading = false }) {
   const style = TONE_CLASSES[tone] || TONE_CLASSES.slate;
   return (
     <Card className="min-w-0 border-slate-200 bg-white shadow-sm">
@@ -261,8 +261,12 @@ function MetricCard({ label, value, icon: Icon, tone = 'slate', subtitle }) {
         </div>
         <div className="min-w-0">
           <p className="truncate text-xs font-medium text-slate-500 sm:text-sm">{label}</p>
-          <p className={`mt-1 break-words text-xl font-bold tracking-tight sm:text-2xl ${style.value}`}>{value}</p>
-          {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
+          {loading ? (
+            <div className="mt-2 h-8 w-24 animate-pulse rounded-md bg-slate-200" aria-label="Loading figure" />
+          ) : (
+            <p className={`mt-1 break-words text-xl font-bold tracking-tight sm:text-2xl ${style.value}`}>{value}</p>
+          )}
+          {loading ? <p className="mt-1 text-xs text-slate-400">Loading figures…</p> : subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
         </div>
       </CardContent>
     </Card>
@@ -288,10 +292,12 @@ function NoRows({ children = 'No operational records were found for this selecti
   );
 }
 
-function ActionsPanel({ actions = [], title = 'Management Actions', panelRef, linksEnabled = false }) {
+function ActionsPanel({ actions = [], title = 'Management Actions', panelRef, linksEnabled = false, loading = false }) {
   return (
     <Panel title={title} panelRef={panelRef}>
-      {actions.length === 0 ? (
+      {loading ? (
+        <NoRows>Loading management actions…</NoRows>
+      ) : actions.length === 0 ? (
         <NoRows>No pending management actions for this selection.</NoRows>
       ) : (
         <div className="divide-y divide-slate-100 p-2">
@@ -323,18 +329,18 @@ function ActionsPanel({ actions = [], title = 'Management Actions', panelRef, li
   );
 }
 
-function LocationTable({ locations, mode, panelRef }) {
+function LocationTable({ locations, mode, panelRef, loading = false }) {
   const isAgm = mode === 'agm';
   return (
     <Panel title={isAgm ? 'Location Exception Summary' : 'Location Comparison'} panelRef={panelRef}>
-      {locations.length === 0 ? <NoRows /> : (
+      {loading ? <NoRows>Loading location Food Cost…</NoRows> : locations.length === 0 ? <NoRows /> : (
         <Table>
           <TableHeader className="bg-slate-50">
             <TableRow>
               <TableHead className="min-w-40 px-4">Location</TableHead>
               {!isAgm ? <TableHead>Meals</TableHead> : null}
               <TableHead>Budget</TableHead>
-              <TableHead>Spent</TableHead>
+              <TableHead>Food Cost</TableHead>
               {isAgm ? <TableHead>Variance</TableHead> : <TableHead>Cost / Meal</TableHead>}
               <TableHead>{isAgm ? 'Waste Cost' : 'Waste'}</TableHead>
               {isAgm ? (
@@ -394,10 +400,10 @@ function LocationTable({ locations, mode, panelRef }) {
   );
 }
 
-function MealOperationsTable({ meals, panelRef }) {
+function MealOperationsTable({ meals, panelRef, loading = false }) {
   return (
     <Panel title="Project Operations" panelRef={panelRef}>
-      {meals.length === 0 ? <NoRows>No meal-period production was found for this project and date range.</NoRows> : (
+      {loading ? <NoRows>Loading meal-period Food Cost…</NoRows> : meals.length === 0 ? <NoRows>No meal-period production was found for this project and date range.</NoRows> : (
         <Table>
           <TableHeader className="bg-slate-50">
             <TableRow>
@@ -406,7 +412,7 @@ function MealOperationsTable({ meals, panelRef }) {
               <TableHead>Produced</TableHead>
               <TableHead>Variance</TableHead>
               <TableHead>Budget</TableHead>
-              <TableHead>Spent</TableHead>
+              <TableHead>Food Cost</TableHead>
               <TableHead>Waste Cost</TableHead>
               <TableHead>Action Required</TableHead>
             </TableRow>
@@ -481,7 +487,7 @@ function ProjectCharts({ trends, meals, panelRef }) {
                 <Tooltip content={<MoneyTooltip />} />
                 <Legend />
                 <Line type="monotone" dataKey="budget" name="Budget" stroke="#2563eb" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="spent" name="Spent" stroke="#059669" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="spent" name="Food Cost" stroke="#059669" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="waste_cost" name="Waste Cost" stroke="#e11d48" strokeWidth={2} strokeDasharray="5 4" dot={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -536,7 +542,7 @@ function GmCharts({ trends, locations, locationSeries, panelRef }) {
           </div>
         )}
       </Panel>
-      <Panel title="Budget vs Spent">
+      <Panel title="Budget vs Food Cost">
         {locations.length === 0 ? <NoRows /> : (
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
@@ -547,7 +553,7 @@ function GmCharts({ trends, locations, locationSeries, panelRef }) {
                 <Tooltip content={<MoneyTooltip />} />
                 <Legend />
                 <Bar dataKey="budget" name="Budget" fill="#2563eb" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="spent" name="Spent" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="spent" name="Food Cost" fill="#f59e0b" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -561,7 +567,7 @@ function AreaCharts({ locations, panelRef }) {
   const wasteTotal = locations.reduce((sum, location) => sum + (Number(location.waste_cost) || 0), 0);
   return (
     <div ref={panelRef} tabIndex={-1} className="scroll-mt-20 grid gap-4 xl:grid-cols-2">
-      <Panel title="Budget vs Spent">
+      <Panel title="Budget vs Food Cost">
         {locations.length === 0 ? <NoRows /> : (
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
@@ -572,7 +578,7 @@ function AreaCharts({ locations, panelRef }) {
                 <Tooltip content={<MoneyTooltip />} />
                 <Legend />
                 <Bar dataKey="budget" name="Budget" fill="#2563eb" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="spent" name="Spent" fill="#16a34a" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="spent" name="Food Cost" fill="#16a34a" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -609,7 +615,7 @@ function AreaCharts({ locations, panelRef }) {
   );
 }
 
-function PrimaryMetrics({ metrics, view }) {
+function PrimaryMetrics({ metrics, view, loading = false }) {
   const common = [
     { key: 'total_meals', label: 'Total Meals', value: number(metrics.total_meals), icon: UsersRound, tone: 'emerald' },
     {
@@ -621,14 +627,14 @@ function PrimaryMetrics({ metrics, view }) {
       tone: 'emerald'
     },
     { key: 'daily_budget', label: 'Range Budget', value: compactCurrency(metrics.daily_budget), icon: WalletCards, tone: 'blue' },
-    { key: 'daily_spent', label: 'Range Spent', value: compactCurrency(metrics.daily_spent), icon: ReceiptText, tone: 'blue' },
+    { key: 'daily_spent', label: 'Food Cost', value: compactCurrency(metrics.daily_spent), icon: ReceiptText, tone: 'blue' },
     { key: 'food_wastage_cost', label: 'Food Wastage Cost', value: compactCurrency(metrics.food_wastage_cost), icon: Trash2, tone: 'rose' }
   ];
   const cards = view === 'agm' ? common.filter((item) => item.key !== 'total_meals') : common;
-  return <div className={`grid gap-3 sm:grid-cols-2 ${cards.length === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-5'}`}>{cards.map((card) => <MetricCard key={card.key} {...card} />)}</div>;
+  return <div className={`grid gap-3 sm:grid-cols-2 ${cards.length === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-5'}`}>{cards.map((card) => <MetricCard key={card.key} {...card} loading={loading} />)}</div>;
 }
 
-function SecondaryMetrics({ metrics, view }) {
+function SecondaryMetrics({ metrics, view, loading = false }) {
   const base = [
     { key: 'waste_percent', label: 'Waste %', value: percent(metrics.waste_percent), icon: Percent, tone: 'rose' },
     { key: 'stock_risk', label: 'Current Stock Risk', value: `${number(metrics.stock_risk)} Items`, icon: AlertTriangle, tone: 'amber' },
@@ -653,7 +659,7 @@ function SecondaryMetrics({ metrics, view }) {
       { key: 'quality_score', label: 'Quality Score', value: nullablePercent(metrics.quality_score), icon: ShieldCheck, tone: 'emerald' }
     ];
   }
-  return <div className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 ${cards.length === 4 ? 'xl:grid-cols-4' : cards.length === 5 ? 'xl:grid-cols-5' : 'xl:grid-cols-6'}`}>{cards.map((card) => <MetricCard key={card.key} {...card} />)}</div>;
+  return <div className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 ${cards.length === 4 ? 'xl:grid-cols-4' : cards.length === 5 ? 'xl:grid-cols-5' : 'xl:grid-cols-6'}`}>{cards.map((card) => <MetricCard key={card.key} {...card} loading={loading} />)}</div>;
 }
 
 function Toolbar({
@@ -825,11 +831,7 @@ export default function ManagementDashboard({
     target.focus?.({ preventScroll: true });
   };
 
-  if (snapshotQuery.isLoading) {
-    return <AsyncStatePanel variant="loading" title={`Loading ${config.title}`} description="Collecting the latest scoped production, cost, inventory, quality, and workforce data." />;
-  }
-
-  if (snapshotQuery.isError) {
+  if (snapshotQuery.isError && !snapshotQuery.data) {
     return (
       <div className="space-y-4 pb-8">
         <div>
@@ -870,8 +872,22 @@ export default function ManagementDashboard({
     );
   }
 
-  const snapshot = snapshotQuery.data;
-  if (!snapshot) {
+  const isInitialLoading = snapshotQuery.isLoading && !snapshotQuery.data;
+  const snapshot = snapshotQuery.data || {
+    generated_at: null,
+    view: normalizedView,
+    range_start: startDate,
+    range_end: endDate,
+    scope: {},
+    metrics: {},
+    locations: [],
+    meals: [],
+    actions: [],
+    trends: [],
+    location_series: [],
+    data_quality: []
+  };
+  if (!snapshotQuery.data && !isInitialLoading) {
     return <AsyncStatePanel variant="empty" title="No dashboard data" description="No management snapshot was returned for this role and date range." />;
   }
 
@@ -879,7 +895,7 @@ export default function ManagementDashboard({
     && !siteId
     && !snapshot.scope?.selected_site_id
     && snapshot.scope?.available_scopes?.length > 0;
-  if (awaitingProjectScope) {
+  if (!isInitialLoading && awaitingProjectScope) {
     return <AsyncStatePanel variant="loading" title="Selecting assigned project" description="Applying the project scope before management figures are displayed." />;
   }
 
@@ -889,7 +905,7 @@ export default function ManagementDashboard({
   const actions = Array.isArray(snapshot.actions) ? snapshot.actions : [];
   const trends = Array.isArray(snapshot.trends) ? snapshot.trends : [];
   const locationSeries = Array.isArray(snapshot.location_series) ? snapshot.location_series : [];
-  const qualityNotes = Array.isArray(snapshot.data_quality) ? snapshot.data_quality : [];
+  const qualityNotes = !isInitialLoading && Array.isArray(snapshot.data_quality) ? snapshot.data_quality : [];
   const actionLinksEnabled = isAdminPreview || normalizedView === 'project_manager';
 
   return (
@@ -904,7 +920,7 @@ export default function ManagementDashboard({
         </div>
         <div className={`flex items-center gap-2 text-xs ${snapshotQuery.isRefetchError ? 'text-amber-700' : 'text-slate-500'}`} role="status">
           <span className={`h-2 w-2 rounded-full ${snapshotQuery.isRefetchError ? 'bg-amber-500' : 'bg-emerald-500'}`} aria-hidden="true" />
-          <span>{snapshotQuery.isRefetchError ? `Refresh delayed · ${timestamp(snapshot.generated_at)}` : timestamp(snapshot.generated_at)}</span>
+          <span>{isInitialLoading ? 'Loading figures…' : snapshotQuery.isRefetchError ? `Refresh delayed · ${timestamp(snapshot.generated_at)}` : timestamp(snapshot.generated_at)}</span>
         </div>
       </div>
 
@@ -932,43 +948,43 @@ export default function ManagementDashboard({
         </Alert>
       ) : null}
 
-      <PrimaryMetrics metrics={metrics} view={normalizedView} />
-      <SecondaryMetrics metrics={metrics} view={normalizedView} />
+      <PrimaryMetrics metrics={metrics} view={normalizedView} loading={isInitialLoading} />
+      <SecondaryMetrics metrics={metrics} view={normalizedView} loading={isInitialLoading} />
 
       {normalizedView === 'project_manager' ? (
         <>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,0.85fr)]">
-            <MealOperationsTable meals={meals} panelRef={locationRef} />
-            <ActionsPanel actions={actions} title="Approvals & Exceptions" panelRef={actionsRef} linksEnabled={actionLinksEnabled} />
+            <MealOperationsTable meals={meals} panelRef={locationRef} loading={isInitialLoading} />
+            <ActionsPanel actions={actions} title="Approvals & Exceptions" panelRef={actionsRef} linksEnabled={actionLinksEnabled} loading={isInitialLoading} />
           </div>
           <ProjectCharts trends={trends} meals={meals} panelRef={chartRef} />
         </>
       ) : normalizedView === 'head_office' ? (
         <>
-          <LocationTable locations={locations} mode="gm" panelRef={locationRef} />
+          <LocationTable locations={locations} mode="gm" panelRef={locationRef} loading={isInitialLoading} />
           <div className="grid gap-4 xl:grid-cols-[minmax(0,2.1fr)_minmax(280px,0.8fr)]">
             <div className="min-w-0">
               <GmCharts trends={trends} locations={locations} locationSeries={locationSeries} panelRef={chartRef} />
             </div>
-            <ActionsPanel actions={actions} title="Head Office Actions" panelRef={actionsRef} linksEnabled={actionLinksEnabled} />
+            <ActionsPanel actions={actions} title="Head Office Actions" panelRef={actionsRef} linksEnabled={actionLinksEnabled} loading={isInitialLoading} />
           </div>
-          <LocationTable locations={locations} mode="agm" />
+          <LocationTable locations={locations} mode="agm" loading={isInitialLoading} />
         </>
       ) : normalizedView === 'agm' ? (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,2.4fr)_minmax(280px,0.8fr)]">
-          <LocationTable locations={locations} mode="agm" panelRef={locationRef} />
-          <ActionsPanel actions={actions} title="Current Actions" panelRef={actionsRef} linksEnabled={actionLinksEnabled} />
+          <LocationTable locations={locations} mode="agm" panelRef={locationRef} loading={isInitialLoading} />
+          <ActionsPanel actions={actions} title="Current Actions" panelRef={actionsRef} linksEnabled={actionLinksEnabled} loading={isInitialLoading} />
         </div>
       ) : (
         <>
-          <LocationTable locations={locations} mode={normalizedView} panelRef={locationRef} />
+          <LocationTable locations={locations} mode={normalizedView} panelRef={locationRef} loading={isInitialLoading} />
           <div className="grid gap-4 xl:grid-cols-[minmax(0,2.1fr)_minmax(280px,0.8fr)]">
             <div className="min-w-0">
               {normalizedView === 'area_manager'
                 ? <AreaCharts locations={locations} panelRef={chartRef} />
                 : <GmCharts trends={trends} locations={locations} locationSeries={locationSeries} panelRef={chartRef} />}
             </div>
-            <ActionsPanel actions={actions} title={normalizedView === 'area_manager' ? 'Area Actions' : 'Executive Actions'} panelRef={actionsRef} linksEnabled={actionLinksEnabled} />
+            <ActionsPanel actions={actions} title={normalizedView === 'area_manager' ? 'Area Actions' : 'Executive Actions'} panelRef={actionsRef} linksEnabled={actionLinksEnabled} loading={isInitialLoading} />
           </div>
         </>
       )}
