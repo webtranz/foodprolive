@@ -298,6 +298,40 @@ assert.equal(manifestFallbackItem.portion_size.is_complete, true);
 assert.equal(manifestFallbackItem.portion_size.grams, 100);
 assert.equal(manifestFallbackDashboard.summary.total_batch_cost, 20);
 
+const completedCostRepairDashboard = buildProductionPlanningDashboard({
+  productions: [{
+    id: 'completed-zero-cost-repair',
+    site_id: 'site-a',
+    site_name: 'Main Kitchen',
+    production_date: '2026-08-16',
+    recipe_name: 'Breakfast / General / Labor',
+    meal_type: 'breakfast',
+    menu_type: 'general',
+    menu_category: 'labor',
+    target_servings: 10,
+    status: 'completed',
+    production_cost_total: 0,
+    ingredient_cost_total: 0,
+    actual_finished_weight_grams: 1000,
+    produced_servings: 10,
+    completion_lines: [{
+      ingredient_id: 'rice',
+      ingredient_name: 'Basmati Rice',
+      posted_cost: 0,
+      movement_layers: [
+        { accounting_total_cost: 12.25 },
+        { total_cost: 7.75 }
+      ]
+    }]
+  }],
+  recipes,
+  ingredients,
+  inventory: []
+});
+const completedCostRepairItem = completedCostRepairDashboard.items.find((item) => item.id === 'completed-zero-cost-repair');
+assert.equal(completedCostRepairItem.estimated_batch_cost, 20);
+assert.equal(completedCostRepairDashboard.summary.total_batch_cost, 20);
+
 const legacyMenuReviewDashboard = buildProductionPlanningDashboard({
   productions: [
     {

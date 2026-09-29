@@ -55,6 +55,21 @@ function round(value, decimals = 2) {
   return Math.round((numberValue(value, 0) + Number.EPSILON) * multiplier) / multiplier;
 }
 
+function sumLineLayerCost(line = {}) {
+  return (Array.isArray(line?.movement_layers) ? line.movement_layers : [])
+    .reduce((sum, layer) => (
+      sum + numberValue(layer?.accounting_total_cost ?? layer?.total_cost, 0)
+    ), 0);
+}
+
+function sumProductionLineCosts(lines = []) {
+  return (Array.isArray(lines) ? lines : [])
+    .reduce((sum, line) => {
+      const explicitCost = numberValue(line?.posted_cost ?? line?.total_cost ?? line?.actual_cost ?? line?.cost, 0);
+      return sum + (explicitCost > 0 ? explicitCost : sumLineLayerCost(line));
+    }, 0);
+}
+
 function textValue(value) {
   return String(value || '').trim();
 }
@@ -267,11 +282,19 @@ export function normalizeProductionMealType(value) {
 function resolveProductionCost(production, ingredientMap) {
   const isCompleted = String(production?.status || '').toLowerCase() === 'completed';
   if (isCompleted) {
-    const postedCost = production?.production_cost_total ?? production?.ingredient_cost_total;
-    if (postedCost !== null && postedCost !== undefined && postedCost !== '') {
+    const postedCost = [
+      production?.production_cost_total,
+      production?.ingredient_cost_total,
+      production?.total_consumption_cost
+    ].find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+    if (postedCost !== null && typeof postedCost !== 'undefined') {
       return round(postedCost);
     }
   }
+
+  const completionLineCost = sumProductionLineCosts(production?.completion_lines)
+    || sumProductionLineCosts(production?.ingredient_lines);
+  if (completionLineCost > 0) return round(completionLineCost);
 
   const calculated = (Array.isArray(production?.ingredients_used) ? production.ingredients_used : [])
     .reduce((sum, line) => (

@@ -108,6 +108,24 @@ export async function loadNormalizedFoodCostReport({
 
   const productionSql = `
     WITH location_dim AS (${locationDimensionSql}),
+    report_line_layer_totals AS (
+      SELECT
+        report_line_id,
+        SUM(COALESCE(accounting_total_cost, total_cost, 0)) AS layer_cost
+      FROM production_consumption_report_line_layers
+      GROUP BY report_line_id
+    ),
+    report_totals AS (
+      SELECT
+        report.production_id,
+        MAX(NULLIF(report.total_consumption_cost, 0)) AS report_total_cost,
+        SUM(COALESCE(NULLIF(line.posted_cost, 0), NULLIF(report_line_layer_totals.layer_cost, 0), 0)) AS report_line_cost
+      FROM production_consumption_reports report
+      LEFT JOIN production_consumption_report_lines line ON line.report_id = report.report_id
+      LEFT JOIN report_line_layer_totals ON report_line_layer_totals.report_line_id = line.report_line_id
+      WHERE report.status <> 'reversed'
+      GROUP BY report.production_id
+    ),
     production_totals AS (
       SELECT
         pe.production_id,
@@ -129,9 +147,17 @@ export async function loadNormalizedFoodCostReport({
       COALESCE(production_totals.production_name, 'Production') AS production,
       COALESCE(production_totals.produced_weight_grams, 0) AS produced_weight_grams,
       COALESCE(production_totals.produced_servings, pe.produced_servings, pe.expected_yield_servings, pe.target_servings, 0) AS production_servings,
-      COALESCE(NULLIF(production_totals.production_cost, 0), pe.production_cost_total, pe.ingredient_cost_total, 0) AS production_cost
+      COALESCE(
+        NULLIF(production_totals.production_cost, 0),
+        NULLIF(report_totals.report_total_cost, 0),
+        NULLIF(report_totals.report_line_cost, 0),
+        pe.production_cost_total,
+        pe.ingredient_cost_total,
+        0
+      ) AS production_cost
     FROM production_events pe
     LEFT JOIN production_totals ON production_totals.production_id = pe.production_id
+    LEFT JOIN report_totals ON report_totals.production_id = pe.production_id
     LEFT JOIN location_dim ON location_dim.warehouse_id = pe.warehouse_id
     WHERE pe.production_date BETWEEN $1::date AND $2::date
       AND pe.status = 'completed'

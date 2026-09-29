@@ -51,6 +51,23 @@ function ingredientMapFromRecords(records = []) {
   );
 }
 
+function getLineLayerCost(line = {}) {
+  return (Array.isArray(line?.movement_layers) ? line.movement_layers : [])
+    .reduce((sum, layer) => (
+      sum + safeFoodCostNumber(layer?.accounting_total_cost ?? layer?.total_cost)
+    ), 0);
+}
+
+function getLineCost(line = {}) {
+  const explicit = firstPositive([
+    line.posted_cost,
+    line.total_cost,
+    line.actual_cost,
+    line.cost
+  ]);
+  return explicit > EPSILON ? explicit : getLineLayerCost(line);
+}
+
 export function getProductionOutputWeightGrams(production = {}) {
   return firstPositive([
     production.produced_weight_grams,
@@ -63,8 +80,12 @@ export function getProductionOutputWeightGrams(production = {}) {
 
 function calculateProductionLineCost(production = {}, ingredientMap = {}) {
   const completionLineCost = (Array.isArray(production.completion_lines) ? production.completion_lines : [])
-    .reduce((sum, line) => sum + safeFoodCostNumber(line.posted_cost ?? line.total_cost ?? line.cost), 0);
+    .reduce((sum, line) => sum + getLineCost(line), 0);
   if (completionLineCost > EPSILON) return completionLineCost;
+
+  const reportLineCost = (Array.isArray(production.ingredient_lines) ? production.ingredient_lines : [])
+    .reduce((sum, line) => sum + getLineCost(line), 0);
+  if (reportLineCost > EPSILON) return reportLineCost;
 
   return (Array.isArray(production.ingredients_used) ? production.ingredients_used : [])
     .reduce((sum, line) => sum + calculateProductionIngredientCost(

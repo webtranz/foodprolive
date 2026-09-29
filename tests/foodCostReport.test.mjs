@@ -3,6 +3,7 @@ import {
   buildConfirmedFoodCostRows,
   buildPendingProductionRows,
   buildProductionFoodCostRows,
+  getProductionOutputCost,
   groupFoodCostRows
 } from '../shared/foodCostReport.js';
 
@@ -196,6 +197,37 @@ assert.equal(
   1100
 );
 assert.equal(groupedProductionRows[0].source, 'Production completed');
+
+const repairedCostRows = buildProductionFoodCostRows({
+  productions: [{
+    id: 'prod-report-layer-cost',
+    status: 'completed',
+    production_date: '2026-09-01',
+    site_id: 'store-384',
+    site_name: 'STORE 384',
+    meal_type: 'breakfast',
+    menu_type: 'general',
+    menu_category: 'labor',
+    recipe_name: 'Breakfast / General / Labor',
+    production_cost_total: 0,
+    ingredient_cost_total: 0,
+    actual_finished_weight_grams: 1000,
+    produced_servings: 10,
+    completion_lines: [{
+      ingredient_id: 'rice',
+      ingredient_name: 'Basmati Rice',
+      posted_cost: 0,
+      movement_layers: [
+        { accounting_total_cost: 12.25 },
+        { total_cost: 7.75 }
+      ]
+    }]
+  }]
+});
+assert.equal(repairedCostRows.length, 1);
+assert.equal(repairedCostRows[0].total_cost, 20);
+assert.equal(repairedCostRows[0].cost_per_serving, 2);
+assert.equal(getProductionOutputCost(repairedCostRows[0]), 20);
 
 const pendingRows = buildPendingProductionRows({
   consumptions,
