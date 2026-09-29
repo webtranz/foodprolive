@@ -835,6 +835,7 @@ test('recipe-less grouped production lines remain selectable for Meal Service', 
   assert.equal(dish.recipe_id, 'production-breakfast:line:arabic-bread');
   assert.equal(dish.source_recipe_id, null);
   assert.equal(dish.production_line_id, 'production-breakfast:line:arabic-bread');
+  assert.equal(dish.item_name, 'ARABIC BREAD');
   assert.equal(dish.recipe_name, 'ARABIC BREAD');
   assert.equal(dish.available_covers, 40);
   assert.equal(dish.batches[0].production_line_id, 'production-breakfast:line:arabic-bread');

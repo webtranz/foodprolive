@@ -7278,12 +7278,26 @@ async function insertOrUpdateNormalizedRecipe(record, existing = null, executor 
 
 async function ensureProductionManifestLine(record, executor = pool) {
   const lineId = record.production_line_id || record.source_event_recipe_id || `${record.id}:line:1`;
+  const itemName = record.item_name || record.recipe_name || record.production_name || record.name || 'Production item';
   const existingLine = await query(
     'SELECT production_line_id FROM production_manifest_lines WHERE production_line_id = $1 LIMIT 1',
     [lineId],
     executor
   );
-  if (existingLine.rowCount) return lineId;
+  if (existingLine.rowCount) {
+    if (record.item_name) {
+      await query(
+        `UPDATE production_manifest_lines
+            SET item_name = $2,
+                updated_at = $3
+          WHERE production_line_id = $1
+            AND COALESCE(BTRIM(item_name), '') <> COALESCE(BTRIM($2::text), '')`,
+        [lineId, itemName, record.updated_date || nowIso()],
+        executor
+      );
+    }
+    return lineId;
+  }
   await query(
     `INSERT INTO production_manifest_lines (
       production_line_id, production_id, menu_plan_line_id, line_number, recipe_version_id,
@@ -7310,7 +7324,7 @@ async function ensureProductionManifestLine(record, executor = pool) {
       1,
       record.recipe_id || null,
       record.ingredient_id || null,
-      record.production_name || record.recipe_name || record.name || 'Production item',
+      itemName,
       record.line_type || 'recipe',
       record.key || record.manifest_item_key || record.source_menu_plan_item_key || null,
       record.source_menu_plan_item_key || null,

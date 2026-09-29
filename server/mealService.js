@@ -157,6 +157,9 @@ export function buildMealServiceAvailabilitySnapshot(scope = {}, batches = []) {
     recipe_id: getMealServiceBatchDishId(batch),
     source_recipe_id: normalizeText(batch.recipe_id),
     production_line_id: normalizeText(batch.production_line_id),
+    item_name: normalizeText(batch.item_name),
+    recipe_name: normalizeText(batch.recipe_name),
+    production_name: normalizeText(batch.production_name),
     batch_number: normalizeText(batch.batch_number),
     completed_at: normalizeText(batch.completed_at),
     status: normalizeText(batch.status).toLowerCase(),
@@ -267,8 +270,14 @@ export function groupMealServiceProducedDishes(batches = []) {
     const sourceRecipeId = normalizeText(batch.recipe_id);
     const recipeId = getMealServiceBatchDishId(batch);
     if (!recipeId) return;
+    const itemName = normalizeText(
+      batch.item_name
+      || batch.original_recipe_name
+      || batch.recipe_name
+      || batch.production_name
+    ) || recipeId;
     const productionName = formatProductionEventTitle(batch, {
-      fallback: batch.production_name || batch.recipe_name || recipeId
+      fallback: batch.production_name || itemName || recipeId
     });
     if (!grouped.has(recipeId)) {
       grouped.set(recipeId, {
@@ -276,7 +285,8 @@ export function groupMealServiceProducedDishes(batches = []) {
         source_recipe_id: sourceRecipeId || null,
         production_line_id: normalizeText(batch.production_line_id) || null,
         ingredient_id: normalizeText(batch.ingredient_id) || null,
-        recipe_name: productionName,
+        item_name: itemName,
+        recipe_name: itemName,
         meal_type: batch.meal_type || null,
         menu_type: batch.menu_type || null,
         menu_category: batch.menu_category || null,

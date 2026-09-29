@@ -25,7 +25,6 @@ import {
   getMenuCategoryOptions,
   MENU_CUISINE_OPTIONS
 } from '../../../shared/menuCategories.js';
-import { formatProductionEventTitle } from '../../../shared/productionLabels.js';
 
 const MEAL_PERIODS = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -846,9 +845,7 @@ export function CustomerMealServicePanel({
                         const previousCategory = index > 0 ? getDishCategory(displayedDishes[index - 1], scope.menu_category) : '';
                         const categoryLabel = dish.meal_service_category_label || categoryLabelByValue[dishCategory] || formatLabel(dishCategory);
                         const showCategoryHeader = isAllCategoryScope && dishCategory !== previousCategory;
-                        const dishTitle = formatProductionEventTitle(dish, {
-                          fallback: dish.recipe_name || 'Prepared dish'
-                        });
+                        const dishTitle = dish.item_name || dish.recipe_name || 'Prepared dish';
                       const configuredPortion = normalizeMealServicePortionSize(dish.service_portion_size_grams);
                       const availableCoversValue = Number(dish.available_covers);
                       const availableCovers = configuredPortion !== null
