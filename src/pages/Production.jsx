@@ -300,8 +300,12 @@ function manifestItemCost(item = {}) {
     item.production_cost_total,
     item.ingredient_cost_total,
     item.actual_cost,
+    item.production_time_cost,
     item.total_cost,
-    item.posted_cost
+    item.posted_cost,
+    item.estimated_cost,
+    item.estimated_batch_cost,
+    item.planned_total_cost
   );
   if (direct !== null) return direct;
   return sumReportLineCosts(item.ingredients_used);
@@ -311,7 +315,13 @@ function manifestItemDirectPostedCost(item = {}) {
   const direct = firstPositivePresent(
     item.posted_cost,
     item.accounting_total_cost,
-    item.consumed_cost
+    item.consumed_cost,
+    item.actual_cost,
+    item.production_time_cost,
+    item.total_cost,
+    item.estimated_cost,
+    item.estimated_batch_cost,
+    item.planned_total_cost
   );
   if (direct !== null) return direct;
   return sumStrictPostedReportLineCosts(item.ingredients_used);
@@ -573,6 +583,33 @@ function mergeManifestItem(reportItem = {}, fallbackItem = {}) {
     ?? sumManifestItemWeight(fallbackItem, 'raw_weight_grams');
   const yieldedWeight = sumManifestItemWeight(reportItem, 'yielded_weight_grams')
     ?? sumManifestItemWeight(fallbackItem, 'yielded_weight_grams');
+  const productionTimeCost = firstPositivePresent(
+    reportItem.actual_cost,
+    reportItem.production_time_cost,
+    reportItem.posted_cost,
+    reportItem.consumed_cost,
+    reportItem.total_cost,
+    reportItem.estimated_cost,
+    reportItem.estimated_batch_cost,
+    reportItem.planned_total_cost,
+    fallbackItem.actual_cost,
+    fallbackItem.production_time_cost,
+    fallbackItem.posted_cost,
+    fallbackItem.consumed_cost,
+    fallbackItem.total_cost,
+    fallbackItem.estimated_cost,
+    fallbackItem.estimated_batch_cost,
+    fallbackItem.planned_total_cost
+  );
+  const estimatedBatchCost = firstPresent(
+    reportItem.estimated_batch_cost,
+    reportItem.estimated_cost,
+    fallbackItem.estimated_batch_cost,
+    fallbackItem.estimated_cost,
+    fallbackItem.planned_total_cost,
+    productionTimeCost,
+    0
+  );
 
   return {
     ...fallbackItem,
@@ -588,7 +625,10 @@ function mergeManifestItem(reportItem = {}, fallbackItem = {}) {
       fallbackItem.target_servings,
       fallbackItem.expected_servings
     ),
-    estimated_batch_cost: firstPresent(reportItem.estimated_batch_cost, fallbackItem.estimated_batch_cost, fallbackItem.planned_total_cost, 0),
+    estimated_cost: firstPresent(reportItem.estimated_cost, fallbackItem.estimated_cost, estimatedBatchCost),
+    estimated_batch_cost: estimatedBatchCost,
+    production_time_cost: productionTimeCost,
+    actual_cost: firstPresent(reportItem.actual_cost, fallbackItem.actual_cost, productionTimeCost),
     raw_weight_grams: rawWeight,
     yielded_weight_grams: yieldedWeight,
     ingredients_used: mergedLines
@@ -3899,9 +3939,14 @@ export default function Production() {
   ].filter(Boolean).join(' ');
   const reportUsedLegacyFallback = /legacy_(?:completion_recipe_expansion|recipe_raw_yield_fallback|recipe_raw_line_yields)|legacy recipe raw yield/i
     .test(reportSourceText);
+  const reportManifestCostsComplete = reportManifestItems.length > 0
+    && reportManifestItems.every((item) => manifestItemDirectPostedCost(item) !== null);
   const reportManifestCoverageIncomplete = reportManifestItems.length > 0
     && reportSourceRecipeNames.size > 0
-    && reportSourceRecipeNames.size < reportManifestItems.length;
+    && reportSourceRecipeNames.size < reportManifestItems.length
+    && !reportManifestCostsComplete;
+  const showReportLegacyWarning = (reportUsedLegacyFallback || reportManifestCoverageIncomplete)
+    && !reportManifestCostsComplete;
   const reportLotLines = getReportSectionLines(selectedConsumptionReport, 'inventory_lot_usage');
   const reportShortageLines = getReportSectionLines(selectedConsumptionReport, 'shortages');
   const reportTotalRawWeightGrams = positiveOptionalNumber(selectedConsumptionReport?.total_raw_consumption_weight_grams)
@@ -5691,12 +5736,12 @@ export default function Production() {
                   <div>
                     <p className="font-semibold text-emerald-900">Full production manifest</p>
                     <p className="text-emerald-700">
-                      This production event contains every planned production line, including recipes and non-dish items. Posted Cost is actual stock consumption cost allocated from the saved report lines; planned estimates are not included in Total Consumption Cost.
+                      This production event contains every planned production line, including recipes and non-dish items. Line Cost uses mapped posted stock cost first, then the saved production-time cost frozen on the PCR row.
                     </p>
                   </div>
                 </div>
               ) : null}
-              {reportUsedLegacyFallback || reportManifestCoverageIncomplete ? (
+              {showReportLegacyWarning ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                   <p className="font-semibold">Legacy calculation warning</p>
                   <p className="mt-1">
@@ -5711,7 +5756,7 @@ export default function Production() {
                       <TableRow>
                         <TableHead className="min-w-[260px]">Manifest Item</TableHead>
                         <TableHead className="whitespace-nowrap">Booked Production</TableHead>
-                        <TableHead className="whitespace-nowrap">Posted Cost</TableHead>
+                        <TableHead className="whitespace-nowrap">Line Cost</TableHead>
                         <TableHead className="whitespace-nowrap">Snapshot Lines</TableHead>
                         <TableHead className="whitespace-nowrap">Raw / Issued Qty</TableHead>
                         <TableHead className="whitespace-nowrap">Yielded / Output Qty</TableHead>

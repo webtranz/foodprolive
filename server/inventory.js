@@ -498,6 +498,31 @@ function sumPositiveLineWeight(lines = [], field) {
   return total > 0 ? roundQuantity(total) : null;
 }
 
+function firstProductionCost(...values) {
+  const numericValues = values
+    .map((value) => roundOptionalQuantity(value, 2))
+    .filter((value) => value !== null);
+  if (numericValues.length === 0) return null;
+  return numericValues.find((value) => value > 0) ?? 0;
+}
+
+function resolveProductionTimeManifestCost(item = {}) {
+  return roundOptionalQuantity(
+    firstProductionCost(
+      item.actual_cost,
+      item.production_time_cost,
+      item.posted_cost,
+      item.consumed_cost,
+      item.accounting_total_cost,
+      item.total_cost,
+      item.estimated_cost,
+      item.estimated_batch_cost,
+      item.planned_total_cost
+    ),
+    2
+  );
+}
+
 function enrichCompletedMenuIssueItems({
   production = {},
   completionProduction = {},
@@ -561,6 +586,11 @@ function enrichCompletedMenuIssueItems({
       ?? positiveNumber(item.expected_finished_weight_grams)
       ?? positiveNumber(itemYieldSummary.expected_finished_weight_grams)
       ?? sumPositiveLineWeight(enrichedLines, 'yielded_weight_grams');
+    const productionTimeCost = resolveProductionTimeManifestCost(item);
+    const estimatedBatchCost = roundOptionalQuantity(
+      item.estimated_batch_cost ?? item.estimated_cost ?? item.planned_total_cost ?? productionTimeCost,
+      2
+    );
 
     return {
       ...item,
@@ -569,10 +599,10 @@ function enrichCompletedMenuIssueItems({
       recipe_name: item.recipe_name || item.name || 'Planned item',
       expected_servings: roundOptionalQuantity(item.expected_servings),
       production_covers: roundOptionalQuantity(targetServings),
-      estimated_batch_cost: roundOptionalQuantity(
-        item.estimated_batch_cost ?? item.planned_total_cost,
-        2
-      ),
+      estimated_cost: estimatedBatchCost,
+      estimated_batch_cost: estimatedBatchCost,
+      production_time_cost: productionTimeCost,
+      actual_cost: productionTimeCost,
       raw_weight_grams: roundOptionalQuantity(rawWeight, 3),
       yielded_weight_grams: roundOptionalQuantity(yieldedWeight, 3),
       expected_finished_weight_grams: roundOptionalQuantity(yieldedWeight, 3),

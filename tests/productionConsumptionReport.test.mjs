@@ -172,6 +172,10 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(reportBlock, /menu_issue_items:/);
   assert.match(inventorySource, /raw_weight_grams:[\s\S]*item\.raw_weight_grams/);
   assert.match(inventorySource, /yielded_weight_grams:[\s\S]*item\.yielded_weight_grams/);
+  assert.match(inventorySource, /function firstProductionCost/);
+  assert.match(inventorySource, /resolveProductionTimeManifestCost/);
+  assert.match(inventorySource, /production_time_cost: productionTimeCost/);
+  assert.match(inventorySource, /actual_cost: productionTimeCost/);
   assert.match(reportBlock, /total_raw_consumption_weight_grams:/);
   assert.match(reportBlock, /total_yielded_weight_grams:/);
 
@@ -204,20 +208,28 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.ok(postedCostEnd > postedCostStart, 'manifest posted cost helper should be scoped');
   assert.match(postedCostBlock, /sumPostedReportLineCosts\(reportLines\)/);
   assert.doesNotMatch(postedCostBlock, /manifestItemCost\(/);
-  assert.doesNotMatch(postedCostBlock, /estimated_batch_cost|production_cost_total|ingredient_cost_total|planned_total_cost/);
+  assert.match(postedCostBlock, /manifestItemDirectPostedCost\(item\)/);
   assert.match(productionPage, /function strictPostedReportLineCost/);
   const directPostedCostStart = productionPage.indexOf('function manifestItemDirectPostedCost');
   const directPostedCostEnd = productionPage.indexOf('\nfunction manifestItemPostedCost', directPostedCostStart);
   const directPostedCostBlock = productionPage.slice(directPostedCostStart, directPostedCostEnd);
+  assert.match(directPostedCostBlock, /item\.actual_cost/);
+  assert.match(directPostedCostBlock, /item\.production_time_cost/);
+  assert.match(directPostedCostBlock, /item\.estimated_batch_cost/);
   assert.match(directPostedCostBlock, /sumStrictPostedReportLineCosts\(item\.ingredients_used\)/);
-  assert.doesNotMatch(directPostedCostBlock, /item\.(total_consumption_cost|total_cost|estimated_batch_cost|planned_total_cost)/);
+  assert.doesNotMatch(directPostedCostBlock, /item\.(total_consumption_cost|production_cost_total|ingredient_cost_total)/);
   assert.match(productionPage, /sourceNames\.some\(\(sourceName\) => itemNames\.has\(sourceName\)\)/);
   assert.match(productionPage, /allowIngredientIdentityMatch/);
   assert.match(productionPage, /Unable to load the production consumption report right now/);
   assert.match(productionPage, />Booked Production<\/TableHead>/);
+  assert.match(productionPage, />Line Cost<\/TableHead>/);
   assert.match(productionPage, />Raw \/ Issued Qty<\/TableHead>/);
   assert.match(productionPage, />Yielded \/ Output Qty<\/TableHead>/);
   assert.match(ingredientSection, /formatCurrency\(reportLineCost\(line\)\)/);
+
+  const dbSource = source('server/db.js');
+  assert.match(dbSource, /item\?\.production_time_cost/);
+  assert.match(dbSource, /item\?\.planned_total_cost/);
 
   const lotSection = productionPage.slice(ingredientSectionEnd);
   assertItemCodeBeforeItemName(lotSection, 'inventory-lot consumption');

@@ -8099,6 +8099,20 @@ async function replaceProductionConsumptionReportMenuItems(record, executor = po
   const updatedAt = record.updated_date || nowIso();
   for (const [index, item] of sourceItems.entries()) {
     const itemOrder = safeLineNumber(item?.item_order ?? item?.line_number, index + 1);
+    const estimatedCost = firstPositiveNumber([
+      item?.estimated_cost,
+      item?.estimated_batch_cost,
+      item?.planned_total_cost
+    ]);
+    const actualCost = firstPositiveNumber([
+      item?.actual_cost,
+      item?.production_time_cost,
+      item?.posted_cost,
+      item?.consumed_cost,
+      item?.accounting_total_cost,
+      item?.total_cost,
+      estimatedCost
+    ]);
     await query(
       `INSERT INTO production_consumption_report_menu_items (
         report_menu_item_id, report_id, item_order, production_line_id, recipe_version_id,
@@ -8180,8 +8194,8 @@ async function replaceProductionConsumptionReportMenuItems(record, executor = po
         item?.weight_calculation_source || null,
         item?.yield_calculation_source || item?.yield_source || null,
         toNumberOrNull(item?.weight_snapshot_version),
-        toNumberOrZero(item?.estimated_cost ?? item?.estimated_batch_cost),
-        toNumberOrZero(item?.actual_cost ?? item?.total_cost),
+        estimatedCost,
+        actualCost,
         item?.status || 'active',
         item?.source_name || record.source_name || null,
         createdAt,
