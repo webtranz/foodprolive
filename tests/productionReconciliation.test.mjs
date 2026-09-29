@@ -313,6 +313,60 @@ test('saved production manifests complete from their frozen snapshot even when t
   assert.equal(plan.production_snapshot.expected_yield_servings, 10);
 });
 
+test('saved production manifests aggregate duplicate ingredient IDs before automatic completion', () => {
+  const plan = buildAutomaticProductionCompletionPlan({
+    production: {
+      id: 'snapshot-with-duplicate-ingredients',
+      recipe_id: recipe.id,
+      recipe_name: 'Dinner / General / Labor',
+      meal_type: 'dinner',
+      menu_type: 'general',
+      menu_category: 'labor',
+      target_servings: 10,
+      production_issue_grouped: true,
+      recipe_snapshot_locked: true,
+      yield_adjustment_version: 2,
+      quantity_semantics: 'raw_recipe_to_yielded_output_v2',
+      ingredients_used: [
+        {
+          ingredient_id: chicken.id,
+          ingredient_name: chicken.name,
+          planned_quantity: 5,
+          raw_quantity: 5,
+          unit: 'EA',
+          raw_weight_grams: 4500,
+          yielded_weight_grams: 3600,
+          yield_multiplier: 0.8,
+          source_recipe_names: ['Chicken Haleem']
+        },
+        {
+          ingredient_id: chicken.id,
+          ingredient_name: chicken.name,
+          planned_quantity: 1,
+          raw_quantity: 1,
+          unit: 'EA',
+          raw_weight_grams: 900,
+          yielded_weight_grams: 720,
+          yield_multiplier: 0.8,
+          source_recipe_names: ['Chicken Korma']
+        }
+      ]
+    },
+    recipeCatalog: [recipe],
+    ingredientCatalog: [chicken]
+  });
+
+  assert.equal(plan.ingredients_used.length, 1);
+  assert.equal(plan.ingredients_used[0].ingredient_id, chicken.id);
+  assert.equal(plan.ingredients_used[0].planned_quantity, 6);
+  assert.equal(plan.ingredients_used[0].raw_quantity, 6);
+  assert.equal(plan.ingredients_used[0].raw_weight_grams, 5400);
+  assert.equal(plan.ingredients_used[0].yielded_weight_grams, 4320);
+  assert.deepEqual(plan.ingredients_used[0].source_recipe_names, ['Chicken Haleem', 'Chicken Korma']);
+  assert.equal(plan.production_snapshot.expected_finished_weight_grams, 4320);
+  assert.equal(plan.production_snapshot.output_calculation_source, 'frozen_raw_line_yields');
+});
+
 test('frozen v2 line weights remain stable when ingredient package and yield metadata later change', () => {
   const summary = buildAutomaticProductionYieldSummary({
     production: {
@@ -375,7 +429,7 @@ test('yield-calculated v2 portions are derived from frozen output and target, no
   assert.equal(summary.expected_yield_servings, 10);
 });
 
-test('corrupt v2 snapshots reject missing weights, duplicate ingredients and incompatible units', () => {
+test('corrupt v2 snapshots reject missing weights and incompatible units', () => {
   const baseProduction = {
     id: 'corrupt-v2',
     recipe_id: recipe.id,
@@ -391,18 +445,6 @@ test('corrupt v2 snapshots reject missing weights, duplicate ingredients and inc
     recipeCatalog: [recipe],
     ingredientCatalog: [{ id: 'unknown', name: 'Unknown Each', unit: 'EA' }]
   }), (error) => error.status === 409 && /cannot calculate yield weight/.test(error.message));
-
-  assert.throws(() => buildAutomaticProductionCompletionPlan({
-    production: {
-      ...baseProduction,
-      ingredients_used: [
-        { ingredient_id: chicken.id, planned_quantity: 5, unit: 'EA' },
-        { ingredient_id: chicken.id, planned_quantity: 1, unit: 'EA' }
-      ]
-    },
-    recipeCatalog: [recipe],
-    ingredientCatalog: [chicken]
-  }), (error) => error.status === 409 && /duplicate ingredient IDs/.test(error.message));
 
   assert.throws(() => buildAutomaticProductionCompletionPlan({
     production: {

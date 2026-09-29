@@ -16,7 +16,7 @@ import {
 import { expandRecipeIngredients } from '../shared/recipeComposition.js';
 import { calculateYieldOutputQuantity } from '../shared/ingredientYield.js';
 import { calculateRecipeServingWeight } from '../shared/recipeWeight.js';
-import { getRecipeLinePrepExemptPercent, isExemptProcessingAid, recipeLineWeightFields } from '../shared/recipeLineWeight.js';
+import { recipeLineWeightFields } from '../shared/recipeLineWeight.js';
 import { buildAutomaticProductionYieldSummary } from '../shared/productionReconciliation.js';
 import { getItemCodeFromRecords } from '../shared/itemCode.js';
 import {
@@ -120,6 +120,120 @@ function resolveFrozenRawQuantity(line = {}) {
   return quantity;
 }
 
+function mergeUniqueTextList(...lists) {
+  return [...new Set(
+    lists
+      .flatMap((value) => (Array.isArray(value) ? value : [value]))
+      .map((value) => normalizeText(value))
+      .filter(Boolean)
+  )];
+}
+
+function sumOptionalLineQuantity(lines = [], field, decimals = 6) {
+  if (!lines.length) return null;
+  const values = lines.map((line) => positiveNumber(line?.[field]));
+  if (values.some((value) => value === null)) return null;
+  return Number(values.reduce((sum, value) => sum + value, 0).toFixed(decimals));
+}
+
+function aggregateSavedProductionManifestLines({
+  lines = [],
+  ingredientMap = new Map(),
+  frozenV2 = false
+} = {}) {
+  const groups = new Map();
+
+  lines.forEach((line) => {
+    const ingredientId = normalizeText(line?.ingredient_id);
+    if (!ingredientId) {
+      const error = new Error('Every saved production manifest ingredient must include an ingredient ID');
+      error.status = 409;
+      throw error;
+    }
+
+    const ingredient = ingredientMap.get(ingredientId) || {};
+    const sourceUnit = line.unit || ingredient.unit || 'unit';
+    const masterUnit = ingredient.unit || sourceUnit;
+    if (!isIngredientUnitCompatible(sourceUnit, masterUnit, ingredient)) {
+      const error = new Error(
+        `The saved production unit for ${line.ingredient_name || ingredient.name || ingredientId} cannot be converted to ingredient unit ${masterUnit}`
+      );
+      error.status = 409;
+      throw error;
+    }
+
+    const rawQuantity = resolveFrozenRawQuantity(line);
+    const rawQuantityInMasterUnit = convertIngredientQuantity(
+      rawQuantity,
+      sourceUnit,
+      masterUnit,
+      ingredient
+    );
+    const key = ingredientId;
+    const current = groups.get(key) || {
+      ingredient_id: ingredientId,
+      ingredient,
+      unit: masterUnit,
+      lines: [],
+      raw_quantity: 0
+    };
+    current.lines.push({ line, raw_quantity: rawQuantityInMasterUnit });
+    current.raw_quantity += rawQuantityInMasterUnit;
+    groups.set(key, current);
+  });
+
+  return [...groups.values()].map((group) => {
+    const firstLine = group.lines[0]?.line || {};
+    const sourceRecipeNames = mergeUniqueTextList(
+      ...group.lines.map(({ line }) => line.source_recipe_names || line.source_recipe_name || line.used_in)
+    );
+    const rawQuantity = roundQuantity(group.raw_quantity);
+    const rawWeightGrams = sumOptionalLineQuantity(
+      group.lines.map(({ line }) => line),
+      'raw_weight_grams',
+      3
+    );
+    const yieldedWeightGrams = sumOptionalLineQuantity(
+      group.lines.map(({ line }) => line),
+      'yielded_weight_grams',
+      3
+    );
+    const yieldMultipliers = group.lines
+      .map(({ line }) => positiveNumber(line.yield_multiplier))
+      .filter((value) => value !== null);
+    const weightedYieldMultiplier = rawWeightGrams && yieldedWeightGrams
+      ? yieldedWeightGrams / rawWeightGrams
+      : yieldMultipliers.length === group.lines.length
+        ? yieldMultipliers.reduce((sum, value) => sum + value, 0) / yieldMultipliers.length
+        : null;
+
+    return {
+      ...firstLine,
+      quantity_basis: frozenV2 ? 'raw_recipe_v2' : 'production_manifest_snapshot',
+      ingredient_id: group.ingredient_id,
+      item_code: getItemCodeFromRecords([group.ingredient, firstLine], null),
+      ingredient_name: group.ingredient.name || firstLine.ingredient_name,
+      source_recipe_names: sourceRecipeNames,
+      unit: group.unit,
+      raw_quantity: rawQuantity,
+      planned_quantity: rawQuantity,
+      required_quantity: rawQuantity,
+      actual_quantity: null,
+      desired_quantity: rawQuantity,
+      ...(rawWeightGrams !== null ? { raw_weight_grams: rawWeightGrams } : {}),
+      ...(yieldedWeightGrams !== null ? { yielded_weight_grams: yieldedWeightGrams } : {}),
+      ...(weightedYieldMultiplier !== null
+        ? {
+          yield_multiplier: roundQuantity(weightedYieldMultiplier),
+          yield_percent: Number((weightedYieldMultiplier * 100).toFixed(2))
+        }
+        : {}),
+      manifest_line_count: group.lines.length,
+      source_manifest_line_count: group.lines.length
+    };
+  });
+}
+
 export function convertProductionQuantityToInventoryUnit({
   quantity,
   sourceUnit,
@@ -193,41 +307,10 @@ export function buildAutomaticProductionCompletionPlan({
       error.status = 409;
       throw error;
     }
-    const ingredientKeys = production.ingredients_used.map((line) => (
-      `${normalizeText(line?.ingredient_id)}::${isExemptProcessingAid(line) ? 'processing_aid' : `prep_${getRecipeLinePrepExemptPercent(line)}`}`
-    ));
-    if (new Set(ingredientKeys).size !== ingredientKeys.length) {
-      const error = new Error('The saved production manifest contains duplicate ingredient IDs');
-      error.status = 409;
-      throw error;
-    }
-    productionIngredients = production.ingredients_used.map((line) => {
-      const ingredientId = normalizeText(line?.ingredient_id);
-      if (!ingredientId) {
-        const error = new Error('Every saved production manifest ingredient must include an ingredient ID');
-        error.status = 409;
-        throw error;
-      }
-      const rawQuantity = resolveFrozenRawQuantity(line);
-      const ingredient = ingredientMap.get(ingredientId) || {};
-      const sourceUnit = line.unit || ingredient.unit || 'unit';
-      const masterUnit = ingredient.unit || sourceUnit;
-      if (!isIngredientUnitCompatible(sourceUnit, masterUnit, ingredient)) {
-        const error = new Error(
-          `The saved production unit for ${line.ingredient_name || ingredient.name || ingredientId} cannot be converted to ingredient unit ${masterUnit}`
-        );
-        error.status = 409;
-        throw error;
-      }
-      return {
-        ...line,
-        quantity_basis: frozenV2 ? 'raw_recipe_v2' : 'production_manifest_snapshot',
-        raw_quantity: roundQuantity(rawQuantity),
-        planned_quantity: roundQuantity(rawQuantity),
-        required_quantity: roundQuantity(rawQuantity),
-        actual_quantity: null,
-        desired_quantity: roundQuantity(rawQuantity)
-      };
+    productionIngredients = aggregateSavedProductionManifestLines({
+      lines: production.ingredients_used,
+      ingredientMap,
+      frozenV2
     });
   } else {
     const recipeServings = Math.max(1, toNumber(recipe.servings, 1));
