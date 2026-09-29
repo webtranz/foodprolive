@@ -6093,7 +6093,7 @@ const menuProductionIssueConcurrency = Math.max(
   1,
   Math.min(
     6,
-    Number.parseInt(process.env.MENU_PRODUCTION_ISSUE_WORKERS || '2', 10) || 2
+    Number.parseInt(process.env.MENU_PRODUCTION_ISSUE_WORKERS || '1', 10) || 1
   )
 );
 
@@ -6103,6 +6103,181 @@ function queueAuditAction(label, payload) {
       console.error(`Unable to audit ${label}`, error);
     });
   });
+}
+
+const PRODUCTION_PROCUREMENT_ACTIVATION_ACTIVE_STATUSES = new Set(['activation_queued', 'activation_processing']);
+const PRODUCTION_PROCUREMENT_ACTIVATION_COMPLETE_STATUSES = new Set([
+  'pending_procurement_ack',
+  'acknowledged',
+  'not_required'
+]);
+const productionProcurementActivationQueue = [];
+const productionProcurementActivationActiveIds = new Set();
+let productionProcurementActivationRunningCount = 0;
+const productionProcurementActivationConcurrency = Math.max(
+  1,
+  Math.min(
+    4,
+    Number.parseInt(process.env.PRODUCTION_PROCUREMENT_ACTIVATION_WORKERS || '1', 10) || 1
+  )
+);
+
+function isProjectManagerApprovalActivation(currentProduction = {}, payload = {}) {
+  return (
+    normalizeProductionStatus(currentProduction.status) === 'pending_approval'
+    && normalizeProductionStatus(payload?.status) === 'pending_procurement'
+    && normalizeProductionReviewAction(payload?.review_action) === 'approved'
+  );
+}
+
+function scheduleProductionProcurementActivationQueueDrain() {
+  setImmediate(() => {
+    while (
+      productionProcurementActivationRunningCount < productionProcurementActivationConcurrency
+      && productionProcurementActivationQueue.length > 0
+    ) {
+      const work = productionProcurementActivationQueue.shift();
+      productionProcurementActivationRunningCount += 1;
+      runProductionProcurementActivationWork(work).finally(() => {
+        productionProcurementActivationRunningCount = Math.max(0, productionProcurementActivationRunningCount - 1);
+        productionProcurementActivationActiveIds.delete(String(work.productionId || ''));
+        if (productionProcurementActivationQueue.length > 0) {
+          scheduleProductionProcurementActivationQueueDrain();
+        }
+      });
+    }
+  });
+}
+
+function enqueueProductionProcurementActivationWork(work) {
+  const productionId = String(work.productionId || '').trim();
+  if (!productionId || productionProcurementActivationActiveIds.has(productionId)) {
+    return false;
+  }
+  productionProcurementActivationActiveIds.add(productionId);
+  productionProcurementActivationQueue.push({
+    ...work,
+    productionId,
+    requestedAt: work.requestedAt || new Date().toISOString()
+  });
+  scheduleProductionProcurementActivationQueueDrain();
+  return true;
+}
+
+async function markProductionProcurementActivationFailed({ productionId, error }) {
+  const errorMessage = error?.message || 'Store / Procurement material request activation failed.';
+  return withTransaction(async (client) => {
+    const production = await findDocument('Production', productionId, client, true);
+    if (!production) return null;
+    const status = normalizeProductionStatus(production.status);
+    if (['cancelled', 'rejected', 'completed', 'reversed'].includes(status)) return production;
+    return updateDocument('Production', production.id, {
+      status: status === 'pending_procurement' ? 'pending_approval' : production.status,
+      material_request_status: 'activation_failed',
+      last_review_action: 'procurement_activation_failed',
+      review_notes: [
+        String(production.review_notes || '').trim(),
+        `Store / Procurement activation failed: ${errorMessage}`
+      ].filter(Boolean).join('\n')
+    }, client);
+  });
+}
+
+async function runProductionProcurementActivationWork(work) {
+  const productionId = String(work.productionId || '').trim();
+  const actor = work.actor || {};
+  if (!productionId) return;
+  try {
+    await updateDocument('Production', productionId, {
+      material_request_status: 'activation_processing',
+      last_review_action: 'procurement_activation_processing'
+    });
+    recordChanged('Production');
+    const result = await withTransaction(async (client) => {
+      const production = await findDocument('Production', productionId, client, true);
+      if (!production) {
+        const error = new Error('Production record not found for Store / Procurement activation.');
+        error.status = 404;
+        throw error;
+      }
+      const status = normalizeProductionStatus(production.status);
+      const materialStatus = String(production.material_request_status || '').toLowerCase();
+      if (status !== 'pending_procurement') {
+        return {
+          production,
+          materialRequest: null,
+          skipped: true,
+          message: 'Production is no longer awaiting Store / Procurement activation.'
+        };
+      }
+      if (PRODUCTION_PROCUREMENT_ACTIVATION_COMPLETE_STATUSES.has(materialStatus)) {
+        return {
+          production,
+          materialRequest: null,
+          skipped: true,
+          message: 'Store / Procurement material request is already active.'
+        };
+      }
+      await updateDocument('Production', production.id, {
+        material_request_status: 'activation_processing',
+        last_review_action: 'procurement_activation_processing'
+      }, client);
+      const productionForActivation = await findDocument('Production', production.id, client);
+      const materialRequest = await syncMaterialRequestForProduction(
+        actor,
+        productionForActivation,
+        'activate',
+        client
+      );
+      const updatedProduction = await findDocument('Production', production.id, client);
+      return {
+        production: updatedProduction,
+        materialRequest,
+        skipped: false,
+        message: materialRequest
+          ? 'Store / Procurement material request activated.'
+          : 'No stock-managed material request was required.'
+      };
+    });
+    recordChanged('Production');
+    recordChanged('MaterialRequest');
+    queueAuditAction('production procurement activation completed', {
+      user: actor,
+      action: result.skipped
+        ? 'PRODUCTION_PROCUREMENT_ACTIVATION_SKIPPED'
+        : 'PRODUCTION_PROCUREMENT_ACTIVATED',
+      entity: 'Production',
+      entityId: productionId,
+      details: {
+        production_record: result.production,
+        material_request_record: result.materialRequest,
+        message: result.message,
+        background_job: true
+      }
+    });
+  } catch (error) {
+    const failedProduction = await markProductionProcurementActivationFailed({
+      productionId,
+      error
+    }).catch((updateError) => {
+      console.error('Unable to mark Store / Procurement activation job as failed', updateError);
+      return null;
+    });
+    recordChanged('Production');
+    await auditAction({
+      user: actor,
+      action: 'PRODUCTION_PROCUREMENT_ACTIVATION_FAILED',
+      entity: 'Production',
+      entityId: productionId,
+      details: {
+        message: error?.message || 'Store / Procurement material request activation failed.',
+        production_record: failedProduction,
+        background_job: true
+      }
+    }).catch((auditError) => {
+      console.error('Unable to audit failed Store / Procurement activation job', auditError);
+    });
+  }
 }
 
 function normalizeMenuProductionIssueJobStatus(status) {
@@ -6481,6 +6656,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
     let productionInventoryMutated = false;
     let materialRequestMutated = false;
     let autoCompleteStartedProduction = null;
+    let procurementActivationQueuedProduction = null;
     if (entity === 'Production') {
       updated = await withTransaction(async (client) => {
         const lockedExisting = await findDocument(entity, request.params.id, client, true);
@@ -6507,6 +6683,7 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
           && normalizeProductionStatus(request.body?.status) === 'pending_procurement'
           && normalizeProductionReviewAction(request.body?.review_action) === 'rejected'
         );
+        const shouldQueueProcurementActivation = isProjectManagerApprovalActivation(lockedExisting, request.body || {});
         if (isAreaRejectionRollback && hasProductionInventoryCommitment(lockedExisting)) {
           const sites = await listDocuments('Site', { limit: 5000 }, client);
           const fulfillmentStore = resolveProductionFulfillmentStore(lockedExisting, sites);
@@ -6562,12 +6739,20 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
             jobId: startCompletionJobId
           };
         }
+        if (shouldQueueProcurementActivation) {
+          transactionPayload = {
+            ...transactionPayload,
+            material_request_status: 'activation_queued'
+          };
+        }
         let saved = await updateDocument(entity, request.params.id, transactionPayload, client);
         const status = String(saved?.status || '');
         if (['draft', 'planned', 'pending_approval', 'changes_requested'].includes(status)) {
           await syncMaterialRequestForProduction(request.user, saved, 'draft', client);
           materialRequestMutated = true;
           saved = await findDocument(entity, request.params.id, client);
+        } else if (status === 'pending_procurement' && shouldQueueProcurementActivation) {
+          procurementActivationQueuedProduction = saved;
         } else if (status === 'pending_procurement') {
           await syncMaterialRequestForProduction(
             request.user,
@@ -6599,6 +6784,31 @@ app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, ne
         completion_job: completionQueue.job,
         job: completionQueue.job
       };
+    }
+    if (entity === 'Production' && procurementActivationQueuedProduction) {
+      const queued = enqueueProductionProcurementActivationWork({
+        productionId: procurementActivationQueuedProduction.id,
+        actor: { ...request.user }
+      });
+      updated = {
+        ...updated,
+        queued: true,
+        procurement_activation_queued: true,
+        message: queued
+          ? 'PM approval saved. Store / Procurement material request activation queued in the background.'
+          : 'PM approval saved. Store / Procurement material request activation is already queued.'
+      };
+      queueAuditAction('production procurement activation queued', {
+        user: request.user,
+        action: 'PRODUCTION_PROCUREMENT_ACTIVATION_QUEUED',
+        entity: 'Production',
+        entityId: procurementActivationQueuedProduction.id,
+        details: {
+          production_record: procurementActivationQueuedProduction,
+          background_job: true,
+          duplicate_prevented: !queued
+        }
+      });
     }
     invalidateEntityAccessCaches(entity);
     recordChanged(entity);
@@ -8559,7 +8769,7 @@ const materialRequestAcknowledgementConcurrency = Math.max(
   1,
   Math.min(
     8,
-    Number.parseInt(process.env.MATERIAL_REQUEST_ACKNOWLEDGEMENT_WORKERS || '2', 10) || 2
+    Number.parseInt(process.env.MATERIAL_REQUEST_ACKNOWLEDGEMENT_WORKERS || '1', 10) || 1
   )
 );
 
@@ -10634,7 +10844,7 @@ const productionCompletionConcurrency = Math.max(
   1,
   Math.min(
     8,
-    Number.parseInt(process.env.PRODUCTION_COMPLETION_WORKERS || '2', 10) || 2
+    Number.parseInt(process.env.PRODUCTION_COMPLETION_WORKERS || '1', 10) || 1
   )
 );
 
