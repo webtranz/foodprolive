@@ -6198,6 +6198,7 @@ const OPERATIONAL_BACKGROUND_JOB_TYPES = Object.freeze({
   MATERIAL_REQUEST_ACKNOWLEDGEMENT: 'material_request_acknowledgement',
   PRODUCTION_COMPLETION: 'production_completion'
 });
+const OPERATIONAL_BACKGROUND_JOB_PAYLOAD_INSERT_CHUNK_SIZE = 250;
 
 function normalizeOperationalBackgroundJobStatus(status, fallback = 'QUEUED') {
   const normalized = String(status || '').trim().toUpperCase();
@@ -6602,26 +6603,29 @@ async function replaceOperationalBackgroundJobPayload(jobId, payload = {}) {
   const rows = flattenOperationalJobPayload(payload);
   await pool.query('DELETE FROM background_job_payload_fields WHERE job_id = $1', [id]);
   if (!rows.length) return;
-  const values = [];
-  const placeholders = rows.map((row, index) => {
-    const offset = index * 7;
-    values.push(
-      id,
-      row.field_path,
-      row.value_kind,
-      row.value_text,
-      row.value_numeric,
-      row.value_boolean,
-      row.value_date
+  for (let start = 0; start < rows.length; start += OPERATIONAL_BACKGROUND_JOB_PAYLOAD_INSERT_CHUNK_SIZE) {
+    const chunk = rows.slice(start, start + OPERATIONAL_BACKGROUND_JOB_PAYLOAD_INSERT_CHUNK_SIZE);
+    const values = [];
+    const placeholders = chunk.map((row, index) => {
+      const offset = index * 7;
+      values.push(
+        id,
+        row.field_path,
+        row.value_kind,
+        row.value_text,
+        row.value_numeric,
+        row.value_boolean,
+        row.value_date
+      );
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, NOW())`;
+    });
+    await pool.query(
+      `INSERT INTO background_job_payload_fields (
+         job_id, field_path, value_kind, value_text, value_numeric, value_boolean, value_date, created_at
+       ) VALUES ${placeholders.join(', ')}`,
+      values
     );
-    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, NOW())`;
-  });
-  await pool.query(
-    `INSERT INTO background_job_payload_fields (
-       job_id, field_path, value_kind, value_text, value_numeric, value_boolean, value_date, created_at
-     ) VALUES ${placeholders.join(', ')}`,
-    values
-  );
+  }
 }
 
 function operationalJobPayloadRowValue(row = {}) {

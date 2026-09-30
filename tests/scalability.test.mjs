@@ -67,6 +67,8 @@ assert.match(server, /createOperationalBackgroundJob/);
 assert.match(server, /createOperationalBackgroundJobItems/);
 assert.match(server, /updateOperationalBackgroundJobItem/);
 assert.match(server, /replaceOperationalBackgroundJobPayload/);
+assert.match(server, /OPERATIONAL_BACKGROUND_JOB_PAYLOAD_INSERT_CHUNK_SIZE = 250/);
+assert.match(server, /rows\.slice\(start, start \+ OPERATIONAL_BACKGROUND_JOB_PAYLOAD_INSERT_CHUNK_SIZE\)/);
 assert.match(server, /getOperationalBackgroundJobPayload/);
 assert.match(server, /app\.get\('\/api\/activity\/background-jobs', requireAuth, requireRole\(\['admin'\]\)/);
 assert.match(client, /listBackgroundJobs/);
