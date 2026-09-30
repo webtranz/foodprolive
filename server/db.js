@@ -1611,6 +1611,105 @@ function sumProductionReportMenuItemCosts(items = []) {
   return Number(costs.reduce((sum, value) => sum + Number(value), 0).toFixed(2));
 }
 
+async function syncProductionConsumptionReportCostsFromManifest(reportId, executor = pool) {
+  if (!reportId) return;
+
+  await query(
+    `UPDATE production_consumption_report_menu_items item
+        SET estimated_cost = COALESCE(NULLIF(line.estimated_cost, 0), NULLIF(line.actual_cost, 0), item.estimated_cost),
+            actual_cost = COALESCE(NULLIF(line.actual_cost, 0), NULLIF(line.estimated_cost, 0), item.actual_cost),
+            raw_weight_grams = COALESCE(item.raw_weight_grams, line.raw_weight_grams),
+            yielded_weight_grams = COALESCE(item.yielded_weight_grams, line.yielded_weight_grams),
+            produced_weight_grams = COALESCE(item.produced_weight_grams, line.produced_weight_grams),
+            expected_finished_weight_grams = COALESCE(item.expected_finished_weight_grams, line.expected_finished_weight_grams),
+            production_covers = COALESCE(item.production_covers, line.production_covers),
+            expected_yield_servings = COALESCE(item.expected_yield_servings, line.expected_yield_servings),
+            updated_at = NOW()
+       FROM production_manifest_lines line
+      WHERE item.report_id = $1
+        AND item.production_line_id = line.production_line_id
+        AND COALESCE(NULLIF(line.actual_cost, 0), NULLIF(line.estimated_cost, 0)) IS NOT NULL
+        AND (
+          item.actual_cost IS DISTINCT FROM COALESCE(NULLIF(line.actual_cost, 0), NULLIF(line.estimated_cost, 0), item.actual_cost)
+          OR item.estimated_cost IS DISTINCT FROM COALESCE(NULLIF(line.estimated_cost, 0), NULLIF(line.actual_cost, 0), item.estimated_cost)
+          OR item.raw_weight_grams IS NULL AND line.raw_weight_grams IS NOT NULL
+          OR item.yielded_weight_grams IS NULL AND line.yielded_weight_grams IS NOT NULL
+          OR item.produced_weight_grams IS NULL AND line.produced_weight_grams IS NOT NULL
+          OR item.expected_finished_weight_grams IS NULL AND line.expected_finished_weight_grams IS NOT NULL
+        )`,
+    [reportId],
+    executor
+  );
+
+  await query(
+    `WITH manifest_totals AS (
+       SELECT item.report_id, SUM(COALESCE(NULLIF(item.actual_cost, 0), NULLIF(item.estimated_cost, 0), 0)) AS total_cost
+         FROM production_consumption_report_menu_items item
+        WHERE item.report_id = $1
+          AND COALESCE(item.status, 'active') NOT IN ('voided', 'reversed', 'cancelled')
+        GROUP BY item.report_id
+     ),
+     line_layer_totals AS (
+       SELECT layer.report_line_id,
+              SUM(COALESCE(NULLIF(layer.accounting_total_cost, 0), NULLIF(layer.total_cost, 0), 0)) AS total_cost
+         FROM production_consumption_report_line_layers layer
+        WHERE layer.report_id = $1
+        GROUP BY layer.report_line_id
+     ),
+     line_totals AS (
+       SELECT line.report_id,
+              SUM(COALESCE(NULLIF(line.posted_cost, 0), NULLIF(layer_total.total_cost, 0), 0)) AS total_cost
+         FROM production_consumption_report_lines line
+         LEFT JOIN line_layer_totals layer_total
+           ON layer_total.report_line_id = line.report_line_id
+        WHERE line.report_id = $1
+          AND COALESCE(line.status, 'posted') NOT IN ('voided', 'reversed', 'cancelled')
+        GROUP BY line.report_id
+     ),
+     resolved AS (
+       SELECT report.report_id,
+              COALESCE(NULLIF(manifest_totals.total_cost, 0), NULLIF(line_totals.total_cost, 0), NULLIF(report.total_consumption_cost, 0), 0) AS total_cost
+         FROM production_consumption_reports report
+         LEFT JOIN manifest_totals ON manifest_totals.report_id = report.report_id
+         LEFT JOIN line_totals ON line_totals.report_id = report.report_id
+        WHERE report.report_id = $1
+     )
+     UPDATE production_consumption_reports report
+        SET total_consumption_cost = resolved.total_cost,
+            updated_at = NOW()
+       FROM resolved
+      WHERE report.report_id = resolved.report_id
+        AND resolved.total_cost > 0
+        AND report.total_consumption_cost IS DISTINCT FROM resolved.total_cost`,
+    [reportId],
+    executor
+  );
+
+  await query(
+    `UPDATE production_events production
+        SET ingredient_cost_total = report.total_consumption_cost,
+            production_cost_total = report.total_consumption_cost,
+            cost_per_serving = CASE
+              WHEN COALESCE(production.produced_servings, production.expected_yield_servings, production.target_servings, 0) > 0
+                THEN ROUND((report.total_consumption_cost / COALESCE(production.produced_servings, production.expected_yield_servings, production.target_servings))::numeric, 2)
+              ELSE production.cost_per_serving
+            END,
+            updated_at = NOW()
+       FROM production_consumption_reports report
+      WHERE report.report_id = $1
+        AND production.production_id = report.production_id
+        AND report.status <> 'reversed'
+        AND production.status = 'completed'
+        AND report.total_consumption_cost > 0
+        AND (
+          production.ingredient_cost_total IS DISTINCT FROM report.total_consumption_cost
+          OR production.production_cost_total IS DISTINCT FROM report.total_consumption_cost
+        )`,
+    [reportId],
+    executor
+  );
+}
+
 function rowToProductionConsumptionReport(row = {}) {
   const ingredientLines = rowJsonArray(row.ingredient_lines);
   const menuIssueItems = rowJsonArray(row.menu_issue_items);
@@ -1659,7 +1758,7 @@ function rowToProductionConsumptionReport(row = {}) {
     total_yielded_weight_grams: toNumberOrNull(row.total_yielded_weight_grams),
     portion_size_grams: toNumberOrNull(row.portion_size_grams),
     expected_yield_servings: toNumberOrNull(row.expected_yield_servings),
-    total_consumption_cost: lineTotalConsumptionCost || manifestTotalConsumptionCost || Number(row.total_consumption_cost || 0),
+    total_consumption_cost: manifestTotalConsumptionCost || lineTotalConsumptionCost || Number(row.total_consumption_cost || 0),
     total_shortage_cost: Number(row.total_shortage_cost || 0),
     shortage_line_count: Number(row.shortage_line_count || 0),
     shortage_totals_by_unit: rowJsonObject(row.shortage_totals_by_unit),
@@ -5381,10 +5480,10 @@ function normalizedSelectForEntity(entity) {
                          'weight_calculation_source', COALESCE(item.weight_calculation_source, manifest.weight_calculation_source),
                          'yield_calculation_source', COALESCE(item.yield_calculation_source, manifest.yield_calculation_source),
                          'weight_snapshot_version', COALESCE(item.weight_snapshot_version, manifest.weight_snapshot_version),
-                         'estimated_cost', COALESCE(NULLIF(item.estimated_cost, 0), NULLIF(manifest.estimated_cost, 0), NULLIF(manifest.actual_cost, 0), 0),
-                         'estimated_batch_cost', COALESCE(NULLIF(item.estimated_cost, 0), NULLIF(manifest.estimated_cost, 0), NULLIF(manifest.actual_cost, 0), 0),
-                         'actual_cost', COALESCE(NULLIF(item.actual_cost, 0), NULLIF(manifest.actual_cost, 0), NULLIF(item.estimated_cost, 0), NULLIF(manifest.estimated_cost, 0), 0),
-                         'production_time_cost', COALESCE(NULLIF(item.actual_cost, 0), NULLIF(manifest.actual_cost, 0), NULLIF(item.estimated_cost, 0), NULLIF(manifest.estimated_cost, 0), 0),
+                         'estimated_cost', COALESCE(NULLIF(manifest.estimated_cost, 0), NULLIF(manifest.actual_cost, 0), NULLIF(item.estimated_cost, 0), NULLIF(item.actual_cost, 0), 0),
+                         'estimated_batch_cost', COALESCE(NULLIF(manifest.estimated_cost, 0), NULLIF(manifest.actual_cost, 0), NULLIF(item.estimated_cost, 0), NULLIF(item.actual_cost, 0), 0),
+                         'actual_cost', COALESCE(NULLIF(manifest.actual_cost, 0), NULLIF(manifest.estimated_cost, 0), NULLIF(item.actual_cost, 0), NULLIF(item.estimated_cost, 0), 0),
+                         'production_time_cost', COALESCE(NULLIF(manifest.actual_cost, 0), NULLIF(manifest.estimated_cost, 0), NULLIF(item.actual_cost, 0), NULLIF(item.estimated_cost, 0), 0),
                          'status', COALESCE(item.status, manifest.status),
                          'source_name', COALESCE(item.source_name, manifest.source_name),
                          'ingredients_used', COALESCE((
@@ -8523,7 +8622,17 @@ async function replaceProductionConsumptionReportMenuItems(record, executor = po
         (SELECT recipe_version_id FROM recipe_versions WHERE recipe_version_id = NULLIF($5::text, '') LIMIT 1),
         (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($6::text, '') LIMIT 1),
         $7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-        $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35
+        $21,$22,$23,$24,$25,$26,$27,$28,$29,
+        COALESCE(
+          (SELECT COALESCE(NULLIF(estimated_cost, 0), NULLIF(actual_cost, 0)) FROM production_manifest_lines WHERE production_line_id = NULLIF($4::text, '') LIMIT 1),
+          $30
+        ),
+        COALESCE(
+          (SELECT COALESCE(NULLIF(actual_cost, 0), NULLIF(estimated_cost, 0)) FROM production_manifest_lines WHERE production_line_id = NULLIF($4::text, '') LIMIT 1),
+          $31,
+          $30
+        ),
+        $32,$33,$34,$35
       )
       ON CONFLICT (report_menu_item_id) DO UPDATE SET
         item_order = EXCLUDED.item_order,
@@ -9450,6 +9559,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
     );
     await replaceProductionManifestLines(record, executor);
     await replaceProductionConsumptionLines(record, executor);
+    await syncProductionConsumptionReportCostsFromManifest(record.consumption_report_id, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'ProductionConsumptionReport') {
@@ -9584,6 +9694,7 @@ async function insertOrUpdateNormalizedDocument(entity, record, existing = null,
     await replaceProductionConsumptionReportMenuItems(record, executor);
     await replaceProductionConsumptionReportUnitTotals(record, executor);
     await replaceProductionConsumptionReportEvents(record, executor);
+    await syncProductionConsumptionReportCostsFromManifest(record.id, executor);
     return findNormalizedDocument(entity, record.id, executor);
   }
   if (entity === 'ProducedItemBatch') {

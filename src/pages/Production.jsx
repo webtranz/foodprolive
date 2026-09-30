@@ -586,24 +586,24 @@ function mergeManifestItem(reportItem = {}, fallbackItem = {}) {
   const yieldedWeight = sumManifestItemWeight(reportItem, 'yielded_weight_grams')
     ?? sumManifestItemWeight(fallbackItem, 'yielded_weight_grams');
   const productionTimeCost = firstPositivePresent(
-    reportItem.actual_cost,
-    reportItem.production_time_cost,
-    reportItem.posted_cost,
-    reportItem.consumed_cost,
-    reportItem.total_cost,
     fallbackItem.actual_cost,
     fallbackItem.production_time_cost,
     fallbackItem.posted_cost,
     fallbackItem.consumed_cost,
-    fallbackItem.total_cost
+    fallbackItem.total_cost,
+    reportItem.actual_cost,
+    reportItem.production_time_cost,
+    reportItem.posted_cost,
+    reportItem.consumed_cost,
+    reportItem.total_cost
   );
   const estimatedBatchCost = firstPresent(
-    reportItem.estimated_batch_cost,
-    reportItem.estimated_cost,
     fallbackItem.estimated_batch_cost,
     fallbackItem.estimated_cost,
     fallbackItem.planned_total_cost,
     productionTimeCost,
+    reportItem.estimated_batch_cost,
+    reportItem.estimated_cost,
     0
   );
 
@@ -621,10 +621,10 @@ function mergeManifestItem(reportItem = {}, fallbackItem = {}) {
       fallbackItem.target_servings,
       fallbackItem.expected_servings
     ),
-    estimated_cost: firstPresent(reportItem.estimated_cost, fallbackItem.estimated_cost, estimatedBatchCost),
+    estimated_cost: firstPresent(fallbackItem.estimated_cost, reportItem.estimated_cost, estimatedBatchCost),
     estimated_batch_cost: estimatedBatchCost,
     production_time_cost: productionTimeCost,
-    actual_cost: firstPresent(reportItem.actual_cost, fallbackItem.actual_cost, productionTimeCost),
+    actual_cost: firstPresent(productionTimeCost, fallbackItem.actual_cost, reportItem.actual_cost),
     raw_weight_grams: rawWeight,
     yielded_weight_grams: yieldedWeight,
     ingredients_used: mergedLines

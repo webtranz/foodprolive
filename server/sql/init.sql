@@ -7411,6 +7411,110 @@ CREATE TABLE IF NOT EXISTS monthly_purchase_request_exports (
 CREATE INDEX IF NOT EXISTS idx_monthly_pr_exports_request
   ON monthly_purchase_request_exports (request_id, exported_at DESC);
 
+-- PCR menu-item cost repair: linked normalized production manifest lines are the
+-- production-time source of truth. Earlier PCR rows could keep stale non-zero
+-- menu-planning costs, causing line costs and totals to diverge from the actual
+-- produced manifest. This block is idempotent and also repairs historical PCRs.
+UPDATE production_consumption_report_menu_items item
+   SET estimated_cost = COALESCE(NULLIF(line.estimated_cost, 0), NULLIF(line.actual_cost, 0), item.estimated_cost),
+       actual_cost = COALESCE(NULLIF(line.actual_cost, 0), NULLIF(line.estimated_cost, 0), item.actual_cost),
+       raw_weight_grams = COALESCE(item.raw_weight_grams, line.raw_weight_grams),
+       yielded_weight_grams = COALESCE(item.yielded_weight_grams, line.yielded_weight_grams),
+       produced_weight_grams = COALESCE(item.produced_weight_grams, line.produced_weight_grams),
+       expected_finished_weight_grams = COALESCE(item.expected_finished_weight_grams, line.expected_finished_weight_grams),
+       production_covers = COALESCE(item.production_covers, line.production_covers),
+       expected_yield_servings = COALESCE(item.expected_yield_servings, line.expected_yield_servings),
+       updated_at = NOW()
+  FROM production_manifest_lines line
+ WHERE item.production_line_id = line.production_line_id
+   AND COALESCE(NULLIF(line.actual_cost, 0), NULLIF(line.estimated_cost, 0)) IS NOT NULL
+   AND (
+     item.actual_cost IS DISTINCT FROM COALESCE(NULLIF(line.actual_cost, 0), NULLIF(line.estimated_cost, 0), item.actual_cost)
+     OR item.estimated_cost IS DISTINCT FROM COALESCE(NULLIF(line.estimated_cost, 0), NULLIF(line.actual_cost, 0), item.estimated_cost)
+     OR item.raw_weight_grams IS NULL AND line.raw_weight_grams IS NOT NULL
+     OR item.yielded_weight_grams IS NULL AND line.yielded_weight_grams IS NOT NULL
+     OR item.produced_weight_grams IS NULL AND line.produced_weight_grams IS NOT NULL
+     OR item.expected_finished_weight_grams IS NULL AND line.expected_finished_weight_grams IS NOT NULL
+   );
+
+WITH manifest_totals AS (
+  SELECT item.report_id,
+         SUM(COALESCE(NULLIF(item.actual_cost, 0), NULLIF(item.estimated_cost, 0), 0)) AS total_cost
+    FROM production_consumption_report_menu_items item
+   WHERE COALESCE(item.status, 'active') NOT IN ('voided', 'reversed', 'cancelled')
+   GROUP BY item.report_id
+),
+line_layer_totals AS (
+  SELECT layer.report_line_id,
+         SUM(COALESCE(NULLIF(layer.accounting_total_cost, 0), NULLIF(layer.total_cost, 0), 0)) AS total_cost
+    FROM production_consumption_report_line_layers layer
+   GROUP BY layer.report_line_id
+),
+line_totals AS (
+  SELECT line.report_id,
+         SUM(COALESCE(NULLIF(line.posted_cost, 0), NULLIF(layer_total.total_cost, 0), 0)) AS total_cost
+    FROM production_consumption_report_lines line
+    LEFT JOIN line_layer_totals layer_total
+      ON layer_total.report_line_id = line.report_line_id
+   WHERE COALESCE(line.status, 'posted') NOT IN ('voided', 'reversed', 'cancelled')
+   GROUP BY line.report_id
+),
+resolved_totals AS (
+  SELECT report.report_id,
+         COALESCE(NULLIF(manifest_totals.total_cost, 0), NULLIF(line_totals.total_cost, 0), NULLIF(report.total_consumption_cost, 0), 0) AS total_cost
+    FROM production_consumption_reports report
+    LEFT JOIN manifest_totals
+      ON manifest_totals.report_id = report.report_id
+    LEFT JOIN line_totals
+      ON line_totals.report_id = report.report_id
+   WHERE report.status <> 'reversed'
+)
+UPDATE production_consumption_reports report
+   SET total_consumption_cost = resolved_totals.total_cost,
+       updated_at = NOW()
+  FROM resolved_totals
+ WHERE report.report_id = resolved_totals.report_id
+   AND resolved_totals.total_cost > 0
+   AND report.total_consumption_cost IS DISTINCT FROM resolved_totals.total_cost;
+
+UPDATE production_events production
+   SET ingredient_cost_total = report.total_consumption_cost,
+       production_cost_total = report.total_consumption_cost,
+       cost_per_serving = CASE
+         WHEN COALESCE(production.produced_servings, production.expected_yield_servings, production.target_servings, 0) > 0
+           THEN ROUND((report.total_consumption_cost / COALESCE(production.produced_servings, production.expected_yield_servings, production.target_servings))::numeric, 2)
+         ELSE production.cost_per_serving
+       END,
+       updated_at = NOW()
+  FROM production_consumption_reports report
+ WHERE production.production_id = report.production_id
+   AND report.status <> 'reversed'
+   AND production.status = 'completed'
+   AND report.total_consumption_cost > 0
+   AND (
+     production.ingredient_cost_total IS DISTINCT FROM report.total_consumption_cost
+     OR production.production_cost_total IS DISTINCT FROM report.total_consumption_cost
+   );
+
+UPDATE produced_output_batches batch
+   SET total_cost = line.actual_cost,
+       unit_cost = CASE
+         WHEN batch.initial_weight_grams > 0 THEN line.actual_cost / batch.initial_weight_grams
+         ELSE batch.unit_cost
+       END,
+       updated_at = NOW()
+  FROM production_manifest_lines line
+ WHERE batch.production_line_id = line.production_line_id
+   AND line.actual_cost > 0
+   AND COALESCE(batch.status, 'active') NOT IN ('voided', 'reversed', 'cancelled')
+   AND (
+     batch.total_cost IS DISTINCT FROM line.actual_cost
+     OR batch.unit_cost IS DISTINCT FROM CASE
+       WHEN batch.initial_weight_grams > 0 THEN line.actual_cost / batch.initial_weight_grams
+       ELSE batch.unit_cost
+     END
+   );
+
 CREATE OR REPLACE FUNCTION notify_foodpro_scoped_table_change()
 RETURNS TRIGGER AS $$
 DECLARE

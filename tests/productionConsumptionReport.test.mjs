@@ -296,7 +296,9 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(dbSource, /item\?\.production_time_cost/);
   assert.match(dbSource, /LEFT JOIN production_manifest_lines manifest[\s\S]*manifest\.production_line_id = item\.production_line_id/);
   assert.match(dbSource, /FROM production_manifest_lines manifest[\s\S]*WHERE manifest\.production_id = report\.production_id/);
-  assert.match(dbSource, /'actual_cost', COALESCE\(NULLIF\(item\.actual_cost, 0\), NULLIF\(manifest\.actual_cost, 0\), NULLIF\(item\.estimated_cost, 0\), NULLIF\(manifest\.estimated_cost, 0\), 0\)/);
+  assert.match(dbSource, /'actual_cost', COALESCE\(NULLIF\(manifest\.actual_cost, 0\), NULLIF\(manifest\.estimated_cost, 0\), NULLIF\(item\.actual_cost, 0\), NULLIF\(item\.estimated_cost, 0\), 0\)/);
+  assert.match(dbSource, /async function syncProductionConsumptionReportCostsFromManifest/);
+  assert.match(sqlSource, /PCR menu-item cost repair/);
   const reportMenuItemCostStart = dbSource.indexOf('function productionReportMenuItemCost');
   const reportMenuItemCostEnd = dbSource.indexOf('\nfunction productionReportLineLayerCost', reportMenuItemCostStart);
   const reportMenuItemCostBlock = dbSource.slice(reportMenuItemCostStart, reportMenuItemCostEnd);
