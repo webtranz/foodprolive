@@ -97,6 +97,10 @@ const OPERATIONAL_QUERY_OPTIONS = {
 
 const ACTIVE_COMPLETION_JOB_STATUSES = new Set(['queued', 'processing']);
 
+function createMenuIssueAdminReissueRunId() {
+  return `admin-reissue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function getProductionCompletionJobFromRecord(record = {}) {
   const embeddedJob = record?.completion_job || record?.job || null;
   const recordStatus = String(record?.production_status || record?.status || '').trim().toLowerCase();
@@ -1625,6 +1629,9 @@ export default function Production() {
   const [issueSuggestionLoadingKey, setIssueSuggestionLoadingKey] = useState('');
   const [editingIssueProduction, setEditingIssueProduction] = useState(null);
   const [issueAdminReissueEnabled, setIssueAdminReissueEnabled] = useState(false);
+  const [issueAdminReissueRunId, setIssueAdminReissueRunId] = useState('');
+  const [issueSubmitLocked, setIssueSubmitLocked] = useState(false);
+  const issueSubmitInFlightRef = useRef(false);
 
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -1672,6 +1679,9 @@ export default function Production() {
     setActiveIssueItemKey('');
     setEditingIssueProduction(null);
     setIssueAdminReissueEnabled(false);
+    setIssueAdminReissueRunId('');
+    setIssueSubmitLocked(false);
+    issueSubmitInFlightRef.current = false;
   };
 
   const { data: sites = [], error: sitesError, isPending: sitesLoading } = useQuery({
@@ -1746,7 +1756,7 @@ export default function Production() {
   });
 
   const issueProductionMutation = useMutation({
-    mutationFn: async ({ status }) => {
+    mutationFn: async ({ status, adminReissueRunId = '' }) => {
       if (editingIssueProduction && !can('edit_production_request')) {
         throw new Error('You need production edit permission to update this menu production request.');
       }
@@ -1780,7 +1790,7 @@ export default function Production() {
           throw new Error('Edit one meal review request at a time. Keep only this meal review selected before saving.');
         }
         const group = mealGroups[0];
-        const nextPayload = buildMenuIssueSubmitData(group, status);
+        const nextPayload = buildMenuIssueSubmitData(group, status, { adminReissueRunId });
         const currentStatus = String(editingIssueProduction.status || 'draft').trim().toLowerCase() || 'draft';
         const contentPayload = {
           ...nextPayload,
@@ -1792,7 +1802,7 @@ export default function Production() {
         }
         return { mode: 'updated', records: [updated] };
       }
-      const productions = mealGroups.map((group) => buildMenuIssueSubmitData(group, status));
+      const productions = mealGroups.map((group) => buildMenuIssueSubmitData(group, status, { adminReissueRunId }));
       const queued = await base44.productionWorkflow.issueMenuProduction({ productions });
       return {
         mode: 'queued',
@@ -1819,12 +1829,32 @@ export default function Production() {
     },
     onError: (error) => {
       setActionError(error.message || 'Unable to issue production from the menu plan.');
+    },
+    onSettled: () => {
+      issueSubmitInFlightRef.current = false;
+      setIssueSubmitLocked(false);
     }
   });
 
   const issueMutationStatus = String(issueProductionMutation.variables?.status || '').toLowerCase();
   const isIssueDraftPending = issueProductionMutation.isPending && issueMutationStatus === 'draft';
   const isIssueSubmitPending = issueProductionMutation.isPending && issueMutationStatus === 'pending_approval';
+  const submitMenuIssueProduction = (status) => {
+    if (issueSubmitInFlightRef.current || issueSubmitLocked || issueProductionMutation.isPending) {
+      setActionError('This menu production submission was already accepted. Please wait for the queued job instead of submitting again.');
+      return;
+    }
+    const adminReissueRunId = issueAdminReissueActive
+      ? issueAdminReissueRunId || createMenuIssueAdminReissueRunId()
+      : '';
+    if (adminReissueRunId && adminReissueRunId !== issueAdminReissueRunId) {
+      setIssueAdminReissueRunId(adminReissueRunId);
+    }
+    issueSubmitInFlightRef.current = true;
+    setIssueSubmitLocked(true);
+    setActionError('');
+    issueProductionMutation.mutate({ status, adminReissueRunId });
+  };
 
   const productionInventorySiteFilter = selectedSite && selectedSite !== 'all' ? selectedSite : '';
   const { data: inventory = [], error: inventoryError, isFetching: inventoryLoading } = useQuery({
@@ -1995,6 +2025,10 @@ export default function Production() {
   const isIssueItemSelectionLocked = (item) => (
     isIssueItemAlreadyIssued(item) && !issueAdminReissueActive
   );
+  const setIssueAdminReissueOverride = (enabled) => {
+    setIssueAdminReissueEnabled(enabled);
+    setIssueAdminReissueRunId((current) => (enabled ? current || createMenuIssueAdminReissueRunId() : ''));
+  };
 
   useEffect(() => {
     const routeIssueRequest = location.state?.issueProduction;
@@ -3142,7 +3176,7 @@ export default function Production() {
     };
   });
 
-  const buildMenuIssueSubmitData = (group, status) => {
+  const buildMenuIssueSubmitData = (group, status, { adminReissueRunId: requestedAdminReissueRunId = '' } = {}) => {
     const firstItem = group.items[0] || {};
     const recipe = recipes.find((entry) => String(entry.id) === String(firstItem.recipe_id)) || {};
     const site = issueSite || visibleSites.find((entry) => String(entry.id) === String(group.site_id || firstItem.site_id));
@@ -3156,9 +3190,7 @@ export default function Production() {
     const manifestItemNames = group.items.map((item) => item.recipe_name).filter(Boolean);
     const adminReissuedItems = group.items.filter((item) => isIssueItemAlreadyIssued(item));
     const isAdminReissue = issueAdminReissueActive && adminReissuedItems.length > 0;
-    const adminReissueRunId = isAdminReissue
-      ? `admin-reissue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-      : '';
+    const adminReissueRunId = isAdminReissue ? requestedAdminReissueRunId || issueAdminReissueRunId : '';
     const menuIssueItems = group.items.map((item) => {
       const itemLines = issueSnapshots[item.key] || [];
       const itemBatchCost = Number(getIssueItemSnapshotCost(item.key).toFixed(2));
@@ -3930,14 +3962,18 @@ export default function Production() {
   const activeIssueCostPerServing = activeIssueItem
     ? Number((activeIssueBatchCost / Math.max(1, getIssueItemProductionTarget(activeIssueItem))).toFixed(2))
     : 0;
+  const issueAlreadySubmittedDisabledReason = !issueAdminReissueActive && visibleAlreadyIssuedIssueItems.length > 0
+    ? 'This menu production was already submitted. Use the existing production card, or an administrator must tick “Create another admin run” before adding quantities again.'
+    : '';
   const issueSubmitDisabledReason = editingIssueProduction && !can('edit_production_request')
       ? 'You need production edit permission to update this menu production request.'
       : !editingIssueProduction && !can('create_production_request')
         ? 'You need production creation permission to issue production.'
         : selectedIssueMealGroups.length === 0
-        ? issueAdminReissueActive
-          ? 'Enter production covers or production size greater than zero for at least one admin reissue item.'
-          : 'Enter production covers greater than zero for at least one planned meal item that has not already been issued.'
+        ? issueAlreadySubmittedDisabledReason
+          || (issueAdminReissueActive
+            ? 'Enter production covers or production size greater than zero for at least one admin reissue item.'
+            : 'Enter production covers greater than zero for at least one planned meal item that has not already been issued.')
         : issueInventoryCheckState.message;
   const issueSubmitForApprovalDisabledReason = issueSubmitDisabledReason
     || (!can('submit_production_request') ? 'You need production submission permission to submit this request.' : '');
@@ -4497,7 +4533,7 @@ export default function Production() {
                               type="checkbox"
                               className="h-4 w-4 rounded border-amber-300"
                               checked={issueAdminReissueActive}
-                              onChange={(event) => setIssueAdminReissueEnabled(event.target.checked)}
+                              onChange={(event) => setIssueAdminReissueOverride(event.target.checked)}
                             />
                             Create another admin run
                           </label>
@@ -4634,7 +4670,9 @@ export default function Production() {
                       return (
                         <div
                           key={item.key}
-                          className={`rounded-2xl border bg-white p-4 transition ${
+                          className={`rounded-2xl border p-4 transition ${
+                            selectionLocked ? 'bg-slate-50 opacity-70' : 'bg-white'
+                          } ${
                             isActive ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-slate-200'
                           }`}
                         >
@@ -4683,6 +4721,11 @@ export default function Production() {
                               {item.production_blocked_reason ? (
                                 <p className="mt-1 text-xs font-medium text-amber-700">
                                   {item.production_blocked_reason}
+                                </p>
+                              ) : null}
+                              {selectionLocked ? (
+                                <p className="mt-1 text-xs font-medium text-slate-500">
+                                  Already submitted. Admin override is required before quantities can be added again.
                                 </p>
                               ) : null}
                             </button>
@@ -4813,17 +4856,17 @@ export default function Production() {
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={issueProductionMutation.isPending || Boolean(issueSubmitDisabledReason)}
-                      onClick={() => issueProductionMutation.mutate({ status: 'draft' })}
+                      disabled={issueSubmitLocked || issueProductionMutation.isPending || Boolean(issueSubmitDisabledReason)}
+                      onClick={() => submitMenuIssueProduction('draft')}
                     >
                       {isIssueDraftPending ? 'Queuing...' : editingIssueProduction ? 'Save Draft' : 'Save Meal Drafts'}
                     </Button>
                     <Button
                       type="button"
                       className="bg-emerald-600 hover:bg-emerald-700"
-                      disabled={issueProductionMutation.isPending || Boolean(issueSubmitForApprovalDisabledReason)}
+                      disabled={issueSubmitLocked || issueProductionMutation.isPending || Boolean(issueSubmitForApprovalDisabledReason)}
                       title={issueSubmitForApprovalDisabledReason || undefined}
-                      onClick={() => issueProductionMutation.mutate({ status: 'pending_approval' })}
+                      onClick={() => submitMenuIssueProduction('pending_approval')}
                     >
                       <Factory className="mr-2 h-4 w-4" />
                       {isIssueSubmitPending

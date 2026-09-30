@@ -7446,29 +7446,103 @@ function isActiveMenuIssueProductionStatus(status) {
   return !['cancelled', 'voided', 'reversed'].includes(normalizeProductionStatus(status));
 }
 
+function normalizeMenuIssueDuplicateValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function menuIssueProductionSiteIds(record = {}) {
+  return [
+    record.fulfillment_store_id,
+    record.site_id,
+    record.warehouse_id
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+}
+
+function menuIssueProductionItemKeys(record = {}) {
+  const keys = [
+    record.source_menu_plan_item_key,
+    ...(Array.isArray(record.source_menu_plan_item_keys) ? record.source_menu_plan_item_keys : []),
+    ...(Array.isArray(record.menu_issue_items)
+      ? record.menu_issue_items.flatMap((item) => [
+        item?.key,
+        item?.source_menu_plan_item_key,
+        item?.original_source_menu_plan_item_key,
+        item?.manifest_item_key
+      ])
+      : []),
+    ...(Array.isArray(record.manifest_lines)
+      ? record.manifest_lines.flatMap((line) => [
+        line?.key,
+        line?.item_key,
+        line?.source_menu_plan_item_key,
+        line?.original_source_menu_plan_item_key,
+        line?.manifest_item_key
+      ])
+      : [])
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  return [...new Set(keys)];
+}
+
+function menuIssueProductionsOverlap(payload = {}, candidate = {}) {
+  const payloadPlanId = String(payload.source_menu_plan_id || payload.menu_plan_id || '').trim();
+  const candidatePlanId = String(candidate.source_menu_plan_id || candidate.menu_plan_id || '').trim();
+  if (payloadPlanId && candidatePlanId && payloadPlanId !== candidatePlanId) return false;
+
+  const payloadDate = String(payload.production_date || '').slice(0, 10);
+  const candidateDate = String(candidate.production_date || '').slice(0, 10);
+  if (payloadDate && candidateDate && payloadDate !== candidateDate) return false;
+
+  const payloadMeal = normalizeMenuIssueDuplicateValue(payload.meal_type || payload.source_menu_plan_meal_type);
+  const candidateMeal = normalizeMenuIssueDuplicateValue(candidate.meal_type || candidate.source_menu_plan_meal_type);
+  if (payloadMeal && candidateMeal && payloadMeal !== candidateMeal) return false;
+
+  const payloadMenuType = normalizeMenuIssueDuplicateValue(payload.menu_type || payload.cuisine_type);
+  const candidateMenuType = normalizeMenuIssueDuplicateValue(candidate.menu_type || candidate.cuisine_type);
+  if (payloadMenuType && candidateMenuType && payloadMenuType !== candidateMenuType) return false;
+
+  const payloadMenuCategory = normalizeMenuIssueDuplicateValue(payload.menu_category);
+  const candidateMenuCategory = normalizeMenuIssueDuplicateValue(candidate.menu_category);
+  if (payloadMenuCategory && candidateMenuCategory && payloadMenuCategory !== candidateMenuCategory) return false;
+
+  const payloadSites = new Set(menuIssueProductionSiteIds(payload));
+  const candidateSites = menuIssueProductionSiteIds(candidate);
+  if (payloadSites.size > 0 && candidateSites.length > 0 && !candidateSites.some((siteId) => payloadSites.has(siteId))) {
+    return false;
+  }
+
+  const payloadReissueRunId = String(payload.production_issue_reissue_run_id || '').trim();
+  if (payload.production_issue_admin_reissue) {
+    return candidate.production_issue_admin_reissue === true
+      && payloadReissueRunId
+      && String(candidate.production_issue_reissue_run_id || '').trim() === payloadReissueRunId;
+  }
+
+  const payloadGroupKey = String(payload.production_issue_group_key || '').trim();
+  const candidateGroupKey = String(candidate.production_issue_group_key || '').trim();
+  if (payloadGroupKey && candidateGroupKey && payloadGroupKey === candidateGroupKey) return true;
+
+  const payloadItemKeys = new Set(menuIssueProductionItemKeys(payload));
+  const candidateItemKeys = menuIssueProductionItemKeys(candidate);
+  return payloadItemKeys.size > 0 && candidateItemKeys.some((itemKey) => payloadItemKeys.has(itemKey));
+}
+
 async function findExistingMenuIssueProduction(payload = {}, executor = null) {
   const issueGroupKey = String(payload.issue_group_key || '').trim();
   const productionDate = String(payload.production_date || '').slice(0, 10);
-  const siteId = String(payload.fulfillment_store_id || payload.site_id || payload.warehouse_id || '').trim();
   const mealType = String(payload.meal_type || payload.source_menu_plan_meal_type || '').trim().toLowerCase();
   const candidates = await listDocuments('Production', {
     filters: {
-      ...(siteId ? { site_id: siteId } : {}),
       ...(productionDate ? { production_date: productionDate } : {}),
       ...(mealType ? { meal_type: mealType } : {})
     },
-    limit: 300
+    limit: 500
   }, executor || undefined);
   return (Array.isArray(candidates) ? candidates : []).find((candidate) => {
     if (!isActiveMenuIssueProductionStatus(candidate.status)) return false;
     if (issueGroupKey && String(candidate.issue_group_key || '').trim() === issueGroupKey) return true;
-    return (
-      String(candidate.source_menu_plan_id || candidate.menu_plan_id || '') === String(payload.source_menu_plan_id || payload.menu_plan_id || '')
-      && String(candidate.production_issue_group_key || '') === String(payload.production_issue_group_key || '')
-      && String(candidate.meal_type || '').toLowerCase() === mealType
-      && String(candidate.menu_type || candidate.cuisine_type || '').toLowerCase() === String(payload.menu_type || payload.cuisine_type || '').toLowerCase()
-      && String(candidate.menu_category || '').toLowerCase() === String(payload.menu_category || '').toLowerCase()
-    );
+    return menuIssueProductionsOverlap(payload, candidate);
   }) || null;
 }
 
@@ -7500,6 +7574,14 @@ async function createMenuIssueProductionRecord(actor, payload = {}) {
     ...payload,
     issue_group_key: String(payload.issue_group_key || '').trim() || buildMenuProductionIssueRecordKey(payload)
   };
+  if (
+    issuePayload.production_issue_admin_reissue === true
+    && !String(issuePayload.production_issue_reissue_run_id || '').trim()
+  ) {
+    const error = new Error('Admin reissue requires a tracked reissue run ID before another production can be created from already-submitted menu items.');
+    error.status = 400;
+    throw error;
+  }
   authorizeEntityAction(actor, 'Production', 'create', issuePayload);
   const existing = await findExistingMenuIssueProduction(issuePayload);
   if (existing) {
@@ -7518,7 +7600,21 @@ async function createMenuIssueProductionRecord(actor, payload = {}) {
         duplicatePrevented: true
       };
     }
-    let created = await createDocument('Production', preparedPayload, client);
+    let created;
+    try {
+      created = await createDocument('Production', preparedPayload, client);
+    } catch (error) {
+      if (error?.code === '23505') {
+        const raceExisting = await findExistingMenuIssueProduction(issuePayload, client);
+        if (raceExisting) {
+          return {
+            record: raceExisting,
+            duplicatePrevented: true
+          };
+        }
+      }
+      throw error;
+    }
     if (['draft', 'planned', 'pending_approval', 'changes_requested'].includes(String(created.status || ''))) {
       await syncMaterialRequestForProduction(actor, created, 'draft', client);
       created = await findDocument('Production', created.id, client);
@@ -7704,9 +7800,58 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
     if (productions.length > 12) {
       return response.status(400).json({ message: 'Issue no more than 12 meal production requests in one background job.' });
     }
+    const unauthorizedAdminReissue = productions.find((payload) => payload?.production_issue_admin_reissue === true);
+    if (unauthorizedAdminReissue && !hasAdminAccess(request.user)) {
+      return response.status(403).json({
+        message: 'Only administrators can create another production run from menu items that were already submitted.'
+      });
+    }
+    const adminReissueWithoutRunId = productions.find((payload) => (
+      payload?.production_issue_admin_reissue === true
+      && !String(payload?.production_issue_reissue_run_id || '').trim()
+    ));
+    if (adminReissueWithoutRunId) {
+      return response.status(400).json({
+        message: 'Admin reissue requires a tracked reissue run ID before another production can be created from already-submitted menu items.'
+      });
+    }
     productions.forEach((payload) => {
       authorizeEntityAction(request.user, 'Production', 'create', payload || {});
     });
+    const duplicateMatches = [];
+    for (const payload of productions) {
+      const duplicatePayload = {
+        ...payload,
+        issue_group_key: String(payload?.issue_group_key || '').trim() || buildMenuProductionIssueRecordKey(payload)
+      };
+      const existingProduction = await findExistingMenuIssueProduction(duplicatePayload);
+      if (existingProduction) {
+        duplicateMatches.push({
+          payload,
+          existing: existingProduction
+        });
+      }
+    }
+    if (duplicateMatches.length > 0) {
+      const duplicateLabels = duplicateMatches.map(({ payload, existing }) => (
+        [
+          payload?.meal_type || existing?.meal_type,
+          payload?.menu_type || payload?.cuisine_type || existing?.menu_type || existing?.cuisine_type,
+          payload?.menu_category || existing?.menu_category
+        ].filter(Boolean).join(' / ') || existing?.recipe_name || existing?.id || 'menu production'
+      ));
+      return response.status(409).json({
+        message: `${duplicateLabels.join(', ')} was already submitted for production. Use the existing production card, or an administrator must tick “Create another admin run” before adding quantities again.`,
+        duplicate_prevented: true,
+        duplicate_productions: duplicateMatches.map(({ existing }) => ({
+          id: existing.id,
+          status: existing.status,
+          production_date: existing.production_date,
+          meal_type: existing.meal_type,
+          recipe_name: existing.recipe_name
+        }))
+      });
+    }
     const key = buildMenuProductionIssueJobKey(productions);
     const backgroundJob = await createOperationalBackgroundJob({
       jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.MENU_PRODUCTION_ISSUE,
