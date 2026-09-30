@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, Search } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { usePermissions } from '@/components/auth/usePermissions';
 import { downloadCSV, downloadExcel } from '@/components/utils/exportData';
 import PageHeader from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/badge';
@@ -89,7 +90,28 @@ function buildAuditNarrative(log) {
   };
 }
 
+const JOB_STATUS_TONE = {
+  PREPARING: 'bg-sky-100 text-sky-700',
+  QUEUED: 'bg-blue-100 text-blue-700',
+  PROCESSING: 'bg-amber-100 text-amber-700',
+  COMPLETED: 'bg-emerald-100 text-emerald-700',
+  SKIPPED: 'bg-slate-100 text-slate-700',
+  FAILED: 'bg-rose-100 text-rose-700',
+  CANCELLED: 'bg-slate-100 text-slate-700'
+};
+
+function clampProgress(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function formatJobType(value) {
+  return humanize(value || 'background_job');
+}
+
 export default function AuditLogs() {
+  const { isAdmin } = usePermissions();
   const [search, setSearch] = useState('');
   const [action, setAction] = useState('');
   const [entity, setEntity] = useState('');
@@ -98,7 +120,18 @@ export default function AuditLogs() {
     queryKey: ['audit-logs', filters],
     queryFn: () => base44.activity.listAuditLogs(filters)
   });
+  const {
+    data: backgroundJobData,
+    isLoading: isBackgroundJobsLoading,
+    error: backgroundJobsError
+  } = useQuery({
+    queryKey: ['background-jobs', isAdmin],
+    queryFn: () => base44.activity.listBackgroundJobs(100),
+    enabled: isAdmin,
+    refetchInterval: isAdmin ? 5000 : false
+  });
   const logs = data?.logs || [];
+  const backgroundJobs = backgroundJobData?.jobs || [];
 
   const applyFilters = (event) => {
     event.preventDefault();
@@ -108,6 +141,88 @@ export default function AuditLogs() {
   return (
     <div className="p-4 md:p-8">
       <PageHeader title="Audit Logs" description="Plain-language history of sign-ins, record changes, report access, and background jobs for reverse troubleshooting." />
+
+      {isAdmin ? (
+        <Card className="mb-5">
+          <CardContent className="p-4">
+            <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Background Job Monitor</h2>
+                <p className="text-sm text-slate-500">Admin-only queue trace with durable job status and progress.</p>
+              </div>
+              <Badge variant="outline">{backgroundJobs.length} recent jobs</Badge>
+            </div>
+            {isBackgroundJobsLoading ? (
+              <div className="rounded border border-slate-200 p-4 text-sm text-slate-500">Loading background jobs…</div>
+            ) : backgroundJobsError ? (
+              <div className="rounded border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{backgroundJobsError.message}</div>
+            ) : !backgroundJobs.length ? (
+              <div className="rounded border border-slate-200 p-4 text-sm text-slate-500">No background jobs have been recorded yet.</div>
+            ) : (
+              <div className="max-h-[360px] overflow-auto rounded border border-slate-200">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-white">
+                    <TableRow>
+                      <TableHead>Queued</TableHead>
+                      <TableHead>Job</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Progress</TableHead>
+                      <TableHead>Entity</TableHead>
+                      <TableHead>Message</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {backgroundJobs.map((job) => {
+                      const progress = clampProgress(job.progress);
+                      const status = String(job.status || 'QUEUED').toUpperCase();
+                      return (
+                        <TableRow key={job.id}>
+                          <TableCell className="whitespace-nowrap align-top text-xs">{formatDate(job.queued_at)}</TableCell>
+                          <TableCell className="align-top">
+                            <div className="font-medium text-slate-900">{formatJobType(job.job_type)}</div>
+                            <div className="max-w-52 truncate text-xs text-slate-500">{job.id}</div>
+                            <div className="text-xs text-slate-500">{job.actor_name || job.actor_email || 'System'}</div>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <Badge className={JOB_STATUS_TONE[status] || 'bg-slate-100 text-slate-700'}>{humanize(status)}</Badge>
+                            {job.total_items ? (
+                              <div className="mt-1 text-xs text-slate-500">
+                                {job.completed_items}/{job.total_items} items complete
+                                {job.failed_items ? ` · ${job.failed_items} failed` : ''}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="min-w-48 align-top">
+                            <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
+                              <span>{progress.toFixed(0)}%</span>
+                              <span>{formatDate(job.updated_at)}</span>
+                            </div>
+                            <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                              <div
+                                className={`h-full ${status === 'FAILED' ? 'bg-rose-500' : status === 'COMPLETED' ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                                style={{ width: `${progress}%` }}
+                              />
+                            </div>
+                          </TableCell>
+                          <TableCell className="align-top text-sm">
+                            <div>{job.entity_name || '—'}</div>
+                            <div className="max-w-44 truncate text-xs text-slate-500">{job.entity_id || '—'}</div>
+                          </TableCell>
+                          <TableCell className="max-w-[420px] align-top text-sm">
+                            <div className="text-slate-700">{job.message || '—'}</div>
+                            {job.error ? <div className="mt-1 text-xs text-rose-700">{job.error}</div> : null}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card className="mb-5">
         <CardContent className="p-4">
           <form onSubmit={applyFilters} className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_220px_auto]">

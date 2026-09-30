@@ -1105,6 +1105,9 @@ export const base44 = {
     getBulkUploadJob(id) {
       return apiRequest(`/api/activity/bulk-upload-jobs/${encodeURIComponent(id)}`);
     },
+    listBackgroundJobs(limit = 100) {
+      return apiRequest(`/api/activity/background-jobs${buildQueryString({ limit })}`);
+    },
     listAuditLogs(filters = {}) {
       return apiRequest(`/api/activity/audit-logs${buildQueryString(filters)}`);
     }

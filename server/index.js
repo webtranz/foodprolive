@@ -4015,10 +4015,6 @@ app.post('/api/menu-plans/pr-generation/run', requireAuth, requirePermission('ge
   }
 });
 
-const MENU_REPEAT_QUEUE_ACTIVE_KEYS = new Set();
-const menuRepeatQueue = [];
-let menuRepeatRunning = false;
-
 function addMenuRepeatUtcDays(dateOnly, days) {
   const date = new Date(`${dateOnly}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -4300,55 +4296,6 @@ async function applyMenuRepeatPlan(requestUser, repeatPlan) {
   });
 }
 
-function scheduleMenuRepeatQueueDrain() {
-  if (menuRepeatRunning) return;
-  setImmediate(async () => {
-    if (menuRepeatRunning) return;
-    const work = menuRepeatQueue.shift();
-    if (!work) return;
-    menuRepeatRunning = true;
-    try {
-      const result = await applyMenuRepeatPlan(work.user, work.repeatPlan);
-      recordChanged('MenuPlan');
-      await auditAction({
-        user: work.user,
-        action: 'MENU_PLAN_REPEAT_COMPLETED',
-        entity: 'MenuPlan',
-        entityId: `${work.repeatPlan.siteId}:${work.repeatPlan.weekStart}`,
-        details: {
-          ...result,
-          job_id: work.jobId,
-          copy_key: work.copyKey
-        }
-      });
-    } catch (error) {
-      await auditAction({
-        user: work.user,
-        action: 'MENU_PLAN_REPEAT_FAILED',
-        entity: 'MenuPlan',
-        entityId: `${work.repeatPlan.siteId}:${work.repeatPlan.weekStart}`,
-        details: {
-          message: error?.message || 'Menu repeat failed.',
-          job_id: work.jobId,
-          copy_key: work.copyKey,
-          source_start: work.repeatPlan.weekStart,
-          source_end: work.repeatPlan.weekEnd,
-          target_start: work.repeatPlan.targetStart,
-          target_end: work.repeatPlan.targetEnd
-        }
-      }).catch((auditError) => {
-        console.error('Unable to audit failed menu repeat job', auditError);
-      });
-    } finally {
-      MENU_REPEAT_QUEUE_ACTIVE_KEYS.delete(work.copyKey);
-      menuRepeatRunning = false;
-      if (menuRepeatQueue.length > 0) {
-        scheduleMenuRepeatQueueDrain();
-      }
-    }
-  });
-}
-
 app.post('/api/menu-plans/repeat-cycle', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
   try {
     const repeatPlan = await resolveMenuRepeatPlan(request.user, request.body || {});
@@ -4359,44 +4306,52 @@ app.post('/api/menu-plans/repeat-cycle', requireAuth, requirePermission('manage_
       repeatPlan.cuisineType,
       repeatPlan.menuCategory
     ].join('::');
-    const alreadyQueued = MENU_REPEAT_QUEUE_ACTIVE_KEYS.has(copyKey);
-    const jobId = alreadyQueued ? null : randomUUID();
-    if (!alreadyQueued) {
-      MENU_REPEAT_QUEUE_ACTIVE_KEYS.add(copyKey);
-      menuRepeatQueue.push({
-        jobId,
-        copyKey,
-        user: request.user,
-        repeatPlan
-      });
-      scheduleMenuRepeatQueueDrain();
-      queueAuditAction('menu repeat queued', {
-        user: request.user,
-        action: 'MENU_PLAN_REPEAT_QUEUED',
-        entity: 'MenuPlan',
-        entityId: `${repeatPlan.siteId}:${repeatPlan.weekStart}`,
-        details: {
-          job_id: jobId,
-          copy_key: copyKey,
-          source_start: repeatPlan.weekStart,
-          source_end: repeatPlan.weekEnd,
-          target_start: repeatPlan.targetStart,
-          target_end: repeatPlan.targetEnd,
-          target_count: repeatPlan.targets.length
-        }
-      });
+    const backgroundJob = await createOperationalBackgroundJob({
+      jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.MENU_REPEAT,
+      idempotencyKey: `menu-repeat:${copyKey}`,
+      actor: request.user,
+      entityName: 'MenuPlan',
+      entityId: `${repeatPlan.siteId}:${repeatPlan.weekStart}`,
+      message: `Menu repeat queued for ${repeatPlan.targetStart} to ${repeatPlan.targetEnd}.`,
+      progress: 5,
+      initialStatus: OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS
+    });
+    const shouldPrepareJob = !backgroundJob.alreadyQueued
+      || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS;
+    if (shouldPrepareJob) {
+      await replaceOperationalBackgroundJobPayload(backgroundJob.job.id, { repeatPlan });
+      await markOperationalBackgroundJobReady(backgroundJob.job.id, `Menu repeat queued for ${repeatPlan.targetStart} to ${repeatPlan.targetEnd}.`);
+      scheduleOperationalBackgroundQueueDrain();
+      if (!backgroundJob.alreadyQueued) {
+        queueAuditAction('menu repeat queued', {
+          user: request.user,
+          action: 'MENU_PLAN_REPEAT_QUEUED',
+          entity: 'MenuPlan',
+          entityId: `${repeatPlan.siteId}:${repeatPlan.weekStart}`,
+          details: {
+            job_id: backgroundJob.job.id,
+            copy_key: copyKey,
+            source_start: repeatPlan.weekStart,
+            source_end: repeatPlan.weekEnd,
+            target_start: repeatPlan.targetStart,
+            target_end: repeatPlan.targetEnd,
+            target_count: repeatPlan.targets.length
+          }
+        });
+      }
     }
     return response.status(202).json({
       queued: true,
-      already_queued: alreadyQueued,
-      job_id: jobId,
+      already_queued: backgroundJob.alreadyQueued,
+      job_id: backgroundJob.job.id,
+      background_job_id: backgroundJob.job.id,
       source_start: repeatPlan.weekStart,
       source_end: repeatPlan.weekEnd,
       target_start: repeatPlan.targetStart,
       target_end: repeatPlan.targetEnd,
       target_count: repeatPlan.targets.length,
       copied_dates: repeatPlan.targets,
-      message: alreadyQueued
+      message: backgroundJob.alreadyQueued
         ? `Menu repeat is already queued for ${repeatPlan.targetStart} to ${repeatPlan.targetEnd}.`
         : `Menu repeat queued for ${repeatPlan.targetStart} to ${repeatPlan.targetEnd}.`
     });
@@ -6088,17 +6043,7 @@ app.post('/api/entities/:entity', requireAuth, async (request, response, next) =
 
 const MENU_PRODUCTION_ISSUE_ACTIVE_STATUSES = new Set(['queued', 'processing']);
 const MENU_PRODUCTION_ISSUE_FINAL_STATUSES = new Set(['completed', 'failed']);
-const menuProductionIssueQueue = [];
 const menuProductionIssueJobs = new Map();
-const menuProductionIssueActiveKeys = new Map();
-let menuProductionIssueRunningCount = 0;
-const menuProductionIssueConcurrency = Math.max(
-  1,
-  Math.min(
-    6,
-    Number.parseInt(process.env.MENU_PRODUCTION_ISSUE_WORKERS || '1', 10) || 1
-  )
-);
 
 function queueAuditAction(label, payload) {
   setImmediate(() => {
@@ -6108,9 +6053,16 @@ function queueAuditAction(label, payload) {
   });
 }
 
-const OPERATIONAL_BACKGROUND_JOB_ACTIVE_STATUSES = Object.freeze(['QUEUED', 'PROCESSING']);
+const OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS = 'PREPARING';
+const OPERATIONAL_BACKGROUND_JOB_READY_STATUS = 'QUEUED';
+const OPERATIONAL_BACKGROUND_JOB_ACTIVE_STATUSES = Object.freeze([
+  OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS,
+  OPERATIONAL_BACKGROUND_JOB_READY_STATUS,
+  'PROCESSING'
+]);
 const OPERATIONAL_BACKGROUND_JOB_FINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'SKIPPED']);
 const OPERATIONAL_BACKGROUND_JOB_TYPES = Object.freeze({
+  MENU_REPEAT: 'menu_repeat',
   MENU_PRODUCTION_ISSUE: 'menu_production_issue',
   PRODUCTION_PROCUREMENT_ACTIVATION: 'production_procurement_activation',
   MATERIAL_REQUEST_ACKNOWLEDGEMENT: 'material_request_acknowledgement',
@@ -6219,7 +6171,8 @@ async function createOperationalBackgroundJob({
   entityName = null,
   entityId = null,
   message = '',
-  progress = 5
+  progress = 5,
+  initialStatus = OPERATIONAL_BACKGROUND_JOB_READY_STATUS
 } = {}) {
   const type = String(jobType || '').trim();
   if (!type) {
@@ -6236,6 +6189,10 @@ async function createOperationalBackgroundJob({
   }
   const actorFields = buildOperationalBackgroundJobActorFields(actor);
   const requestedProgress = clampOperationalBackgroundJobProgress(progress, 5);
+  const requestedStatus = normalizeOperationalBackgroundJobStatus(
+    initialStatus,
+    OPERATIONAL_BACKGROUND_JOB_READY_STATUS
+  );
   try {
     const result = await pool.query(
       `INSERT INTO background_jobs (
@@ -6246,18 +6203,19 @@ async function createOperationalBackgroundJob({
          actor_role_permissions,
          progress, message, queued_at, updated_at
        ) VALUES (
-         $1, $2, $3, 'QUEUED', $4, $5,
-         $6, $7, $8, $9, $10,
-         $11, $12, $13, $14,
-         $15, $16::text[], $17::text[],
-         $18::text[],
-         $19, $20, NOW(), NOW()
+         $1, $2, $3, $4, $5, $6,
+         $7, $8, $9, $10, $11,
+         $12, $13, $14, $15,
+         $16, $17::text[], $18::text[],
+         $19::text[],
+         $20, $21, NOW(), NOW()
        )
        RETURNING *`,
       [
         id,
         type,
         key,
+        requestedStatus,
         entityName || null,
         entityId || null,
         actorFields.id,
@@ -6287,6 +6245,12 @@ async function createOperationalBackgroundJob({
     }
     throw error;
   }
+}
+
+async function markOperationalBackgroundJobReady(jobId, message = null) {
+  const patch = { status: OPERATIONAL_BACKGROUND_JOB_READY_STATUS };
+  if (message) patch.message = message;
+  return updateOperationalBackgroundJob(jobId, patch);
 }
 
 async function createOperationalBackgroundJobItems(jobId, items = []) {
@@ -6405,6 +6369,196 @@ async function updateOperationalBackgroundJob(jobId, patch = {}) {
   return result.rowCount ? normalizeOperationalBackgroundJobRow(result.rows[0]) : null;
 }
 
+function encodeOperationalJobPayloadPathSegment(segment) {
+  return String(segment ?? '').replace(/~/g, '~0').replace(/\//g, '~1');
+}
+
+function decodeOperationalJobPayloadPathSegment(segment) {
+  return String(segment ?? '').replace(/~1/g, '/').replace(/~0/g, '~');
+}
+
+function operationalJobPayloadPointer(segments = []) {
+  return segments.length
+    ? `/${segments.map(encodeOperationalJobPayloadPathSegment).join('/')}`
+    : '';
+}
+
+function operationalJobPayloadFieldColumns(value, kindOverride = null) {
+  if (kindOverride) {
+    return {
+      value_kind: kindOverride,
+      value_text: null,
+      value_numeric: null,
+      value_boolean: null,
+      value_date: null
+    };
+  }
+  if (value === null || typeof value === 'undefined') {
+    return {
+      value_kind: 'null',
+      value_text: null,
+      value_numeric: null,
+      value_boolean: null,
+      value_date: null
+    };
+  }
+  if (typeof value === 'number') {
+    return {
+      value_kind: 'number',
+      value_text: null,
+      value_numeric: Number.isFinite(value) ? value : null,
+      value_boolean: null,
+      value_date: null
+    };
+  }
+  if (typeof value === 'boolean') {
+    return {
+      value_kind: 'boolean',
+      value_text: null,
+      value_numeric: null,
+      value_boolean: value,
+      value_date: null
+    };
+  }
+  if (value instanceof Date) {
+    return {
+      value_kind: 'date',
+      value_text: null,
+      value_numeric: null,
+      value_boolean: null,
+      value_date: value.toISOString()
+    };
+  }
+  return {
+    value_kind: 'text',
+    value_text: String(value),
+    value_numeric: null,
+    value_boolean: null,
+    value_date: null
+  };
+}
+
+function flattenOperationalJobPayload(value, segments = [], rows = []) {
+  if (Array.isArray(value)) {
+    rows.push({
+      field_path: operationalJobPayloadPointer(segments),
+      ...operationalJobPayloadFieldColumns(null, 'array')
+    });
+    value.forEach((item, index) => {
+      flattenOperationalJobPayload(item, [...segments, String(index)], rows);
+    });
+    return rows;
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    rows.push({
+      field_path: operationalJobPayloadPointer(segments),
+      ...operationalJobPayloadFieldColumns(null, 'object')
+    });
+    Object.entries(value).forEach(([fieldName, fieldValue]) => {
+      flattenOperationalJobPayload(fieldValue, [...segments, fieldName], rows);
+    });
+    return rows;
+  }
+  rows.push({
+    field_path: operationalJobPayloadPointer(segments),
+    ...operationalJobPayloadFieldColumns(value)
+  });
+  return rows;
+}
+
+async function replaceOperationalBackgroundJobPayload(jobId, payload = {}) {
+  const id = String(jobId || '').trim();
+  if (!id) return;
+  const rows = flattenOperationalJobPayload(payload);
+  await pool.query('DELETE FROM background_job_payload_fields WHERE job_id = $1', [id]);
+  if (!rows.length) return;
+  const values = [];
+  const placeholders = rows.map((row, index) => {
+    const offset = index * 7;
+    values.push(
+      id,
+      row.field_path,
+      row.value_kind,
+      row.value_text,
+      row.value_numeric,
+      row.value_boolean,
+      row.value_date
+    );
+    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, NOW())`;
+  });
+  await pool.query(
+    `INSERT INTO background_job_payload_fields (
+       job_id, field_path, value_kind, value_text, value_numeric, value_boolean, value_date, created_at
+     ) VALUES ${placeholders.join(', ')}`,
+    values
+  );
+}
+
+function operationalJobPayloadRowValue(row = {}) {
+  const kind = String(row.value_kind || '').trim().toLowerCase();
+  if (kind === 'object') return {};
+  if (kind === 'array') return [];
+  if (kind === 'number') return Number(row.value_numeric || 0);
+  if (kind === 'boolean') return row.value_boolean === true;
+  if (kind === 'date') return row.value_date ? new Date(row.value_date).toISOString() : null;
+  if (kind === 'text') return row.value_text ?? '';
+  return null;
+}
+
+function operationalJobPayloadPointerSegments(pointer = '') {
+  if (!pointer) return [];
+  return String(pointer).split('/').slice(1).map(decodeOperationalJobPayloadPathSegment);
+}
+
+function assignOperationalJobPayloadValue(rootHolder, pointer, value) {
+  const segments = operationalJobPayloadPointerSegments(pointer);
+  if (segments.length === 0) {
+    rootHolder.value = value;
+    return;
+  }
+  let current = rootHolder.value;
+  segments.forEach((segment, index) => {
+    const isLast = index === segments.length - 1;
+    const nextSegment = segments[index + 1];
+    const nextContainer = /^\d+$/.test(String(nextSegment || '')) ? [] : {};
+    const key = Array.isArray(current) && /^\d+$/.test(segment) ? Number(segment) : segment;
+    if (isLast) {
+      current[key] = value;
+      return;
+    }
+    if (current[key] === null || typeof current[key] === 'undefined' || typeof current[key] !== 'object') {
+      current[key] = nextContainer;
+    }
+    current = current[key];
+  });
+}
+
+async function getOperationalBackgroundJobPayload(jobId) {
+  const id = String(jobId || '').trim();
+  if (!id) return {};
+  const result = await pool.query(
+    `SELECT field_path, value_kind, value_text, value_numeric, value_boolean, value_date
+       FROM background_job_payload_fields
+      WHERE job_id = $1
+      ORDER BY field_path ASC`,
+    [id]
+  );
+  const rows = result.rows.slice().sort((left, right) => {
+    const leftDepth = operationalJobPayloadPointerSegments(left.field_path).length;
+    const rightDepth = operationalJobPayloadPointerSegments(right.field_path).length;
+    return leftDepth - rightDepth || String(left.field_path || '').localeCompare(String(right.field_path || ''));
+  });
+  const rootHolder = { value: {} };
+  rows.forEach((row) => {
+    assignOperationalJobPayloadValue(
+      rootHolder,
+      row.field_path,
+      operationalJobPayloadRowValue(row)
+    );
+  });
+  return rootHolder.value && typeof rootHolder.value === 'object' ? rootHolder.value : {};
+}
+
 async function listRecoverableOperationalBackgroundJobs(jobTypes = []) {
   const safeTypes = (Array.isArray(jobTypes) ? jobTypes : [])
     .map((item) => String(item || '').trim())
@@ -6422,23 +6576,200 @@ async function listRecoverableOperationalBackgroundJobs(jobTypes = []) {
   return result.rows.map(normalizeOperationalBackgroundJobRow);
 }
 
+const operationalBackgroundWorkerTypes = Object.freeze(Object.values(OPERATIONAL_BACKGROUND_JOB_TYPES));
+const operationalBackgroundMaxWorkers = Math.max(
+  1,
+  Math.min(
+    8,
+    Number.parseInt(process.env.OPERATIONAL_BACKGROUND_JOB_WORKERS || '1', 10) || 1
+  )
+);
+const operationalBackgroundPollIntervalMs = Math.max(
+  500,
+  Number.parseInt(process.env.OPERATIONAL_BACKGROUND_QUEUE_POLL_MS || '1500', 10) || 1500
+);
+const operationalBackgroundStaleAfterMs = Math.max(
+  60000,
+  Number.parseInt(process.env.OPERATIONAL_BACKGROUND_STALE_AFTER_MS || String(15 * 60 * 1000), 10) || (15 * 60 * 1000)
+);
+let operationalBackgroundActiveWorkers = 0;
+let operationalBackgroundDrainPromise = null;
+let operationalBackgroundPollTimer = null;
+let operationalBackgroundShuttingDown = false;
+
+async function claimNextOperationalBackgroundJob() {
+  return withTransaction(async (client) => {
+    const staleBefore = new Date(Date.now() - operationalBackgroundStaleAfterMs).toISOString();
+    const result = await client.query(
+      `WITH candidate AS (
+         SELECT id
+           FROM background_jobs
+          WHERE job_type = ANY($1::text[])
+            AND (
+              status = 'QUEUED'
+              OR (status = 'PROCESSING' AND updated_at < $2)
+            )
+          ORDER BY priority DESC, queued_at ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+       )
+       UPDATE background_jobs job
+          SET status = 'PROCESSING',
+              started_at = COALESCE(job.started_at, NOW()),
+              updated_at = NOW(),
+              message = CASE
+                WHEN job.status = 'PROCESSING' THEN COALESCE(NULLIF(job.message, ''), 'Recovering stale background job.')
+                ELSE COALESCE(NULLIF(job.message, ''), 'Background job claimed by worker.')
+              END
+         FROM candidate
+        WHERE job.id = candidate.id
+        RETURNING job.*`,
+      [operationalBackgroundWorkerTypes, staleBefore]
+    );
+    return result.rowCount ? normalizeOperationalBackgroundJobRow(result.rows[0]) : null;
+  });
+}
+
+async function runMenuRepeatBackgroundJob(job) {
+  const actor = actorFromOperationalBackgroundJob(job);
+  const payload = await getOperationalBackgroundJobPayload(job.id);
+  const repeatPlan = payload.repeatPlan || payload.repeat_plan || null;
+  if (!repeatPlan || !repeatPlan.siteId || !repeatPlan.weekStart) {
+    const error = new Error('Menu repeat job is missing its saved repeat plan.');
+    error.status = 409;
+    throw error;
+  }
+  const result = await applyMenuRepeatPlan(actor, repeatPlan);
+  recordChanged('MenuPlan');
+  await updateOperationalBackgroundJob(job.id, {
+    status: 'COMPLETED',
+    progress: 100,
+    message: `Menu repeat completed. ${result.created_count} created, ${result.updated_count} updated.`,
+    result_entity_name: 'MenuPlan',
+    result_entity_id: `${repeatPlan.siteId}:${repeatPlan.weekStart}`,
+    result_count: Number(result.target_count || 0),
+    completed_at: new Date().toISOString(),
+    error: ''
+  });
+  await auditAction({
+    user: actor,
+    action: 'MENU_PLAN_REPEAT_COMPLETED',
+    entity: 'MenuPlan',
+    entityId: `${repeatPlan.siteId}:${repeatPlan.weekStart}`,
+    details: {
+      ...result,
+      job_id: job.id,
+      copy_key: job.idempotency_key || null,
+      background_job_id: job.id
+    }
+  });
+}
+
+async function runClaimedOperationalBackgroundJob(job) {
+  const actor = actorFromOperationalBackgroundJob(job);
+  if (job.job_type === OPERATIONAL_BACKGROUND_JOB_TYPES.MENU_REPEAT) {
+    await runMenuRepeatBackgroundJob(job);
+    return;
+  }
+  if (job.job_type === OPERATIONAL_BACKGROUND_JOB_TYPES.MENU_PRODUCTION_ISSUE) {
+    const payload = await getOperationalBackgroundJobPayload(job.id);
+    await runMenuProductionIssueWork({
+      jobId: job.id,
+      actor,
+      productions: Array.isArray(payload.productions) ? payload.productions : []
+    });
+    return;
+  }
+  if (job.job_type === OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_PROCUREMENT_ACTIVATION) {
+    await runProductionProcurementActivationWork({
+      productionId: job.entity_id,
+      jobId: job.id,
+      actor
+    });
+    return;
+  }
+  if (job.job_type === OPERATIONAL_BACKGROUND_JOB_TYPES.MATERIAL_REQUEST_ACKNOWLEDGEMENT) {
+    const payload = await getOperationalBackgroundJobPayload(job.id);
+    await runMaterialRequestAcknowledgementWork({
+      materialRequestId: job.entity_id,
+      jobId: job.id,
+      actor,
+      notes: payload.notes || ''
+    });
+    return;
+  }
+  if (job.job_type === OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION) {
+    const payload = await getOperationalBackgroundJobPayload(job.id);
+    await runProductionCompletionWork({
+      productionId: job.entity_id,
+      jobId: job.id,
+      actor,
+      fulfillmentStoreId: payload.fulfillment_store_id || payload.fulfillmentStoreId || ''
+    });
+    return;
+  }
+  throw new Error(`Unsupported background job type: ${job.job_type}`);
+}
+
+async function drainOperationalBackgroundQueue() {
+  while (!operationalBackgroundShuttingDown && operationalBackgroundActiveWorkers < operationalBackgroundMaxWorkers) {
+    const job = await claimNextOperationalBackgroundJob();
+    if (!job) break;
+    operationalBackgroundActiveWorkers += 1;
+    runClaimedOperationalBackgroundJob(job)
+      .catch(async (error) => {
+        console.error(`Operational background job ${job.id} failed:`, error);
+        await updateOperationalBackgroundJob(job.id, {
+          status: 'FAILED',
+          progress: 100,
+          message: error?.message || 'Background job failed.',
+          error: error?.message || 'Background job failed.',
+          completed_at: new Date().toISOString()
+        }).catch((updateError) => {
+          console.error(`Unable to mark operational background job ${job.id} as failed`, updateError);
+        });
+      })
+      .finally(() => {
+        operationalBackgroundActiveWorkers = Math.max(0, operationalBackgroundActiveWorkers - 1);
+        scheduleOperationalBackgroundQueueDrain();
+      });
+  }
+}
+
+function scheduleOperationalBackgroundQueueDrain() {
+  if (operationalBackgroundShuttingDown) return Promise.resolve();
+  if (operationalBackgroundDrainPromise) return operationalBackgroundDrainPromise;
+  operationalBackgroundDrainPromise = drainOperationalBackgroundQueue()
+    .catch((error) => {
+      console.error(`Operational background queue polling failed: ${error.message}`);
+    })
+    .finally(() => {
+      operationalBackgroundDrainPromise = null;
+    });
+  return operationalBackgroundDrainPromise;
+}
+
+async function resumeOperationalBackgroundQueue() {
+  operationalBackgroundShuttingDown = false;
+  if (!operationalBackgroundPollTimer) {
+    operationalBackgroundPollTimer = setInterval(scheduleOperationalBackgroundQueueDrain, operationalBackgroundPollIntervalMs);
+    operationalBackgroundPollTimer.unref?.();
+  }
+  await scheduleOperationalBackgroundQueueDrain();
+}
+
+async function stopOperationalBackgroundQueue() {
+  operationalBackgroundShuttingDown = true;
+  if (operationalBackgroundPollTimer) clearInterval(operationalBackgroundPollTimer);
+  operationalBackgroundPollTimer = null;
+}
+
 const PRODUCTION_PROCUREMENT_ACTIVATION_ACTIVE_STATUSES = new Set(['activation_queued', 'activation_processing']);
 const PRODUCTION_PROCUREMENT_ACTIVATION_COMPLETE_STATUSES = new Set([
   'pending_procurement_ack',
   'acknowledged',
   'not_required'
 ]);
-const productionProcurementActivationQueue = [];
-const productionProcurementActivationActiveIds = new Set();
-let productionProcurementActivationRunningCount = 0;
-const productionProcurementActivationConcurrency = Math.max(
-  1,
-  Math.min(
-    4,
-    Number.parseInt(process.env.PRODUCTION_PROCUREMENT_ACTIVATION_WORKERS || '1', 10) || 1
-  )
-);
-
 function isProjectManagerApprovalActivation(currentProduction = {}, payload = {}) {
   return (
     normalizeProductionStatus(currentProduction.status) === 'pending_approval'
@@ -6447,38 +6778,12 @@ function isProjectManagerApprovalActivation(currentProduction = {}, payload = {}
   );
 }
 
-function scheduleProductionProcurementActivationQueueDrain() {
-  setImmediate(() => {
-    while (
-      productionProcurementActivationRunningCount < productionProcurementActivationConcurrency
-      && productionProcurementActivationQueue.length > 0
-    ) {
-      const work = productionProcurementActivationQueue.shift();
-      productionProcurementActivationRunningCount += 1;
-      runProductionProcurementActivationWork(work).finally(() => {
-        productionProcurementActivationRunningCount = Math.max(0, productionProcurementActivationRunningCount - 1);
-        productionProcurementActivationActiveIds.delete(String(work.productionId || ''));
-        if (productionProcurementActivationQueue.length > 0) {
-          scheduleProductionProcurementActivationQueueDrain();
-        }
-      });
-    }
-  });
-}
-
 function enqueueProductionProcurementActivationWork(work) {
   const productionId = String(work.productionId || '').trim();
-  if (!productionId || productionProcurementActivationActiveIds.has(productionId)) {
+  if (!productionId) {
     return false;
   }
-  productionProcurementActivationActiveIds.add(productionId);
-  productionProcurementActivationQueue.push({
-    ...work,
-    productionId,
-    jobId: work.jobId || null,
-    requestedAt: work.requestedAt || new Date().toISOString()
-  });
-  scheduleProductionProcurementActivationQueueDrain();
+  scheduleOperationalBackgroundQueueDrain();
   return true;
 }
 
@@ -6788,38 +7093,12 @@ async function findExistingMenuIssueProduction(payload = {}, executor = null) {
   }) || null;
 }
 
-function scheduleMenuProductionIssueQueueDrain() {
-  setImmediate(() => {
-    while (
-      menuProductionIssueRunningCount < menuProductionIssueConcurrency
-      && menuProductionIssueQueue.length > 0
-    ) {
-      const work = menuProductionIssueQueue.shift();
-      menuProductionIssueRunningCount += 1;
-      runMenuProductionIssueWork(work).finally(() => {
-        menuProductionIssueRunningCount = Math.max(0, menuProductionIssueRunningCount - 1);
-        if (work.key) menuProductionIssueActiveKeys.delete(work.key);
-        if (menuProductionIssueQueue.length > 0) {
-          scheduleMenuProductionIssueQueueDrain();
-        }
-      });
-    }
-  });
-}
-
 function enqueueMenuProductionIssueWork(work) {
-  const key = String(work.key || '').trim();
-  if (key && menuProductionIssueActiveKeys.has(key)) {
-    return {
-      queued: false,
-      existingJobId: menuProductionIssueActiveKeys.get(key)
-    };
-  }
   const jobId = work.jobId || randomUUID();
   const requestedAt = new Date().toISOString();
   menuProductionIssueJobs.set(jobId, {
     id: jobId,
-    key,
+    key: String(work.key || '').trim(),
     status: 'queued',
     progress: 5,
     total: work.productions.length,
@@ -6830,9 +7109,7 @@ function enqueueMenuProductionIssueWork(work) {
     requested_by: work.actor?.email || work.actor?.id || '',
     requested_by_name: work.actor?.full_name || work.actor?.email || ''
   });
-  if (key) menuProductionIssueActiveKeys.set(key, jobId);
-  menuProductionIssueQueue.push({ ...work, jobId });
-  scheduleMenuProductionIssueQueueDrain();
+  scheduleOperationalBackgroundQueueDrain();
   return {
     queued: true,
     jobId
@@ -7059,9 +7336,12 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
       entityName: 'Production',
       entityId: null,
       message: `Menu production issue queued. ${productions.length} meal review${productions.length === 1 ? '' : 's'} will be created in the background.`,
-      progress: 5
+      progress: 5,
+      initialStatus: OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS
     });
-    if (backgroundJob.alreadyQueued) {
+    const shouldPrepareJob = !backgroundJob.alreadyQueued
+      || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS;
+    if (backgroundJob.alreadyQueued && !shouldPrepareJob) {
       const existingJob = menuProductionIssueJobs.get(backgroundJob.job.id);
       return response.status(202).json({
         queued: true,
@@ -7088,6 +7368,11 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
         progress: 0,
         message: 'Menu production request queued.'
       }))
+    );
+    await replaceOperationalBackgroundJobPayload(backgroundJob.job.id, { productions });
+    await markOperationalBackgroundJobReady(
+      backgroundJob.job.id,
+      `Menu production issue queued. ${productions.length} meal review${productions.length === 1 ? '' : 's'} will be created in the background.`
     );
     const enqueueResult = enqueueMenuProductionIssueWork({
       key,
@@ -8443,6 +8728,66 @@ app.get('/api/activity/bulk-upload-jobs/:id', requireAuth, requireAnyPermission(
   }
 });
 
+app.get('/api/activity/background-jobs', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const limit = Math.min(Math.max(Number(request.query.limit) || 100, 1), 500);
+    const result = await pool.query(
+      `SELECT job.*,
+              COALESCE(items.total_items, 0) AS total_items,
+              COALESCE(items.completed_items, 0) AS completed_items,
+              COALESCE(items.failed_items, 0) AS failed_items,
+              COALESCE(items.processing_items, 0) AS processing_items,
+              COALESCE(items.queued_items, 0) AS queued_items
+         FROM background_jobs job
+         LEFT JOIN (
+           SELECT job_id,
+                  COUNT(*)::integer AS total_items,
+                  COUNT(*) FILTER (WHERE status IN ('COMPLETED', 'SKIPPED'))::integer AS completed_items,
+                  COUNT(*) FILTER (WHERE status = 'FAILED')::integer AS failed_items,
+                  COUNT(*) FILTER (WHERE status = 'PROCESSING')::integer AS processing_items,
+                  COUNT(*) FILTER (WHERE status IN ('PREPARING', 'QUEUED'))::integer AS queued_items
+             FROM background_job_items
+            GROUP BY job_id
+         ) items ON items.job_id = job.id
+        ORDER BY job.queued_at DESC
+        LIMIT $1`,
+      [limit]
+    );
+    response.json({
+      jobs: result.rows.map((row) => ({
+        id: row.id,
+        job_type: row.job_type,
+        idempotency_key: row.idempotency_key,
+        status: normalizeOperationalBackgroundJobStatus(row.status),
+        priority: Number(row.priority || 0),
+        entity_name: row.entity_name,
+        entity_id: row.entity_id,
+        actor_id: row.actor_id,
+        actor_email: row.actor_email,
+        actor_name: row.actor_name,
+        actor_role: row.actor_role,
+        result_entity_name: row.result_entity_name,
+        result_entity_id: row.result_entity_id,
+        result_count: Number(row.result_count || 0),
+        progress: clampOperationalBackgroundJobProgress(row.progress),
+        message: row.message || '',
+        error: row.error || '',
+        queued_at: row.queued_at,
+        started_at: row.started_at,
+        completed_at: row.completed_at,
+        updated_at: row.updated_at,
+        total_items: Number(row.total_items || 0),
+        completed_items: Number(row.completed_items || 0),
+        failed_items: Number(row.failed_items || 0),
+        processing_items: Number(row.processing_items || 0),
+        queued_items: Number(row.queued_items || 0)
+      }))
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/activity/notifications', requireAuth, async (request, response, next) => {
   try {
     const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 100);
@@ -9277,17 +9622,6 @@ const MATERIAL_REQUEST_ACK_WORKFLOW_ACTIVE_STATUSES = new Set([
 ]);
 const MATERIAL_REQUEST_ACK_JOB_ACTIVE_STATUSES = new Set(['queued', 'processing']);
 const MATERIAL_REQUEST_ACK_JOB_FINAL_STATUSES = new Set(['completed', 'failed']);
-const materialRequestAcknowledgementQueue = [];
-const materialRequestAcknowledgementActiveIds = new Set();
-let materialRequestAcknowledgementRunningCount = 0;
-const materialRequestAcknowledgementConcurrency = Math.max(
-  1,
-  Math.min(
-    8,
-    Number.parseInt(process.env.MATERIAL_REQUEST_ACKNOWLEDGEMENT_WORKERS || '1', 10) || 1
-  )
-);
-
 function normalizeMaterialRequestAcknowledgementJobStatus(status) {
   const normalized = String(status || '').trim().toLowerCase();
   if (MATERIAL_REQUEST_ACK_JOB_ACTIVE_STATUSES.has(normalized)) return normalized;
@@ -9432,33 +9766,12 @@ function assertMaterialRequestAcknowledgementReady({
   return { fulfillmentStore };
 }
 
-function scheduleMaterialRequestAcknowledgementQueueDrain() {
-  setImmediate(() => {
-    while (
-      materialRequestAcknowledgementRunningCount < materialRequestAcknowledgementConcurrency
-      && materialRequestAcknowledgementQueue.length > 0
-    ) {
-      const work = materialRequestAcknowledgementQueue.shift();
-      materialRequestAcknowledgementRunningCount += 1;
-      runMaterialRequestAcknowledgementWork(work).finally(() => {
-        materialRequestAcknowledgementRunningCount = Math.max(0, materialRequestAcknowledgementRunningCount - 1);
-        materialRequestAcknowledgementActiveIds.delete(String(work.materialRequestId));
-        if (materialRequestAcknowledgementQueue.length > 0) {
-          scheduleMaterialRequestAcknowledgementQueueDrain();
-        }
-      });
-    }
-  });
-}
-
 function enqueueMaterialRequestAcknowledgementWork(work) {
   const materialRequestId = String(work.materialRequestId || '').trim();
-  if (!materialRequestId || materialRequestAcknowledgementActiveIds.has(materialRequestId)) {
+  if (!materialRequestId) {
     return false;
   }
-  materialRequestAcknowledgementActiveIds.add(materialRequestId);
-  materialRequestAcknowledgementQueue.push(work);
-  scheduleMaterialRequestAcknowledgementQueueDrain();
+  scheduleOperationalBackgroundQueueDrain();
   return true;
 }
 
@@ -9798,8 +10111,18 @@ app.post('/api/material-requests/:id/acknowledge', requireAuth, requirePermissio
       message: queued.alreadyQueued
         ? 'MR to Store acknowledgement is already running in the background.'
         : 'MR to Store acknowledgement queued. Stock reservation will complete in the background.',
-      progress: queued.job?.progress || 5
+      progress: queued.job?.progress || 5,
+      initialStatus: OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS
     });
+    if (!backgroundJob.alreadyQueued || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS) {
+      await replaceOperationalBackgroundJobPayload(backgroundJob.job.id, { notes: requestedNotes });
+      await markOperationalBackgroundJobReady(
+        backgroundJob.job.id,
+        queued.alreadyQueued
+          ? 'MR to Store acknowledgement is already running in the background.'
+          : 'MR to Store acknowledgement queued. Stock reservation will complete in the background.'
+      );
+    }
     enqueueMaterialRequestAcknowledgementWork({
       materialRequestId: queued.materialRequest.id,
       jobId: queued.job?.id || queued.materialRequest.acknowledgement_job_id,
@@ -11398,17 +11721,6 @@ app.post('/api/inventory/production/:id/repair-menu-classification', requireAuth
 
 const PRODUCTION_COMPLETION_ACTIVE_STATUSES = new Set(['queued', 'processing']);
 const PRODUCTION_COMPLETION_FINAL_STATUSES = new Set(['completed', 'failed']);
-const productionCompletionQueue = [];
-const productionCompletionActiveIds = new Set();
-let productionCompletionRunningCount = 0;
-const productionCompletionConcurrency = Math.max(
-  1,
-  Math.min(
-    8,
-    Number.parseInt(process.env.PRODUCTION_COMPLETION_WORKERS || '1', 10) || 1
-  )
-);
-
 function normalizeProductionCompletionJobStatus(status) {
   const normalized = String(status || '').trim().toLowerCase();
   if (PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(normalized)) return normalized;
@@ -11512,33 +11824,12 @@ async function resolveProductionCompletionRequest(request) {
   return { production, productionInventorySite };
 }
 
-function scheduleProductionCompletionQueueDrain() {
-  setImmediate(() => {
-    while (
-      productionCompletionRunningCount < productionCompletionConcurrency
-      && productionCompletionQueue.length > 0
-    ) {
-      const work = productionCompletionQueue.shift();
-      productionCompletionRunningCount += 1;
-      runProductionCompletionWork(work).finally(() => {
-        productionCompletionRunningCount = Math.max(0, productionCompletionRunningCount - 1);
-        productionCompletionActiveIds.delete(String(work.productionId));
-        if (productionCompletionQueue.length > 0) {
-          scheduleProductionCompletionQueueDrain();
-        }
-      });
-    }
-  });
-}
-
 function enqueueProductionCompletionWork(work) {
   const productionId = String(work.productionId || '').trim();
-  if (!productionId || productionCompletionActiveIds.has(productionId)) {
+  if (!productionId) {
     return false;
   }
-  productionCompletionActiveIds.add(productionId);
-  productionCompletionQueue.push(work);
-  scheduleProductionCompletionQueueDrain();
+  scheduleOperationalBackgroundQueueDrain();
   return true;
 }
 
@@ -11559,7 +11850,7 @@ async function queueProductionCompletionForRecord(production, actor, fulfillment
   }
 
   if (existingJob && PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(existingJob.status)) {
-    await createOperationalBackgroundJob({
+    const backgroundJob = await createOperationalBackgroundJob({
       id: existingJob.id,
       jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
       idempotencyKey: `production:${production.id}:completion:${existingJob.id}`,
@@ -11567,10 +11858,22 @@ async function queueProductionCompletionForRecord(production, actor, fulfillment
       entityName: 'Production',
       entityId: production.id,
       message: existingJob.message || 'Production completion is already queued.',
-      progress: existingJob.progress || 5
+      progress: existingJob.progress || 5,
+      initialStatus: OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS
     }).catch((error) => {
       console.error('Unable to create production completion background job for existing queue entry', error);
+      return null;
     });
+    if (backgroundJob && (!backgroundJob.alreadyQueued || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS)) {
+      await replaceOperationalBackgroundJobPayload(existingJob.id, {
+        fulfillment_store_id: fulfillmentStoreId
+      }).catch((error) => {
+        console.error('Unable to save production completion background job payload', error);
+      });
+      await markOperationalBackgroundJobReady(existingJob.id, existingJob.message || 'Production completion is already queued.').catch((error) => {
+        console.error('Unable to mark production completion background job ready', error);
+      });
+    }
     enqueueProductionCompletionWork({
       productionId: production.id,
       jobId: existingJob.id,
@@ -11597,7 +11900,7 @@ async function queueProductionCompletionForRecord(production, actor, fulfillment
     completion_job_requested_by_name: actor.full_name || actor.email || ''
   }));
   const queuedJob = serializeProductionCompletionJob(queuedProduction);
-  await createOperationalBackgroundJob({
+  const backgroundJob = await createOperationalBackgroundJob({
     id: jobId,
     jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
     idempotencyKey: `production:${production.id}:completion:${jobId}`,
@@ -11605,10 +11908,22 @@ async function queueProductionCompletionForRecord(production, actor, fulfillment
     entityName: 'Production',
     entityId: production.id,
     message: queuedJob?.message || options.message || 'Production completion has been queued.',
-    progress: queuedJob?.progress || 5
+    progress: queuedJob?.progress || 5,
+    initialStatus: OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS
   }).catch((error) => {
     console.error('Unable to create production completion background job', error);
+    return null;
   });
+  if (backgroundJob && (!backgroundJob.alreadyQueued || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS)) {
+    await replaceOperationalBackgroundJobPayload(jobId, {
+      fulfillment_store_id: fulfillmentStoreId
+    }).catch((error) => {
+      console.error('Unable to save production completion background job payload', error);
+    });
+    await markOperationalBackgroundJobReady(jobId, queuedJob?.message || options.message || 'Production completion has been queued.').catch((error) => {
+      console.error('Unable to mark production completion background job ready', error);
+    });
+  }
   enqueueProductionCompletionWork({
     productionId: production.id,
     jobId,
@@ -11711,7 +12026,7 @@ app.get('/api/inventory/production/:id/completion-job', requireAuth, requirePerm
     const { production, productionInventorySite } = await resolveProductionCompletionRequest(request);
     const job = serializeProductionCompletionJob(production);
     if (job && PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(job.status)) {
-      await createOperationalBackgroundJob({
+      const backgroundJob = await createOperationalBackgroundJob({
         id: job.id,
         jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
         idempotencyKey: `production:${production.id}:completion:${job.id}`,
@@ -11719,10 +12034,22 @@ app.get('/api/inventory/production/:id/completion-job', requireAuth, requirePerm
         entityName: 'Production',
         entityId: production.id,
         message: job.message || 'Production completion is already queued.',
-        progress: job.progress || 5
+        progress: job.progress || 5,
+        initialStatus: OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS
       }).catch((error) => {
         console.error('Unable to create production completion background job while polling', error);
+        return null;
       });
+      if (backgroundJob && (!backgroundJob.alreadyQueued || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS)) {
+        await replaceOperationalBackgroundJobPayload(job.id, {
+          fulfillment_store_id: productionInventorySite.id
+        }).catch((error) => {
+          console.error('Unable to save production completion background job payload while polling', error);
+        });
+        await markOperationalBackgroundJobReady(job.id, job.message || 'Production completion is already queued.').catch((error) => {
+          console.error('Unable to mark production completion background job ready while polling', error);
+        });
+      }
       enqueueProductionCompletionWork({
         productionId: production.id,
         jobId: job.id,
@@ -11763,7 +12090,7 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
     }
 
     if (existingJob && PRODUCTION_COMPLETION_ACTIVE_STATUSES.has(existingJob.status)) {
-      await createOperationalBackgroundJob({
+      const backgroundJob = await createOperationalBackgroundJob({
         id: existingJob.id,
         jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
         idempotencyKey: `production:${production.id}:completion:${existingJob.id}`,
@@ -11771,10 +12098,22 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
         entityName: 'Production',
         entityId: production.id,
         message: existingJob.message || 'Production completion is already queued.',
-        progress: existingJob.progress || 5
+        progress: existingJob.progress || 5,
+        initialStatus: OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS
       }).catch((error) => {
         console.error('Unable to create production completion background job for existing completion request', error);
+        return null;
       });
+      if (backgroundJob && (!backgroundJob.alreadyQueued || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS)) {
+        await replaceOperationalBackgroundJobPayload(existingJob.id, {
+          fulfillment_store_id: productionInventorySite.id
+        }).catch((error) => {
+          console.error('Unable to save production completion background job payload for existing completion request', error);
+        });
+        await markOperationalBackgroundJobReady(existingJob.id, existingJob.message || 'Production completion is already queued.').catch((error) => {
+          console.error('Unable to mark production completion background job ready for existing completion request', error);
+        });
+      }
       enqueueProductionCompletionWork({
         productionId: production.id,
         jobId: existingJob.id,
@@ -11803,7 +12142,7 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
       completion_job_requested_by_name: request.user.full_name || request.user.email || ''
     }));
     const queuedJob = serializeProductionCompletionJob(queuedProduction);
-    await createOperationalBackgroundJob({
+    const backgroundJob = await createOperationalBackgroundJob({
       id: jobId,
       jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_COMPLETION,
       idempotencyKey: `production:${production.id}:completion:${jobId}`,
@@ -11811,10 +12150,22 @@ app.post('/api/inventory/production/:id/complete', requireAuth, requirePermissio
       entityName: 'Production',
       entityId: production.id,
       message: queuedJob?.message || 'Production completion has been queued.',
-      progress: queuedJob?.progress || 5
+      progress: queuedJob?.progress || 5,
+      initialStatus: OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS
     }).catch((error) => {
       console.error('Unable to create production completion background job for manual completion', error);
+      return null;
     });
+    if (backgroundJob && (!backgroundJob.alreadyQueued || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS)) {
+      await replaceOperationalBackgroundJobPayload(jobId, {
+        fulfillment_store_id: productionInventorySite.id
+      }).catch((error) => {
+        console.error('Unable to save production completion background job payload for manual completion', error);
+      });
+      await markOperationalBackgroundJobReady(jobId, queuedJob?.message || 'Production completion has been queued.').catch((error) => {
+        console.error('Unable to mark production completion background job ready for manual completion', error);
+      });
+    }
     enqueueProductionCompletionWork({
       productionId: production.id,
       jobId,
@@ -12593,6 +12944,7 @@ const stopCacheInvalidationListener = await subscribeToEntityEvents((event) => {
   invalidateEntityAccessCaches(event.entity);
 });
 await resumeBulkUploadQueue();
+await resumeOperationalBackgroundQueue();
 
 const httpServer = app.listen(port, host, () => {
   console.log(`FoodPro server listening on ${host}:${port}`);
@@ -12609,6 +12961,7 @@ async function shutdown(signal) {
   activeEventResponses.forEach((response) => response.end());
   activeEventResponses.clear();
   await serverClosed;
+  await stopOperationalBackgroundQueue();
   await stopBulkUploadQueue();
   stopCacheInvalidationListener();
   await closeRealtime();

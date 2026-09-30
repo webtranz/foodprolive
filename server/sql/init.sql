@@ -2119,9 +2119,10 @@ CREATE INDEX IF NOT EXISTS idx_background_jobs_status
   ON background_jobs(job_type, status, queued_at ASC);
 CREATE INDEX IF NOT EXISTS idx_background_jobs_entity
   ON background_jobs(entity_name, entity_id, queued_at DESC);
+DROP INDEX IF EXISTS idx_background_jobs_active_idempotency;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_background_jobs_active_idempotency
   ON background_jobs(job_type, idempotency_key)
-  WHERE idempotency_key IS NOT NULL AND status IN ('QUEUED', 'PROCESSING');
+  WHERE idempotency_key IS NOT NULL AND status IN ('PREPARING', 'QUEUED', 'PROCESSING');
 
 CREATE TABLE IF NOT EXISTS background_job_items (
   id TEXT PRIMARY KEY,
@@ -2146,6 +2147,21 @@ CREATE INDEX IF NOT EXISTS idx_background_job_items_job
 CREATE UNIQUE INDEX IF NOT EXISTS idx_background_job_items_idempotency
   ON background_job_items(job_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS background_job_payload_fields (
+  id BIGSERIAL PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES background_jobs(id) ON DELETE CASCADE,
+  field_path TEXT NOT NULL,
+  value_kind TEXT NOT NULL DEFAULT 'null',
+  value_text TEXT,
+  value_numeric NUMERIC(18, 6),
+  value_boolean BOOLEAN,
+  value_date TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_background_job_payload_fields_job
+  ON background_job_payload_fields(job_id, field_path);
 
 CREATE TABLE IF NOT EXISTS erp_integration_configs (
   id TEXT PRIMARY KEY,
