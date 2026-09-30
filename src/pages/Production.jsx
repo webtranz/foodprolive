@@ -1338,6 +1338,7 @@ function ProductionIngredientSnapshotEditor({
                         value={line.ingredient_id || ''}
                         selectedIngredient={ingredients.find((ingredient) => String(ingredient.id) === String(line.ingredient_id)) || null}
                         siteId={inventorySiteId}
+                        fallbackItems={ingredients}
                         placeholder="Search replacement ingredient..."
                         className="mt-1"
                         onValueChange={(value, ingredient) => onLineIngredientChange?.(lineKey, value, ingredient)}
@@ -1522,6 +1523,7 @@ function ProductionIngredientSnapshotEditor({
                 value={addIngredientId}
                 selectedIngredient={selectedAddIngredient}
                 siteId={inventorySiteId}
+                fallbackItems={ingredients}
                 placeholder="Search ingredient to add..."
                 className="mt-1"
                 allowClear

@@ -14,7 +14,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber } from '@/lib/currency';
-import { splitHighlightedIngredientText } from '../../../shared/ingredientSearch.js';
+import { searchIngredientCatalog, splitHighlightedIngredientText } from '../../../shared/ingredientSearch.js';
 import { getItemCode } from '../../../shared/itemCode.js';
 import { normalizeAllergenTags } from '../../../shared/allergens.js';
 
@@ -66,6 +66,7 @@ export default function IngredientSearchCombobox({
   selectedIngredient = null,
   siteId = '',
   stockOnly = false,
+  fallbackItems = [],
   placeholder = 'Search ingredient, SKU, category or alias…',
   allowClear = false,
   clearLabel = 'No ingredient',
@@ -104,11 +105,20 @@ export default function IngredientSearchCombobox({
     retry: 1
   });
 
-  const items = query.data?.items || [];
-  const totalCount = Number(query.data?.total_count || 0);
-  const totalPages = Number(query.data?.total_pages || 1);
   const isDebouncing = search !== debouncedSearch;
   const visibleSearch = debouncedSearch;
+  const fallbackData = useMemo(() => (
+    searchIngredientCatalog(fallbackItems, {
+      query: debouncedSearch,
+      page,
+      limit
+    })
+  ), [debouncedSearch, fallbackItems, limit, page]);
+  const isUsingFallback = query.isError && fallbackData.indexed_count > 0;
+  const activeData = isUsingFallback ? fallbackData : query.data;
+  const items = activeData?.items || [];
+  const totalCount = Number(activeData?.total_count || 0);
+  const totalPages = Number(activeData?.total_pages || 1);
   const selectedLabel = selectedIngredient
     ? `${getItemCode(selectedIngredient)} · ${selectedIngredient.name || 'Unnamed item'}`
     : (value ? 'Selected ingredient' : '');
@@ -117,11 +127,12 @@ export default function IngredientSearchCombobox({
     : (selectedLabel || placeholder);
 
   const resultDescription = useMemo(() => {
+    if (isUsingFallback) return 'Ingredient API unavailable; showing local matches';
     if (query.isError) return 'Ingredient search unavailable';
     if (query.isFetching || isDebouncing) return 'Searching ingredients';
     if (!query.data) return 'Type to search ingredients';
     return `${totalCount} ingredient${totalCount === 1 ? '' : 's'} found`;
-  }, [isDebouncing, query.data, query.isError, query.isFetching, totalCount]);
+  }, [isDebouncing, isUsingFallback, query.data, query.isError, query.isFetching, totalCount]);
 
   const chooseIngredient = (ingredient) => {
     onValueChange?.(ingredient?.id || '', ingredient || null);
@@ -174,7 +185,7 @@ export default function IngredientSearchCombobox({
           <div id="ingredient-search-status" aria-live="polite" className="flex flex-wrap items-center justify-between gap-2 border-b bg-slate-50 px-3 py-2 text-xs text-slate-500">
             <span className="inline-flex items-center gap-1.5">
               <span className={cn('h-2 w-2 rounded-full', query.isError ? 'bg-red-500' : 'bg-emerald-500')} />
-              {query.data ? indexedLabel(query.data.indexed_count) : 'Indexed ingredient search'}
+              {activeData ? indexedLabel(activeData.indexed_count) : 'Indexed ingredient search'}
             </span>
             <span>{resultDescription}{query.data && !query.isFetching ? ` in ${query.data.elapsed_ms} ms` : ''}</span>
           </div>
@@ -199,7 +210,13 @@ export default function IngredientSearchCombobox({
               </div>
             ) : null}
 
-            {query.isError && !query.isFetching ? (
+            {isUsingFallback ? (
+              <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+                Live ingredient search could not be reached, so this picker is using the ingredient catalog already loaded on this page.
+              </div>
+            ) : null}
+
+            {query.isError && !query.isFetching && !isUsingFallback ? (
               <div className="flex flex-col items-center gap-3 px-4 py-8 text-center text-sm text-red-700">
                 <AlertCircle className="h-5 w-5" />
                 <span>{query.error?.message || 'Ingredient search could not be loaded.'}</span>
@@ -207,13 +224,13 @@ export default function IngredientSearchCombobox({
               </div>
             ) : null}
 
-            {!query.isFetching && !isDebouncing && !query.isError && items.length === 0 ? (
+            {!query.isFetching && !isDebouncing && (!query.isError || isUsingFallback) && items.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-slate-500">
                 {visibleSearch ? `No active ingredients match “${visibleSearch}”.` : 'No active ingredients are available.'}
               </div>
             ) : null}
 
-            {!query.isFetching && !isDebouncing && !query.isError && items.length > 0 ? (
+            {!query.isFetching && !isDebouncing && (!query.isError || isUsingFallback) && items.length > 0 ? (
               <CommandGroup>
                 {items.map((ingredient) => {
                   const allergens = allergenList(ingredient);

@@ -105,6 +105,9 @@ test('uses a debounced backend endpoint and PostgreSQL search indexes', () => {
   const sqlSource = fs.readFileSync(new URL('../server/sql/init.sql', import.meta.url), 'utf8');
   assert.match(componentSource, /useDebouncedValue\(search, 250\)/);
   assert.match(componentSource, /base44\.ingredients\.search/);
+  assert.match(componentSource, /fallbackItems = \[\]/);
+  assert.match(componentSource, /searchIngredientCatalog\(fallbackItems/);
+  assert.match(componentSource, /Live ingredient search could not be reached/);
   assert.match(componentSource, /shouldFilter=\{false\}/);
   assert.match(apiSource, /\/api\/ingredients\/search/);
   assert.doesNotMatch(searchSource, /ingredient\.payload/);
@@ -122,6 +125,7 @@ test('uses the indexed picker in every ingredient-selection workflow', () => {
     '../src/pages/Ingredients.jsx',
     '../src/pages/Inventory.jsx',
     '../src/pages/ProcurementModule.jsx',
+    '../src/pages/Production.jsx',
     '../src/pages/ProductionTransfer.jsx',
     '../src/pages/CaloriesCalculator.jsx'
   ];
@@ -129,6 +133,8 @@ test('uses the indexed picker in every ingredient-selection workflow', () => {
     const source = fs.readFileSync(new URL(relativePath, import.meta.url), 'utf8');
     assert.match(source, /IngredientSearchCombobox/, `${relativePath} should use the indexed ingredient picker`);
   });
+  const productionSource = fs.readFileSync(new URL('../src/pages/Production.jsx', import.meta.url), 'utf8');
+  assert.match(productionSource, /fallbackItems=\{ingredients\}/, 'production replacement picker should remain usable if live search fails');
 });
 
 console.log('Ingredient search tests passed.');
