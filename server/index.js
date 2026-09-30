@@ -9226,58 +9226,86 @@ app.get('/api/activity/bulk-upload-jobs/:id', requireAuth, requireAnyPermission(
 
 app.get('/api/activity/background-jobs', requireAuth, requireRole(['admin']), async (request, response, next) => {
   try {
-    const limit = Math.min(Math.max(Number(request.query.limit) || 100, 1), 500);
+    const limit = Math.min(Math.max(Number(request.query.limit) || 75, 1), 100);
+    const updatedAfterRaw = String(request.query.updated_after || request.query.since || '').trim();
+    const updatedAfterDate = updatedAfterRaw ? new Date(updatedAfterRaw) : null;
+    const hasUpdatedAfter = updatedAfterDate && !Number.isNaN(updatedAfterDate.getTime());
+    const values = [];
+    const where = hasUpdatedAfter
+      ? `WHERE job.updated_at > $${values.push(updatedAfterDate.toISOString())}::timestamptz`
+      : '';
+    const selectedOrder = hasUpdatedAfter
+      ? 'job.updated_at ASC, job.queued_at DESC, job.id ASC'
+      : 'job.queued_at DESC, job.updated_at DESC, job.id DESC';
+    values.push(limit);
+    const limitParameter = `$${values.length}`;
     const result = await pool.query(
-      `SELECT job.*,
+      `WITH selected_jobs AS (
+         SELECT job.*
+           FROM background_jobs job
+           ${where}
+          ORDER BY ${selectedOrder}
+          LIMIT ${limitParameter}
+       ),
+       item_counts AS (
+         SELECT item.job_id,
+                COUNT(*)::integer AS total_items,
+                COUNT(*) FILTER (WHERE item.status IN ('COMPLETED', 'SKIPPED'))::integer AS completed_items,
+                COUNT(*) FILTER (WHERE item.status = 'FAILED')::integer AS failed_items,
+                COUNT(*) FILTER (WHERE item.status = 'PROCESSING')::integer AS processing_items,
+                COUNT(*) FILTER (WHERE item.status IN ('PREPARING', 'QUEUED'))::integer AS queued_items
+           FROM background_job_items item
+           JOIN selected_jobs selected ON selected.id = item.job_id
+          GROUP BY item.job_id
+       )
+       SELECT selected.*,
               COALESCE(items.total_items, 0) AS total_items,
               COALESCE(items.completed_items, 0) AS completed_items,
               COALESCE(items.failed_items, 0) AS failed_items,
               COALESCE(items.processing_items, 0) AS processing_items,
               COALESCE(items.queued_items, 0) AS queued_items
-         FROM background_jobs job
-         LEFT JOIN (
-           SELECT job_id,
-                  COUNT(*)::integer AS total_items,
-                  COUNT(*) FILTER (WHERE status IN ('COMPLETED', 'SKIPPED'))::integer AS completed_items,
-                  COUNT(*) FILTER (WHERE status = 'FAILED')::integer AS failed_items,
-                  COUNT(*) FILTER (WHERE status = 'PROCESSING')::integer AS processing_items,
-                  COUNT(*) FILTER (WHERE status IN ('PREPARING', 'QUEUED'))::integer AS queued_items
-             FROM background_job_items
-            GROUP BY job_id
-         ) items ON items.job_id = job.id
-        ORDER BY job.queued_at DESC
-        LIMIT $1`,
-      [limit]
+         FROM selected_jobs selected
+         LEFT JOIN item_counts items ON items.job_id = selected.id
+        ORDER BY selected.queued_at DESC, selected.updated_at DESC, selected.id DESC`,
+      values
     );
+    const jobs = result.rows.map((row) => ({
+      id: row.id,
+      job_type: row.job_type,
+      idempotency_key: row.idempotency_key,
+      status: normalizeOperationalBackgroundJobStatus(row.status),
+      priority: Number(row.priority || 0),
+      entity_name: row.entity_name,
+      entity_id: row.entity_id,
+      actor_id: row.actor_id,
+      actor_email: row.actor_email,
+      actor_name: row.actor_name,
+      actor_role: row.actor_role,
+      result_entity_name: row.result_entity_name,
+      result_entity_id: row.result_entity_id,
+      result_count: Number(row.result_count || 0),
+      progress: clampOperationalBackgroundJobProgress(row.progress),
+      message: row.message || '',
+      error: row.error || '',
+      queued_at: row.queued_at,
+      started_at: row.started_at,
+      completed_at: row.completed_at,
+      updated_at: row.updated_at,
+      total_items: Number(row.total_items || 0),
+      completed_items: Number(row.completed_items || 0),
+      failed_items: Number(row.failed_items || 0),
+      processing_items: Number(row.processing_items || 0),
+      queued_items: Number(row.queued_items || 0)
+    }));
+    const nextUpdatedAfter = jobs.reduce((latest, job) => {
+      const timestamp = new Date(job.updated_at || job.queued_at || 0).getTime();
+      return Number.isFinite(timestamp) && timestamp > latest ? timestamp : latest;
+    }, hasUpdatedAfter ? updatedAfterDate.getTime() : 0);
     response.json({
-      jobs: result.rows.map((row) => ({
-        id: row.id,
-        job_type: row.job_type,
-        idempotency_key: row.idempotency_key,
-        status: normalizeOperationalBackgroundJobStatus(row.status),
-        priority: Number(row.priority || 0),
-        entity_name: row.entity_name,
-        entity_id: row.entity_id,
-        actor_id: row.actor_id,
-        actor_email: row.actor_email,
-        actor_name: row.actor_name,
-        actor_role: row.actor_role,
-        result_entity_name: row.result_entity_name,
-        result_entity_id: row.result_entity_id,
-        result_count: Number(row.result_count || 0),
-        progress: clampOperationalBackgroundJobProgress(row.progress),
-        message: row.message || '',
-        error: row.error || '',
-        queued_at: row.queued_at,
-        started_at: row.started_at,
-        completed_at: row.completed_at,
-        updated_at: row.updated_at,
-        total_items: Number(row.total_items || 0),
-        completed_items: Number(row.completed_items || 0),
-        failed_items: Number(row.failed_items || 0),
-        processing_items: Number(row.processing_items || 0),
-        queued_items: Number(row.queued_items || 0)
-      }))
+      jobs,
+      incremental: Boolean(hasUpdatedAfter),
+      updated_after: hasUpdatedAfter ? updatedAfterDate.toISOString() : null,
+      next_updated_after: nextUpdatedAfter ? new Date(nextUpdatedAfter).toISOString() : null
     });
   } catch (error) {
     next(error);
@@ -9289,8 +9317,8 @@ app.get('/api/activity/notifications', requireAuth, async (request, response, ne
     const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 100);
     const siteIds = await accessibleSiteIds(request.user);
     const [scopedLogs, personalLogs] = await Promise.all([
-      listAuditLogs({ limit: 250, siteIds }),
-      listAuditLogs({ limit: 100, actorId: request.user.id })
+      listAuditLogs({ limit: 100, siteIds, includeDetails: true }),
+      listAuditLogs({ limit: 50, actorId: request.user.id, includeDetails: true })
     ]);
     const merged = new Map();
     scopedLogs
@@ -9316,13 +9344,14 @@ app.get('/api/activity/audit-logs', requireAuth, requirePermission('view_audit_l
   try {
     const siteIds = await accessibleSiteIds(request.user);
     const logs = await listAuditLogs({
-      limit: request.query.limit ? Number(request.query.limit) : 200,
+      limit: request.query.limit ? Number(request.query.limit) : 100,
       offset: request.query.offset ? Number(request.query.offset) : 0,
       action: request.query.action || '',
       entity: request.query.entity || '',
       search: request.query.search || '',
       siteIds,
-      actorId: request.user.id
+      actorId: request.user.id,
+      includeDetails: String(request.query.include_details || '').toLowerCase() === 'true'
     });
     response.json({ logs });
   } catch (error) {

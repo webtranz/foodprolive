@@ -11575,7 +11575,8 @@ async function listAuditLogs({
   entity = '',
   search = '',
   siteIds = null,
-  actorId = null
+  actorId = null,
+  includeDetails = true
 } = {}, executor = pool) {
   const conditions = [];
   const values = [];
@@ -11621,7 +11622,7 @@ async function listAuditLogs({
     conditions.push(`actor_id = ${bind(actorId)}`);
   }
 
-  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 250);
   const safeOffset = Math.max(Number(offset) || 0, 0);
   values.push(safeLimit, safeOffset);
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -11635,7 +11636,9 @@ async function listAuditLogs({
     values,
     executor
   );
-  const detailsByLog = await listAuditLogDetails(result.rows.map((row) => row.id), executor);
+  const detailsByLog = includeDetails
+    ? await listAuditLogDetails(result.rows.map((row) => row.id), executor)
+    : new Map();
   return result.rows.map((row) => ({
     ...row,
     details: detailsByLog.get(row.id) || {}
@@ -12040,6 +12043,7 @@ export {
   createAppLog,
   createAuditLog,
   listAuditLogs,
+  listAuditLogDetails,
   createBulkUploadJob,
   getBulkUploadJob,
   listBulkUploadJobs,

@@ -2119,6 +2119,13 @@ CREATE INDEX IF NOT EXISTS idx_background_jobs_status
   ON background_jobs(job_type, status, queued_at ASC);
 CREATE INDEX IF NOT EXISTS idx_background_jobs_entity
   ON background_jobs(entity_name, entity_id, queued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_background_jobs_updated
+  ON background_jobs(updated_at DESC, queued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_background_jobs_queued_desc
+  ON background_jobs(queued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_background_jobs_active_updated
+  ON background_jobs(status, updated_at DESC)
+  WHERE status IN ('PREPARING', 'QUEUED', 'PROCESSING');
 DROP INDEX IF EXISTS idx_background_jobs_active_idempotency;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_background_jobs_active_idempotency
   ON background_jobs(job_type, idempotency_key)
@@ -2144,6 +2151,8 @@ CREATE TABLE IF NOT EXISTS background_job_items (
 
 CREATE INDEX IF NOT EXISTS idx_background_job_items_job
   ON background_job_items(job_id, item_order ASC);
+CREATE INDEX IF NOT EXISTS idx_background_job_items_job_status
+  ON background_job_items(job_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_background_job_items_idempotency
   ON background_job_items(job_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;

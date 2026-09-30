@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, Search } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
@@ -115,27 +115,82 @@ export default function AuditLogs() {
   const [search, setSearch] = useState('');
   const [action, setAction] = useState('');
   const [entity, setEntity] = useState('');
-  const [filters, setFilters] = useState({ limit: 500 });
+  const [filters, setFilters] = useState({ limit: 100, include_details: false });
+  const [backgroundJobs, setBackgroundJobs] = useState([]);
+  const backgroundJobCursorRef = useRef('');
+  const backgroundJobLimit = 75;
   const { data, isLoading, error } = useQuery({
     queryKey: ['audit-logs', filters],
-    queryFn: () => base44.activity.listAuditLogs(filters)
+    queryFn: () => base44.activity.listAuditLogs(filters),
+    staleTime: 30000
   });
   const {
     data: backgroundJobData,
     isLoading: isBackgroundJobsLoading,
+    isFetching: isBackgroundJobsFetching,
     error: backgroundJobsError
   } = useQuery({
     queryKey: ['background-jobs', isAdmin],
-    queryFn: () => base44.activity.listBackgroundJobs(100),
+    queryFn: ({ signal }) => base44.activity.listBackgroundJobs({
+      limit: backgroundJobLimit,
+      updated_after: backgroundJobCursorRef.current,
+      signal
+    }),
     enabled: isAdmin,
-    refetchInterval: isAdmin ? 5000 : false
+    refetchInterval: isAdmin ? 5000 : false,
+    refetchIntervalInBackground: false,
+    retry: 1,
+    staleTime: 3000
   });
   const logs = data?.logs || [];
-  const backgroundJobs = backgroundJobData?.jobs || [];
+  const detailedMode = filters.include_details === true;
+
+  useEffect(() => {
+    if (isAdmin) return;
+    backgroundJobCursorRef.current = '';
+    setBackgroundJobs([]);
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!backgroundJobData) return;
+    const incomingJobs = Array.isArray(backgroundJobData.jobs) ? backgroundJobData.jobs : [];
+    setBackgroundJobs((currentJobs) => {
+      if (!backgroundJobData.incremental) {
+        return incomingJobs.slice(0, backgroundJobLimit);
+      }
+      if (!incomingJobs.length) return currentJobs;
+      const merged = new Map(currentJobs.map((job) => [job.id, job]));
+      incomingJobs.forEach((job) => merged.set(job.id, job));
+      return [...merged.values()]
+        .sort((left, right) => new Date(right.queued_at || right.updated_at || 0).getTime() - new Date(left.queued_at || left.updated_at || 0).getTime())
+        .slice(0, backgroundJobLimit);
+    });
+    if (backgroundJobData.next_updated_after) {
+      const cursorTime = new Date(backgroundJobData.next_updated_after).getTime();
+      backgroundJobCursorRef.current = Number.isFinite(cursorTime)
+        ? new Date(Math.max(0, cursorTime - 1000)).toISOString()
+        : backgroundJobData.next_updated_after;
+    }
+  }, [backgroundJobData]);
 
   const applyFilters = (event) => {
     event.preventDefault();
-    setFilters({ limit: 500, search: search.trim(), action: action.trim(), entity: entity.trim() });
+    setFilters({
+      limit: detailedMode ? 50 : 100,
+      include_details: detailedMode,
+      search: search.trim(),
+      action: action.trim(),
+      entity: entity.trim()
+    });
+  };
+
+  const toggleDetailedMode = () => {
+    const nextDetailedMode = !detailedMode;
+    setFilters((currentFilters) => ({
+      ...currentFilters,
+      limit: nextDetailedMode ? 50 : 100,
+      include_details: nextDetailedMode
+    }));
   };
 
   return (
@@ -150,11 +205,15 @@ export default function AuditLogs() {
                 <h2 className="text-lg font-semibold text-slate-900">Background Job Monitor</h2>
                 <p className="text-sm text-slate-500">Admin-only queue trace with durable job status and progress.</p>
               </div>
-              <Badge variant="outline">{backgroundJobs.length} recent jobs</Badge>
+              <div className="flex items-center gap-2">
+                {isBackgroundJobsFetching && backgroundJobs.length ? <Badge variant="outline">Refreshing…</Badge> : null}
+                {backgroundJobsError && backgroundJobs.length ? <Badge className="bg-amber-100 text-amber-700">Retrying</Badge> : null}
+                <Badge variant="outline">{backgroundJobs.length} recent jobs</Badge>
+              </div>
             </div>
-            {isBackgroundJobsLoading ? (
+            {isBackgroundJobsLoading && !backgroundJobs.length ? (
               <div className="rounded border border-slate-200 p-4 text-sm text-slate-500">Loading background jobs…</div>
-            ) : backgroundJobsError ? (
+            ) : backgroundJobsError && !backgroundJobs.length ? (
               <div className="rounded border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{backgroundJobsError.message}</div>
             ) : !backgroundJobs.length ? (
               <div className="rounded border border-slate-200 p-4 text-sm text-slate-500">No background jobs have been recorded yet.</div>
@@ -234,7 +293,14 @@ export default function AuditLogs() {
           <div className="mt-3 flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => downloadCSV(logs, 'food-pro-audit-logs')} disabled={!logs.length}><Download className="mr-2 h-4 w-4" />CSV</Button>
             <Button variant="outline" size="sm" onClick={() => downloadExcel(logs, 'food-pro-audit-logs', 'Audit Logs')} disabled={!logs.length}>Excel</Button>
-            <span className="self-center text-xs text-slate-500">Sensitive values such as passwords and tokens are redacted by the server.</span>
+            <Button variant="outline" size="sm" type="button" onClick={toggleDetailedMode}>
+              {detailedMode ? 'Fast mode' : 'Load row details'}
+            </Button>
+            <span className="self-center text-xs text-slate-500">
+              {detailedMode
+                ? 'Detailed mode loads fewer rows to keep the page responsive.'
+                : 'Fast mode avoids loading full audit details until needed. Sensitive values are still redacted.'}
+            </span>
           </div>
         </CardContent>
       </Card>
@@ -274,7 +340,11 @@ export default function AuditLogs() {
                                   )}
                                   <details>
                                     <summary className="cursor-pointer text-xs font-medium text-emerald-700">Technical data</summary>
-                                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-2 text-[11px] text-slate-100">{JSON.stringify(log.details || {}, null, 2)}</pre>
+                                    {Object.keys(log.details || {}).length ? (
+                                      <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-2 text-[11px] text-slate-100">{JSON.stringify(log.details || {}, null, 2)}</pre>
+                                    ) : (
+                                      <p className="mt-2 rounded bg-slate-50 p-2 text-xs text-slate-500">Use “Load row details” for full technical data. Fast mode keeps this page from timing out.</p>
+                                    )}
                                   </details>
                                 </div>
                               );

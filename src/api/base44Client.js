@@ -1111,8 +1111,10 @@ export const base44 = {
     getBulkUploadJob(id) {
       return apiRequest(`/api/activity/bulk-upload-jobs/${encodeURIComponent(id)}`);
     },
-    listBackgroundJobs(limit = 100) {
-      return apiRequest(`/api/activity/background-jobs${buildQueryString({ limit })}`);
+    listBackgroundJobs(options = 75) {
+      const params = typeof options === 'number' ? { limit: options } : { ...(options || {}) };
+      const { signal, ...query } = params;
+      return apiRequest(`/api/activity/background-jobs${buildQueryString(query)}`, { signal });
     },
     listAuditLogs(filters = {}) {
       return apiRequest(`/api/activity/audit-logs${buildQueryString(filters)}`);
