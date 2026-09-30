@@ -2196,6 +2196,104 @@ async function resolveFoodWasteProductionSiteIds(siteId, executor = null) {
   return uniqueTextValues([normalizedSiteId, ...childStoreIds]);
 }
 
+function foodWasteSiteLookupKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+async function listFoodWasteVisibleSites(executor = null) {
+  return listDocuments('Site', {
+    limit: 10000,
+    sort: 'name'
+  }, executor || undefined);
+}
+
+function findFoodWasteSiteByIdentifier(sites = [], identifier = '') {
+  const key = foodWasteSiteLookupKey(identifier);
+  if (!key) return null;
+  return (Array.isArray(sites) ? sites : []).find((site) => [
+    site?.id,
+    site?.name,
+    site?.project_code,
+    site?.warehouse_code,
+    site?.d365_warehouse_id,
+    site?.hierarchy_path
+  ].some((candidate) => foodWasteSiteLookupKey(candidate) === key)) || null;
+}
+
+function activeFoodWasteChildStores(sites = [], parentSiteId = '') {
+  const parentId = String(parentSiteId || '').trim();
+  if (!parentId) return [];
+  return (Array.isArray(sites) ? sites : []).filter((site) => (
+    site?.is_active !== false
+    && String(site?.parent_site_id || '') === parentId
+    && normalizeSiteType(site?.type) === SITE_HIERARCHY_TYPES.STORE
+  ));
+}
+
+async function resolveFoodWasteRecordWarehouse(siteId, {
+  preferredSiteIds = [],
+  executor = null
+} = {}) {
+  const normalizedSiteId = String(siteId || '').trim();
+  if (!normalizedSiteId) {
+    const error = new Error('Select the Store / Warehouse for this waste record.');
+    error.status = 400;
+    throw error;
+  }
+  const sites = await listFoodWasteVisibleSites(executor);
+  const selected = findFoodWasteSiteByIdentifier(sites, normalizedSiteId);
+  if (!selected) {
+    const error = new Error(`Food waste location "${normalizedSiteId}" could not be found. Select a valid Store / Warehouse.`);
+    error.status = 400;
+    throw error;
+  }
+
+  if (normalizeSiteType(selected.type) === SITE_HIERARCHY_TYPES.STORE) {
+    return {
+      site_id: selected.id,
+      site_name: selected.name || selected.warehouse_code || selected.id
+    };
+  }
+
+  const childStores = activeFoodWasteChildStores(sites, selected.id);
+  const preferredSet = new Set(uniqueTextValues(preferredSiteIds));
+  const preferredStore = childStores.find((store) => preferredSet.has(String(store.id)));
+  if (preferredStore) {
+    return {
+      site_id: preferredStore.id,
+      site_name: preferredStore.name || preferredStore.warehouse_code || preferredStore.id
+    };
+  }
+  if (childStores.length === 1) {
+    const store = childStores[0];
+    return {
+      site_id: store.id,
+      site_name: store.name || store.warehouse_code || store.id
+    };
+  }
+
+  const error = new Error(
+    childStores.length > 1
+      ? 'This Project has more than one Store / Warehouse. Select the exact Store before recording food waste.'
+      : 'Food waste must be recorded against a Store / Warehouse. Add or select the Store under this Project first.'
+  );
+  error.status = 400;
+  throw error;
+}
+
+async function resolveFoodWasteRecordWarehouseIds(siteId, executor = null) {
+  const normalizedSiteId = String(siteId || '').trim();
+  if (!normalizedSiteId) return [];
+  const sites = await listFoodWasteVisibleSites(executor);
+  const selected = findFoodWasteSiteByIdentifier(sites, normalizedSiteId);
+  if (!selected) return [normalizedSiteId];
+  if (normalizeSiteType(selected.type) === SITE_HIERARCHY_TYPES.STORE) {
+    return uniqueTextValues([selected.id]);
+  }
+  const childStores = activeFoodWasteChildStores(sites, selected.id);
+  return uniqueTextValues(childStores.map((store) => store.id));
+}
+
 async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = new Date() }) {
   const normalizedMealType = normalizeMealType(mealType);
   const siteIdValue = String(siteId || '').trim();
@@ -2461,23 +2559,47 @@ function getAllocationBatchId(allocation = {}) {
 }
 
 function reconcileProducedItemBatchWasteBalance(batch = {}) {
+  const producedWeight = firstPositiveNumber([
+    batch.produced_weight_grams,
+    numericMatch(batch.served_weight_grams, 0)
+      + numericMatch(batch.wasted_weight_grams, 0)
+      + numericMatch(batch.remaining_weight_grams, 0)
+  ]);
+  const producedServings = firstPositiveNumber([
+    batch.produced_servings,
+    numericMatch(batch.served_servings, 0)
+      + numericMatch(batch.wasted_servings, 0)
+      + numericMatch(batch.remaining_servings, 0)
+  ]);
   const portionSize = numericMatch(batch.portion_size_grams, 0);
-  const producedWeight = numericMatch(batch.produced_weight_grams, 0);
-  const producedServings = numericMatch(batch.produced_servings, 0);
-  const servedWeight = roundFoodWasteQuantity(numericMatch(batch.served_weight_grams, 0));
-  const servedServings = roundFoodWasteQuantity(numericMatch(batch.served_servings, 0));
+  const servedWeight = roundFoodWasteQuantity(Math.max(0, Math.min(
+    numericMatch(batch.served_weight_grams, 0),
+    producedWeight > FOOD_WASTE_QUANTITY_EPSILON ? producedWeight : Number.POSITIVE_INFINITY
+  )));
   const wastedWeight = roundFoodWasteQuantity(Math.min(
     Math.max(0, numericMatch(batch.wasted_weight_grams, 0)),
-    Math.max(0, producedWeight - servedWeight)
+    producedWeight > FOOD_WASTE_QUANTITY_EPSILON
+      ? Math.max(0, producedWeight - servedWeight)
+      : Number.POSITIVE_INFINITY
   ));
-  const remainingWeight = roundFoodWasteQuantity(Math.max(0, producedWeight - servedWeight - wastedWeight));
-  const wastedServings = roundFoodWasteQuantity(portionSize > FOOD_WASTE_QUANTITY_EPSILON
-    ? wastedWeight / portionSize
-    : Math.min(
-      Math.max(0, numericMatch(batch.wasted_servings, 0)),
-      Math.max(0, producedServings - servedServings)
-    ));
-  const remainingServings = roundFoodWasteQuantity(Math.max(0, producedServings - servedServings - wastedServings));
+  const remainingWeight = producedWeight > FOOD_WASTE_QUANTITY_EPSILON
+    ? roundFoodWasteQuantity(Math.max(0, producedWeight - servedWeight - wastedWeight))
+    : roundFoodWasteQuantity(Math.max(0, numericMatch(batch.remaining_weight_grams, 0)));
+
+  let servedServings = roundFoodWasteQuantity(Math.max(0, numericMatch(batch.served_servings, 0)));
+  let wastedServings = roundFoodWasteQuantity(Math.max(0, numericMatch(batch.wasted_servings, 0)));
+  let remainingServings = roundFoodWasteQuantity(Math.max(0, numericMatch(batch.remaining_servings, 0)));
+
+  if (producedWeight > FOOD_WASTE_QUANTITY_EPSILON && producedServings > FOOD_WASTE_QUANTITY_EPSILON) {
+    servedServings = roundFoodWasteQuantity((servedWeight / producedWeight) * producedServings);
+    wastedServings = roundFoodWasteQuantity((wastedWeight / producedWeight) * producedServings);
+    remainingServings = roundFoodWasteQuantity(Math.max(0, producedServings - servedServings - wastedServings));
+  } else if (portionSize > FOOD_WASTE_QUANTITY_EPSILON) {
+    servedServings = roundFoodWasteQuantity(servedWeight / portionSize);
+    wastedServings = roundFoodWasteQuantity(wastedWeight / portionSize);
+    remainingServings = roundFoodWasteQuantity(remainingWeight / portionSize);
+  }
+
   const status = remainingWeight <= FOOD_WASTE_QUANTITY_EPSILON
     ? 'consumed'
     : servedWeight > FOOD_WASTE_QUANTITY_EPSILON || wastedWeight > FOOD_WASTE_QUANTITY_EPSILON
@@ -3327,7 +3449,9 @@ function filterFoodWasteRows(rows, filters = {}) {
   return rows.filter((row) => {
     const rowStatus = String(row.status || row.approval_status || '').trim().toLowerCase();
     if (!includeReversed && invalidStatuses.has(rowStatus)) return false;
-    if (filters.site_id && row.site_id !== filters.site_id) return false;
+    const siteIds = new Set(uniqueTextValues(filters.site_ids || []));
+    if (siteIds.size > 0 && !siteIds.has(String(row.site_id || ''))) return false;
+    if (siteIds.size === 0 && filters.site_id && row.site_id !== filters.site_id) return false;
     if (filters.waste_category && row.waste_category !== filters.waste_category) return false;
     if (filters.reason_code && row.reason_code !== filters.reason_code) return false;
     if (filters.scope && row.waste_scope !== filters.scope) return false;
@@ -5187,7 +5311,12 @@ app.get('/api/food-waste', requireAuth, requirePermission('manage_waste'), async
     const wasteScope = String(request.query.scope || '').trim();
     const mealType = String(request.query.meal_type || '').trim();
     const filters = {};
-    if (siteId) filters.site_id = siteId;
+    const recordWarehouseIds = siteId ? await resolveFoodWasteRecordWarehouseIds(siteId) : [];
+    if (siteId && recordWarehouseIds.length === 1) {
+      filters.site_id = recordWarehouseIds[0];
+    } else if (siteId && recordWarehouseIds.length === 0) {
+      filters.site_id = siteId;
+    }
     if (wasteCategory) filters.waste_category = wasteCategory;
     if (reasonCode) filters.reason_code = reasonCode;
     if (wasteScope) filters.waste_scope = wasteScope;
@@ -5213,6 +5342,7 @@ app.get('/api/food-waste', requireAuth, requirePermission('manage_waste'), async
       start_date: request.query.start_date,
       end_date: request.query.end_date,
       site_id: siteId,
+      site_ids: recordWarehouseIds,
       waste_category: wasteCategory,
       reason_code: reasonCode,
       scope: wasteScope,

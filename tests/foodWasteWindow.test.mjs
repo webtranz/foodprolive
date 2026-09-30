@@ -13,6 +13,7 @@ import {
   normalizeMealType,
   normalizeRealRecipeId
 } from '../server/foodWaste.js';
+import { validateEntityPayload } from '../server/entities.js';
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -471,6 +472,54 @@ const cases = [
       assert.equal(allocation.batches[0].status, 'consumed');
       assert.equal(allocation.batches[1].remaining_weight_grams, 400);
       assert.equal(allocation.batches[1].status, 'partial');
+    }
+  },
+  {
+    name: 'keeps produced item serving balances reconciled for gram-based waste',
+    run() {
+      const allocation = allocateBatchOverproductionWaste({
+        recipeId: 'egg-curry',
+        wasteWeightGrams: 200,
+        batches: [
+          {
+            id: 'batch-mixed-basis',
+            batch_number: 'B-003',
+            production_id: 'production-3',
+            production_date: '2026-09-02',
+            completed_at: '2026-09-02T08:00:00.000Z',
+            site_id: '384',
+            status: 'available',
+            recipe_id: 'egg-curry',
+            meal_type: 'breakfast',
+            portion_size_grams: 100,
+            expected_servings: 1,
+            expected_finished_weight_grams: 1000,
+            actual_finished_weight_grams: 1000,
+            produced_servings: 1,
+            produced_weight_grams: 1000,
+            served_servings: 0,
+            served_weight_grams: 0,
+            wasted_servings: 0,
+            wasted_weight_grams: 0,
+            remaining_servings: 1,
+            remaining_weight_grams: 1000,
+            cutover_version: 1
+          }
+        ]
+      });
+
+      const [batch] = allocation.batches;
+      assert.equal(allocation.wasted_weight_grams, 200);
+      assert.equal(allocation.wasted_production_equivalent_servings, 0.2);
+      assert.equal(batch.wasted_weight_grams, 200);
+      assert.equal(batch.remaining_weight_grams, 800);
+      assert.equal(batch.wasted_servings, 0.2);
+      assert.equal(batch.remaining_servings, 0.8);
+      assert.equal(
+        Number((batch.served_servings + batch.wasted_servings + batch.remaining_servings).toFixed(6)),
+        batch.produced_servings
+      );
+      assert.doesNotThrow(() => validateEntityPayload('ProducedItemBatch', batch));
     }
   },
   {

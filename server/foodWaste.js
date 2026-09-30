@@ -127,6 +127,86 @@ function getBatchAvailableWeight(batch = {}) {
   return roundQuantity(Math.max(0, number(batch.remaining_weight_grams, 0)));
 }
 
+function getBatchProducedWeight(batch = {}) {
+  return firstPositiveQuantity([
+    batch.produced_weight_grams,
+    number(batch.served_weight_grams, 0)
+      + number(batch.wasted_weight_grams, 0)
+      + number(batch.remaining_weight_grams, 0)
+  ]);
+}
+
+function getBatchProducedServings(batch = {}) {
+  return firstPositiveQuantity([
+    batch.produced_servings,
+    number(batch.served_servings, 0)
+      + number(batch.wasted_servings, 0)
+      + number(batch.remaining_servings, 0)
+  ]);
+}
+
+function getBatchWeightServingEquivalent(batch = {}, weightGrams = 0) {
+  const weight = roundQuantity(Math.max(0, number(weightGrams, 0)));
+  const producedWeight = getBatchProducedWeight(batch);
+  const producedServings = getBatchProducedServings(batch);
+  if (producedWeight > QUANTITY_EPSILON && producedServings > QUANTITY_EPSILON) {
+    return roundQuantity((weight / producedWeight) * producedServings);
+  }
+
+  const portionSize = number(batch.portion_size_grams, 0);
+  return portionSize > QUANTITY_EPSILON ? roundQuantity(weight / portionSize) : 0;
+}
+
+function reconcileBatchOverproductionWasteBalance(batch = {}) {
+  const producedWeight = getBatchProducedWeight(batch);
+  const producedServings = getBatchProducedServings(batch);
+  const portionSize = number(batch.portion_size_grams, 0);
+  const servedWeight = roundQuantity(Math.max(0, Math.min(
+    number(batch.served_weight_grams, 0),
+    producedWeight > QUANTITY_EPSILON ? producedWeight : Number.POSITIVE_INFINITY
+  )));
+  const wastedWeight = roundQuantity(Math.max(0, Math.min(
+    number(batch.wasted_weight_grams, 0),
+    producedWeight > QUANTITY_EPSILON
+      ? Math.max(0, producedWeight - servedWeight)
+      : Number.POSITIVE_INFINITY
+  )));
+  const remainingWeight = producedWeight > QUANTITY_EPSILON
+    ? roundQuantity(Math.max(0, producedWeight - servedWeight - wastedWeight))
+    : roundQuantity(Math.max(0, number(batch.remaining_weight_grams, 0)));
+
+  let servedServings = roundQuantity(Math.max(0, number(batch.served_servings, 0)));
+  let wastedServings = roundQuantity(Math.max(0, number(batch.wasted_servings, 0)));
+  let remainingServings = roundQuantity(Math.max(0, number(batch.remaining_servings, 0)));
+
+  if (producedWeight > QUANTITY_EPSILON && producedServings > QUANTITY_EPSILON) {
+    servedServings = roundQuantity((servedWeight / producedWeight) * producedServings);
+    wastedServings = roundQuantity((wastedWeight / producedWeight) * producedServings);
+    remainingServings = roundQuantity(Math.max(0, producedServings - servedServings - wastedServings));
+  } else if (portionSize > QUANTITY_EPSILON) {
+    servedServings = roundQuantity(servedWeight / portionSize);
+    wastedServings = roundQuantity(wastedWeight / portionSize);
+    remainingServings = roundQuantity(remainingWeight / portionSize);
+  }
+
+  const status = remainingWeight <= QUANTITY_EPSILON
+    ? 'consumed'
+    : servedWeight > QUANTITY_EPSILON || wastedWeight > QUANTITY_EPSILON
+      ? 'partial'
+      : 'available';
+
+  return {
+    ...batch,
+    served_servings: servedServings,
+    served_weight_grams: servedWeight,
+    wasted_servings: wastedServings,
+    wasted_weight_grams: wastedWeight,
+    remaining_servings: remainingServings,
+    remaining_weight_grams: remainingWeight,
+    status
+  };
+}
+
 function compareBatchFifo(left = {}, right = {}) {
   const leftTime = normalizeText(left.completed_at || left.production_completed_at || left.created_date);
   const rightTime = normalizeText(right.completed_at || right.production_completed_at || right.created_date);
@@ -711,9 +791,7 @@ export function allocateBatchOverproductionWaste({
     const beforeWeight = getAllocatableWeight(batch);
     const allocatedWeight = roundQuantity(Math.min(remainingDemand, beforeWeight));
     const portionSize = number(batch.portion_size_grams, 0);
-    const wastedServings = portionSize > QUANTITY_EPSILON
-      ? roundQuantity(allocatedWeight / portionSize)
-      : 0;
+    const wastedServings = getBatchWeightServingEquivalent(batch, allocatedWeight);
     const rowBatch = summaryBatchById.get(normalizeText(batch.id)) || {};
     const rowItemKey = normalizeText(
       normalizedManifestItemKey
@@ -734,11 +812,7 @@ export function allocateBatchOverproductionWaste({
 
     batch.remaining_weight_grams = roundQuantity(Math.max(0, actualBeforeWeight - allocatedWeight));
     batch.wasted_weight_grams = roundQuantity(number(batch.wasted_weight_grams, 0) + allocatedWeight);
-    batch.remaining_servings = portionSize > QUANTITY_EPSILON
-      ? roundQuantity(batch.remaining_weight_grams / portionSize)
-      : roundQuantity(Math.max(0, number(batch.remaining_servings, 0) - wastedServings));
-    batch.wasted_servings = roundQuantity(number(batch.wasted_servings, 0) + wastedServings);
-    batch.status = batch.remaining_weight_grams <= QUANTITY_EPSILON ? 'consumed' : 'partial';
+    Object.assign(batch, reconcileBatchOverproductionWasteBalance(batch));
 
     allocations.push({
       produced_item_batch_id: batch.id,
