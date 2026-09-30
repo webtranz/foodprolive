@@ -299,12 +299,36 @@ export function normalizeProductionMealType(value) {
 
 function resolveProductionCost(production, ingredientMap, ingredientCostIndex = {}) {
   const isCompleted = String(production?.status || '').toLowerCase() === 'completed';
+  const manifestCost = (Array.isArray(production?.manifest_lines)
+    ? production.manifest_lines
+    : (Array.isArray(production?.menu_issue_items) ? production.menu_issue_items : [])
+  ).reduce((sum, line) => (
+    sum + numberValue(
+      line?.actual_cost
+        ?? line?.production_time_cost
+        ?? line?.posted_cost
+        ?? line?.consumed_cost
+        ?? line?.total_cost
+        ?? line?.estimated_batch_cost
+        ?? line?.estimated_cost,
+      0
+    )
+  ), 0);
+
   if (isCompleted) {
-    const lineCost = sumProductionLineCosts(production?.completion_lines)
-      || sumProductionLineCosts(production?.ingredient_lines)
-      || sumProductionLineCosts(production?.ingredients_used);
-    if (lineCost > 0) {
-      return round(lineCost);
+    const savedCompletedCost = [
+      production?.total_consumption_cost,
+      production?.production_cost_total,
+      production?.ingredient_cost_total,
+      production?.actual_cost,
+      production?.production_time_cost,
+      manifestCost,
+      production?.total_cost,
+      production?.estimated_batch_cost,
+      production?.estimated_cost
+    ].find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+    if (savedCompletedCost) {
+      return round(savedCompletedCost);
     }
 
     const outputCost = getProductionOutputCost(production, ingredientCostIndex);
@@ -326,22 +350,6 @@ function resolveProductionCost(production, ingredientMap, ingredientCostIndex = 
     ), 0);
 
   if (calculated > 0) return round(calculated);
-
-  const manifestCost = (Array.isArray(production?.manifest_lines)
-    ? production.manifest_lines
-    : (Array.isArray(production?.menu_issue_items) ? production.menu_issue_items : [])
-  ).reduce((sum, line) => (
-    sum + numberValue(
-      line?.actual_cost
-        ?? line?.production_time_cost
-        ?? line?.posted_cost
-        ?? line?.consumed_cost
-        ?? line?.total_cost
-        ?? line?.estimated_batch_cost
-        ?? line?.estimated_cost,
-      0
-    )
-  ), 0);
 
   if (manifestCost > 0) return round(manifestCost);
 

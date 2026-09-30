@@ -5183,7 +5183,42 @@ function normalizedSelectForEntity(entity) {
                          'actual_cost', line.actual_cost,
                          'production_time_cost', line.actual_cost,
                          'status', line.status,
-                         'source_name', line.source_name
+                         'source_name', line.source_name,
+                         'ingredients_used', COALESCE((
+                           SELECT jsonb_agg(
+                             jsonb_build_object(
+                               'id', ingredient_line.production_line_ingredient_id,
+                               'line_id', ingredient_line.production_line_ingredient_id,
+                               'production_line_id', ingredient_line.production_line_id,
+                               'ingredient_id', ingredient_line.ingredient_id,
+                               'item_code', COALESCE(ingredient_line.item_code, manifest_ingredient.item_code, manifest_ingredient.ingredient_code, manifest_ingredient.sku, manifest_ingredient.d365_item_id),
+                               'ingredient_name', COALESCE(ingredient_line.ingredient_name, manifest_ingredient.name),
+                               'quantity', ingredient_line.quantity,
+                               'raw_quantity', COALESCE(ingredient_line.raw_quantity, ingredient_line.quantity),
+                               'planned_quantity', COALESCE(ingredient_line.planned_quantity, ingredient_line.quantity),
+                               'required_quantity', COALESCE(ingredient_line.required_quantity, ingredient_line.quantity),
+                               'unit', ingredient_line.unit,
+                               'recipe_quantity', ingredient_line.recipe_quantity,
+                               'recipe_unit', ingredient_line.recipe_unit,
+                               'inventory_unit', ingredient_line.inventory_unit,
+                               'raw_weight_grams', ingredient_line.raw_weight_grams,
+                               'yielded_weight_grams', ingredient_line.yielded_weight_grams,
+                               'yield_percent', ingredient_line.yield_percent,
+                               'yield_multiplier', ingredient_line.yield_multiplier,
+                               'estimated_cost', ingredient_line.estimated_cost,
+                               'estimated_batch_cost', ingredient_line.estimated_cost,
+                               'actual_cost', ingredient_line.actual_cost,
+                               'production_time_cost', ingredient_line.actual_cost,
+                               'status', ingredient_line.status,
+                               'source_name', ingredient_line.source_name
+                             )
+                             ORDER BY ingredient_line.line_number, ingredient_line.production_line_ingredient_id
+                           )
+                           FROM production_manifest_line_ingredients ingredient_line
+                           LEFT JOIN ingredients manifest_ingredient
+                             ON manifest_ingredient.ingredient_id = ingredient_line.ingredient_id
+                           WHERE ingredient_line.production_line_id = line.production_line_id
+                         ), '[]'::jsonb)
                        )
                        ORDER BY line.line_number
                      )
@@ -5351,7 +5386,42 @@ function normalizedSelectForEntity(entity) {
                          'actual_cost', COALESCE(NULLIF(item.actual_cost, 0), NULLIF(manifest.actual_cost, 0), NULLIF(item.estimated_cost, 0), NULLIF(manifest.estimated_cost, 0), 0),
                          'production_time_cost', COALESCE(NULLIF(item.actual_cost, 0), NULLIF(manifest.actual_cost, 0), NULLIF(item.estimated_cost, 0), NULLIF(manifest.estimated_cost, 0), 0),
                          'status', COALESCE(item.status, manifest.status),
-                         'source_name', COALESCE(item.source_name, manifest.source_name)
+                         'source_name', COALESCE(item.source_name, manifest.source_name),
+                         'ingredients_used', COALESCE((
+                           SELECT jsonb_agg(
+                             jsonb_build_object(
+                               'id', ingredient_line.production_line_ingredient_id,
+                               'line_id', ingredient_line.production_line_ingredient_id,
+                               'production_line_id', ingredient_line.production_line_id,
+                               'ingredient_id', ingredient_line.ingredient_id,
+                               'item_code', COALESCE(ingredient_line.item_code, manifest_ingredient.item_code, manifest_ingredient.ingredient_code, manifest_ingredient.sku, manifest_ingredient.d365_item_id),
+                               'ingredient_name', COALESCE(ingredient_line.ingredient_name, manifest_ingredient.name),
+                               'quantity', ingredient_line.quantity,
+                               'raw_quantity', COALESCE(ingredient_line.raw_quantity, ingredient_line.quantity),
+                               'planned_quantity', COALESCE(ingredient_line.planned_quantity, ingredient_line.quantity),
+                               'required_quantity', COALESCE(ingredient_line.required_quantity, ingredient_line.quantity),
+                               'unit', ingredient_line.unit,
+                               'recipe_quantity', ingredient_line.recipe_quantity,
+                               'recipe_unit', ingredient_line.recipe_unit,
+                               'inventory_unit', ingredient_line.inventory_unit,
+                               'raw_weight_grams', ingredient_line.raw_weight_grams,
+                               'yielded_weight_grams', ingredient_line.yielded_weight_grams,
+                               'yield_percent', ingredient_line.yield_percent,
+                               'yield_multiplier', ingredient_line.yield_multiplier,
+                               'estimated_cost', ingredient_line.estimated_cost,
+                               'estimated_batch_cost', ingredient_line.estimated_cost,
+                               'actual_cost', ingredient_line.actual_cost,
+                               'production_time_cost', ingredient_line.actual_cost,
+                               'status', ingredient_line.status,
+                               'source_name', ingredient_line.source_name
+                             )
+                             ORDER BY ingredient_line.line_number, ingredient_line.production_line_ingredient_id
+                           )
+                           FROM production_manifest_line_ingredients ingredient_line
+                           LEFT JOIN ingredients manifest_ingredient
+                             ON manifest_ingredient.ingredient_id = ingredient_line.ingredient_id
+                           WHERE ingredient_line.production_line_id = COALESCE(item.production_line_id, manifest.production_line_id)
+                         ), '[]'::jsonb)
                        )
                        ORDER BY item.item_order
                      )
@@ -5398,7 +5468,42 @@ function normalizedSelectForEntity(entity) {
                          'actual_cost', COALESCE(NULLIF(manifest.actual_cost, 0), NULLIF(manifest.estimated_cost, 0), 0),
                          'production_time_cost', COALESCE(NULLIF(manifest.actual_cost, 0), NULLIF(manifest.estimated_cost, 0), 0),
                          'status', manifest.status,
-                         'source_name', manifest.source_name
+                         'source_name', manifest.source_name,
+                         'ingredients_used', COALESCE((
+                           SELECT jsonb_agg(
+                             jsonb_build_object(
+                               'id', ingredient_line.production_line_ingredient_id,
+                               'line_id', ingredient_line.production_line_ingredient_id,
+                               'production_line_id', ingredient_line.production_line_id,
+                               'ingredient_id', ingredient_line.ingredient_id,
+                               'item_code', COALESCE(ingredient_line.item_code, manifest_ingredient.item_code, manifest_ingredient.ingredient_code, manifest_ingredient.sku, manifest_ingredient.d365_item_id),
+                               'ingredient_name', COALESCE(ingredient_line.ingredient_name, manifest_ingredient.name),
+                               'quantity', ingredient_line.quantity,
+                               'raw_quantity', COALESCE(ingredient_line.raw_quantity, ingredient_line.quantity),
+                               'planned_quantity', COALESCE(ingredient_line.planned_quantity, ingredient_line.quantity),
+                               'required_quantity', COALESCE(ingredient_line.required_quantity, ingredient_line.quantity),
+                               'unit', ingredient_line.unit,
+                               'recipe_quantity', ingredient_line.recipe_quantity,
+                               'recipe_unit', ingredient_line.recipe_unit,
+                               'inventory_unit', ingredient_line.inventory_unit,
+                               'raw_weight_grams', ingredient_line.raw_weight_grams,
+                               'yielded_weight_grams', ingredient_line.yielded_weight_grams,
+                               'yield_percent', ingredient_line.yield_percent,
+                               'yield_multiplier', ingredient_line.yield_multiplier,
+                               'estimated_cost', ingredient_line.estimated_cost,
+                               'estimated_batch_cost', ingredient_line.estimated_cost,
+                               'actual_cost', ingredient_line.actual_cost,
+                               'production_time_cost', ingredient_line.actual_cost,
+                               'status', ingredient_line.status,
+                               'source_name', ingredient_line.source_name
+                             )
+                             ORDER BY ingredient_line.line_number, ingredient_line.production_line_ingredient_id
+                           )
+                           FROM production_manifest_line_ingredients ingredient_line
+                           LEFT JOIN ingredients manifest_ingredient
+                             ON manifest_ingredient.ingredient_id = ingredient_line.ingredient_id
+                           WHERE ingredient_line.production_line_id = manifest.production_line_id
+                         ), '[]'::jsonb)
                        )
                        ORDER BY manifest.line_number
                      )
@@ -7761,6 +7866,143 @@ async function replaceMenuPlanLines(record, executor = pool) {
   }
 }
 
+function manifestItemLookupKeys(item = {}, index = null) {
+  return [
+    item?.production_line_id,
+    item?.id,
+    item?.key,
+    item?.manifest_item_key,
+    item?.item_key,
+    item?.source_menu_plan_item_key,
+    item?.original_source_menu_plan_item_key,
+    item?.recipe_id,
+    item?.recipe_version_id,
+    index === null ? null : `index:${index}`
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+}
+
+function buildManifestItemLookup(items = []) {
+  const lookup = new Map();
+  (Array.isArray(items) ? items : []).forEach((item, index) => {
+    manifestItemLookupKeys(item, index).forEach((key) => {
+      if (!lookup.has(key)) lookup.set(key, item);
+    });
+  });
+  return lookup;
+}
+
+async function replaceProductionManifestLineIngredients({
+  record,
+  productionLineId,
+  ingredientLines = [],
+  executor = pool,
+  createdAt,
+  updatedAt
+}) {
+  await query(
+    'DELETE FROM production_manifest_line_ingredients WHERE production_line_id = $1',
+    [productionLineId],
+    executor
+  );
+
+  const sourceLines = Array.isArray(ingredientLines) ? ingredientLines : [];
+  for (const [index, line] of sourceLines.entries()) {
+    const lineNumber = safeLineNumber(line?.line_number, index + 1);
+    const quantity = toNumberOrZero(
+      line?.actual_requested_quantity
+      ?? line?.raw_quantity
+      ?? line?.planned_quantity
+      ?? line?.required_quantity
+      ?? line?.recipe_quantity
+      ?? line?.quantity
+    );
+    const ingredientId = String(line?.ingredient_id || '').trim();
+    const ingredientName = String(line?.ingredient_name || line?.name || ingredientId || line?.item_code || '').trim();
+    if (!ingredientId && !ingredientName) continue;
+
+    const estimatedCost = firstPositiveNumber([
+      line?.estimated_cost,
+      line?.estimated_batch_cost,
+      line?.planned_total_cost,
+      line?.cost
+    ]);
+    const actualCost = firstPositiveNumber([
+      line?.actual_cost,
+      line?.production_time_cost,
+      line?.posted_cost,
+      line?.consumed_cost,
+      line?.accounting_total_cost,
+      line?.total_cost,
+      estimatedCost
+    ]);
+
+    await query(
+      `INSERT INTO production_manifest_line_ingredients (
+        production_line_ingredient_id, production_line_id, production_id, line_number,
+        ingredient_id, item_code, ingredient_name, quantity, unit,
+        recipe_quantity, recipe_unit, inventory_unit, raw_quantity, planned_quantity,
+        required_quantity, raw_weight_grams, yielded_weight_grams, yield_percent,
+        yield_multiplier, estimated_cost, actual_cost, status, source_name,
+        created_at, updated_at
+      ) VALUES (
+        $1,$2,$3,$4,
+        (SELECT ingredient_id FROM ingredients WHERE ingredient_id = NULLIF($5::text, '') LIMIT 1),
+        $6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+      )
+      ON CONFLICT (production_line_ingredient_id) DO UPDATE SET
+        line_number = EXCLUDED.line_number,
+        ingredient_id = EXCLUDED.ingredient_id,
+        item_code = EXCLUDED.item_code,
+        ingredient_name = EXCLUDED.ingredient_name,
+        quantity = EXCLUDED.quantity,
+        unit = EXCLUDED.unit,
+        recipe_quantity = EXCLUDED.recipe_quantity,
+        recipe_unit = EXCLUDED.recipe_unit,
+        inventory_unit = EXCLUDED.inventory_unit,
+        raw_quantity = EXCLUDED.raw_quantity,
+        planned_quantity = EXCLUDED.planned_quantity,
+        required_quantity = EXCLUDED.required_quantity,
+        raw_weight_grams = EXCLUDED.raw_weight_grams,
+        yielded_weight_grams = EXCLUDED.yielded_weight_grams,
+        yield_percent = EXCLUDED.yield_percent,
+        yield_multiplier = EXCLUDED.yield_multiplier,
+        estimated_cost = EXCLUDED.estimated_cost,
+        actual_cost = EXCLUDED.actual_cost,
+        status = EXCLUDED.status,
+        source_name = EXCLUDED.source_name,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        line?.production_line_ingredient_id || line?.line_id || line?.id || lineNumberedId('manifest-ingredient', productionLineId, lineNumber),
+        productionLineId,
+        record.id,
+        lineNumber,
+        ingredientId || null,
+        line?.item_code || line?.code || null,
+        ingredientName || 'Ingredient',
+        quantity,
+        line?.unit || line?.recipe_unit || line?.inventory_unit || 'unit',
+        toNumberOrNull(line?.recipe_quantity),
+        line?.recipe_unit || null,
+        line?.inventory_unit || line?.unit || null,
+        toNumberOrNull(line?.raw_quantity ?? line?.quantity),
+        toNumberOrNull(line?.planned_quantity),
+        toNumberOrNull(line?.required_quantity),
+        toNumberOrNull(line?.raw_weight_grams),
+        toNumberOrNull(line?.yielded_weight_grams),
+        toNumberOrNull(line?.yield_percent),
+        toNumberOrNull(line?.yield_multiplier),
+        estimatedCost,
+        actualCost,
+        line?.status || 'active',
+        line?.source_name || record.source_name || null,
+        createdAt,
+        updatedAt
+      ],
+      executor
+    );
+  }
+}
+
 async function replaceProductionManifestLines(record, executor = pool) {
   const sourceLines = Array.isArray(record.manifest_lines) ? record.manifest_lines : null;
   if (!Array.isArray(sourceLines)) {
@@ -7770,6 +8012,7 @@ async function replaceProductionManifestLines(record, executor = pool) {
 
   const createdAt = record.created_date || nowIso();
   const updatedAt = record.updated_date || nowIso();
+  const menuItemLookup = buildManifestItemLookup(record.menu_issue_items);
   const sourceLineIds = sourceLines.map((sourceLine, index) => {
     const lineNumber = safeLineNumber(sourceLine?.line_number, index + 1);
     return sourceLine?.production_line_id || sourceLine?.id || lineNumberedId('line', record.id, lineNumber);
@@ -7896,6 +8139,23 @@ async function replaceProductionManifestLines(record, executor = pool) {
       ],
       executor
     );
+
+    const relatedMenuItem = manifestItemLookupKeys(sourceLine, index)
+      .map((key) => menuItemLookup.get(key))
+      .find(Boolean);
+    const ingredientLines = Array.isArray(sourceLine?.ingredients_used) && sourceLine.ingredients_used.length
+      ? sourceLine.ingredients_used
+      : Array.isArray(relatedMenuItem?.ingredients_used)
+        ? relatedMenuItem.ingredients_used
+        : [];
+    await replaceProductionManifestLineIngredients({
+      record,
+      productionLineId,
+      ingredientLines,
+      executor,
+      createdAt,
+      updatedAt
+    });
   }
 
   const distinctLineIds = [...new Set(sourceLineIds.filter(Boolean))];

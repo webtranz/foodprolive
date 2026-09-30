@@ -3812,6 +3812,40 @@ CREATE INDEX IF NOT EXISTS idx_production_consumption_lines_event
 CREATE INDEX IF NOT EXISTS idx_production_consumption_lines_lot
   ON production_consumption_lines(lot_id);
 
+CREATE TABLE IF NOT EXISTS production_manifest_line_ingredients (
+  production_line_ingredient_id TEXT PRIMARY KEY,
+  production_line_id TEXT NOT NULL REFERENCES production_manifest_lines(production_line_id) ON DELETE CASCADE,
+  production_id TEXT NOT NULL REFERENCES production_events(production_id) ON DELETE CASCADE,
+  line_number INTEGER NOT NULL DEFAULT 0,
+  ingredient_id TEXT REFERENCES ingredients(ingredient_id) ON DELETE RESTRICT,
+  item_code TEXT,
+  ingredient_name TEXT NOT NULL,
+  quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL,
+  recipe_quantity NUMERIC(18, 6),
+  recipe_unit TEXT,
+  inventory_unit TEXT,
+  raw_quantity NUMERIC(18, 6),
+  planned_quantity NUMERIC(18, 6),
+  required_quantity NUMERIC(18, 6),
+  raw_weight_grams NUMERIC(18, 6),
+  yielded_weight_grams NUMERIC(18, 6),
+  yield_percent NUMERIC(18, 6),
+  yield_multiplier NUMERIC(18, 6),
+  estimated_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  actual_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  source_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_manifest_line_ingredients_line
+  ON production_manifest_line_ingredients(production_line_id, line_number);
+
+CREATE INDEX IF NOT EXISTS idx_production_manifest_line_ingredients_event
+  ON production_manifest_line_ingredients(production_id, ingredient_id);
+
 CREATE TABLE IF NOT EXISTS produced_output_batches (
   output_batch_id TEXT PRIMARY KEY,
   production_id TEXT NOT NULL REFERENCES production_events(production_id) ON DELETE RESTRICT,

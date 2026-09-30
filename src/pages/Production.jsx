@@ -322,7 +322,7 @@ function manifestItemDirectPostedCost(item = {}) {
 }
 
 function manifestItemPostedCost(item = {}, reportLines = []) {
-  return sumPostedReportLineCosts(reportLines) ?? manifestItemDirectPostedCost(item);
+  return manifestItemDirectPostedCost(item) ?? sumPostedReportLineCosts(reportLines);
 }
 
 function sumManifestPostedCosts(items = [], reportLines = []) {
@@ -3225,6 +3225,7 @@ export default function Production() {
       estimated_batch_cost: item.estimated_batch_cost,
       production_time_cost: item.production_time_cost,
       actual_cost: item.actual_cost,
+      ingredients_used: item.ingredients_used,
       status: 'active'
     }));
     const productionOverrides = menuIssueItems.flatMap((item) => item.production_overrides || []);

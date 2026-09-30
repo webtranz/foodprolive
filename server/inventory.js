@@ -187,6 +187,13 @@ function aggregateSavedProductionManifestLines({
     const sourceRecipeNames = mergeUniqueTextList(
       ...group.lines.map(({ line }) => line.source_recipe_names || line.source_recipe_name || line.used_in)
     );
+    const sourceMenuPlanItemKeys = mergeUniqueTextList(
+      ...group.lines.map(({ line }) => [
+        line.source_menu_plan_item_key,
+        line.original_source_menu_plan_item_key,
+        ...(Array.isArray(line.source_menu_plan_item_keys) ? line.source_menu_plan_item_keys : [])
+      ])
+    );
     const rawQuantity = roundQuantity(group.raw_quantity);
     const rawWeightGrams = sumOptionalLineQuantity(
       group.lines.map(({ line }) => line),
@@ -214,6 +221,8 @@ function aggregateSavedProductionManifestLines({
       item_code: getItemCodeFromRecords([group.ingredient, firstLine], null),
       ingredient_name: group.ingredient.name || firstLine.ingredient_name,
       source_recipe_names: sourceRecipeNames,
+      source_menu_plan_item_keys: sourceMenuPlanItemKeys,
+      source_menu_plan_item_key: sourceMenuPlanItemKeys[0] || firstLine.source_menu_plan_item_key || '',
       unit: group.unit,
       raw_quantity: rawQuantity,
       planned_quantity: rawQuantity,
@@ -539,11 +548,182 @@ function sumProductionTimeManifestCosts(items = []) {
   return Number(costs.reduce((sum, value) => sum + toNumber(value, 0), 0).toFixed(2));
 }
 
+function resolveProductionTimeLineCost(line = {}) {
+  return roundOptionalQuantity(
+    firstProductionCost(
+      line.actual_cost,
+      line.production_time_cost,
+      line.posted_cost,
+      line.consumed_cost,
+      line.accounting_total_cost,
+      line.total_cost,
+      line.estimated_cost,
+      line.cost
+    ),
+    2
+  );
+}
+
+function sumProductionTimeLineCosts(lines = []) {
+  const costs = (Array.isArray(lines) ? lines : [])
+    .map((line) => resolveProductionTimeLineCost(line))
+    .filter((value) => value !== null && value > 0);
+  if (costs.length === 0) return null;
+  return Number(costs.reduce((sum, value) => sum + toNumber(value, 0), 0).toFixed(2));
+}
+
+function manifestItemIdentity(item = {}) {
+  return {
+    keys: new Set(mergeUniqueTextList(
+      item.key,
+      item.manifest_item_key,
+      item.item_key,
+      item.source_menu_plan_item_key,
+      item.original_source_menu_plan_item_key,
+      item.production_line_id
+    )),
+    names: new Set(mergeUniqueTextList(
+      item.recipe_name,
+      item.item_name,
+      item.name,
+      item.original_recipe_name
+    ).map((name) => name.toLowerCase()))
+  };
+}
+
+function postedLineCost(line = {}) {
+  return firstProductionCost(
+    line.posted_cost,
+    line.accounting_total_cost,
+    line.total_cost,
+    line.production_time_cost,
+    line.actual_cost,
+    line.estimated_cost,
+    line.cost
+  ) ?? 0;
+}
+
+function postedLineSourceKeys(line = {}) {
+  return mergeUniqueTextList(
+    line.source_menu_plan_item_key,
+    line.original_source_menu_plan_item_key,
+    ...(Array.isArray(line.source_menu_plan_item_keys) ? line.source_menu_plan_item_keys : [])
+  );
+}
+
+function postedLineSourceNames(line = {}) {
+  return mergeUniqueTextList(
+    line.source_recipe_name,
+    line.used_in,
+    ...(Array.isArray(line.source_recipe_names) ? line.source_recipe_names : [])
+  ).map((name) => name.toLowerCase());
+}
+
+function allocationQuantityForItemLine(itemLine = {}, postedLine = {}, ingredient = {}) {
+  const ingredientId = normalizeText(postedLine.ingredient_id);
+  if (ingredientId && normalizeText(itemLine.ingredient_id) !== ingredientId) return 0;
+  const targetUnit = postedLine.inventory_unit || postedLine.unit || ingredient.unit || itemLine.inventory_unit || itemLine.unit;
+  const quantityCandidates = [
+    [itemLine.actual_requested_quantity, itemLine.inventory_unit || itemLine.unit || targetUnit],
+    [itemLine.planned_quantity, itemLine.unit || itemLine.recipe_unit || itemLine.inventory_unit || targetUnit],
+    [itemLine.raw_quantity, itemLine.unit || itemLine.recipe_unit || itemLine.inventory_unit || targetUnit],
+    [itemLine.required_quantity, itemLine.unit || itemLine.recipe_unit || itemLine.inventory_unit || targetUnit],
+    [itemLine.recipe_quantity, itemLine.recipe_unit || itemLine.unit || itemLine.inventory_unit || targetUnit],
+    [itemLine.quantity, itemLine.unit || itemLine.recipe_unit || itemLine.inventory_unit || targetUnit]
+  ];
+  const [sourceQuantityValue, sourceUnit] = quantityCandidates.find(([quantity]) => {
+    const numeric = Number(quantity);
+    return Number.isFinite(numeric) && numeric > 0;
+  }) || [0, targetUnit];
+  const sourceQuantity = toNumber(sourceQuantityValue, 0);
+  if (!sourceQuantity || sourceQuantity <= 0 || !targetUnit || !sourceUnit) return 0;
+  try {
+    return convertProductionQuantityToInventoryUnit({
+      quantity: sourceQuantity,
+      sourceUnit,
+      inventoryUnit: targetUnit,
+      ingredient,
+      ingredientName: itemLine.ingredient_name || postedLine.ingredient_name
+    });
+  } catch {
+    return 0;
+  }
+}
+
+export function allocatePostedConsumptionCostToManifestItems({
+  manifestItems = [],
+  postedLines = [],
+  ingredientCatalog = []
+} = {}) {
+  const items = Array.isArray(manifestItems) ? manifestItems : [];
+  if (!items.length) return [];
+
+  const ingredientMap = new Map((Array.isArray(ingredientCatalog) ? ingredientCatalog : [])
+    .map((ingredient) => [normalizeText(ingredient?.id), ingredient])
+    .filter(([id]) => Boolean(id)));
+  const itemIdentities = items.map((item) => manifestItemIdentity(item));
+  const allocatedCosts = new Map();
+
+  (Array.isArray(postedLines) ? postedLines : []).forEach((postedLine) => {
+    const lineCost = postedLineCost(postedLine);
+    if (!lineCost || lineCost <= 0) return;
+
+    const ingredient = ingredientMap.get(normalizeText(postedLine.ingredient_id)) || postedLine;
+    const sourceKeys = postedLineSourceKeys(postedLine);
+    const sourceNames = postedLineSourceNames(postedLine);
+    const candidates = items
+      .map((item, itemIndex) => {
+        const identity = itemIdentities[itemIndex];
+        const hasKeyMatch = sourceKeys.some((key) => identity.keys.has(key));
+        const hasNameMatch = sourceNames.some((name) => identity.names.has(name));
+        const matchingLines = (Array.isArray(item.ingredients_used) ? item.ingredients_used : [])
+          .filter((itemLine) => !postedLine.ingredient_id || normalizeText(itemLine?.ingredient_id) === normalizeText(postedLine.ingredient_id));
+        const quantity = matchingLines.reduce((sum, itemLine) => (
+          sum + allocationQuantityForItemLine(itemLine, postedLine, ingredient)
+        ), 0);
+        if (!hasKeyMatch && !hasNameMatch && quantity <= 0) return null;
+        return { itemIndex, quantity };
+      })
+      .filter(Boolean);
+
+    if (!candidates.length) return;
+    const totalQuantity = candidates.reduce((sum, candidate) => sum + candidate.quantity, 0);
+    const equalShare = totalQuantity <= 0 ? lineCost / candidates.length : null;
+    candidates.forEach((candidate) => {
+      const share = equalShare ?? (lineCost * (candidate.quantity / totalQuantity));
+      allocatedCosts.set(
+        candidate.itemIndex,
+        toNumber(allocatedCosts.get(candidate.itemIndex), 0) + share
+      );
+    });
+  });
+
+  return items.map((item, itemIndex) => {
+    const allocatedCost = roundOptionalQuantity(allocatedCosts.get(itemIndex), 2);
+    const frozenLineCost = sumProductionTimeLineCosts(item.ingredients_used);
+    const directCost = resolveProductionTimeManifestCost(item) ?? resolveLegacyIssueSnapshotCost(item);
+    const productionTimeCost = allocatedCost ?? frozenLineCost ?? directCost ?? null;
+    const estimatedBatchCost = roundOptionalQuantity(
+      productionTimeCost ?? item.estimated_batch_cost ?? item.estimated_cost ?? item.planned_total_cost,
+      2
+    );
+
+    return {
+      ...item,
+      estimated_cost: estimatedBatchCost,
+      estimated_batch_cost: estimatedBatchCost,
+      production_time_cost: productionTimeCost,
+      actual_cost: productionTimeCost
+    };
+  });
+}
+
 function enrichCompletedMenuIssueItems({
   production = {},
   completionProduction = {},
   ingredientCatalog = [],
-  recipeCatalog = []
+  recipeCatalog = [],
+  postedConsumptionLines = []
 } = {}) {
   const manifestItems = Array.isArray(production.menu_issue_items)
     ? production.menu_issue_items
@@ -553,7 +733,7 @@ function enrichCompletedMenuIssueItems({
   const recipes = Array.isArray(recipeCatalog) ? recipeCatalog : [];
   const ingredients = Array.isArray(ingredientCatalog) ? ingredientCatalog : [];
 
-  return manifestItems.map((item, itemIndex) => {
+  const enrichedItems = manifestItems.map((item, itemIndex) => {
     const itemLines = Array.isArray(item.ingredients_used) ? item.ingredients_used : [];
     const itemRecipe = recipes.find((candidate) => (
       String(candidate?.id || '') === String(item.recipe_id || '')
@@ -602,7 +782,9 @@ function enrichCompletedMenuIssueItems({
       ?? positiveNumber(item.expected_finished_weight_grams)
       ?? positiveNumber(itemYieldSummary.expected_finished_weight_grams)
       ?? sumPositiveLineWeight(enrichedLines, 'yielded_weight_grams');
-    const productionTimeCost = resolveProductionTimeManifestCost(item)
+    const frozenLineCost = sumProductionTimeLineCosts(enrichedLines);
+    const productionTimeCost = frozenLineCost
+      ?? resolveProductionTimeManifestCost(item)
       ?? resolveLegacyIssueSnapshotCost(item);
     const estimatedBatchCost = roundOptionalQuantity(
       productionTimeCost ?? item.estimated_batch_cost ?? item.estimated_cost ?? item.planned_total_cost,
@@ -634,6 +816,12 @@ function enrichCompletedMenuIssueItems({
       output_calculation_source: itemYieldSummary.output_calculation_source || item.output_calculation_source || completionProduction.output_calculation_source || null,
       ingredients_used: enrichedLines
     };
+  });
+
+  return allocatePostedConsumptionCostToManifestItems({
+    manifestItems: enrichedItems,
+    postedLines: postedConsumptionLines,
+    ingredientCatalog
   });
 }
 
@@ -3603,6 +3791,8 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
       estimated_shortage_cost: Number(fallbackShortageCost.toFixed(2)),
       quantity_basis: plannedQuantityBasis,
       source_recipe_names: Array.isArray(ingredient.source_recipe_names) ? ingredient.source_recipe_names : [],
+      source_menu_plan_item_key: ingredient.source_menu_plan_item_key || '',
+      source_menu_plan_item_keys: Array.isArray(ingredient.source_menu_plan_item_keys) ? ingredient.source_menu_plan_item_keys : [],
       yield_percent: toNumber(ingredient.yield_percent, 100),
       raw_weight_grams: roundOptionalQuantity(ingredient.raw_weight_grams, 3),
       yielded_weight_grams: roundOptionalQuantity(ingredient.yielded_weight_grams, 3),
@@ -3654,7 +3844,8 @@ async function completeProductionWithExecutor(productionId, actor, options, exec
     production,
     completionProduction,
     ingredientCatalog,
-    recipeCatalog
+    recipeCatalog,
+    postedConsumptionLines: consumptionSummary
   });
   const postedTotalConsumptionCost = Number(totalProductionCost.toFixed(2));
   const hasPostedConsumptionCosts = consumptionSummary.some((line) => (

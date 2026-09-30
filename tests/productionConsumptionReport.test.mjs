@@ -7,6 +7,9 @@ import {
   entityRegistry,
   validateEntityPayload
 } from '../server/entities.js';
+import {
+  allocatePostedConsumptionCostToManifestItems
+} from '../server/inventory.js';
 
 function source(relativePath) {
   return fs.readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
@@ -133,6 +136,58 @@ test('completion accepts only the server-owned automatic reconciliation plan', (
   assert.doesNotMatch(completionBlock, /options\?\.actual_finished_weight_grams/);
 });
 
+test('completion allocates posted ingredient cost back to each manifest item', () => {
+  const allocated = allocatePostedConsumptionCostToManifestItems({
+    ingredientCatalog: [
+      { id: 'chicken', unit: 'kg', name: 'Chicken' },
+      { id: 'oil', unit: 'kg', name: 'Oil' }
+    ],
+    postedLines: [
+      {
+        ingredient_id: 'chicken',
+        unit: 'kg',
+        posted_cost: 100,
+        source_menu_plan_item_keys: ['egg-curry', 'side']
+      },
+      {
+        ingredient_id: 'oil',
+        unit: 'kg',
+        posted_cost: 30,
+        source_menu_plan_item_keys: ['egg-curry', 'side']
+      }
+    ],
+    manifestItems: [
+      {
+        key: 'egg-curry',
+        recipe_name: 'EGG CURRY KBR-384',
+        actual_cost: 0,
+        production_time_cost: 0,
+        ingredients_used: [
+          { ingredient_id: 'chicken', raw_quantity: 8, unit: 'kg' },
+          { ingredient_id: 'oil', raw_quantity: 1, unit: 'kg' }
+        ]
+      },
+      {
+        key: 'side',
+        recipe_name: 'SIDE DISH',
+        actual_cost: 0,
+        production_time_cost: 0,
+        ingredients_used: [
+          { ingredient_id: 'chicken', raw_quantity: 2, unit: 'kg' },
+          { ingredient_id: 'oil', raw_quantity: 2, unit: 'kg' }
+        ]
+      }
+    ]
+  });
+
+  assert.equal(allocated[0].actual_cost, 90);
+  assert.equal(allocated[1].actual_cost, 40);
+  assert.equal(
+    Number(allocated.reduce((sum, item) => sum + item.actual_cost, 0).toFixed(2)),
+    130
+  );
+});
+
 test('completion reporting preserves item-code-first reconciliation fields and named report sections', () => {
   const inventorySource = source('server/inventory.js');
   const summaryStart = inventorySource.indexOf('consumptionSummary.push({');
@@ -229,6 +284,14 @@ test('completion reporting preserves item-code-first reconciliation fields and n
   assert.match(ingredientSection, /formatCurrency\(reportLineCost\(line\)\)/);
 
   const dbSource = source('server/db.js');
+  const sqlSource = source('server/sql/init.sql');
+  assert.match(sqlSource, /CREATE TABLE IF NOT EXISTS production_manifest_line_ingredients/);
+  assert.match(sqlSource, /production_line_id TEXT NOT NULL REFERENCES production_manifest_lines/);
+  assert.match(dbSource, /async function replaceProductionManifestLineIngredients/);
+  assert.match(dbSource, /DELETE FROM production_manifest_line_ingredients WHERE production_line_id = \$1/);
+  assert.match(dbSource, /FROM production_manifest_line_ingredients ingredient_line/);
+  assert.match(dbSource, /'ingredients_used', COALESCE/);
+  assert.match(productionPage, /ingredients_used: item\.ingredients_used/);
   assert.match(dbSource, /function sumProductionReportMenuItemCosts/);
   assert.match(dbSource, /item\?\.production_time_cost/);
   assert.match(dbSource, /LEFT JOIN production_manifest_lines manifest[\s\S]*manifest\.production_line_id = item\.production_line_id/);
