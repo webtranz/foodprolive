@@ -6194,6 +6194,7 @@ const OPERATIONAL_BACKGROUND_JOB_FINAL_STATUSES = new Set(['COMPLETED', 'FAILED'
 const OPERATIONAL_BACKGROUND_JOB_TYPES = Object.freeze({
   MENU_REPEAT: 'menu_repeat',
   MENU_PRODUCTION_ISSUE: 'menu_production_issue',
+  PRODUCTION_PM_REVIEW: 'production_pm_review',
   PRODUCTION_PROCUREMENT_ACTIVATION: 'production_procurement_activation',
   MATERIAL_REQUEST_ACKNOWLEDGEMENT: 'material_request_acknowledgement',
   PRODUCTION_COMPLETION: 'production_completion'
@@ -6814,6 +6815,17 @@ async function runClaimedOperationalBackgroundJob(job) {
     });
     return;
   }
+  if (job.job_type === OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_PM_REVIEW) {
+    const payload = await getOperationalBackgroundJobPayload(job.id);
+    await runProductionPmReviewWork({
+      jobId: job.id,
+      actor,
+      productionIds: Array.isArray(payload.production_ids) ? payload.production_ids : [],
+      reviewNotes: payload.review_notes || '',
+      fulfillmentStoreId: payload.fulfillment_store_id || ''
+    });
+    return;
+  }
   if (job.job_type === OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_PROCUREMENT_ACTIVATION) {
     await runProductionProcurementActivationWork({
       productionId: job.entity_id,
@@ -7072,6 +7084,239 @@ async function runProductionProcurementActivationWork(work) {
       console.error('Unable to audit failed Store / Procurement activation job', auditError);
     });
   }
+}
+
+function normalizeProductionPmReviewIds(value = []) {
+  const ids = Array.isArray(value) ? value : [value];
+  return [...new Set(
+    ids
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  )];
+}
+
+function buildProductionPmReviewJobKey(productionIds = []) {
+  return normalizeProductionPmReviewIds(productionIds)
+    .sort((left, right) => left.localeCompare(right))
+    .join('|');
+}
+
+function productionPmReviewItemKey(productionId) {
+  return `production:${String(productionId || '').trim()}:pm-approve`;
+}
+
+function serializeProductionPmReviewBackgroundJob(job = {}, overrides = {}) {
+  const normalized = normalizeOperationalBackgroundJobRow({
+    ...job,
+    ...overrides
+  });
+  return {
+    id: normalized?.id || overrides.id || '',
+    status: normalizeOperationalBackgroundJobStatus(normalized?.status || overrides.status || 'QUEUED'),
+    progress: clampOperationalBackgroundJobProgress(normalized?.progress ?? overrides.progress ?? 0),
+    total: Number(overrides.total ?? normalized?.total ?? normalized?.result_count ?? 0) || 0,
+    approved_count: Number(overrides.approved_count ?? normalized?.approved_count ?? normalized?.result_count ?? 0) || 0,
+    skipped_count: Number(overrides.skipped_count ?? normalized?.skipped_count ?? 0) || 0,
+    failed_count: Number(overrides.failed_count ?? normalized?.failed_count ?? 0) || 0,
+    message: String(overrides.message ?? normalized?.message ?? '').trim(),
+    error: String(overrides.error ?? normalized?.error ?? '').trim(),
+    requested_at: overrides.requested_at ?? normalized?.queued_at ?? null,
+    started_at: overrides.started_at ?? normalized?.started_at ?? null,
+    completed_at: overrides.completed_at ?? normalized?.completed_at ?? null
+  };
+}
+
+async function runProductionPmReviewWork({ jobId, actor, productionIds, reviewNotes = '', fulfillmentStoreId = '' } = {}) {
+  const ids = normalizeProductionPmReviewIds(productionIds);
+  if (!ids.length) {
+    const error = new Error('PM approval job is missing production review IDs.');
+    error.status = 409;
+    throw error;
+  }
+
+  await updateOperationalBackgroundJob(jobId, {
+    status: 'PROCESSING',
+    progress: 10,
+    message: `Approving ${ids.length} production review${ids.length === 1 ? '' : 's'} in the background.`,
+    started_at: new Date().toISOString(),
+    error: ''
+  });
+
+  let approvedCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
+  const failures = [];
+  const cleanReviewNotes = String(reviewNotes || '').trim();
+  const cleanFulfillmentStoreId = String(fulfillmentStoreId || '').trim();
+
+  for (let index = 0; index < ids.length; index += 1) {
+    const productionId = ids[index];
+    const itemKey = productionPmReviewItemKey(productionId);
+    await updateOperationalBackgroundJobItem(jobId, itemKey, {
+      status: 'PROCESSING',
+      progress: 25,
+      message: 'PM approval is processing.'
+    });
+
+    try {
+      const result = await withTransaction(async (client) => {
+        const lockedProduction = await findDocument('Production', productionId, client, true);
+        if (!lockedProduction) {
+          const error = new Error('Production record not found for PM approval.');
+          error.status = 404;
+          throw error;
+        }
+        const currentStatus = normalizeProductionStatus(lockedProduction.status);
+        if (currentStatus !== 'pending_approval') {
+          return {
+            skipped: true,
+            production: lockedProduction,
+            materialRequest: null,
+            message: `Skipped because production is ${currentStatus || 'not pending approval'}.`
+          };
+        }
+
+        const reviewPayload = {
+          status: 'pending_procurement',
+          review_notes: cleanReviewNotes || null,
+          review_action: 'approved',
+          ...(cleanFulfillmentStoreId ? { fulfillment_store_id: cleanFulfillmentStoreId } : {})
+        };
+        authorizeEntityAction(actor, 'Production', 'update', reviewPayload, lockedProduction);
+        const preparedPayload = await prepareEntityPayload(
+          actor,
+          'Production',
+          reviewPayload,
+          lockedProduction
+        );
+        const workflowPayload = applyProductionWorkflowMetadata(
+          actor,
+          preparedPayload,
+          lockedProduction,
+          reviewPayload
+        );
+        let savedProduction = await updateDocument('Production', productionId, {
+          ...workflowPayload,
+          material_request_status: 'activation_processing'
+        }, client);
+        const materialRequest = await syncMaterialRequestForProduction(
+          actor,
+          savedProduction,
+          'activate',
+          client
+        );
+        savedProduction = await findDocument('Production', productionId, client);
+        return {
+          skipped: false,
+          production: savedProduction,
+          materialRequest,
+          message: materialRequest
+            ? 'PM approved. Store / Procurement MR activation completed.'
+            : 'PM approved. No stock-managed MR was required.'
+        };
+      });
+
+      recordChanged('Production');
+      recordChanged('MaterialRequest');
+      if (result.skipped) {
+        skippedCount += 1;
+        await updateOperationalBackgroundJobItem(jobId, itemKey, {
+          status: 'SKIPPED',
+          progress: 100,
+          message: result.message,
+          result_entity_name: 'Production',
+          result_entity_id: result.production?.id || productionId
+        });
+      } else {
+        approvedCount += 1;
+        await updateOperationalBackgroundJobItem(jobId, itemKey, {
+          status: 'COMPLETED',
+          progress: 100,
+          message: result.message,
+          result_entity_name: result.materialRequest ? 'MaterialRequest' : 'Production',
+          result_entity_id: result.materialRequest?.id || result.production?.id || productionId
+        });
+      }
+      queueAuditAction('production pm approval background item', {
+        user: actor,
+        action: result.skipped
+          ? 'PRODUCTION_PM_APPROVAL_SKIPPED'
+          : 'PRODUCTION_PM_APPROVED_BACKGROUND',
+        entity: 'Production',
+        entityId: productionId,
+        details: {
+          production_record: result.production,
+          material_request_record: result.materialRequest,
+          message: result.message,
+          background_job: true,
+          background_job_id: jobId
+        }
+      });
+    } catch (error) {
+      failedCount += 1;
+      failures.push({ production_id: productionId, message: error?.message || 'PM approval failed.' });
+      await markProductionProcurementActivationFailed({ productionId, error }).catch((updateError) => {
+        console.error('Unable to mark failed PM approval production state', updateError);
+      });
+      recordChanged('Production');
+      await updateOperationalBackgroundJobItem(jobId, itemKey, {
+        status: 'FAILED',
+        progress: 100,
+        message: error?.message || 'PM approval failed.',
+        error: error?.message || 'PM approval failed.',
+        result_entity_name: 'Production',
+        result_entity_id: productionId
+      });
+      queueAuditAction('production pm approval background failure', {
+        user: actor,
+        action: 'PRODUCTION_PM_APPROVAL_BACKGROUND_FAILED',
+        entity: 'Production',
+        entityId: productionId,
+        details: {
+          message: error?.message || 'PM approval failed.',
+          background_job: true,
+          background_job_id: jobId
+        }
+      });
+    }
+
+    await updateOperationalBackgroundJob(jobId, {
+      progress: 10 + Math.round(((index + 1) / ids.length) * 85),
+      result_count: approvedCount,
+      message: `PM approval background job processed ${index + 1} of ${ids.length}.`
+    });
+  }
+
+  const finalMessage = failedCount > 0
+    ? `PM approval background job finished with ${failedCount} failure${failedCount === 1 ? '' : 's'}. ${approvedCount} approved, ${skippedCount} skipped.`
+    : `PM approval background job completed. ${approvedCount} approved, ${skippedCount} skipped.`;
+  await updateOperationalBackgroundJob(jobId, {
+    status: failedCount > 0 ? 'FAILED' : 'COMPLETED',
+    progress: 100,
+    message: finalMessage,
+    error: failures.map((failure) => `${failure.production_id}: ${failure.message}`).join('\n'),
+    result_entity_name: 'Production',
+    result_entity_id: ids[0] || null,
+    result_count: approvedCount,
+    completed_at: new Date().toISOString()
+  });
+  await auditAction({
+    user: actor,
+    action: failedCount > 0
+      ? 'PRODUCTION_PM_APPROVAL_BACKGROUND_JOB_FAILED'
+      : 'PRODUCTION_PM_APPROVAL_BACKGROUND_JOB_COMPLETED',
+    entity: 'Production',
+    entityId: ids[0] || jobId,
+    details: {
+      production_ids: ids,
+      approved_count: approvedCount,
+      skipped_count: skippedCount,
+      failed_count: failedCount,
+      failures,
+      background_job: true,
+      background_job_id: jobId
+    }
+  });
 }
 
 function normalizeMenuProductionIssueJobStatus(status) {
@@ -7549,6 +7794,123 @@ app.get('/api/productions/menu-issue/:jobId', requireAuth, requirePermission('ma
   }
   return response.json({ job: serializeMenuProductionIssueJob(job) });
 });
+
+app.post(
+  '/api/productions/pm-review',
+  requireAuth,
+  requirePermission('review_production_request'),
+  requirePermission('approve_production_request'),
+  async (request, response, next) => {
+    try {
+      const productionIds = normalizeProductionPmReviewIds(request.body?.production_ids);
+      if (!productionIds.length) {
+        return response.status(400).json({ message: 'Select at least one production review to approve.' });
+      }
+      if (productionIds.length > 25) {
+        return response.status(400).json({ message: 'Approve no more than 25 production reviews in one background job.' });
+      }
+
+      const reviewNotes = String(request.body?.review_notes || '').trim();
+      const fulfillmentStoreId = String(request.body?.fulfillment_store_id || '').trim();
+      const records = await Promise.all(productionIds.map((id) => findDocument('Production', id)));
+      const missingId = productionIds.find((id, index) => !records[index]);
+      if (missingId) {
+        return response.status(404).json({ message: `Production review ${missingId} was not found.` });
+      }
+      const scopedRecords = await scopeEntityRecords(request.user, 'Production', records);
+      if (scopedRecords.length !== records.length) {
+        return response.status(403).json({ message: 'You do not have access to one or more selected production reviews.' });
+      }
+
+      const approvalPayload = {
+        status: 'pending_procurement',
+        review_notes: reviewNotes || null,
+        review_action: 'approved',
+        ...(fulfillmentStoreId ? { fulfillment_store_id: fulfillmentStoreId } : {})
+      };
+      const invalidRecord = records.find((record) => normalizeProductionStatus(record.status) !== 'pending_approval');
+      if (invalidRecord) {
+        return response.status(409).json({
+          message: `${invalidRecord.recipe_name || invalidRecord.id} is no longer pending PM approval.`
+        });
+      }
+      records.forEach((record) => {
+        authorizeEntityAction(request.user, 'Production', 'update', approvalPayload, record);
+      });
+
+      const key = buildProductionPmReviewJobKey(productionIds);
+      const backgroundJob = await createOperationalBackgroundJob({
+        jobType: OPERATIONAL_BACKGROUND_JOB_TYPES.PRODUCTION_PM_REVIEW,
+        idempotencyKey: `production-pm-review:${key}`,
+        actor: request.user,
+        entityName: 'Production',
+        entityId: productionIds[0] || null,
+        message: `PM approval queued for ${productionIds.length} production review${productionIds.length === 1 ? '' : 's'}.`,
+        progress: 5,
+        initialStatus: OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS
+      });
+      const shouldPrepareJob = !backgroundJob.alreadyQueued
+        || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS;
+      if (backgroundJob.alreadyQueued && !shouldPrepareJob) {
+        return response.status(202).json({
+          queued: true,
+          alreadyQueued: true,
+          background_job_id: backgroundJob.job.id,
+          job: serializeProductionPmReviewBackgroundJob(backgroundJob.job, {
+            total: productionIds.length,
+            message: 'PM approval is already queued for this same production review selection.'
+          }),
+          message: 'PM approval is already queued for this same production review selection.'
+        });
+      }
+
+      await createOperationalBackgroundJobItems(
+        backgroundJob.job.id,
+        productionIds.map((productionId, index) => ({
+          item_order: index,
+          entity_name: 'Production',
+          entity_id: productionId,
+          action_key: 'pm_approval',
+          idempotency_key: productionPmReviewItemKey(productionId),
+          status: 'QUEUED',
+          progress: 0,
+          message: 'PM approval queued.'
+        }))
+      );
+      await replaceOperationalBackgroundJobPayload(backgroundJob.job.id, {
+        production_ids: productionIds,
+        review_notes: reviewNotes,
+        fulfillment_store_id: fulfillmentStoreId
+      });
+      const readyJob = await markOperationalBackgroundJobReady(
+        backgroundJob.job.id,
+        `PM approval queued for ${productionIds.length} production review${productionIds.length === 1 ? '' : 's'}.`
+      );
+      scheduleOperationalBackgroundQueueDrain();
+      queueAuditAction('production pm approval queued', {
+        user: request.user,
+        action: 'PRODUCTION_PM_APPROVAL_BACKGROUND_QUEUED',
+        entity: 'Production',
+        entityId: productionIds[0] || backgroundJob.job.id,
+        details: {
+          production_ids: productionIds,
+          background_job: true,
+          background_job_id: backgroundJob.job.id
+        }
+      });
+      return response.status(202).json({
+        queued: true,
+        background_job_id: backgroundJob.job.id,
+        job: serializeProductionPmReviewBackgroundJob(readyJob || backgroundJob.job, {
+          total: productionIds.length
+        }),
+        message: `PM approval queued for ${productionIds.length} production review${productionIds.length === 1 ? '' : 's'}.`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 app.patch('/api/entities/:entity/:id', requireAuth, async (request, response, next) => {
   try {

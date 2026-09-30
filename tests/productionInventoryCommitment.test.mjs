@@ -593,3 +593,28 @@ test('approved quantity route scales the frozen approval snapshot instead of re-
     /const hasApprovedTargetChange = operation === 'approved_quantity_adjustment'[\s\S]*\|\| hasApprovedTargetChange/
   );
 });
+
+test('PM approval is queued as a relational background job instead of blocking the review modal', () => {
+  const serverSource = source('server/index.js');
+  const productionPageSource = source('src/pages/Production.jsx');
+  const clientSource = source('src/api/base44Client.js');
+  const reviewBlock = sourceBlock(
+    productionPageSource,
+    'const handleReview = async (action) => {',
+    'const openApprovalDialog = (production) => {'
+  );
+
+  assert.match(serverSource, /PRODUCTION_PM_REVIEW: 'production_pm_review'/);
+  assert.match(serverSource, /app\.post\(\s*'\/api\/productions\/pm-review'/);
+  assert.match(serverSource, /createOperationalBackgroundJob\(\{[\s\S]*OPERATIONAL_BACKGROUND_JOB_TYPES\.PRODUCTION_PM_REVIEW/);
+  assert.match(serverSource, /createOperationalBackgroundJobItems\([\s\S]*productionPmReviewItemKey\(productionId\)/);
+  assert.match(serverSource, /async function runProductionPmReviewWork/);
+  assert.match(serverSource, /runProductionPmReviewWork\(\{[\s\S]*productionIds: Array\.isArray\(payload\.production_ids\)/);
+  assert.match(serverSource, /syncMaterialRequestForProduction\([\s\S]*'activate'/);
+  assert.match(clientSource, /queuePmReview\(data = \{\}\)/);
+  assert.match(reviewBlock, /base44\.productionWorkflow\.queuePmReview/);
+  assert.doesNotMatch(
+    sourceBlock(reviewBlock, "if (action === 'approve') {", 'const reviewOperations = reviewTargets.map'),
+    /base44\.entities\.Production\.update/
+  );
+});

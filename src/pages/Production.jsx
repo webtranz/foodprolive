@@ -3329,12 +3329,29 @@ export default function Production() {
         ? selectedProduction.grouped_productions
         : [selectedProduction];
 
+      if (action === 'approve') {
+        const result = await base44.productionWorkflow.queuePmReview({
+          production_ids: reviewTargets.map((production) => production.id),
+          review_notes: reviewNotes || '',
+          fulfillment_store_id: reviewInventorySiteId
+        });
+        invalidateCurrentProductionScope({
+          approvalQueue: true,
+          inventory: true,
+          materialRequests: true
+        });
+        setShowApprovalDialog(false);
+        setSelectedProduction(null);
+        setReviewNotes('');
+        setActionError('');
+        setActionMessage(result?.message || 'PM approval queued. Store / Procurement activation will continue in the background.');
+        return;
+      }
+
       const reviewOperations = reviewTargets.map((production) => {
-        const status = action === 'approve'
-          ? 'pending_procurement'
-          : action === 'request_changes'
-            ? 'changes_requested'
-            : getProductionRejectionReturnStatus(production.status);
+        const status = action === 'request_changes'
+          ? 'changes_requested'
+          : getProductionRejectionReturnStatus(production.status);
         if (!status) {
           throw new Error('This production request cannot be returned from its current stage.');
         }
@@ -3349,13 +3366,10 @@ export default function Production() {
         await base44.entities.Production.update(operation.production.id, {
           status: operation.status,
           review_notes: reviewNotes || null,
-          review_action: action === 'approve'
-            ? 'approved'
-            : action === 'reject'
-              ? 'rejected'
-              : 'changes_requested',
-          ...(action === 'reject' ? { rejection_reason: reviewNotes.trim() } : {}),
-          ...(action === 'approve' ? { fulfillment_store_id: reviewInventorySiteId } : {})
+          review_action: action === 'reject'
+            ? 'rejected'
+            : 'changes_requested',
+          ...(action === 'reject' ? { rejection_reason: reviewNotes.trim() } : {})
         });
       }
       invalidateCurrentProductionScope({
@@ -5297,7 +5311,7 @@ export default function Production() {
                   >
                     <CheckCircle2 className="w-4 h-4 mr-2" />
                     {reviewAction === 'approve'
-                      ? 'Approving...'
+                      ? 'Queueing approval...'
                       : 'Approve & Send to Store / Procurement'}
                   </Button>
                 ) : null}
