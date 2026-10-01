@@ -270,29 +270,33 @@ export default function D365Integration() {
     category: 'all'
   });
   const [configForm, setConfigForm] = useState(emptyConfig);
+  const canManageErp = can('manage_erp');
+  const canViewErp = can('view_erp') || canManageErp;
+  const canManageInventory = can('manage_inventory');
+  const canRunInventoryImport = canManageErp && canManageInventory;
 
   const { data: configs = [] } = useQuery({
     queryKey: ['erpConfigs'],
     queryFn: () => base44.entities.ERPIntegrationConfig.list('-updated_date', 100),
-    enabled: can('manage_erp')
+    enabled: canViewErp
   });
 
   const { data: logs = [] } = useQuery({
     queryKey: ['erpLogs'],
     queryFn: () => base44.erp.listLogs(),
-    enabled: can('manage_erp')
+    enabled: canViewErp
   });
 
   const { data: sites = [] } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list(),
-    enabled: can('manage_erp')
+    enabled: canViewErp
   });
 
   const { data: recipes = [] } = useQuery({
     queryKey: ['recipes'],
     queryFn: () => base44.entities.Recipe.list(),
-    enabled: can('manage_erp')
+    enabled: canViewErp
   });
 
   const activeConfig = useMemo(() => configs.find((config) => config.is_active !== false) || configs[0] || null, [configs]);
@@ -308,9 +312,6 @@ export default function D365Integration() {
   const canPreviewInventoryImport = typeof base44.erp.previewInventoryImport === 'function';
   const canImportInventory = typeof base44.erp.importInventory === 'function';
   const canGetLogDetails = typeof base44.erp.getLogDetails === 'function';
-  const canManageErp = can('manage_erp');
-  const canManageInventory = can('manage_inventory');
-  const canRunInventoryImport = canManageErp && canManageInventory;
 
   const {
     data: selectedLogDetails = null,
@@ -325,7 +326,7 @@ export default function D365Integration() {
       page: logDetailPage,
       limit: LOG_DETAIL_PAGE_SIZE
     }),
-    enabled: Boolean(selectedLog?.id && canGetLogDetails)
+    enabled: Boolean(selectedLog?.id && canGetLogDetails && canViewErp)
   });
   const selectedLogRows = useMemo(
     () => (selectedLogDetails ? normalizeRows(selectedLogDetails) : getLogRows(selectedLog, null)),
@@ -525,13 +526,13 @@ export default function D365Integration() {
     return <div className="p-8 text-slate-500">Loading integration workspace...</div>;
   }
 
-  if (!canManageErp) {
+  if (!canViewErp) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-8">
         <Card className="max-w-sm w-full text-center p-8">
           <ShieldAlert className="w-12 h-12 text-red-400 mx-auto mb-4" />
           <h2 className="text-lg font-semibold text-slate-800">Access Denied</h2>
-          <p className="text-sm text-slate-500 mt-2">Your role does not include ERP integration management permission.</p>
+          <p className="text-sm text-slate-500 mt-2">Your role does not include ERP integration view permission.</p>
         </Card>
       </div>
     );

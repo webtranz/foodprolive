@@ -22,6 +22,7 @@ export const ROLE_PERMISSION_SECTIONS = [
     ],
     capabilities: [
       { key: 'view_dashboard', label: 'View dashboard data' },
+      { key: 'view_projects', label: 'View projects and locations' },
       { key: 'manage_projects', label: 'Manage projects and locations' },
       { key: 'view_budget', label: 'View budget planning and reporting' },
       { key: 'manage_budget', label: 'Manage informational food budgets' },
@@ -29,9 +30,11 @@ export const ROLE_PERMISSION_SECTIONS = [
       { key: 'manage_inventory', label: 'Manage inventory' },
       { key: 'view_ingredients', label: 'View ingredient master data' },
       { key: 'manage_ingredients', label: 'Manage ingredients' },
+      { key: 'view_food_categories', label: 'View food categories' },
       { key: 'manage_food_categories', label: 'Manage food categories' },
       { key: 'view_recipes', label: 'View recipes' },
       { key: 'manage_recipes', label: 'Manage recipes' },
+      { key: 'view_production', label: 'View production plans' },
       { key: 'manage_production', label: 'Manage production plans' },
       { key: 'create_production_request', label: 'Create production requests' },
       { key: 'edit_production_request', label: 'Edit production requests' },
@@ -47,8 +50,11 @@ export const ROLE_PERMISSION_SECTIONS = [
       { key: 'cancel_production', label: 'Cancel production and return inventory' },
       { key: 'start_production', label: 'Start production' },
       { key: 'complete_production', label: 'Complete production' },
+      { key: 'view_food_waste', label: 'View food waste' },
       { key: 'manage_waste', label: 'Manage food waste' },
       { key: 'approve_waste', label: 'Approve high-value waste' },
+      { key: 'view_users', label: 'View users' },
+      { key: 'view_roles', label: 'View roles and permissions' },
       { key: 'manage_users', label: 'Manage users' },
       { key: 'manage_roles', label: 'Manage roles and permissions' },
       { key: 'delete_records', label: 'Delete protected records' }
@@ -66,6 +72,7 @@ export const ROLE_PERMISSION_SECTIONS = [
       { page: 'AutoSchedule', key: 'access_auto_schedule', label: 'Auto Schedule', description: 'Automated menu scheduling.' }
     ],
     capabilities: [
+      { key: 'view_menu_planning', label: 'View menus and menu planning' },
       { key: 'manage_menu_planning', label: 'Manage menus and menu planning' },
       { key: 'generate_menu_plan_pr', label: 'Generate purchase requests from menu plans' },
       { key: 'create_special_event', label: 'Create special-event requests' },
@@ -101,11 +108,13 @@ export const ROLE_PERMISSION_SECTIONS = [
       { page: 'SupplierPortal', key: 'access_supplier_portal', label: 'Supplier Portal', description: 'Supplier records and performance.' }
     ],
     capabilities: [
+      { key: 'view_procurement', label: 'View procurement' },
       { key: 'create_material_request', label: 'Create MR to Store records' },
       { key: 'view_material_request', label: 'View MR to Store records' },
       { key: 'acknowledge_material_request', label: 'Acknowledge MR to Store records' },
       { key: 'manage_procurement', label: 'Manage procurement' },
       { key: 'approve_procurement', label: 'Approve procurement' },
+      { key: 'view_suppliers', label: 'View suppliers' },
       { key: 'manage_suppliers', label: 'Manage suppliers' }
     ]
   },
@@ -120,6 +129,7 @@ export const ROLE_PERMISSION_SECTIONS = [
       { page: 'ProductionTransfer', key: 'access_production_transfer', label: 'Production Transfer', description: 'Production and inventory transfers between locations.' }
     ],
     capabilities: [
+      { key: 'view_quality', label: 'View quality control' },
       { key: 'manage_quality', label: 'Manage quality control' },
       { key: 'transfer_inventory', label: 'Transfer inventory' }
     ]
@@ -133,7 +143,9 @@ export const ROLE_PERMISSION_SECTIONS = [
       { page: 'POSIntegration', key: 'access_pos', label: 'POS Integration', description: 'POS sources, mappings, imports, and variance.' }
     ],
     capabilities: [
+      { key: 'view_erp', label: 'View ERP integration' },
       { key: 'manage_erp', label: 'Manage ERP integration' },
+      { key: 'view_pos', label: 'View POS integration' },
       { key: 'manage_pos', label: 'Manage POS integration' }
     ]
   },
@@ -190,10 +202,12 @@ export const ROLE_PERMISSION_SECTIONS = [
       { key: 'create_session', label: 'Create attendance sessions' },
       { key: 'manage_sessions', label: 'Manage attendance sessions' },
       { key: 'manage_groups', label: 'Manage user groups' },
+      { key: 'view_attendance', label: 'View attendance and scheduling' },
       { key: 'manage_attendance', label: 'Manage attendance and scheduling' },
       { key: 'approve_attendance', label: 'Approve attendance' },
       { key: 'view_ai_waste', label: 'View AI waste detection' },
       { key: 'camera_detection', label: 'Use camera waste detection' },
+      { key: 'view_forecasting', label: 'View forecasting' },
       { key: 'manage_forecasting', label: 'Manage forecasting' },
       { key: 'view_reports', label: 'View reports' }
     ]

@@ -183,6 +183,7 @@ function KPI({ title, value, subtitle, icon: Icon, accent }) {
 export default function POSIntegration() {
   const { can, isAdmin, isManager, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
+  const canViewPos = can('view_pos') || isManager || can('manage_users');
   const [activeTab, setActiveTab] = useState('sources');
   const [filters, setFilters] = useState(defaultFilterState);
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
@@ -207,13 +208,13 @@ export default function POSIntegration() {
   const { data: mappings = [], isLoading: mappingsLoading } = useQuery({
     queryKey: ['posMappings'],
     queryFn: () => base44.pos.listMappings(),
-    enabled: isManager || can('manage_users')
+    enabled: canViewPos
   });
 
   const { data: logs = [], isLoading: logsLoading } = useQuery({
     queryKey: ['posSyncLogs'],
     queryFn: () => base44.pos.listSyncLogs(100),
-    enabled: isManager || can('manage_users')
+    enabled: canViewPos
   });
 
   const { data: sites = [] } = useQuery({
@@ -233,7 +234,7 @@ export default function POSIntegration() {
       end_date: filters.end_date || undefined,
       location_id: filters.location_id === 'all' ? undefined : filters.location_id
     }),
-    enabled: isManager || can('manage_users')
+    enabled: canViewPos
   });
 
   const { data: varianceReport = [], isLoading: varianceLoading } = useQuery({
@@ -243,7 +244,7 @@ export default function POSIntegration() {
       end_date: filters.end_date || undefined,
       location_id: filters.location_id === 'all' ? undefined : filters.location_id
     }),
-    enabled: isManager || can('manage_users')
+    enabled: canViewPos
   });
 
   const sourceMutation = useMutation({
@@ -521,7 +522,7 @@ export default function POSIntegration() {
     return <div className="p-8 text-slate-500">Loading...</div>;
   }
 
-  if (!isManager && !can('manage_users')) {
+  if (!canViewPos) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-8">
         <Card className="max-w-sm w-full text-center p-8">

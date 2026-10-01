@@ -162,7 +162,7 @@ export default function EventPlanning() {
   const ingredientsQuery = useQuery({
     queryKey: ['ingredients'],
     queryFn: () => base44.entities.Ingredient.list(),
-    enabled: can('manage_ingredients'),
+    enabled: can('view_ingredients') || can('manage_ingredients'),
     retry: false
   });
   const events = eventsQuery.data || [];

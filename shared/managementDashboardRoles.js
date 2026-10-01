@@ -147,26 +147,63 @@ const allGranularPagePermissions = Object.freeze([
   'access_reports_preview'
 ]);
 
+export const READ_ONLY_ROLE_KEY = 'read_only';
+
+export const READ_ONLY_ROLE_VIEW_PERMISSIONS = Object.freeze([
+  'view_dashboard',
+  'view_budget',
+  'view_reports',
+  'view_audit_logs',
+  'view_bulk_upload_progress',
+  'view_projects',
+  'view_users',
+  'view_roles',
+  'view_ingredients',
+  'view_food_categories',
+  'view_inventory',
+  'view_recipes',
+  'view_menu_planning',
+  'view_production',
+  'view_material_request',
+  'view_procurement',
+  'view_suppliers',
+  'view_food_waste',
+  'view_quality',
+  'view_pos',
+  'view_erp',
+  'view_forecasting',
+  'view_attendance',
+  'view_customer_meal_service',
+  'view_ai_waste'
+]);
+
+export const READ_ONLY_ROLE_PERMISSIONS = Object.freeze([
+  ...allGranularPagePermissions,
+  ...READ_ONLY_ROLE_VIEW_PERMISSIONS
+]);
+
 const allCapabilityPermissions = Object.freeze([
   'scan_qr', 'create_session', 'manage_sessions', 'manage_groups', 'delete_records',
   'view_ai_waste', 'camera_detection', 'view_dashboard', 'view_reports', 'export_data',
   'manage_bulk_uploads', 'view_audit_logs', 'view_bulk_upload_progress', 'manage_projects',
+  'view_projects', 'view_users', 'view_roles',
   'view_budget', 'manage_budget',
-  'view_ingredients', 'manage_ingredients', 'manage_food_categories', 'view_inventory', 'manage_inventory',
-  'transfer_inventory', 'view_recipes', 'manage_recipes', 'manage_menu_planning',
+  'view_ingredients', 'manage_ingredients', 'view_food_categories', 'manage_food_categories', 'view_inventory', 'manage_inventory',
+  'transfer_inventory', 'view_recipes', 'manage_recipes', 'view_menu_planning', 'manage_menu_planning',
   'generate_menu_plan_pr', 'create_special_event',
   'edit_special_event', 'submit_special_event', 'review_special_event',
-  'approve_special_event', 'reject_special_event', 'manage_production',
+  'approve_special_event', 'reject_special_event', 'view_production', 'manage_production',
   'create_production_request', 'edit_production_request', 'submit_production_request',
   'review_production_request', 'approve_production_request', 'reject_production_request',
   'request_changes_production', 'approve_production', 'request_changes_area_production',
   'reject_area_production', 'adjust_approved_production', 'cancel_production', 'start_production',
   'complete_production', 'create_material_request', 'view_material_request',
-  'acknowledge_material_request', 'manage_procurement', 'approve_procurement',
-  'manage_suppliers', 'manage_waste', 'approve_waste', 'manage_pos', 'manage_erp',
-  'manage_forecasting', 'manage_attendance', 'approve_attendance',
+  'acknowledge_material_request', 'view_procurement', 'manage_procurement', 'approve_procurement',
+  'view_suppliers', 'manage_suppliers', 'view_food_waste', 'manage_waste', 'approve_waste',
+  'view_pos', 'manage_pos', 'view_erp', 'manage_erp',
+  'view_forecasting', 'manage_forecasting', 'view_attendance', 'manage_attendance', 'approve_attendance',
   'view_customer_meal_service', 'record_customer_meal_service', 'generate_staff_meal_qr',
-  'create_employee_meal_qr', 'manage_quality',
+  'create_employee_meal_qr', 'view_quality', 'manage_quality',
   'manage_users', 'manage_roles'
 ]);
 
@@ -287,6 +324,13 @@ export const OPERATIONAL_ROLE_DEFINITIONS = Object.freeze({
     access_level: 'manager',
     description: 'Cross-functional operational management for assigned projects and stores.',
     permissions: managerPermissions
+  }),
+  [READ_ONLY_ROLE_KEY]: Object.freeze({
+    role_key: READ_ONLY_ROLE_KEY,
+    name: 'Read Only Auditor',
+    access_level: 'manager',
+    description: 'View-only access across application areas without create, edit, approve, post, import, export, upload, scan, or delete actions.',
+    permissions: READ_ONLY_ROLE_PERMISSIONS
   }),
   user: Object.freeze({
     role_key: 'user',

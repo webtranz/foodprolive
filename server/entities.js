@@ -6,6 +6,8 @@ import {
 } from './accessControl.js';
 import {
   MANAGEMENT_ROLE_DEFINITIONS,
+  READ_ONLY_ROLE_KEY,
+  READ_ONLY_ROLE_PERMISSIONS,
   normalizeManagementRoleProfile
 } from '../shared/managementDashboardRoles.js';
 import { SUPPORTED_SITE_TYPES } from '../shared/siteHierarchy.js';
@@ -116,15 +118,20 @@ export const permissionCatalog = [
   { key: 'manage_bulk_uploads', label: 'Manage Background Bulk Uploads' },
   { key: 'view_audit_logs', label: 'View Audit Logs' },
   { key: 'view_bulk_upload_progress', label: 'View Bulk Upload Progress' },
+  { key: 'view_projects', label: 'View Projects' },
   { key: 'manage_projects', label: 'Manage Projects' },
+  { key: 'view_users', label: 'View Users' },
+  { key: 'view_roles', label: 'View Roles & Permissions' },
   { key: 'view_ingredients', label: 'View Ingredients' },
   { key: 'manage_ingredients', label: 'Manage Ingredients' },
+  { key: 'view_food_categories', label: 'View Food Categories' },
   { key: 'manage_food_categories', label: 'Manage Food Categories' },
   { key: 'manage_inventory', label: 'Manage Inventory' },
   { key: 'view_inventory', label: 'View Inventory' },
   { key: 'transfer_inventory', label: 'Transfer Inventory' },
   { key: 'view_recipes', label: 'View Recipes' },
   { key: 'manage_recipes', label: 'Manage Recipes' },
+  { key: 'view_menu_planning', label: 'View Menu Planning' },
   { key: 'manage_menu_planning', label: 'Manage Menu Planning' },
   { key: 'generate_menu_plan_pr', label: 'Generate Menu Planning Purchase Requests' },
   { key: 'create_special_event', label: 'Create Special Event Requests' },
@@ -133,6 +140,7 @@ export const permissionCatalog = [
   { key: 'review_special_event', label: 'Review Special Event Requests' },
   { key: 'approve_special_event', label: 'Approve Special Event Requests' },
   { key: 'reject_special_event', label: 'Reject Special Event Requests' },
+  { key: 'view_production', label: 'View Production Plans' },
   { key: 'manage_production', label: 'Manage Production Plans' },
   { key: 'create_production_request', label: 'Create Production Request' },
   { key: 'edit_production_request', label: 'Edit Production Request' },
@@ -151,20 +159,28 @@ export const permissionCatalog = [
   { key: 'create_material_request', label: 'Create MR to Store' },
   { key: 'view_material_request', label: 'View MR to Store' },
   { key: 'acknowledge_material_request', label: 'Acknowledge MR to Store' },
+  { key: 'view_procurement', label: 'View Procurement' },
   { key: 'manage_procurement', label: 'Manage Procurement' },
   { key: 'approve_procurement', label: 'Approve Procurement' },
+  { key: 'view_suppliers', label: 'View Suppliers' },
   { key: 'manage_suppliers', label: 'Manage Suppliers' },
+  { key: 'view_food_waste', label: 'View Food Waste' },
   { key: 'manage_waste', label: 'Manage Food Waste' },
   { key: 'approve_waste', label: 'Approve High-Value Waste' },
+  { key: 'view_pos', label: 'View POS Integration' },
   { key: 'manage_pos', label: 'Manage POS Integration' },
+  { key: 'view_erp', label: 'View ERP & Accounting Integration' },
   { key: 'manage_erp', label: 'Manage ERP & Accounting Integration' },
+  { key: 'view_forecasting', label: 'View Forecasting' },
   { key: 'manage_forecasting', label: 'Manage Forecasting' },
+  { key: 'view_attendance', label: 'View Attendance & Scheduling' },
   { key: 'manage_attendance', label: 'Manage Attendance & Scheduling' },
   { key: 'approve_attendance', label: 'Approve Attendance' },
   { key: 'view_customer_meal_service', label: 'View Meal Service production balances' },
   { key: 'record_customer_meal_service', label: 'Save Meal Service covers' },
   { key: 'generate_staff_meal_qr', label: 'Generate Meal Service cover QR codes' },
   { key: 'create_employee_meal_qr', label: 'Create meal QR codes' },
+  { key: 'view_quality', label: 'View Quality Control' },
   { key: 'manage_quality', label: 'Manage Quality Control' },
   { key: 'manage_users', label: 'Manage Users' },
   { key: 'manage_roles', label: 'Manage Roles & Permissions' }
@@ -199,6 +215,13 @@ export const systemRoleDefinitions = {
       'approve_attendance', 'view_customer_meal_service', 'record_customer_meal_service',
       'generate_staff_meal_qr', 'create_employee_meal_qr', 'manage_quality'
     ]
+  },
+  [READ_ONLY_ROLE_KEY]: {
+    role_key: READ_ONLY_ROLE_KEY,
+    name: 'Read Only Auditor',
+    access_level: 'manager',
+    description: 'View-only access across application areas without create, edit, approve, post, import, export, upload, scan, or delete actions.',
+    permissions: [...READ_ONLY_ROLE_PERMISSIONS]
   },
   general_manager: {
     ...MANAGEMENT_ROLE_DEFINITIONS.general_manager,
@@ -347,6 +370,12 @@ const FOOD_WASTE_APPROVAL_ONLY_FIELDS = new Set([
 function isFoodWasteApprovalOnlyPayload(payload = {}) {
   const keys = Object.keys(payload || {});
   return keys.length > 0 && keys.every((key) => FOOD_WASTE_APPROVAL_ONLY_FIELDS.has(key));
+}
+
+const WRITE_ACTIONS = new Set(['create', 'update', 'delete']);
+
+function isReadOnlyRole(user = {}) {
+  return String(user?.role || '').trim().toLowerCase() === READ_ONLY_ROLE_KEY;
 }
 
 export const entityRegistry = {
@@ -1119,50 +1148,50 @@ const writeRoles = {
 };
 
 const entityPermissions = {
-  Site: { write: 'manage_projects' },
-  RoleProfile: { read: 'manage_roles', write: 'manage_roles' },
-  User: { read: 'manage_users', write: 'manage_users' },
+  Site: { read: ['view_projects', 'manage_projects'], write: 'manage_projects' },
+  RoleProfile: { read: ['view_roles', 'manage_roles'], write: 'manage_roles' },
+  User: { read: ['view_users', 'manage_users'], write: 'manage_users' },
   Ingredient: { read: ['view_ingredients', 'manage_ingredients'], write: 'manage_ingredients' },
-  FoodCategory: { read: 'manage_food_categories', write: 'manage_food_categories' },
+  FoodCategory: { read: ['view_food_categories', 'manage_food_categories'], write: 'manage_food_categories' },
   Budget: { read: ['view_budget', 'manage_budget', 'manage_menu_planning'], write: 'manage_budget' },
   Inventory: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
   InventoryTransaction: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
   InventoryLot: { read: ['view_inventory', 'manage_inventory'], write: 'manage_inventory' },
   Recipe: { read: ['view_recipes', 'manage_recipes'], write: 'manage_recipes' },
-  MenuPlan: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
-  MenuPlanPRSchedule: { read: 'manage_menu_planning', write: 'manage_menu_planning' },
-  MenuPlanPRRun: { read: 'generate_menu_plan_pr', write: 'generate_menu_plan_pr' },
-  Production: { read: 'manage_production', write: 'manage_production' },
-  ProductionConsumptionReport: { read: 'manage_production', write: 'complete_production' },
+  MenuPlan: { read: ['view_menu_planning', 'manage_menu_planning'], write: 'manage_menu_planning' },
+  MenuPlanPRSchedule: { read: ['view_menu_planning', 'manage_menu_planning'], write: 'manage_menu_planning' },
+  MenuPlanPRRun: { read: ['view_menu_planning', 'generate_menu_plan_pr'], write: 'generate_menu_plan_pr' },
+  Production: { read: ['view_production', 'manage_production'], write: 'manage_production' },
+  ProductionConsumptionReport: { read: ['view_production', 'manage_production'], write: 'complete_production' },
   ProducedItemBatch: { read: 'view_customer_meal_service', write: 'record_customer_meal_service' },
   MealServiceAttendance: { read: 'view_customer_meal_service', write: 'record_customer_meal_service' },
   MealServiceConsumption: { read: 'view_customer_meal_service', write: 'record_customer_meal_service' },
-  ProductionBatch: { read: 'manage_production', write: 'manage_production' },
-  ProductionTransfer: { read: 'transfer_inventory', write: 'transfer_inventory' },
+  ProductionBatch: { read: ['view_production', 'manage_production'], write: 'manage_production' },
+  ProductionTransfer: { read: ['view_inventory', 'transfer_inventory'], write: 'transfer_inventory' },
   MaterialRequest: {
     read: ['view_material_request', 'acknowledge_material_request', 'manage_procurement', 'approve_procurement'],
     write: 'manage_procurement'
   },
-  Supplier: { read: 'manage_suppliers', write: 'manage_suppliers' },
-  PurchaseOrder: { read: 'manage_procurement', write: 'manage_procurement' },
-  RFQ: { read: 'manage_procurement', write: 'manage_procurement' },
-  FoodWaste: { read: 'manage_waste', write: 'manage_waste' },
-  WasteTarget: { read: 'manage_waste', write: 'manage_waste' },
-  WasteDetectionLog: { read: 'manage_waste', write: 'manage_waste' },
-  QualityControl: { read: 'manage_quality', write: 'manage_quality' },
+  Supplier: { read: ['view_suppliers', 'manage_suppliers', 'view_procurement', 'manage_procurement'], write: 'manage_suppliers' },
+  PurchaseOrder: { read: ['view_procurement', 'manage_procurement'], write: 'manage_procurement' },
+  RFQ: { read: ['view_procurement', 'manage_procurement'], write: 'manage_procurement' },
+  FoodWaste: { read: ['view_food_waste', 'manage_waste'], write: 'manage_waste' },
+  WasteTarget: { read: ['view_food_waste', 'manage_waste'], write: 'manage_waste' },
+  WasteDetectionLog: { read: ['view_food_waste', 'manage_waste'], write: 'manage_waste' },
+  QualityControl: { read: ['view_quality', 'manage_quality'], write: 'manage_quality' },
   CustomerMealPlan: {
-    read: ['manage_menu_planning', 'view_customer_meal_service', 'record_customer_meal_service'],
+    read: ['view_menu_planning', 'manage_menu_planning', 'view_customer_meal_service', 'record_customer_meal_service'],
     write: 'manage_menu_planning'
   },
-  AttendanceSession: { read: 'manage_attendance', write: 'manage_attendance' },
-  AttendanceRecord: { read: 'manage_attendance', write: 'manage_attendance' },
-  StaffShift: { read: 'manage_attendance', write: 'manage_attendance' },
+  AttendanceSession: { read: ['view_attendance', 'manage_attendance'], write: 'manage_attendance' },
+  AttendanceRecord: { read: ['view_attendance', 'manage_attendance'], write: 'manage_attendance' },
+  StaffShift: { read: ['view_attendance', 'manage_attendance'], write: 'manage_attendance' },
   AdvancedReportSchedule: { read: 'view_reports', write: 'view_reports' },
-  ERPIntegrationConfig: { read: 'manage_erp', write: 'manage_erp' },
-  ERPIntegrationLog: { read: 'manage_erp', write: 'manage_erp' },
-  D365Master: { read: 'manage_erp', write: 'manage_erp' },
-  ForecastScenario: { read: 'manage_forecasting', write: 'manage_forecasting' },
-  ForecastSnapshot: { read: 'manage_forecasting', write: 'manage_forecasting' }
+  ERPIntegrationConfig: { read: ['view_erp', 'manage_erp'], write: 'manage_erp' },
+  ERPIntegrationLog: { read: ['view_erp', 'manage_erp'], write: 'manage_erp' },
+  D365Master: { read: ['view_erp', 'manage_erp'], write: 'manage_erp' },
+  ForecastScenario: { read: ['view_forecasting', 'manage_forecasting', 'view_reports'], write: 'manage_forecasting' },
+  ForecastSnapshot: { read: ['view_forecasting', 'manage_forecasting', 'view_reports'], write: 'manage_forecasting' }
 };
 
 const selfWritableFields = new Set(['full_name', 'phone', 'language', 'avatar_url']);
@@ -1222,6 +1251,12 @@ export function authorizeEntityAction(user, entity, action, payload = null, reso
       ? requirement.some((permission) => hasPermission(user, permission))
       : Boolean(requirement && hasPermission(user, requirement))
   );
+
+  if (isReadOnlyRole(user) && WRITE_ACTIONS.has(action)) {
+    const error = new Error('Read Only Auditor can view records but cannot create, update, approve, post, import, export, upload, scan, or delete transactions');
+    error.status = 403;
+    throw error;
+  }
 
   if (entity === 'FoodWaste' && ['create', 'update', 'delete'].includes(action)) {
     const normalizedWasteCategory = String(payload?.waste_category || resource?.waste_category || '').trim().toLowerCase();

@@ -135,7 +135,7 @@ async function copyQrImage(file) {
   return true;
 }
 
-export default function EmployeeMealQRManager({ canCreate = false }) {
+export default function EmployeeMealQRManager({ canCreate = false, canView = canCreate }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedQr, setSelectedQr] = useState(null);
   const [editingQr, setEditingQr] = useState(null);
@@ -147,7 +147,7 @@ export default function EmployeeMealQRManager({ canCreate = false }) {
   const qrQuery = useQuery({
     queryKey: ['staffMealQr'],
     queryFn: () => base44.staffMealQr.list(),
-    enabled: canCreate
+    enabled: canView
   });
 
   const createMutation = useMutation({
@@ -284,7 +284,7 @@ export default function EmployeeMealQRManager({ canCreate = false }) {
     return () => window.clearTimeout(timer);
   }, [pendingWhatsAppShare, selectedQr]);
 
-  if (!canCreate) return null;
+  if (!canView) return null;
 
   return (
     <>
@@ -297,10 +297,12 @@ export default function EmployeeMealQRManager({ canCreate = false }) {
                 Create employee QR codes with breakfast, lunch, and dinner scan windows. Each employee can scan once per meal per day.
               </p>
             </div>
-            <Button type="button" className="bg-emerald-600 hover:bg-emerald-700" onClick={openCreateDialog}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create QR Code
-            </Button>
+            {canCreate ? (
+              <Button type="button" className="bg-emerald-600 hover:bg-emerald-700" onClick={openCreateDialog}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create QR Code
+              </Button>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent>
@@ -340,27 +342,31 @@ export default function EmployeeMealQRManager({ canCreate = false }) {
                           <Badge variant="outline">{record.scan_history?.length || 0}</Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="flex justify-end gap-2">
-                            <Button type="button" size="sm" variant="outline" onClick={() => setSelectedQr(record)}>
-                              <QrCode className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button type="button" size="sm" variant="outline" onClick={() => openAndShareQrImage(record)}>
-                              <MessageSquare className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button type="button" size="sm" variant="outline" onClick={() => openEditDialog(record)}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="border-red-200 text-red-600 hover:bg-red-50"
-                              disabled={deleteMutation.isPending}
-                              onClick={() => deleteQr(record)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
+                          {canCreate ? (
+                            <div className="flex justify-end gap-2">
+                              <Button type="button" size="sm" variant="outline" onClick={() => setSelectedQr(record)}>
+                                <QrCode className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button type="button" size="sm" variant="outline" onClick={() => openAndShareQrImage(record)}>
+                                <MessageSquare className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button type="button" size="sm" variant="outline" onClick={() => openEditDialog(record)}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="border-red-200 text-red-600 hover:bg-red-50"
+                                disabled={deleteMutation.isPending}
+                                onClick={() => deleteQr(record)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="flex justify-end text-xs text-slate-400">View only</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     );

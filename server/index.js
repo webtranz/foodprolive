@@ -3807,7 +3807,7 @@ app.get('/api/dashboard/management', requireAuth, requirePermission('view_dashbo
   }
 });
 
-app.get('/api/reports/food-cost', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+app.get('/api/reports/food-cost', requireAuth, requireAnyPermission(['view_reports', 'view_menu_planning', 'manage_menu_planning']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     const body = await withReadCache({
@@ -3969,7 +3969,7 @@ app.post('/api/user-groups/bulk-members', requireAuth, requireBulkUploadAdminist
   }
 });
 
-app.get('/api/menu-plans/by-date', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+app.get('/api/menu-plans/by-date', requireAuth, requireAnyPermission(['view_menu_planning', 'manage_menu_planning']), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
     const planDate = String(request.query.plan_date || '').trim();
@@ -4001,7 +4001,7 @@ app.get('/api/menu-plans/by-date', requireAuth, requirePermission('manage_menu_p
   }
 });
 
-app.get('/api/menu-plans/week', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+app.get('/api/menu-plans/week', requireAuth, requireAnyPermission(['view_menu_planning', 'manage_menu_planning']), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
     const weekStart = String(request.query.week_start || '').trim();
@@ -4028,7 +4028,7 @@ app.get('/api/menu-plans/week', requireAuth, requirePermission('manage_menu_plan
   }
 });
 
-app.get('/api/menu-plans/budgets', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+app.get('/api/menu-plans/budgets', requireAuth, requireAnyPermission(['view_menu_planning', 'manage_menu_planning']), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
     const planDate = String(request.query.plan_date || '').trim();
@@ -4051,7 +4051,7 @@ app.get('/api/menu-plans/budgets', requireAuth, requirePermission('manage_menu_p
   }
 });
 
-app.post('/api/menu-plans/cost-preview', requireAuth, requirePermission('manage_menu_planning'), async (request, response, next) => {
+app.post('/api/menu-plans/cost-preview', requireAuth, requireAnyPermission(['view_menu_planning', 'manage_menu_planning']), async (request, response, next) => {
   try {
     const payload = buildMenuPlanWritePayload(request.body || {});
     const errors = validateMenuPlanPayload(payload);
@@ -4085,7 +4085,7 @@ app.post('/api/menu-plans/cost-preview', requireAuth, requirePermission('manage_
   }
 });
 
-app.get('/api/menu-plans/pr-generation', requireAuth, requireAnyPermission(['manage_menu_planning', 'generate_menu_plan_pr']), async (request, response, next) => {
+app.get('/api/menu-plans/pr-generation', requireAuth, requireAnyPermission(['view_menu_planning', 'manage_menu_planning', 'generate_menu_plan_pr']), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
     const referenceDate = String(request.query.reference_date || '').trim();
@@ -4600,6 +4600,7 @@ app.delete('/api/menu-plans/:id', requireAuth, requirePermission('manage_menu_pl
 });
 
 app.get('/api/special-events', requireAuth, requireAnyPermission([
+  'view_menu_planning',
   'manage_menu_planning',
   'create_special_event',
   'edit_special_event',
@@ -4621,6 +4622,7 @@ app.get('/api/special-events', requireAuth, requireAnyPermission([
 });
 
 app.get('/api/special-events/budgets', requireAuth, requireAnyPermission([
+  'view_menu_planning',
   'manage_menu_planning',
   'create_special_event',
   'edit_special_event',
@@ -4654,6 +4656,7 @@ app.get('/api/special-events/budgets', requireAuth, requireAnyPermission([
 });
 
 app.get('/api/special-events/recipes', requireAuth, requireAnyPermission([
+  'view_menu_planning',
   'manage_menu_planning',
   'create_special_event',
   'edit_special_event',
@@ -4678,6 +4681,7 @@ app.get('/api/special-events/recipes', requireAuth, requireAnyPermission([
 });
 
 app.get('/api/special-events/:id', requireAuth, requireAnyPermission([
+  'view_menu_planning',
   'manage_menu_planning',
   'create_special_event',
   'edit_special_event',
@@ -4698,6 +4702,7 @@ app.get('/api/special-events/:id', requireAuth, requireAnyPermission([
 });
 
 app.get('/api/special-events/:id/history', requireAuth, requireAnyPermission([
+  'view_menu_planning',
   'manage_menu_planning',
   'create_special_event',
   'edit_special_event',
@@ -5280,7 +5285,7 @@ app.post('/api/special-events/:id/reject', requireAuth, requirePermission('rejec
   }
 });
 
-app.get('/api/food-waste/context', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
+app.get('/api/food-waste/context', requireAuth, requireAnyPermission(['view_food_waste', 'manage_waste']), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
     const wasteDate = String(request.query.waste_date || '').trim();
@@ -5303,7 +5308,7 @@ app.get('/api/food-waste/context', requireAuth, requirePermission('manage_waste'
   }
 });
 
-app.get('/api/food-waste', requireAuth, requirePermission('manage_waste'), async (request, response, next) => {
+app.get('/api/food-waste', requireAuth, requireAnyPermission(['view_food_waste', 'manage_waste']), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
     const wasteCategory = String(request.query.waste_category || '').trim();
@@ -9691,7 +9696,7 @@ app.post('/api/app-logs', requireAuth, (request, response) => {
   });
 });
 
-app.get('/api/pos/sources', requireAuth, requireRole(['admin']), async (_request, response, next) => {
+app.get('/api/pos/sources', requireAuth, requireAnyPermission(['view_pos', 'manage_pos', 'manage_users']), async (_request, response, next) => {
   try {
     response.json(await getPosSources());
   } catch (error) {
@@ -9732,7 +9737,7 @@ app.delete('/api/pos/sources/:id', requireAuth, requireRole(['admin']), async (r
   }
 });
 
-app.get('/api/pos/mappings', requireAuth, requireRole(['admin', 'manager']), async (_request, response, next) => {
+app.get('/api/pos/mappings', requireAuth, requireAnyPermission(['view_pos', 'manage_pos', 'manage_users']), async (_request, response, next) => {
   try {
     response.json(await getRecipeMappings());
   } catch (error) {
@@ -9773,7 +9778,7 @@ app.delete('/api/pos/mappings/:id', requireAuth, requireRole(['admin']), async (
   }
 });
 
-app.get('/api/pos/sync-logs', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.get('/api/pos/sync-logs', requireAuth, requireAnyPermission(['view_pos', 'manage_pos', 'manage_users']), async (request, response, next) => {
   try {
     const limit = request.query.limit ? Number(request.query.limit) : 100;
     response.json(await getSyncLogs(limit));
@@ -9809,7 +9814,7 @@ app.post('/api/pos/sources/:id/sync', requireAuth, requireRole(['admin']), async
   }
 });
 
-app.get('/api/pos/sales-summary', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.get('/api/pos/sales-summary', requireAuth, requireAnyPermission(['view_pos', 'manage_pos', 'manage_users']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     const report = await getDailySalesSummary({
@@ -9825,7 +9830,7 @@ app.get('/api/pos/sales-summary', requireAuth, requireRole(['admin', 'manager'])
   }
 });
 
-app.get('/api/pos/variance-report', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.get('/api/pos/variance-report', requireAuth, requireAnyPermission(['view_pos', 'manage_pos', 'manage_users']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     const report = await getSalesProductionVariance({
@@ -11398,6 +11403,7 @@ app.get('/api/procurement/suppliers', requireAuth, async (_request, response, ne
 });
 
 app.get('/api/procurement/monthly-purchase-requests', requireAuth, requireAnyPermission([
+  'view_procurement',
   'generate_menu_plan_pr',
   'manage_procurement',
   'approve_procurement',
@@ -11434,6 +11440,7 @@ app.post('/api/procurement/monthly-purchase-requests', requireAuth, requireAnyPe
 });
 
 app.get('/api/procurement/monthly-purchase-requests/:id', requireAuth, requireAnyPermission([
+  'view_procurement',
   'generate_menu_plan_pr',
   'manage_procurement',
   'approve_procurement',
@@ -11744,7 +11751,7 @@ app.get('/api/procurement/price-comparison', requireAuth, async (request, respon
   }
 });
 
-app.get('/api/procurement/performance', requireAuth, requireAnyPermission(['manage_procurement', 'approve_procurement']), async (_request, response, next) => {
+app.get('/api/procurement/performance', requireAuth, requireAnyPermission(['view_procurement', 'manage_procurement', 'approve_procurement']), async (_request, response, next) => {
   try {
     const scope = await getLocationScope(_request.user);
     response.json(filterRowsByAccessibleSites(await getSupplierPerformanceDashboard(), scope));
@@ -11982,7 +11989,7 @@ async function findStaffMealQrByToken(token) {
   return matches[0] || null;
 }
 
-app.get('/api/staff-meal-qr', requireAuth, requirePermission('create_employee_meal_qr'), async (_request, response, next) => {
+app.get('/api/staff-meal-qr', requireAuth, requireAnyPermission(['view_customer_meal_service', 'create_employee_meal_qr']), async (_request, response, next) => {
   try {
     const codes = await listDocuments('QRCode', {
       filters: { category: STAFF_MEAL_QR_CATEGORY },
@@ -13492,7 +13499,7 @@ app.post(
   }
 );
 
-app.get('/api/erp/logs', requireAuth, requirePermission('manage_erp'), async (request, response, next) => {
+app.get('/api/erp/logs', requireAuth, requireAnyPermission(['view_erp', 'manage_erp']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     response.json(await listErpLogs(scope));
@@ -13501,7 +13508,7 @@ app.get('/api/erp/logs', requireAuth, requirePermission('manage_erp'), async (re
   }
 });
 
-app.get('/api/erp/logs/:id/rows', requireAuth, requirePermission('manage_erp'), async (request, response, next) => {
+app.get('/api/erp/logs/:id/rows', requireAuth, requireAnyPermission(['view_erp', 'manage_erp']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     response.json(await getD365ImportLogDetails(request.params.id, {
@@ -13523,7 +13530,7 @@ app.post('/api/erp/logs/:id/retry', requireAuth, requirePermission('manage_erp')
   }
 });
 
-app.get('/api/forecasting/summary', requireAuth, requireRole(['admin', 'manager']), async (request, response, next) => {
+app.get('/api/forecasting/summary', requireAuth, requireAnyPermission(['view_forecasting', 'manage_forecasting', 'view_reports']), async (request, response, next) => {
   try {
     const scope = await getLocationScope(request.user);
     const requestedLocation = request.query.location_id || null;

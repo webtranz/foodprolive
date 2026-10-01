@@ -389,6 +389,8 @@ export default function UserRoleManagement() {
   const { can, accessLevel, currentUser, loading: permissionLoading } = usePermissions();
   const canManageUsers = can('manage_users');
   const canManageRoles = can('manage_roles');
+  const canViewUsers = canManageUsers || can('view_users');
+  const canViewRoles = canManageRoles || can('view_roles');
   const canDeactivateUsers = accessLevel === 'admin';
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('users');
@@ -414,19 +416,19 @@ export default function UserRoleManagement() {
   const { data: users = [], isLoading: usersLoading, error: usersQueryError } = useQuery({
     queryKey: ['users'],
     queryFn: () => base44.entities.User.list(),
-    enabled: canManageUsers
+    enabled: canViewUsers
   });
 
   const { data: sites = [], error: sitesQueryError } = useQuery({
     queryKey: ['sites'],
     queryFn: () => base44.entities.Site.list(),
-    enabled: canManageUsers
+    enabled: canViewUsers
   });
 
   const { data: roleProfiles = [], error: rolesQueryError } = useQuery({
     queryKey: ['roleProfiles'],
     queryFn: () => base44.entities.RoleProfile.list('name', 200),
-    enabled: canManageRoles
+    enabled: canViewRoles
   });
 
   const roots = useMemo(() => sites.filter((site) => !site.parent_site_id), [sites]);
@@ -757,25 +759,25 @@ export default function UserRoleManagement() {
     });
   };
 
-  if (permissionLoading || (canManageUsers && usersLoading)) {
+  if (permissionLoading || (canViewUsers && usersLoading)) {
     return <div className="p-8 text-slate-500">Loading...</div>;
   }
 
-  if (!canManageUsers && !canManageRoles) {
+  if (!canViewUsers && !canViewRoles) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-8">
         <Card className="max-w-sm w-full text-center p-8">
           <ShieldAlert className="w-12 h-12 text-red-400 mx-auto mb-4" />
           <h2 className="text-lg font-semibold text-slate-800">Access Denied</h2>
-          <p className="text-sm text-slate-500 mt-2">You need User Management or Role Management permission to access this page.</p>
+          <p className="text-sm text-slate-500 mt-2">You need User or Role view permission to access this page.</p>
         </Card>
       </div>
     );
   }
 
-  const visibleTab = activeTab === 'users' && !canManageUsers
+  const visibleTab = activeTab === 'users' && !canViewUsers
     ? 'roles'
-    : activeTab === 'roles' && !canManageRoles
+    : activeTab === 'roles' && !canViewRoles
       ? 'users'
       : activeTab;
   const queryError = visibleTab === 'users'
@@ -813,9 +815,9 @@ export default function UserRoleManagement() {
         ) : null}
 
         <Tabs value={visibleTab} onValueChange={setActiveTab}>
-          <TabsList className={`grid w-full ${canManageUsers && canManageRoles ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            {canManageUsers ? <TabsTrigger value="users">Users</TabsTrigger> : null}
-            {canManageRoles ? <TabsTrigger value="roles">Roles & Permissions</TabsTrigger> : null}
+          <TabsList className={`grid w-full ${canViewUsers && canViewRoles ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {canViewUsers ? <TabsTrigger value="users">Users</TabsTrigger> : null}
+            {canViewRoles ? <TabsTrigger value="roles">Roles & Permissions</TabsTrigger> : null}
           </TabsList>
 
           <TabsContent value="users" className="space-y-6">
@@ -922,17 +924,19 @@ export default function UserRoleManagement() {
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-wrap items-center gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                aria-label={`Edit ${user.full_name || user.email}`}
-                                title={accountDisabled ? 'Deactivated accounts cannot be edited' : 'Edit user'}
-                                disabled={accountDisabled}
-                                onClick={() => openEditUser(user)}
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </Button>
+                              {canManageUsers ? (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  aria-label={`Edit ${user.full_name || user.email}`}
+                                  title={accountDisabled ? 'Deactivated accounts cannot be edited' : 'Edit user'}
+                                  disabled={accountDisabled}
+                                  onClick={() => openEditUser(user)}
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </Button>
+                              ) : null}
                               {canDeactivateUsers ? (
                                 <Button
                                   type="button"
@@ -1016,15 +1020,17 @@ export default function UserRoleManagement() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               {role.is_system ? <span className="text-xs text-slate-400">Built-in</span> : null}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                aria-label={`Edit ${role.name}`}
-                                onClick={() => openEditRole(role)}
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </Button>
+                              {canManageRoles ? (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  aria-label={`Edit ${role.name}`}
+                                  onClick={() => openEditRole(role)}
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </Button>
+                              ) : null}
                             </div>
                           </TableCell>
                         </TableRow>

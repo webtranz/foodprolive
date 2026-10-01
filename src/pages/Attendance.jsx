@@ -26,7 +26,7 @@ export default function Attendance({ section = FOOD_CONSUMPTION_SECTIONS.MEAL_SE
   const canGenerateCoversQr = isAdmin || can('generate_staff_meal_qr');
   const canCreateEmployeeMealQr = isAdmin || can('create_employee_meal_qr');
   const canViewMealService = isAdmin || canConfirm || can('view_customer_meal_service') || canGenerateCoversQr;
-  const canViewMealQrGenerator = canCreateEmployeeMealQr;
+  const canViewMealQrGenerator = canCreateEmployeeMealQr || can('view_customer_meal_service');
   const canView = activeSection === FOOD_CONSUMPTION_SECTIONS.MEAL_QR_GENERATOR
     ? canViewMealQrGenerator
     : canViewMealService;
@@ -87,7 +87,7 @@ export default function Attendance({ section = FOOD_CONSUMPTION_SECTIONS.MEAL_SE
         />
 
         {activeSection === FOOD_CONSUMPTION_SECTIONS.MEAL_QR_GENERATOR ? (
-          <EmployeeMealQRManager canCreate={canCreateEmployeeMealQr} />
+          <EmployeeMealQRManager canCreate={canCreateEmployeeMealQr} canView={canViewMealQrGenerator} />
         ) : sitesQuery.isLoading ? (
           <div className="flex min-h-[320px] items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-slate-500">
             <Loader2 className="h-5 w-5 animate-spin" /> Loading accessible projects...

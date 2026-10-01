@@ -249,7 +249,8 @@ export default function Sites() {
   const [formError, setFormError] = useState('');
 
   const queryClient = useQueryClient();
-  const { isAdmin } = usePermissions();
+  const { can, isAdmin } = usePermissions();
+  const canExportData = can('export_data');
 
   const { data: sites = [], isLoading } = useQuery({
     queryKey: ['sites'],
@@ -682,10 +683,12 @@ export default function Sites() {
           title="Site Structure"
           description="Manage the operational hierarchy in a clear Area → Project → Store structure"
         >
-          <Button variant="outline" onClick={() => downloadCSV(sites, 'project_hierarchy')}>
-            <Download className="w-4 h-4 mr-2" />
-            Export
-          </Button>
+          {canExportData ? (
+            <Button variant="outline" onClick={() => downloadCSV(sites, 'project_hierarchy')}>
+              <Download className="w-4 h-4 mr-2" />
+              Export
+            </Button>
+          ) : null}
           {isAdmin ? (
             <>
               <Button variant="outline" onClick={() => setBulkDialogOpen(true)}>

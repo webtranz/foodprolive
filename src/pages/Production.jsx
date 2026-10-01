@@ -1733,7 +1733,7 @@ export default function Production() {
       end_date: productionLoadDate,
       limit: 1000
     }),
-    enabled: can('manage_waste') && Boolean(productionLoadDate),
+    enabled: (can('view_food_waste') || can('manage_waste')) && Boolean(productionLoadDate),
     ...OPERATIONAL_QUERY_OPTIONS
   });
 

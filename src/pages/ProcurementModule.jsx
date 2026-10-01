@@ -170,10 +170,11 @@ function KPI({ title, value, subtitle, icon: Icon, tone }) {
 export default function ProcurementModule() {
   const queryClient = useQueryClient();
   const { role, can } = usePermissions();
+  const canViewProcurement = can('view_procurement');
   const canManageProcurement = can('manage_procurement');
   const canApproveProcurement = can('approve_procurement');
   const canManageSuppliers = can('manage_suppliers');
-  const canViewPerformance = canManageProcurement || canApproveProcurement;
+  const canViewPerformance = canViewProcurement || canManageProcurement || canApproveProcurement;
 
   const [activeTab, setActiveTab] = useState('requests');
   const [supplierDialogOpen, setSupplierDialogOpen] = useState(false);
