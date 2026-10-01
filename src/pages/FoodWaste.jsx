@@ -23,6 +23,7 @@ import StatCard from '@/components/ui/StatCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -84,6 +85,8 @@ const MAX_WASTE_PICTURES = 8;
 const MAX_WASTE_PICTURE_TOTAL_BYTES = 500 * 1024;
 const MAX_WASTE_PICTURE_LONG_EDGE = 900;
 const MIN_WASTE_PICTURE_LONG_EDGE = 360;
+const DEFAULT_ADMIN_WASTE_WINDOW_DAYS = 30;
+const MAX_ADMIN_WASTE_WINDOW_DAYS = 3650;
 
 const CATEGORY_BADGES = Object.fromEntries(
   WASTE_CATEGORIES.map((item) => [item.value, `bg-white text-slate-700 border border-slate-200`])
@@ -465,6 +468,8 @@ export default function FoodWaste() {
     target_month: format(new Date(), 'yyyy-MM'),
     notes: ''
   });
+  const [adminWasteWindowEditorOpen, setAdminWasteWindowEditorOpen] = useState(false);
+  const [adminWasteWindowDaysInput, setAdminWasteWindowDaysInput] = useState(String(DEFAULT_ADMIN_WASTE_WINDOW_DAYS));
   const wasteListFilters = useMemo(() => ({
     start_date: filters.startDate,
     end_date: filters.endDate,
@@ -578,6 +583,18 @@ export default function FoodWaste() {
   });
 
   const {
+    data: adminWasteWindowSettings = null,
+    isLoading: adminWasteWindowSettingsLoading,
+    error: adminWasteWindowSettingsError
+  } = useQuery({
+    queryKey: ['foodWasteAdminWindowSettings'],
+    enabled: Boolean(isAdmin),
+    queryFn: () => base44.foodWaste.getAdminWindowSettings(),
+    staleTime: 60 * 1000,
+    gcTime: 10 * 60 * 1000
+  });
+
+  const {
     data: wasteContext = null,
     isLoading: wasteContextLoading,
     error: wasteContextError
@@ -647,15 +664,23 @@ export default function FoodWaste() {
   const hasBatchOverproductionAvailableOutput = batchWasteRows.some((row) => (
     safeNumber(row.available_weight_grams) > 0
   ));
-  const adminEditingExistingWaste = Boolean(isAdmin && editingWasteId);
-  const adminWasteWindowOverride = Boolean(isAdmin && wasteContext?.window_status !== 'future_date');
-  const wasteContextAllowsSave = Boolean(
-    wasteContext?.is_within_recording_window
-    || adminWasteWindowOverride
-    || adminEditingExistingWaste
+  const adminWasteWindowOverride = Boolean(
+    isAdmin
+    && wasteContext?.is_within_recording_window
+    && wasteContext?.recording_window_basis === 'admin_custom_days'
+  );
+  const wasteContextAllowsSave = Boolean(wasteContext?.is_within_recording_window);
+  const adminWasteWindowDays = Math.max(
+    1,
+    safeNumber(adminWasteWindowSettings?.days, DEFAULT_ADMIN_WASTE_WINDOW_DAYS)
   );
   const bootstrapLoading = sitesLoading || ingredientsLoading || recipesLoading || productionsLoading || foodWasteLoading || wasteTargetsLoading;
   const bootstrapError = sitesError || ingredientsError || recipesError || productionsError || foodWasteError || wasteTargetsError;
+
+  useEffect(() => {
+    if (!isAdmin || !adminWasteWindowSettings) return;
+    setAdminWasteWindowDaysInput(String(adminWasteWindowDays));
+  }, [adminWasteWindowDays, adminWasteWindowSettings, isAdmin]);
 
   useEffect(() => {
     if (formData.production_id === 'none') {
@@ -806,6 +831,17 @@ export default function FoodWaste() {
       setMessage('Waste reduction target saved.');
     },
     onError: (error) => setMessage(error.message || 'Failed to save target')
+  });
+
+  const adminWasteWindowMutation = useMutation({
+    mutationFn: (days) => base44.foodWaste.updateAdminWindowSettings({ days }),
+    onSuccess: (settings) => {
+      queryClient.invalidateQueries({ queryKey: ['foodWasteAdminWindowSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['foodWasteContext'] });
+      setAdminWasteWindowDaysInput(String(settings?.days || DEFAULT_ADMIN_WASTE_WINDOW_DAYS));
+      setMessage(`Admin food waste recording window saved at ${settings?.days || DEFAULT_ADMIN_WASTE_WINDOW_DAYS} days.`);
+    },
+    onError: (error) => setMessage(error.message || 'Failed to save admin food waste recording window')
   });
 
   const filteredWaste = useMemo(() => (
@@ -1507,6 +1543,16 @@ export default function FoodWaste() {
     });
   };
 
+  const handleSaveAdminWasteWindow = () => {
+    const days = Number.parseInt(String(adminWasteWindowDaysInput || ''), 10);
+    if (!Number.isFinite(days) || days < 1 || days > MAX_ADMIN_WASTE_WINDOW_DAYS) {
+      setMessage(`Enter a whole number of days between 1 and ${MAX_ADMIN_WASTE_WINDOW_DAYS}.`);
+      return;
+    }
+    setMessage('');
+    adminWasteWindowMutation.mutate(days);
+  };
+
   const exportWastePackage = (type = 'csv') => {
     const wasteRows = analyticsWaste.map((item) => ({
       item_code: getItemCodeFromRecords([
@@ -1618,6 +1664,60 @@ export default function FoodWaste() {
           <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
             {message}
           </div>
+        ) : null}
+
+        {isAdmin ? (
+          <Card className="border-blue-100 bg-blue-50/60 shadow-sm">
+            <CardContent className="pt-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      id="admin-food-waste-window-toggle"
+                      checked={adminWasteWindowEditorOpen}
+                      onCheckedChange={(checked) => setAdminWasteWindowEditorOpen(Boolean(checked))}
+                    />
+                    <Label htmlFor="admin-food-waste-window-toggle" className="text-sm font-semibold text-slate-900">
+                      Admin food waste recording window
+                    </Label>
+                  </div>
+                  <p className="text-sm text-slate-600">
+                    Current admin limit: {adminWasteWindowSettingsLoading ? 'Loading...' : `${adminWasteWindowDays} day${adminWasteWindowDays === 1 ? '' : 's'}`}.
+                    Future dates remain blocked.
+                  </p>
+                  {adminWasteWindowSettingsError ? (
+                    <p className="text-sm text-red-700">
+                      {adminWasteWindowSettingsError.message || 'Unable to load the admin food waste window setting.'}
+                    </p>
+                  ) : null}
+                </div>
+                {adminWasteWindowEditorOpen ? (
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <div className="min-w-40">
+                      <Label htmlFor="admin-food-waste-window-days">Days</Label>
+                      <Input
+                        id="admin-food-waste-window-days"
+                        type="number"
+                        min="1"
+                        max={MAX_ADMIN_WASTE_WINDOW_DAYS}
+                        step="1"
+                        className="mt-1 bg-white"
+                        value={adminWasteWindowDaysInput}
+                        onChange={(event) => setAdminWasteWindowDaysInput(event.target.value)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={handleSaveAdminWasteWindow}
+                      disabled={adminWasteWindowMutation.isPending}
+                    >
+                      {adminWasteWindowMutation.isPending ? 'Saving...' : 'Save'}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
         ) : null}
 
         {bootstrapError ? (
@@ -2312,7 +2412,7 @@ export default function FoodWaste() {
                   <div className="flex flex-wrap items-center gap-2 font-medium">
                     <Clock3 className="h-4 w-4" />
                     <span>
-                      {adminWasteWindowOverride && !wasteContext.is_within_recording_window
+                      {adminWasteWindowOverride
                         ? editingWasteId
                           ? 'Admin historical edit is open for this saved waste record.'
                           : 'Admin historical entry is open for this waste record.'
@@ -2322,17 +2422,19 @@ export default function FoodWaste() {
                   <div className="mt-2 grid gap-2 md:grid-cols-2">
                     <p>
                       <span className="font-medium">
-                        {wasteContext.recording_window_basis === 'admin_month' ? 'Admin window:' : 'Production completed:'}
+                        {String(wasteContext.recording_window_basis || '').startsWith('admin_') ? 'Admin window:' : 'Production completed:'}
                       </span>{' '}
-                      {wasteContext.recording_window_basis === 'admin_month'
-                        ? 'Current month'
+                      {wasteContext.recording_window_basis === 'admin_custom_days'
+                        ? `Last ${wasteContext.admin_historical_window_days || adminWasteWindowDays} day${Number(wasteContext.admin_historical_window_days || adminWasteWindowDays) === 1 ? '' : 's'}`
+                        : wasteContext.recording_window_basis === 'admin_month'
+                          ? 'Current month'
                         : wasteContext.production_completed_at
                           ? new Date(wasteContext.production_completed_at).toLocaleString()
                           : 'No successful production found'}
                     </p>
                     <p>
                       <span className="font-medium">
-                        {wasteContext.recording_window_basis === 'admin_month' ? 'Month closes:' : 'Recording deadline:'}
+                        {String(wasteContext.recording_window_basis || '').startsWith('admin_') ? 'Window ends:' : 'Recording deadline:'}
                       </span>{' '}
                       {wasteContext.recording_deadline_at ? new Date(wasteContext.recording_deadline_at).toLocaleString() : 'Unavailable'}
                     </p>

@@ -112,6 +112,10 @@ function endOfCalendarMonth(date) {
   return new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
 }
 
+function endOfCalendarDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+}
+
 function isSameCalendarMonth(left, right) {
   return left.getFullYear() === right.getFullYear()
     && left.getMonth() === right.getMonth();
@@ -885,6 +889,8 @@ export function getFoodWasteRecordingWindow({
   mealType,
   now = new Date(),
   isAdmin = false,
+  adminHistoricalWindowEnabled = true,
+  adminHistoricalWindowDays = 30,
   productionCompletedAt = null,
   successfulProductionCompletedAt = null
 } = {}) {
@@ -927,24 +933,35 @@ export function getFoodWasteRecordingWindow({
     const todayToken = dateOnlyToken(currentDate);
     const wasteToken = dateOnlyToken(wasteDateOnly);
     const monthDeadline = endOfCalendarMonth(currentDate);
+    const configuredDayCount = Math.max(1, Math.min(3650, Number.parseInt(adminHistoricalWindowDays, 10) || 30));
+    const historicalOpenAt = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate());
+    historicalOpenAt.setDate(historicalOpenAt.getDate() - (configuredDayCount - 1));
+    const historicalOpenToken = dateOnlyToken(historicalOpenAt);
+    const useHistoricalWindow = Boolean(adminHistoricalWindowEnabled);
     let windowStatus = 'closed';
-    let message = 'Administrators can record waste only for dates in the current month.';
+    let message = useHistoricalWindow
+      ? `Administrators can record waste for the last ${configuredDayCount} day${configuredDayCount === 1 ? '' : 's'}.`
+      : 'Administrators can record waste only for dates in the current month.';
 
     if (wasteToken > todayToken) {
       windowStatus = 'future_date';
       message = 'Waste cannot be recorded for a future date.';
-    } else if (isSameCalendarMonth(wasteDateOnly, currentDate)) {
+    } else if (useHistoricalWindow ? wasteToken >= historicalOpenToken : isSameCalendarMonth(wasteDateOnly, currentDate)) {
       windowStatus = 'open';
-      message = 'Administrator waste recording is open for dates in the current month.';
+      message = useHistoricalWindow
+        ? `Administrator waste recording is open for the last ${configuredDayCount} day${configuredDayCount === 1 ? '' : 's'}.`
+        : 'Administrator waste recording is open for dates in the current month.';
     }
 
     return {
       meal_type: normalizedMealType,
       served_at: null,
       production_completed_at: null,
-      recording_window_basis: 'admin_month',
-      recording_window_open_at: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toISOString(),
-      recording_deadline_at: monthDeadline.toISOString(),
+      recording_window_basis: useHistoricalWindow ? 'admin_custom_days' : 'admin_month',
+      recording_window_open_at: (useHistoricalWindow ? historicalOpenAt : new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)).toISOString(),
+      recording_deadline_at: (useHistoricalWindow ? endOfCalendarDay(currentDate) : monthDeadline).toISOString(),
+      admin_historical_window_enabled: useHistoricalWindow,
+      admin_historical_window_days: configuredDayCount,
       window_status: windowStatus,
       is_within_recording_window: windowStatus === 'open',
       can_edit: windowStatus === 'open',
@@ -1014,7 +1031,9 @@ export function decorateFoodWasteRecord(record, now = new Date(), options = {}) 
         || record.recording_window_open_at
         || record.served_at,
       now,
-      isAdmin: Boolean(options.isAdmin)
+      isAdmin: Boolean(options.isAdmin),
+      adminHistoricalWindowEnabled: Boolean(options.adminHistoricalWindowEnabled),
+      adminHistoricalWindowDays: options.adminHistoricalWindowDays
     })
   };
 }

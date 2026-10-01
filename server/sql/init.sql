@@ -6254,6 +6254,21 @@ CREATE TABLE IF NOT EXISTS app_logs (
   visited_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS app_settings (
+  setting_key TEXT PRIMARY KEY,
+  setting_label TEXT,
+  boolean_value BOOLEAN,
+  numeric_value NUMERIC(18, 6),
+  text_value TEXT,
+  updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_name TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_settings_updated_at
+  ON app_settings(updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id TEXT PRIMARY KEY,
   actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,

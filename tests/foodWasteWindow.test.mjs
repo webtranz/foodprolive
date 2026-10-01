@@ -26,7 +26,7 @@ const cases = [
     }
   },
   {
-    name: 'allows administrators to record waste during the current month',
+    name: 'allows administrators to record waste during the configured default 30 day window',
     run() {
       const window = getFoodWasteRecordingWindow({
         wasteDate: '2026-09-04',
@@ -38,14 +38,15 @@ const cases = [
       assert.equal(window.window_status, 'open');
       assert.equal(window.is_within_recording_window, true);
       assert.equal(window.can_edit, true);
-      assert.equal(window.recording_window_basis, 'admin_month');
+      assert.equal(window.recording_window_basis, 'admin_custom_days');
+      assert.equal(window.admin_historical_window_days, 30);
     }
   },
   {
-    name: 'blocks administrators outside the current month and on future dates',
+    name: 'blocks administrators outside the configured day window and on future dates',
     run() {
-      const previousMonth = getFoodWasteRecordingWindow({
-        wasteDate: '2026-08-31',
+      const outsideWindow = getFoodWasteRecordingWindow({
+        wasteDate: '2026-07-31',
         mealType: 'breakfast',
         now: '2026-09-04T09:30:01',
         isAdmin: true
@@ -57,10 +58,26 @@ const cases = [
         isAdmin: true
       });
 
-      assert.equal(previousMonth.window_status, 'closed');
-      assert.equal(previousMonth.is_within_recording_window, false);
+      assert.equal(outsideWindow.window_status, 'closed');
+      assert.equal(outsideWindow.is_within_recording_window, false);
       assert.equal(futureDate.window_status, 'future_date');
       assert.equal(futureDate.is_within_recording_window, false);
+    }
+  },
+  {
+    name: 'allows administrators to extend food waste recording by configured days',
+    run() {
+      const window = getFoodWasteRecordingWindow({
+        wasteDate: '2026-08-31',
+        mealType: 'breakfast',
+        now: '2026-09-04T09:30:01',
+        isAdmin: true,
+        adminHistoricalWindowDays: 90
+      });
+
+      assert.equal(window.window_status, 'open');
+      assert.equal(window.is_within_recording_window, true);
+      assert.equal(window.admin_historical_window_days, 90);
     }
   },
   {
@@ -607,7 +624,7 @@ const cases = [
       const server = read('server/index.js');
       assert.match(server, /Add at least one waste picture before saving this record/);
       assert.match(server, /Select the location and ingredient to remove from inventory/);
-      assert.match(server, /adminHistoricalCreateAllowed/);
+      assert.match(server, /!context\.is_within_recording_window/);
       assert.match(server, /deductStock\(\{/);
       assert.match(server, /transaction_type: 'waste'/);
       assert.match(server, /source_type: 'food_waste'/);
@@ -673,15 +690,16 @@ const cases = [
       assert.match(page, /Only administrators can edit waste requests\./);
       assert.match(page, /isAdmin \? \(/);
       assert.match(page, /adminWasteWindowOverride/);
-      assert.match(page, /adminEditingExistingWaste/);
       assert.match(page, /wasteContextAllowsSave/);
+      assert.match(page, /adminWasteWindowEditorOpen/);
+      assert.match(api, /updateAdminWindowSettings/);
       assert.match(page, /editingBatchOverproductionWaste/);
       assert.match(page, /isBatchOverproductionEntryMode/);
       assert.match(page, /disabled=\{String\(item\.status \|\| ''\)\.toLowerCase\(\) === 'reversed'\}/);
       assert.match(api, /emitEntityChange\('FoodWaste', \{ action: 'update'/);
       assert.match(api, /emitEntityChange\('ProducedItemBatch', \{ action: 'food-waste-update'/);
       assert.match(server, /Only administrators can edit food waste requests\./);
-      assert.match(server, /adminHistoricalEditAllowed/);
+      assert.match(server, /!updateContext\.can_edit/);
       assert.match(server, /updateBatchOverproductionFoodWasteRecord/);
       assert.match(server, /reverseBatchOverproductionWasteAllocations/);
       assert.match(entities, /Only administrators can edit food waste requests/);
@@ -761,7 +779,8 @@ const cases = [
       assert.match(page, /setDishWasteGramsByRecipe/);
       assert.match(server, /batch_overproduction_dishes: batchOverproductionDishes/);
       assert.match(server, /getLatestSuccessfulProductionCompletedAt/);
-      assert.match(server, /isAdmin: hasAdminAccess\(user\)/);
+      assert.match(server, /getFoodWasteAdminWindowSettings/);
+      assert.match(server, /adminHistoricalWindowDays: adminWindowSettings\.days/);
       assert.match(server, /production_completed_at: context\.production_completed_at/);
       assert.match(server, /allocateBatchOverproductionWaste/);
       assert.match(server, /calculateProducedOutputWasteCost/);

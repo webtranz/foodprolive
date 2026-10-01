@@ -774,6 +774,15 @@ export const base44 = {
     list(filters = {}) {
       return apiRequest(`/api/food-waste${buildQueryString(filters)}`);
     },
+    getAdminWindowSettings() {
+      return apiRequest('/api/food-waste/admin-window-settings');
+    },
+    updateAdminWindowSettings(data = {}) {
+      return apiRequest('/api/food-waste/admin-window-settings', {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      });
+    },
     getContext(siteId, wasteDate, mealType) {
       return apiRequest(`/api/food-waste/context${buildQueryString({
         site_id: siteId,

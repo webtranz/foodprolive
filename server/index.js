@@ -274,6 +274,9 @@ const maximumRecipeDecorationCacheEntries = 10000;
 const readCacheTtlMs = Math.max(0, Number(process.env.FOODPRO_READ_CACHE_TTL_MS || 15000));
 const reportCacheTtlMs = Math.max(0, Number(process.env.FOODPRO_REPORT_CACHE_TTL_MS || 10000));
 const maximumReadCacheEntries = Math.max(1, Number(process.env.FOODPRO_READ_CACHE_MAX_ENTRIES || 2000));
+const FOOD_WASTE_ADMIN_WINDOW_SETTING_KEY = 'food_waste_admin_recording_window_days';
+const DEFAULT_FOOD_WASTE_ADMIN_WINDOW_DAYS = 30;
+const MAX_FOOD_WASTE_ADMIN_WINDOW_DAYS = 3650;
 const entityReadCache = new Map();
 const entityReadCacheGenerations = new Map();
 const activeEventResponses = new Set();
@@ -2294,10 +2297,73 @@ async function resolveFoodWasteRecordWarehouseIds(siteId, executor = null) {
   return uniqueTextValues(childStores.map((store) => store.id));
 }
 
+function normalizeFoodWasteAdminWindowDays(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_FOOD_WASTE_ADMIN_WINDOW_DAYS;
+  return Math.max(1, Math.min(MAX_FOOD_WASTE_ADMIN_WINDOW_DAYS, parsed));
+}
+
+async function getFoodWasteAdminWindowSettings(executor = pool) {
+  const result = await executor.query(
+    `SELECT setting_key, setting_label, numeric_value, updated_by_name, updated_at
+       FROM app_settings
+      WHERE setting_key = $1
+      LIMIT 1`,
+    [FOOD_WASTE_ADMIN_WINDOW_SETTING_KEY]
+  );
+  const row = result.rows[0] || {};
+  const days = normalizeFoodWasteAdminWindowDays(row.numeric_value);
+  return {
+    setting_key: FOOD_WASTE_ADMIN_WINDOW_SETTING_KEY,
+    setting_label: row.setting_label || 'Food Waste admin recording window',
+    days,
+    max_days: MAX_FOOD_WASTE_ADMIN_WINDOW_DAYS,
+    updated_by_name: row.updated_by_name || null,
+    updated_at: row.updated_at?.toISOString?.() || row.updated_at || null
+  };
+}
+
+async function saveFoodWasteAdminWindowSettings(user, days, executor = pool) {
+  const normalizedDays = normalizeFoodWasteAdminWindowDays(days);
+  const result = await executor.query(
+    `INSERT INTO app_settings (
+       setting_key, setting_label, numeric_value, updated_by, updated_by_name, updated_at, created_at
+     )
+     VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+     ON CONFLICT (setting_key) DO UPDATE SET
+       setting_label = EXCLUDED.setting_label,
+       numeric_value = EXCLUDED.numeric_value,
+       updated_by = EXCLUDED.updated_by,
+       updated_by_name = EXCLUDED.updated_by_name,
+       updated_at = NOW()
+     RETURNING setting_key, setting_label, numeric_value, updated_by_name, updated_at`,
+    [
+      FOOD_WASTE_ADMIN_WINDOW_SETTING_KEY,
+      'Food Waste admin recording window',
+      normalizedDays,
+      user?.id || null,
+      user?.full_name || user?.email || null
+    ]
+  );
+  const row = result.rows[0] || {};
+  return {
+    setting_key: FOOD_WASTE_ADMIN_WINDOW_SETTING_KEY,
+    setting_label: row.setting_label || 'Food Waste admin recording window',
+    days: normalizeFoodWasteAdminWindowDays(row.numeric_value),
+    max_days: MAX_FOOD_WASTE_ADMIN_WINDOW_DAYS,
+    updated_by_name: row.updated_by_name || null,
+    updated_at: row.updated_at?.toISOString?.() || row.updated_at || null
+  };
+}
+
 async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = new Date() }) {
   const normalizedMealType = normalizeMealType(mealType);
   const siteIdValue = String(siteId || '').trim();
   const wasteDateValue = normalizeDateOnly(wasteDate);
+  const isAdministrator = hasAdminAccess(user);
+  const adminWindowSettings = isAdministrator
+    ? await getFoodWasteAdminWindowSettings()
+    : { days: DEFAULT_FOOD_WASTE_ADMIN_WINDOW_DAYS };
 
   const menuPlan = siteIdValue && wasteDateValue
     ? await findScopedOperationalMenuPlan(user, siteIdValue, wasteDateValue)
@@ -2356,7 +2422,9 @@ async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = 
     wasteDate: wasteDateValue,
     mealType: normalizedMealType,
     now,
-    isAdmin: hasAdminAccess(user),
+    isAdmin: isAdministrator,
+    adminHistoricalWindowEnabled: true,
+    adminHistoricalWindowDays: adminWindowSettings.days,
     productionCompletedAt: latestProductionCompletedAt
   });
 
@@ -2381,6 +2449,7 @@ async function buildFoodWasteContext(user, { siteId, wasteDate, mealType, now = 
     site_id: siteIdValue || null,
     waste_date: wasteDateValue || null,
     meal_type: normalizedMealType || null,
+    admin_window_settings: isAdministrator ? adminWindowSettings : null,
     ...timeWindow,
     menu_plan: menuPlanSummary.id ? {
       id: menuPlanSummary.id,
@@ -5285,6 +5354,40 @@ app.post('/api/special-events/:id/reject', requireAuth, requirePermission('rejec
   }
 });
 
+app.get('/api/food-waste/admin-window-settings', requireAuth, requireRole(['admin']), async (_request, response, next) => {
+  try {
+    const settings = await getFoodWasteAdminWindowSettings();
+    return response.json(settings);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.patch('/api/food-waste/admin-window-settings', requireAuth, requireRole(['admin']), async (request, response, next) => {
+  try {
+    const rawDays = request.body?.days;
+    const parsedDays = Number.parseInt(String(rawDays ?? ''), 10);
+    if (!Number.isFinite(parsedDays) || parsedDays < 1 || parsedDays > MAX_FOOD_WASTE_ADMIN_WINDOW_DAYS) {
+      return response.status(400).json({
+        message: `Enter a whole number of days between 1 and ${MAX_FOOD_WASTE_ADMIN_WINDOW_DAYS}.`
+      });
+    }
+    const settings = await saveFoodWasteAdminWindowSettings(request.user, parsedDays);
+    await auditAction({
+      user: request.user,
+      action: 'FOOD_WASTE_ADMIN_WINDOW_UPDATED',
+      entity: 'FoodWaste',
+      entityId: FOOD_WASTE_ADMIN_WINDOW_SETTING_KEY,
+      details: {
+        days: settings.days
+      }
+    });
+    return response.json(settings);
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.get('/api/food-waste/context', requireAuth, requireAnyPermission(['view_food_waste', 'manage_waste']), async (request, response, next) => {
   try {
     const siteId = String(request.query.site_id || '').trim();
@@ -5356,9 +5459,14 @@ app.get('/api/food-waste', requireAuth, requireAnyPermission(['view_food_waste',
     });
 
     const isAdministrator = hasAdminAccess(request.user);
+    const adminWindowSettings = isAdministrator
+      ? await getFoodWasteAdminWindowSettings()
+      : { days: DEFAULT_FOOD_WASTE_ADMIN_WINDOW_DAYS };
     const costedRecords = await enrichFoodWasteDisplayCosts(filteredRecords);
     return response.json(costedRecords.map((record) => decorateFoodWasteRecord(record, new Date(), {
-      isAdmin: isAdministrator
+      isAdmin: isAdministrator,
+      adminHistoricalWindowEnabled: true,
+      adminHistoricalWindowDays: adminWindowSettings.days
     })));
   } catch (error) {
     return next(error);
@@ -5391,8 +5499,7 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
       mealType
     });
 
-    const adminHistoricalCreateAllowed = hasAdminAccess(request.user) && context.window_status !== 'future_date';
-    if (!context.is_within_recording_window && !adminHistoricalCreateAllowed) {
+    if (!context.is_within_recording_window) {
       return response.status(400).json({ message: context.message || 'Food waste recording is closed for this meal.' });
     }
 
@@ -5657,7 +5764,11 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
     if (created.source_type === 'plate_waste' || numericMatch(created.meal_service_adjustment_weight_grams, 0) > 0) {
       recordChanged('MealServiceConsumption');
     }
-    return response.status(201).json(buildApiObjectResponse(decorateFoodWasteRecord(created), { action: 'create' }));
+    return response.status(201).json(buildApiObjectResponse(decorateFoodWasteRecord(created, new Date(), {
+      isAdmin: hasAdminAccess(request.user),
+      adminHistoricalWindowEnabled: true,
+      adminHistoricalWindowDays: context.admin_window_settings?.days
+    }), { action: 'create' }));
   } catch (error) {
     return next(error);
   }
@@ -5707,40 +5818,37 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
       site_id: String(payload.site_id ?? existing.site_id ?? '').trim()
     };
     const editingBatchOverproductionWaste = isBatchOverproductionFoodWasteRecord(existing);
+    let updateContext = null;
 
     if (editingBatchOverproductionWaste && !isBatchOverproductionFoodWasteRecord(merged)) {
       return response.status(400).json({ message: 'Batch overproduction waste records must stay linked to their produced-output batch allocation.' });
     }
 
     if (!approvalOnly) {
-      const context = await buildFoodWasteContext(request.user, {
+      updateContext = await buildFoodWasteContext(request.user, {
         siteId: merged.site_id,
         wasteDate: merged.waste_date,
         mealType: merged.meal_type
       });
 
-      const adminHistoricalEditAllowed = adminEdit && context.window_status !== 'future_date';
-      if (!context.can_edit && !adminHistoricalEditAllowed) {
-        return response.status(400).json({ message: context.message || 'Food waste editing is closed for this meal.' });
+      if (!updateContext.can_edit) {
+        return response.status(400).json({ message: updateContext.message || 'Food waste editing is closed for this meal.' });
       }
 
-      merged.served_at = context.served_at;
-      merged.production_completed_at = context.production_completed_at;
-      merged.recording_window_basis = context.recording_window_basis;
-      merged.recording_window_open_at = context.recording_window_open_at;
-      merged.recording_deadline_at = context.recording_deadline_at;
-      merged.menu_plan_id = context.menu_plan?.id || null;
-      merged.menu_plan_name = context.menu_plan?.name || null;
+      merged.served_at = updateContext.served_at;
+      merged.production_completed_at = updateContext.production_completed_at;
+      merged.recording_window_basis = updateContext.recording_window_basis;
+      merged.recording_window_open_at = updateContext.recording_window_open_at;
+      merged.recording_deadline_at = updateContext.recording_deadline_at;
+      merged.menu_plan_id = updateContext.menu_plan?.id || null;
+      merged.menu_plan_name = updateContext.menu_plan?.name || null;
 
       const matchingProduction = merged.production_id
-        ? context.production_options.find((item) => item.id === merged.production_id) || null
+        ? updateContext.production_options.find((item) => item.id === merged.production_id) || null
         : null;
       if (matchingProduction) {
         merged.production_id = matchingProduction.id;
         merged.production_name = `${matchingProduction.recipe_name} - ${matchingProduction.production_date}`;
-      } else if (!adminHistoricalEditAllowed) {
-        merged.production_id = null;
-        merged.production_name = merged.production_name || null;
       } else {
         merged.production_id = merged.production_id || null;
         merged.production_name = merged.production_name || null;
@@ -5759,7 +5867,13 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
     if (editingBatchOverproductionWaste && !approvalOnly) {
       recordChanged('ProducedItemBatch');
     }
-    return response.json(buildApiObjectResponse(decorateFoodWasteRecord(updated), { action: approvalOnly ? 'approval' : 'update' }));
+    const adminWindowSettings = updateContext?.admin_window_settings
+      || (hasAdminAccess(request.user) ? await getFoodWasteAdminWindowSettings() : null);
+    return response.json(buildApiObjectResponse(decorateFoodWasteRecord(updated, new Date(), {
+      isAdmin: hasAdminAccess(request.user),
+      adminHistoricalWindowEnabled: true,
+      adminHistoricalWindowDays: adminWindowSettings?.days
+    }), { action: approvalOnly ? 'approval' : 'update' }));
   } catch (error) {
     return next(error);
   }
