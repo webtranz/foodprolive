@@ -692,6 +692,10 @@ const cases = [
       assert.match(page, /adminWasteWindowOverride/);
       assert.match(page, /wasteContextAllowsSave/);
       assert.match(page, /adminWasteWindowEditorOpen/);
+      assert.match(page, /admin-food-waste-window-toggle/);
+      assert.match(page, /Admin food waste recording allowance/);
+      assert.match(page, /admin-food-waste-window-days/);
+      assert.doesNotMatch(page, /admin-food-waste-window-toggle-dialog/);
       assert.match(api, /updateAdminWindowSettings/);
       assert.match(page, /editingBatchOverproductionWaste/);
       assert.match(page, /isBatchOverproductionEntryMode/);

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { authorizeEntityAction, hasPermission } from '../server/entities.js';
 import {
@@ -88,6 +89,16 @@ const cases = [
       assertDenied(() => authorizeEntityAction(readOnlyUser, 'Production', 'create', { status: 'draft' }));
       assertDenied(() => authorizeEntityAction(readOnlyUser, 'FoodWaste', 'create', { waste_category: 'plate_waste' }));
       assertDenied(() => authorizeEntityAction(readOnlyUser, 'AdvancedReportSchedule', 'create', { report_key: 'food_cost' }));
+    }
+  },
+  {
+    name: 'read only system role is seeded into stored role profiles',
+    run() {
+      const databaseSource = readFileSync(new URL('../server/db.js', import.meta.url), 'utf8');
+      assert.match(databaseSource, /mergeSystemRoleProfiles/);
+      assert.match(databaseSource, /async function ensureSystemRoleProfiles/);
+      assert.match(databaseSource, /await ensureSystemRoleProfiles\(client\)/);
+      assert.match(databaseSource, /insertOrUpdateRoleProfile/);
     }
   }
 ];

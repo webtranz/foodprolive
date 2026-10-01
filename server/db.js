@@ -14,6 +14,7 @@ import {
   getSystemRoleDefinition as getSharedSystemRoleDefinition,
   isManagementScopeSiteType,
   isSystemRoleKey,
+  mergeSystemRoleProfiles,
   normalizeManagementRoleProfile,
   resolveManagementDashboardView
 } from '../shared/managementDashboardRoles.js';
@@ -10765,6 +10766,7 @@ async function initDatabase() {
     await client.query('SET LOCAL statement_timeout = 0');
     await client.query({ text: sql, query_timeout: 0 });
     await normalizeStoredManagementRoleProfiles(client);
+    await ensureSystemRoleProfiles(client);
     await ensureAdminAccounts(client);
     await client.query('COMMIT');
   } catch (error) {
@@ -10796,6 +10798,48 @@ async function normalizeStoredManagementRoleProfiles(executor = pool) {
     if (normalized === current || JSON.stringify(normalized) === JSON.stringify(current)) continue;
     const next = { ...normalized, updated_date: nowIso() };
     await insertOrUpdateRoleProfile(next, current, executor);
+  }
+}
+
+async function ensureSystemRoleProfiles(executor = pool) {
+  const result = await query(
+    `SELECT role_profile.*,
+            COALESCE(
+              ARRAY_AGG(permission.permission_key ORDER BY permission.permission_key)
+                FILTER (WHERE permission.permission_key IS NOT NULL),
+              ARRAY[]::text[]
+            ) AS permissions
+       FROM role_profiles role_profile
+       LEFT JOIN role_profile_permissions permission
+         ON permission.role_profile_id = role_profile.id
+      GROUP BY role_profile.id`,
+    [],
+    executor
+  );
+  const storedProfiles = result.rows.map(rowToRoleProfile);
+  const storedRoleKeys = new Set(
+    storedProfiles
+      .map((profile) => String(profile?.role_key || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  for (const profile of mergeSystemRoleProfiles(storedProfiles)) {
+    const roleKey = String(profile?.role_key || '').trim().toLowerCase();
+    if (!roleKey || storedRoleKeys.has(roleKey)) continue;
+    const now = nowIso();
+    await insertOrUpdateRoleProfile(
+      {
+        ...profile,
+        id: profile.id || `system-role:${roleKey}`,
+        is_system: true,
+        is_active: profile.is_active !== false,
+        created_date: now,
+        updated_date: now
+      },
+      null,
+      executor
+    );
+    storedRoleKeys.add(roleKey);
   }
 }
 

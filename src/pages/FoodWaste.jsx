@@ -1666,60 +1666,6 @@ export default function FoodWaste() {
           </div>
         ) : null}
 
-        {isAdmin ? (
-          <Card className="border-blue-100 bg-blue-50/60 shadow-sm">
-            <CardContent className="pt-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <Checkbox
-                      id="admin-food-waste-window-toggle"
-                      checked={adminWasteWindowEditorOpen}
-                      onCheckedChange={(checked) => setAdminWasteWindowEditorOpen(Boolean(checked))}
-                    />
-                    <Label htmlFor="admin-food-waste-window-toggle" className="text-sm font-semibold text-slate-900">
-                      Admin food waste recording window
-                    </Label>
-                  </div>
-                  <p className="text-sm text-slate-600">
-                    Current admin limit: {adminWasteWindowSettingsLoading ? 'Loading...' : `${adminWasteWindowDays} day${adminWasteWindowDays === 1 ? '' : 's'}`}.
-                    Future dates remain blocked.
-                  </p>
-                  {adminWasteWindowSettingsError ? (
-                    <p className="text-sm text-red-700">
-                      {adminWasteWindowSettingsError.message || 'Unable to load the admin food waste window setting.'}
-                    </p>
-                  ) : null}
-                </div>
-                {adminWasteWindowEditorOpen ? (
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                    <div className="min-w-40">
-                      <Label htmlFor="admin-food-waste-window-days">Days</Label>
-                      <Input
-                        id="admin-food-waste-window-days"
-                        type="number"
-                        min="1"
-                        max={MAX_ADMIN_WASTE_WINDOW_DAYS}
-                        step="1"
-                        className="mt-1 bg-white"
-                        value={adminWasteWindowDaysInput}
-                        onChange={(event) => setAdminWasteWindowDaysInput(event.target.value)}
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      onClick={handleSaveAdminWasteWindow}
-                      disabled={adminWasteWindowMutation.isPending}
-                    >
-                      {adminWasteWindowMutation.isPending ? 'Saving...' : 'Save'}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </CardContent>
-          </Card>
-        ) : null}
-
         {bootstrapError ? (
           <AsyncStatePanel
             variant="error"
@@ -1765,6 +1711,57 @@ export default function FoodWaste() {
             <CardTitle className="text-base">Filters</CardTitle>
           </CardHeader>
           <CardContent>
+            {isAdmin ? (
+              <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        id="admin-food-waste-window-toggle"
+                        checked={adminWasteWindowEditorOpen}
+                        onCheckedChange={(checked) => setAdminWasteWindowEditorOpen(Boolean(checked))}
+                      />
+                      <Label htmlFor="admin-food-waste-window-toggle" className="text-sm font-semibold text-slate-900">
+                        Admin food waste recording allowance
+                      </Label>
+                    </div>
+                    <p className="text-sm text-slate-600">
+                      Current admin limit: {adminWasteWindowSettingsLoading ? 'Loading...' : `${adminWasteWindowDays} day${adminWasteWindowDays === 1 ? '' : 's'}`}.
+                      Tick this box to change the allowed historical days for admin waste entry. Future dates remain blocked.
+                    </p>
+                    {adminWasteWindowSettingsError ? (
+                      <p className="text-sm text-red-700">
+                        {adminWasteWindowSettingsError.message || 'Unable to load the admin food waste window setting.'}
+                      </p>
+                    ) : null}
+                  </div>
+                  {adminWasteWindowEditorOpen ? (
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                      <div className="min-w-40">
+                        <Label htmlFor="admin-food-waste-window-days">Days</Label>
+                        <Input
+                          id="admin-food-waste-window-days"
+                          type="number"
+                          min="1"
+                          max={MAX_ADMIN_WASTE_WINDOW_DAYS}
+                          step="1"
+                          className="mt-1 bg-white"
+                          value={adminWasteWindowDaysInput}
+                          onChange={(event) => setAdminWasteWindowDaysInput(event.target.value)}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={handleSaveAdminWasteWindow}
+                        disabled={adminWasteWindowMutation.isPending}
+                      >
+                        {adminWasteWindowMutation.isPending ? 'Saving...' : 'Save'}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
               <div>
                 <Label>Start Date</Label>
