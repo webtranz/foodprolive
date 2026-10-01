@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 import { authorizeEntityAction, hasPermission } from '../server/entities.js';
 import {
+  normalizeManagementRoleProfile,
   READ_ONLY_ROLE_KEY,
   READ_ONLY_ROLE_PERMISSIONS
 } from '../shared/managementDashboardRoles.js';
@@ -38,6 +39,10 @@ const cases = [
       assert.equal(hasPermission(readOnlyUser, 'view_menu_planning'), true);
       assert.equal(hasPermission(readOnlyUser, 'view_users'), true);
       assert.equal(hasPermission(readOnlyUser, 'view_roles'), true);
+      assert.equal(hasPermission(readOnlyUser, 'access_audit_logs'), false);
+      assert.equal(hasPermission(readOnlyUser, 'view_audit_logs'), false);
+      assert.equal(READ_ONLY_ROLE_PERMISSIONS.includes('access_audit_logs'), false);
+      assert.equal(READ_ONLY_ROLE_PERMISSIONS.includes('view_audit_logs'), false);
 
       assert.equal(hasPermission(readOnlyUser, 'manage_production'), false);
       assert.equal(hasPermission(readOnlyUser, 'create_production_request'), false);
@@ -49,6 +54,23 @@ const cases = [
       assert.equal(hasPermission(readOnlyUser, 'manage_users'), false);
       assert.equal(hasPermission(readOnlyUser, 'manage_roles'), false);
       assert.equal(hasPermission(readOnlyUser, 'scan_qr'), false);
+    }
+  },
+  {
+    name: 'read only profile normalization removes legacy audit log access',
+    run() {
+      const normalized = normalizeManagementRoleProfile({
+        role_key: READ_ONLY_ROLE_KEY,
+        permissions: [
+          ...READ_ONLY_ROLE_PERMISSIONS,
+          'access_audit_logs',
+          'view_audit_logs'
+        ]
+      });
+      assert.equal(normalized.permissions.includes('access_audit_logs'), false);
+      assert.equal(normalized.permissions.includes('view_audit_logs'), false);
+      assert.equal(normalized.permissions.includes('access_production'), true);
+      assert.equal(normalized.permissions.includes('view_production'), true);
     }
   },
   {

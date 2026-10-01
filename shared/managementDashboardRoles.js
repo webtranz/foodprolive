@@ -148,12 +148,15 @@ const allGranularPagePermissions = Object.freeze([
 ]);
 
 export const READ_ONLY_ROLE_KEY = 'read_only';
+const READ_ONLY_ROLE_FORBIDDEN_PERMISSIONS = Object.freeze([
+  'access_audit_logs',
+  'view_audit_logs'
+]);
 
 export const READ_ONLY_ROLE_VIEW_PERMISSIONS = Object.freeze([
   'view_dashboard',
   'view_budget',
   'view_reports',
-  'view_audit_logs',
   'view_bulk_upload_progress',
   'view_projects',
   'view_users',
@@ -178,7 +181,7 @@ export const READ_ONLY_ROLE_VIEW_PERMISSIONS = Object.freeze([
 ]);
 
 export const READ_ONLY_ROLE_PERMISSIONS = Object.freeze([
-  ...allGranularPagePermissions,
+  ...allGranularPagePermissions.filter((permission) => permission !== 'access_audit_logs'),
   ...READ_ONLY_ROLE_VIEW_PERMISSIONS
 ]);
 
@@ -516,6 +519,12 @@ export function normalizeManagementRoleProfile(profile = {}) {
   if (!canonical && !dashboardVariant) return profile;
 
   const requiredPermissions = canonical?.permissions || managementDashboardPermissions;
+  const persistedPermissions = Array.isArray(profile.permissions)
+    ? profile.permissions.filter(Boolean)
+    : [];
+  const safePersistedPermissions = normalizedRoleKey === READ_ONLY_ROLE_KEY
+    ? persistedPermissions.filter((permission) => !READ_ONLY_ROLE_FORBIDDEN_PERMISSIONS.includes(permission))
+    : persistedPermissions;
   return {
     ...profile,
     ...(canonical ? { role_key: canonical.role_key } : {}),
@@ -523,7 +532,7 @@ export function normalizeManagementRoleProfile(profile = {}) {
     ...(dashboardVariant ? { dashboard_variant: dashboardVariant } : {}),
     permissions: Array.from(new Set([
       ...requiredPermissions,
-      ...(Array.isArray(profile.permissions) ? profile.permissions.filter(Boolean) : [])
+      ...safePersistedPermissions
     ])),
     ...(canonical ? { is_system: true } : {})
   };
