@@ -95,6 +95,7 @@ import BulkUploadCenter from './pages/BulkUploadCenter';
 import BulkUploadTemplates from './pages/BulkUploadTemplates';
 import DataExports from './pages/DataExports';
 import AuditLogs from './pages/AuditLogs';
+import BackgroundJobMonitor from './pages/BackgroundJobMonitor';
 import BulkUploadProgress from './pages/BulkUploadProgress';
 import ReportsPreview from './pages/ReportsPreview';
 import __Layout from './Layout.jsx';
@@ -149,6 +150,7 @@ export const PAGES = {
     "BulkUploadTemplates": BulkUploadTemplates,
     "DataExports": DataExports,
     "AuditLogs": AuditLogs,
+    "BackgroundJobMonitor": BackgroundJobMonitor,
     "BulkUploadProgress": BulkUploadProgress,
     "ReportsPreview": ReportsPreview,
 }

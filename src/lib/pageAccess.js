@@ -37,6 +37,7 @@ export const pagePermissionMap = {
   BulkUploadTemplates: ['manage_bulk_uploads', 'export_data'],
   DataExports: 'export_data',
   AuditLogs: 'view_audit_logs',
+  BackgroundJobMonitor: 'view_audit_logs',
   BulkUploadProgress: 'view_bulk_upload_progress',
   ReportsPreview: 'view_reports'
 };
@@ -51,6 +52,10 @@ export function canAccessPage(pageName, can, { isAdmin = false } = {}) {
   }
 
   if (isAdminOnlyBulkUploadPage(pageName) && !isAdmin) {
+    return false;
+  }
+
+  if (pageName === 'BackgroundJobMonitor' && !isAdmin) {
     return false;
   }
 

@@ -253,6 +253,7 @@ function buildNavigation(t, can = () => true, isAdmin = false) {
       name: n.activityLogs || 'Activity Logs',
       icon: Activity,
       children: [
+        { name: n.backgroundJobMonitor || 'Background Job Monitor', href: 'BackgroundJobMonitor', icon: Activity, permission: 'view_audit_logs', adminOnly: true },
         { name: n.auditLogs || 'Audit Logs', href: 'AuditLogs', icon: Shield, permission: 'view_audit_logs' },
         { name: n.bulkUploadProgress || 'Bulk Upload Progress', href: 'BulkUploadProgress', icon: Activity, permission: 'view_bulk_upload_progress' },
         { name: n.reportsPreview || 'Reports Preview', href: 'ReportsPreview', icon: BarChart3, permission: 'view_reports' }

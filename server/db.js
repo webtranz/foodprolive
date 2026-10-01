@@ -11406,6 +11406,40 @@ async function createAppLog({ page_name, user_id, user_email, payload = {} }) {
   return { id, page_name, user_id, user_email, payload };
 }
 
+const AUDIT_LOG_RETENTION_DAYS = 35;
+const AUDIT_LOG_RETENTION_PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const AUDIT_LOG_DETAIL_INSERT_CHUNK_SIZE = 250;
+let lastAuditLogRetentionPurgeAt = 0;
+let auditLogRetentionPurgePromise = null;
+
+async function purgeExpiredAuditLogs({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - lastAuditLogRetentionPurgeAt < AUDIT_LOG_RETENTION_PURGE_INTERVAL_MS) {
+    return { skipped: true, deleted_count: 0 };
+  }
+  if (auditLogRetentionPurgePromise) return auditLogRetentionPurgePromise;
+  lastAuditLogRetentionPurgeAt = now;
+  auditLogRetentionPurgePromise = query(
+    `DELETE FROM audit_logs
+      WHERE created_at < NOW() - ($1::integer * INTERVAL '1 day')`,
+    [AUDIT_LOG_RETENTION_DAYS]
+  )
+    .then((result) => ({ skipped: false, deleted_count: result.rowCount || 0 }))
+    .finally(() => {
+      auditLogRetentionPurgePromise = null;
+    });
+  return auditLogRetentionPurgePromise;
+}
+
+function scheduleAuditLogRetentionPurge() {
+  if (Date.now() - lastAuditLogRetentionPurgeAt < AUDIT_LOG_RETENTION_PURGE_INTERVAL_MS) return;
+  setImmediate(() => {
+    purgeExpiredAuditLogs().catch((error) => {
+      console.error('Unable to purge expired audit logs', error);
+    });
+  });
+}
+
 function auditDetailRowsFromValue(value, path = [], rows = []) {
   const safePath = path.map((segment) => String(segment ?? '').trim()).filter(Boolean);
   const pushPrimitive = (primitiveValue) => {
@@ -11500,25 +11534,42 @@ function rebuildAuditDetails(rows = []) {
 async function replaceAuditLogDetails(auditLogId, details = {}, createdAt = nowIso(), executor = pool) {
   await query('DELETE FROM audit_log_details WHERE audit_log_id = $1', [auditLogId], executor);
   const rows = auditDetailRowsFromValue(details || {});
-  let order = 0;
-  for (const row of rows) {
-    order += 1;
-    await query(
-      `INSERT INTO audit_log_details (
-         id, audit_log_id, detail_path, value_type, string_value, numeric_value,
-         boolean_value, value_order, created_at
-       ) VALUES ($1, $2, $3::text[], $4, $5, $6, $7, $8, $9)`,
-      [
-        randomId('auditdet'),
-        auditLogId,
+  if (!rows.length) return;
+  const normalizedRows = rows.map((row, index) => ({
+    id: randomId('auditdet'),
+    auditLogId,
+    path: row.path,
+    valueType: row.valueType,
+    stringValue: row.stringValue,
+    numericValue: row.numericValue,
+    booleanValue: row.booleanValue,
+    order: index + 1,
+    createdAt
+  }));
+  for (let start = 0; start < normalizedRows.length; start += AUDIT_LOG_DETAIL_INSERT_CHUNK_SIZE) {
+    const chunk = normalizedRows.slice(start, start + AUDIT_LOG_DETAIL_INSERT_CHUNK_SIZE);
+    const values = [];
+    const placeholders = chunk.map((row, index) => {
+      const offset = index * 9;
+      values.push(
+        row.id,
+        row.auditLogId,
         row.path,
         row.valueType,
         row.stringValue,
         row.numericValue,
         row.booleanValue,
-        order,
-        createdAt
-      ],
+        row.order,
+        row.createdAt
+      );
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}::text[], $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9})`;
+    });
+    await query(
+      `INSERT INTO audit_log_details (
+         id, audit_log_id, detail_path, value_type, string_value, numeric_value,
+         boolean_value, value_order, created_at
+       ) VALUES ${placeholders.join(', ')}`,
+      values,
       executor
     );
   }
@@ -11596,6 +11647,7 @@ async function createAuditLog({
     [id, site_id, createdAt],
     executor
   );
+  scheduleAuditLogRetentionPurge();
   return {
     id,
     actor_id,
@@ -11629,12 +11681,13 @@ async function listAuditLogs({
     return `$${values.length}`;
   };
 
+  conditions.push(`created_at >= NOW() - (${bind(AUDIT_LOG_RETENTION_DAYS)}::integer * INTERVAL '1 day')`);
   if (action) conditions.push(`action ILIKE ${bind(`%${action}%`)}`);
   if (entity) conditions.push(`entity ILIKE ${bind(`%${entity}%`)}`);
   if (search) {
     const pattern = `%${search}%`;
     const parameter = bind(pattern);
-    conditions.push(`(
+    conditions.push(includeDetails ? `(
       actor_email ILIKE ${parameter}
       OR actor_name ILIKE ${parameter}
       OR action ILIKE ${parameter}
@@ -11651,6 +11704,14 @@ async function listAuditLogs({
             OR COALESCE(detail.boolean_value::text, '') ILIKE ${parameter}
           )
       )
+    )` : `(
+      actor_email ILIKE ${parameter}
+      OR actor_name ILIKE ${parameter}
+      OR action ILIKE ${parameter}
+      OR entity ILIKE ${parameter}
+      OR COALESCE(entity_id, '') ILIKE ${parameter}
+      OR COALESCE(site_name, '') ILIKE ${parameter}
+      OR COALESCE(site_id, '') ILIKE ${parameter}
     )`);
   }
   if (Array.isArray(siteIds)) {
@@ -11680,6 +11741,7 @@ async function listAuditLogs({
     values,
     executor
   );
+  scheduleAuditLogRetentionPurge();
   const detailsByLog = includeDetails
     ? await listAuditLogDetails(result.rows.map((row) => row.id), executor)
     : new Map();

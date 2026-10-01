@@ -6386,7 +6386,12 @@ function normalizeOperationalBackgroundJobRow(row = {}) {
     actor_allowed_site_ids: normalizeOperationalBackgroundJobTextArray(row.actor_allowed_site_ids),
     actor_allowed_site_names: normalizeOperationalBackgroundJobTextArray(row.actor_allowed_site_names),
     actor_role_permissions: normalizeOperationalBackgroundJobTextArray(row.actor_role_permissions),
-    result_count: Number(row.result_count || 0)
+    result_count: Number(row.result_count || 0),
+    total_items: Number(row.total_items || 0),
+    completed_items: Number(row.completed_items || 0),
+    failed_items: Number(row.failed_items || 0),
+    processing_items: Number(row.processing_items || 0),
+    queued_items: Number(row.queued_items || 0)
   };
 }
 
@@ -6504,6 +6509,45 @@ async function markOperationalBackgroundJobReady(jobId, message = null) {
   return updateOperationalBackgroundJob(jobId, patch);
 }
 
+function operationalJobItemCounterColumn(status) {
+  const normalized = normalizeOperationalBackgroundJobStatus(status, 'QUEUED');
+  if (normalized === 'COMPLETED' || normalized === 'SKIPPED') return 'completed_items';
+  if (normalized === 'FAILED') return 'failed_items';
+  if (normalized === 'PROCESSING') return 'processing_items';
+  if (normalized === 'PREPARING' || normalized === 'QUEUED') return 'queued_items';
+  return '';
+}
+
+async function applyOperationalBackgroundJobItemCounterDelta(jobId, statusDeltas = {}, totalDelta = 0) {
+  const id = String(jobId || '').trim();
+  if (!id) return null;
+  const assignments = [];
+  const values = [];
+  const safeColumns = new Set(['completed_items', 'failed_items', 'processing_items', 'queued_items']);
+  Object.entries(statusDeltas).forEach(([column, delta]) => {
+    if (!safeColumns.has(column)) return;
+    const numericDelta = Number(delta);
+    if (!Number.isFinite(numericDelta) || numericDelta === 0) return;
+    values.push(numericDelta);
+    assignments.push(`${column} = GREATEST(0, ${column} + $${values.length}::integer)`);
+  });
+  const numericTotalDelta = Number(totalDelta);
+  if (Number.isFinite(numericTotalDelta) && numericTotalDelta !== 0) {
+    values.push(numericTotalDelta);
+    assignments.push(`total_items = GREATEST(0, total_items + $${values.length}::integer)`);
+  }
+  if (!assignments.length) return getOperationalBackgroundJob(id);
+  values.push(id);
+  const result = await pool.query(
+    `UPDATE background_jobs
+        SET ${assignments.join(', ')}, updated_at = NOW()
+      WHERE id = $${values.length}
+      RETURNING *`,
+    values
+  );
+  return result.rowCount ? normalizeOperationalBackgroundJobRow(result.rows[0]) : null;
+}
+
 async function createOperationalBackgroundJobItems(jobId, items = []) {
   const id = String(jobId || '').trim();
   const normalizedItems = (Array.isArray(items) ? items : [])
@@ -6557,6 +6601,14 @@ async function createOperationalBackgroundJobItems(jobId, items = []) {
      RETURNING *`,
     values
   );
+  if (result.rows.length) {
+    const deltas = result.rows.reduce((accumulator, row) => {
+      const column = operationalJobItemCounterColumn(row.status);
+      if (column) accumulator[column] = (accumulator[column] || 0) + 1;
+      return accumulator;
+    }, {});
+    await applyOperationalBackgroundJobItemCounterDelta(id, deltas, result.rows.length);
+  }
   return result.rows;
 }
 
@@ -6580,14 +6632,37 @@ async function updateOperationalBackgroundJobItem(jobId, idempotencyKey, patch =
   if (!assignments.length) return null;
   values.push(parentId, key);
   const result = await pool.query(
-    `UPDATE background_job_items
-        SET ${assignments.join(', ')}, updated_at = NOW()
-      WHERE job_id = $${values.length - 1}
-        AND idempotency_key = $${values.length}
-      RETURNING *`,
+    `WITH previous AS (
+       SELECT status
+         FROM background_job_items
+        WHERE job_id = $${values.length - 1}
+          AND idempotency_key = $${values.length}
+     ),
+     updated AS (
+       UPDATE background_job_items
+          SET ${assignments.join(', ')}, updated_at = NOW()
+        WHERE job_id = $${values.length - 1}
+          AND idempotency_key = $${values.length}
+        RETURNING *
+     )
+     SELECT updated.*, previous.status AS previous_status
+       FROM updated
+       LEFT JOIN previous ON TRUE`,
     values
   );
-  return result.rows[0] || null;
+  const row = result.rows[0] || null;
+  if (row && Object.hasOwn(patch, 'status')) {
+    const previousColumn = operationalJobItemCounterColumn(row.previous_status);
+    const nextColumn = operationalJobItemCounterColumn(row.status);
+    if (previousColumn !== nextColumn) {
+      const deltas = {};
+      if (previousColumn) deltas[previousColumn] = -1;
+      if (nextColumn) deltas[nextColumn] = 1;
+      await applyOperationalBackgroundJobItemCounterDelta(parentId, deltas);
+    }
+  }
+  if (row) delete row.previous_status;
+  return row;
 }
 
 async function updateOperationalBackgroundJob(jobId, patch = {}) {
@@ -6608,6 +6683,10 @@ async function updateOperationalBackgroundJob(jobId, patch = {}) {
   if (Object.hasOwn(patch, 'result_count')) add('result_count', Math.max(0, Math.trunc(Number(patch.result_count) || 0)));
   if (Object.hasOwn(patch, 'started_at')) add('started_at', patch.started_at);
   if (Object.hasOwn(patch, 'completed_at')) add('completed_at', patch.completed_at);
+  if (Object.hasOwn(patch, 'message')) add('last_progress_message', String(patch.message || '').trim());
+  if (Object.hasOwn(patch, 'status') || Object.hasOwn(patch, 'progress') || Object.hasOwn(patch, 'message')) {
+    assignments.push('last_progress_at = NOW()');
+  }
   if (!assignments.length) return getOperationalBackgroundJob(id);
   values.push(id);
   const result = await pool.query(
@@ -9959,33 +10038,11 @@ app.get('/api/activity/background-jobs', requireAuth, requireRole(['admin']), as
     values.push(limit);
     const limitParameter = `$${values.length}`;
     const result = await pool.query(
-      `WITH selected_jobs AS (
-         SELECT job.*
-           FROM background_jobs job
-           ${where}
-          ORDER BY ${selectedOrder}
-          LIMIT ${limitParameter}
-       ),
-       item_counts AS (
-         SELECT item.job_id,
-                COUNT(*)::integer AS total_items,
-                COUNT(*) FILTER (WHERE item.status IN ('COMPLETED', 'SKIPPED'))::integer AS completed_items,
-                COUNT(*) FILTER (WHERE item.status = 'FAILED')::integer AS failed_items,
-                COUNT(*) FILTER (WHERE item.status = 'PROCESSING')::integer AS processing_items,
-                COUNT(*) FILTER (WHERE item.status IN ('PREPARING', 'QUEUED'))::integer AS queued_items
-           FROM background_job_items item
-           JOIN selected_jobs selected ON selected.id = item.job_id
-          GROUP BY item.job_id
-       )
-       SELECT selected.*,
-              COALESCE(items.total_items, 0) AS total_items,
-              COALESCE(items.completed_items, 0) AS completed_items,
-              COALESCE(items.failed_items, 0) AS failed_items,
-              COALESCE(items.processing_items, 0) AS processing_items,
-              COALESCE(items.queued_items, 0) AS queued_items
-         FROM selected_jobs selected
-         LEFT JOIN item_counts items ON items.job_id = selected.id
-        ORDER BY selected.queued_at DESC, selected.updated_at DESC, selected.id DESC`,
+      `SELECT job.*
+         FROM background_jobs job
+         ${where}
+        ORDER BY ${selectedOrder}
+        LIMIT ${limitParameter}`,
       values
     );
     const jobs = result.rows.map((row) => ({
@@ -10010,6 +10067,8 @@ app.get('/api/activity/background-jobs', requireAuth, requireRole(['admin']), as
       started_at: row.started_at,
       completed_at: row.completed_at,
       updated_at: row.updated_at,
+      last_progress_message: row.last_progress_message || '',
+      last_progress_at: row.last_progress_at || null,
       total_items: Number(row.total_items || 0),
       completed_items: Number(row.completed_items || 0),
       failed_items: Number(row.failed_items || 0),
@@ -10036,8 +10095,8 @@ app.get('/api/activity/notifications', requireAuth, async (request, response, ne
     const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 100);
     const siteIds = await accessibleSiteIds(request.user);
     const [scopedLogs, personalLogs] = await Promise.all([
-      listAuditLogs({ limit: 100, siteIds, includeDetails: true }),
-      listAuditLogs({ limit: 50, actorId: request.user.id, includeDetails: true })
+      listAuditLogs({ limit: 100, siteIds, includeDetails: false }),
+      listAuditLogs({ limit: 50, actorId: request.user.id, includeDetails: false })
     ]);
     const merged = new Map();
     scopedLogs

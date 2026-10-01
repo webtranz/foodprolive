@@ -114,7 +114,7 @@ const cases = [
       );
       assert.deepEqual(
         ROLE_PERMISSION_SECTIONS.find((section) => section.key === 'activity-logs').subsections.map((subsection) => subsection.page),
-        ['AuditLogs', 'BulkUploadProgress', 'ReportsPreview']
+        ['BackgroundJobMonitor', 'AuditLogs', 'BulkUploadProgress', 'ReportsPreview']
       );
     }
   },
@@ -166,6 +166,8 @@ const cases = [
       assert.equal(canAccessPage('BulkUploadTemplates', fakeCan(['manage_bulk_uploads'])), true);
       assert.equal(canAccessPage('BulkUploadTemplates', fakeCan(['export_data'])), true);
       assert.equal(canAccessPage('AuditLogs', fakeCan(['view_audit_logs'])), true);
+      assert.equal(canAccessPage('BackgroundJobMonitor', fakeCan(['view_audit_logs'])), false);
+      assert.equal(canAccessPage('BackgroundJobMonitor', fakeCan(['view_audit_logs']), { isAdmin: true }), true);
       assert.equal(canAccessPage('BulkUploadProgress', fakeCan(['view_bulk_upload_progress'])), true);
       assert.equal(canAccessPage('DataExports', fakeCan(['view_reports'])), false);
       assert.equal(canAccessPage('DataExports', fakeCan(['export_data'])), true);

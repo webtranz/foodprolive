@@ -48,6 +48,7 @@ export const translations = {
       bulkUploadTemplates: 'Bulk Upload Templates',
       dataExports: 'CSV / Excel / PDF Reports',
       activityLogs: 'Activity Logs',
+      backgroundJobMonitor: 'Background Job Monitor',
       auditLogs: 'Audit Logs',
       bulkUploadProgress: 'Bulk Upload Progress',
       reportsPreview: 'Reports Preview'

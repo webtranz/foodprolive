@@ -2076,7 +2076,14 @@ CREATE TABLE IF NOT EXISTS background_jobs (
   result_entity_name TEXT,
   result_entity_id TEXT,
   result_count INTEGER NOT NULL DEFAULT 0,
+  total_items INTEGER NOT NULL DEFAULT 0,
+  completed_items INTEGER NOT NULL DEFAULT 0,
+  failed_items INTEGER NOT NULL DEFAULT 0,
+  processing_items INTEGER NOT NULL DEFAULT 0,
+  queued_items INTEGER NOT NULL DEFAULT 0,
   progress NUMERIC(6, 2) NOT NULL DEFAULT 0,
+  last_progress_message TEXT,
+  last_progress_at TIMESTAMPTZ,
   message TEXT,
   error TEXT,
   queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -2107,7 +2114,14 @@ ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS actor_role_permissions TEXT
 ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS result_entity_name TEXT;
 ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS result_entity_id TEXT;
 ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS result_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS total_items INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS completed_items INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS failed_items INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS processing_items INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS queued_items INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS progress NUMERIC(6, 2) NOT NULL DEFAULT 0;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS last_progress_message TEXT;
+ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS last_progress_at TIMESTAMPTZ;
 ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS message TEXT;
 ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS error TEXT;
 ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW();

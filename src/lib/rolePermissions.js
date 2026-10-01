@@ -168,6 +168,7 @@ export const ROLE_PERMISSION_SECTIONS = [
     title: 'Activity Logs',
     description: 'Activity Logs submenu pages for audits, upload progress, and report previews.',
     subsections: [
+      { page: 'BackgroundJobMonitor', key: 'access_background_job_monitor', label: 'Background Job Monitor', description: 'Administrator-only lightweight queue progress monitor.' },
       { page: 'AuditLogs', key: 'access_audit_logs', label: 'Audit Logs', description: 'Search security-safe user and data activity records.' },
       { page: 'BulkUploadProgress', key: 'access_bulk_upload_progress', label: 'Bulk Upload Progress', description: 'Monitor queued, processing, completed, and failed upload jobs.' },
       { page: 'ReportsPreview', key: 'access_reports_preview', label: 'Reports Preview', description: 'Inspect authorized report rows before exporting.' }
