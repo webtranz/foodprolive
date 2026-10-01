@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
@@ -7908,6 +7908,458 @@ async function runMenuProductionIssueWork(work) {
   }, 60 * 60 * 1000).unref?.();
 }
 
+function stableProductionPlanDraftStringify(value) {
+  return JSON.stringify(value, (_key, entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+    return Object.keys(entry)
+      .sort()
+      .reduce((accumulator, field) => {
+        accumulator[field] = entry[field];
+        return accumulator;
+      }, {});
+  });
+}
+
+function hashProductionPlanDraftPayload(payload = {}) {
+  return createHash('sha256')
+    .update(stableProductionPlanDraftStringify(payload) || '{}')
+    .digest('hex');
+}
+
+function toDraftNumericValue(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function buildProductionPlanDraftRequestKey(scope = {}) {
+  return [
+    'menu-plan',
+    scope.actor_id || 'unknown-user',
+    scope.source_menu_plan_id || 'unknown-plan',
+    scope.site_id || 'unknown-site',
+    scope.production_date || 'unknown-date',
+    scope.meal_scope || 'all',
+    scope.menu_type || '',
+    scope.menu_category || ''
+  ].join(':');
+}
+
+function getProductionPlanDraftPayload(requestBody = {}) {
+  const body = requestBody && typeof requestBody === 'object' ? requestBody : {};
+  const payload = body.payload && typeof body.payload === 'object' ? body.payload : body;
+  return payload && typeof payload === 'object' ? payload : {};
+}
+
+function getProductionPlanDraftIssueState(payload = {}) {
+  const state = payload.issue_state && typeof payload.issue_state === 'object'
+    ? payload.issue_state
+    : {};
+  return state;
+}
+
+function getProductionPlanDraftItems(payload = {}) {
+  const state = getProductionPlanDraftIssueState(payload);
+  if (Array.isArray(state.items)) return state.items.filter((item) => item && typeof item === 'object');
+  const fromProductions = (Array.isArray(payload.productions) ? payload.productions : [])
+    .flatMap((production) => Array.isArray(production?.menu_issue_items) ? production.menu_issue_items : []);
+  return fromProductions.filter((item) => item && typeof item === 'object');
+}
+
+function getProductionPlanDraftLinesForItem(payload = {}, item = {}) {
+  const itemKey = String(item.key || item.item_key || item.source_menu_plan_item_key || '').trim();
+  const state = getProductionPlanDraftIssueState(payload);
+  const snapshots = state.snapshots && typeof state.snapshots === 'object' ? state.snapshots : {};
+  if (itemKey && Array.isArray(snapshots[itemKey])) {
+    return snapshots[itemKey].filter((line) => line && typeof line === 'object');
+  }
+  if (Array.isArray(item.ingredients_used)) {
+    return item.ingredients_used.filter((line) => line && typeof line === 'object');
+  }
+  return [];
+}
+
+function getProductionPlanDraftScope(actor = {}, payload = {}) {
+  const productions = Array.isArray(payload.productions)
+    ? payload.productions.filter((production) => production && typeof production === 'object')
+    : [];
+  const firstProduction = productions[0] || {};
+  const state = getProductionPlanDraftIssueState(payload);
+  const firstItem = getProductionPlanDraftItems(payload)[0] || {};
+  const actorId = String(actor.id || actor.email || payload.actor_id || '').trim();
+  const productionDate = normalizeDateOnly(
+    payload.production_date
+      || firstProduction.production_date
+      || state.production_date
+      || firstItem.plan_date
+      || null
+  );
+  const sourceMenuPlanId = String(
+    payload.source_menu_plan_id
+      || firstProduction.source_menu_plan_id
+      || firstItem.source_menu_plan_id
+      || ''
+  ).trim();
+  const siteId = String(
+    payload.site_id
+      || firstProduction.site_id
+      || firstItem.site_id
+      || ''
+  ).trim();
+  const mealScope = String(
+    payload.meal_scope
+      || payload.production_issue_scope
+      || firstProduction.production_issue_scope
+      || state.meal_view
+      || 'all'
+  ).trim().toLowerCase() || 'all';
+  const menuType = String(payload.menu_type || firstProduction.menu_type || firstProduction.cuisine_type || firstItem.menu_type || '').trim();
+  const menuCategory = String(payload.menu_category || firstProduction.menu_category || firstItem.menu_category || '').trim();
+  const scope = {
+    request_key: String(payload.request_key || payload.draft_request_key || '').trim(),
+    actor_id: actorId,
+    actor_email: String(actor.email || payload.actor_email || '').trim(),
+    actor_name: String(actor.full_name || actor.name || payload.actor_name || '').trim(),
+    source_menu_plan_id: sourceMenuPlanId,
+    site_id: siteId,
+    site_name: String(payload.site_name || firstProduction.site_name || firstItem.site_name || '').trim(),
+    production_date: productionDate || null,
+    meal_scope: mealScope,
+    menu_type: menuType,
+    menu_category: menuCategory,
+    intended_status: String(payload.intended_status || firstProduction.status || 'draft').trim().toLowerCase() || 'draft'
+  };
+  scope.request_key = scope.request_key || buildProductionPlanDraftRequestKey(scope);
+  return scope;
+}
+
+function serializeProductionPlanSubmissionDraft(row = {}, items = [], lines = []) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    request_key: row.request_key,
+    actor_id: row.actor_id,
+    actor_email: row.actor_email,
+    actor_name: row.actor_name,
+    source_menu_plan_id: row.source_menu_plan_id,
+    site_id: row.site_id,
+    site_name: row.site_name,
+    production_date: row.production_date ? normalizeDateOnly(row.production_date) : null,
+    meal_scope: row.meal_scope,
+    menu_type: row.menu_type,
+    menu_category: row.menu_category,
+    intended_status: row.intended_status,
+    status: row.status,
+    review_count: Number(row.review_count || 0),
+    item_count: Number(row.item_count || 0),
+    ingredient_line_count: Number(row.ingredient_line_count || 0),
+    payload_hash: row.payload_hash,
+    payload_snapshot: row.payload_snapshot || {},
+    items,
+    lines,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    last_saved_at: row.last_saved_at
+  };
+}
+
+async function findProductionPlanSubmissionDraft(actor = {}, params = {}) {
+  const scope = getProductionPlanDraftScope(actor, params);
+  if (!scope.request_key && (!scope.actor_id || !scope.site_id || !scope.production_date)) return null;
+  const values = [];
+  const clauses = [];
+  if (String(params.id || '').trim()) {
+    values.push(String(params.id).trim());
+    clauses.push(`id = $${values.length}`);
+  } else if (scope.request_key) {
+    values.push(scope.request_key);
+    clauses.push(`request_key = $${values.length}`);
+  } else {
+    values.push(scope.actor_id);
+    clauses.push(`actor_id = $${values.length}`);
+    values.push(scope.site_id);
+    clauses.push(`site_id = $${values.length}`);
+    values.push(scope.production_date);
+    clauses.push(`production_date = $${values.length}`);
+    if (scope.source_menu_plan_id) {
+      values.push(scope.source_menu_plan_id);
+      clauses.push(`source_menu_plan_id = $${values.length}`);
+    }
+    values.push(scope.meal_scope || 'all');
+    clauses.push(`meal_scope = $${values.length}`);
+  }
+  const draftResult = await pool.query(
+    `SELECT *
+       FROM production_plan_submission_drafts
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    values
+  );
+  if (!draftResult.rowCount) return null;
+  const draft = draftResult.rows[0];
+  const itemResult = await pool.query(
+    `SELECT *
+       FROM production_plan_submission_draft_items
+      WHERE draft_id = $1
+      ORDER BY item_order ASC`,
+    [draft.id]
+  );
+  const lineResult = await pool.query(
+    `SELECT *
+       FROM production_plan_submission_draft_lines
+      WHERE draft_id = $1
+      ORDER BY item_key ASC, line_order ASC`,
+    [draft.id]
+  );
+  return serializeProductionPlanSubmissionDraft(draft, itemResult.rows, lineResult.rows);
+}
+
+async function saveProductionPlanSubmissionDraft(actor = {}, requestBody = {}) {
+  const payload = getProductionPlanDraftPayload(requestBody);
+  const productions = Array.isArray(payload.productions)
+    ? payload.productions.filter((production) => production && typeof production === 'object')
+    : [];
+  const items = getProductionPlanDraftItems(payload);
+  const itemLines = items.flatMap((item, itemIndex) => getProductionPlanDraftLinesForItem(payload, item).map((line, lineIndex) => ({
+    item,
+    itemIndex,
+    line,
+    lineIndex
+  })));
+  if (!items.length && !productions.length) {
+    const error = new Error('Save at least one production plan item before storing a draft.');
+    error.status = 400;
+    throw error;
+  }
+  const scope = getProductionPlanDraftScope(actor, payload);
+  const draftId = String(payload.draft_id || payload.id || '').trim() || `production_plan_draft_${randomUUID()}`;
+  const payloadHash = hashProductionPlanDraftPayload(payload);
+  return withTransaction(async (client) => {
+    const draftResult = await client.query(
+      `INSERT INTO production_plan_submission_drafts (
+         id, request_key, actor_id, actor_email, actor_name,
+         source_menu_plan_id, site_id, site_name, production_date,
+         meal_scope, menu_type, menu_category, intended_status, status,
+         review_count, item_count, ingredient_line_count, payload_hash, payload_snapshot,
+         created_at, updated_at, last_saved_at
+       ) VALUES (
+         $1, $2, $3, $4, $5,
+         $6, $7, $8, $9::date,
+         $10, $11, $12, $13, 'draft_saved',
+         $14, $15, $16, $17, $18::jsonb,
+         NOW(), NOW(), NOW()
+       )
+       ON CONFLICT (request_key)
+       DO UPDATE SET
+         actor_id = EXCLUDED.actor_id,
+         actor_email = EXCLUDED.actor_email,
+         actor_name = EXCLUDED.actor_name,
+         source_menu_plan_id = EXCLUDED.source_menu_plan_id,
+         site_id = EXCLUDED.site_id,
+         site_name = EXCLUDED.site_name,
+         production_date = EXCLUDED.production_date,
+         meal_scope = EXCLUDED.meal_scope,
+         menu_type = EXCLUDED.menu_type,
+         menu_category = EXCLUDED.menu_category,
+         intended_status = EXCLUDED.intended_status,
+         status = EXCLUDED.status,
+         review_count = EXCLUDED.review_count,
+         item_count = EXCLUDED.item_count,
+         ingredient_line_count = EXCLUDED.ingredient_line_count,
+         payload_hash = EXCLUDED.payload_hash,
+         payload_snapshot = EXCLUDED.payload_snapshot,
+         updated_at = NOW(),
+         last_saved_at = NOW()
+       RETURNING *`,
+      [
+        draftId,
+        scope.request_key,
+        scope.actor_id || null,
+        scope.actor_email || null,
+        scope.actor_name || null,
+        scope.source_menu_plan_id || null,
+        scope.site_id || null,
+        scope.site_name || null,
+        scope.production_date,
+        scope.meal_scope || 'all',
+        scope.menu_type || null,
+        scope.menu_category || null,
+        scope.intended_status || 'draft',
+        Math.max(0, productions.length),
+        Math.max(0, items.length),
+        Math.max(0, itemLines.length),
+        payloadHash,
+        JSON.stringify(payload)
+      ]
+    );
+    const draft = draftResult.rows[0];
+    await client.query('DELETE FROM production_plan_submission_draft_lines WHERE draft_id = $1', [draft.id]);
+    await client.query('DELETE FROM production_plan_submission_draft_items WHERE draft_id = $1', [draft.id]);
+
+    for (const [index, item] of items.entries()) {
+      const itemKey = String(item.key || item.item_key || item.source_menu_plan_item_key || `item-${index + 1}`).trim();
+      await client.query(
+        `INSERT INTO production_plan_submission_draft_items (
+           id, draft_id, item_order, item_key, meal_type, recipe_id, recipe_code, recipe_name,
+           selected, production_covers, production_quantity, production_unit,
+           estimated_batch_cost, raw_weight_grams, yielded_weight_grams, payload_snapshot, created_at
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7, $8,
+           $9, $10, $11, $12,
+           $13, $14, $15, $16::jsonb, NOW()
+         )`,
+        [
+          `production_plan_draft_item_${randomUUID()}`,
+          draft.id,
+          index,
+          itemKey,
+          String(item.meal_type || '').trim() || null,
+          String(item.recipe_id || '').trim() || null,
+          String(item.recipe_code || '').trim() || null,
+          String(item.recipe_name || item.item_name || '').trim() || null,
+          item.selected !== false,
+          toDraftNumericValue(item.production_covers ?? item.expected_servings ?? item.requested_servings, 0),
+          toDraftNumericValue(item.production_quantity ?? item.requested_quantity, 0),
+          String(item.production_unit || item.requested_quantity_unit || '').trim() || null,
+          toDraftNumericValue(item.estimated_batch_cost ?? item.production_time_cost ?? item.actual_cost, 0),
+          toDraftNumericValue(item.raw_weight_grams, 0),
+          toDraftNumericValue(item.yielded_weight_grams, 0),
+          JSON.stringify(item)
+        ]
+      );
+    }
+
+    for (const entry of itemLines) {
+      const itemKey = String(entry.item.key || entry.item.item_key || entry.item.source_menu_plan_item_key || `item-${entry.itemIndex + 1}`).trim();
+      const lineKey = String(
+        entry.line.line_id
+          || entry.line.line_key
+          || entry.line.recipe_line_id
+          || entry.line.ingredient_id
+          || `${itemKey}-line-${entry.lineIndex + 1}`
+      ).trim();
+      await client.query(
+        `INSERT INTO production_plan_submission_draft_lines (
+           id, draft_id, item_key, line_order, line_key,
+           ingredient_id, ingredient_name, original_ingredient_id, original_ingredient_name,
+           raw_quantity, unit, inventory_unit, estimated_cost, production_time_cost, actual_cost,
+           production_override_action, production_override_source, production_override_reason,
+           payload_snapshot, created_at
+         ) VALUES (
+           $1, $2, $3, $4, $5,
+           $6, $7, $8, $9,
+           $10, $11, $12, $13, $14, $15,
+           $16, $17, $18,
+           $19::jsonb, NOW()
+         )`,
+        [
+          `production_plan_draft_line_${randomUUID()}`,
+          draft.id,
+          itemKey,
+          entry.lineIndex,
+          lineKey,
+          String(entry.line.ingredient_id || '').trim() || null,
+          String(entry.line.ingredient_name || '').trim() || null,
+          String(entry.line.original_ingredient_id || '').trim() || null,
+          String(entry.line.original_ingredient_name || '').trim() || null,
+          toDraftNumericValue(entry.line.raw_quantity ?? entry.line.quantity ?? entry.line.planned_quantity, 0),
+          String(entry.line.unit || '').trim() || null,
+          String(entry.line.inventory_unit || '').trim() || null,
+          toDraftNumericValue(entry.line.estimated_cost, 0),
+          toDraftNumericValue(entry.line.production_time_cost, 0),
+          toDraftNumericValue(entry.line.actual_cost, 0),
+          String(entry.line.production_override_action || '').trim() || null,
+          String(entry.line.production_override_source || '').trim() || null,
+          String(entry.line.production_override_reason || '').trim() || null,
+          JSON.stringify(entry.line)
+        ]
+      );
+    }
+    return serializeProductionPlanSubmissionDraft(draft, [], []);
+  });
+}
+
+async function deleteProductionPlanSubmissionDraft(actor = {}, requestBody = {}) {
+  const payload = getProductionPlanDraftPayload(requestBody);
+  const draftId = String(payload.draft_id || payload.id || '').trim();
+  const draftRequestKey = String(payload.draft_request_key || payload.request_key || '').trim()
+    || getProductionPlanDraftScope(actor, payload).request_key;
+  if (!draftId && !draftRequestKey) return false;
+  const values = [];
+  const clauses = [];
+  if (draftId) {
+    values.push(draftId);
+    clauses.push(`id = $${values.length}`);
+  } else {
+    values.push(draftRequestKey);
+    clauses.push(`request_key = $${values.length}`);
+  }
+  const actorId = String(actor.id || actor.email || '').trim();
+  if (actorId) {
+    values.push(actorId);
+    clauses.push(`actor_id = $${values.length}`);
+  }
+  const result = await pool.query(
+    `DELETE FROM production_plan_submission_drafts
+      WHERE ${clauses.join(' AND ')}`,
+    values
+  );
+  return result.rowCount > 0;
+}
+
+async function deleteAcceptedProductionPlanSubmissionDraft(actor = {}, requestBody = {}) {
+  try {
+    await deleteProductionPlanSubmissionDraft(actor, requestBody);
+  } catch (error) {
+    console.error('Unable to delete accepted production plan submission draft', error);
+  }
+}
+
+app.get(
+  '/api/productions/menu-issue/draft',
+  requireAuth,
+  requireAnyPermission(['create_production_request', 'edit_production_request', 'submit_production_request', 'manage_production']),
+  async (request, response, next) => {
+    try {
+      const draft = await findProductionPlanSubmissionDraft(request.user, request.query || {});
+      return response.json({ draft });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.post(
+  '/api/productions/menu-issue/draft',
+  requireAuth,
+  requireAnyPermission(['create_production_request', 'edit_production_request', 'submit_production_request', 'manage_production']),
+  async (request, response, next) => {
+    try {
+      const draft = await saveProductionPlanSubmissionDraft(request.user, request.body || {});
+      return response.status(201).json({ draft });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.delete(
+  '/api/productions/menu-issue/draft/:draftId',
+  requireAuth,
+  requireAnyPermission(['create_production_request', 'edit_production_request', 'submit_production_request', 'manage_production']),
+  async (request, response, next) => {
+    try {
+      await deleteProductionPlanSubmissionDraft(request.user, {
+        ...(request.body || {}),
+        draft_id: request.params.draftId
+      });
+      return response.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 app.post('/api/productions/menu-issue', requireAuth, async (request, response, next) => {
   try {
     const productions = Array.isArray(request.body?.productions)
@@ -7986,6 +8438,7 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
       || backgroundJob.job.status === OPERATIONAL_BACKGROUND_JOB_PREPARING_STATUS;
     if (backgroundJob.alreadyQueued && !shouldPrepareJob) {
       const existingJob = menuProductionIssueJobs.get(backgroundJob.job.id);
+      await deleteAcceptedProductionPlanSubmissionDraft(request.user, request.body || {});
       return response.status(202).json({
         queued: true,
         alreadyQueued: true,
@@ -8025,6 +8478,7 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
     });
     if (!enqueueResult.queued) {
       const existingJob = menuProductionIssueJobs.get(enqueueResult.existingJobId);
+      await deleteAcceptedProductionPlanSubmissionDraft(request.user, request.body || {});
       return response.status(202).json({
         queued: true,
         alreadyQueued: true,
@@ -8036,6 +8490,7 @@ app.post('/api/productions/menu-issue', requireAuth, async (request, response, n
       });
     }
     const job = serializeMenuProductionIssueJob(menuProductionIssueJobs.get(enqueueResult.jobId));
+    await deleteAcceptedProductionPlanSubmissionDraft(request.user, request.body || {});
     return response.status(202).json({
       queued: true,
       job,

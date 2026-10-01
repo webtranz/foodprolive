@@ -601,6 +601,21 @@ export const base44 = {
     }
   },
   productionWorkflow: {
+    getMenuIssueDraft(params = {}) {
+      return apiRequest(`/api/productions/menu-issue/draft${buildQueryString(params)}`);
+    },
+    saveMenuIssueDraft(data = {}) {
+      return apiRequest('/api/productions/menu-issue/draft', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    },
+    deleteMenuIssueDraft(id, data = {}) {
+      return apiRequest(`/api/productions/menu-issue/draft/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        body: JSON.stringify(data)
+      });
+    },
     issueMenuProduction(data = {}) {
       return apiRequest('/api/productions/menu-issue', {
         method: 'POST',

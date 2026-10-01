@@ -2172,6 +2172,113 @@ CREATE TABLE IF NOT EXISTS background_job_payload_fields (
 CREATE INDEX IF NOT EXISTS idx_background_job_payload_fields_job
   ON background_job_payload_fields(job_id, field_path);
 
+CREATE TABLE IF NOT EXISTS production_plan_submission_drafts (
+  id TEXT PRIMARY KEY,
+  request_key TEXT NOT NULL,
+  actor_id TEXT,
+  actor_email TEXT,
+  actor_name TEXT,
+  source_menu_plan_id TEXT,
+  site_id TEXT,
+  site_name TEXT,
+  production_date DATE,
+  meal_scope TEXT NOT NULL DEFAULT 'all',
+  menu_type TEXT,
+  menu_category TEXT,
+  intended_status TEXT NOT NULL DEFAULT 'draft',
+  status TEXT NOT NULL DEFAULT 'draft_saved',
+  review_count INTEGER NOT NULL DEFAULT 0,
+  item_count INTEGER NOT NULL DEFAULT 0,
+  ingredient_line_count INTEGER NOT NULL DEFAULT 0,
+  payload_hash TEXT NOT NULL,
+  payload_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS request_key TEXT;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS actor_id TEXT;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS actor_email TEXT;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS actor_name TEXT;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS source_menu_plan_id TEXT;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS site_id TEXT;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS site_name TEXT;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS production_date DATE;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS meal_scope TEXT NOT NULL DEFAULT 'all';
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS menu_type TEXT;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS menu_category TEXT;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS intended_status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft_saved';
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS review_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS item_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS ingredient_line_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS payload_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS payload_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE production_plan_submission_drafts ADD COLUMN IF NOT EXISTS last_saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_production_plan_submission_drafts_request
+  ON production_plan_submission_drafts(request_key);
+CREATE INDEX IF NOT EXISTS idx_production_plan_submission_drafts_scope
+  ON production_plan_submission_drafts(actor_id, site_id, production_date, source_menu_plan_id, meal_scope);
+CREATE INDEX IF NOT EXISTS idx_production_plan_submission_drafts_updated
+  ON production_plan_submission_drafts(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS production_plan_submission_draft_items (
+  id TEXT PRIMARY KEY,
+  draft_id TEXT NOT NULL REFERENCES production_plan_submission_drafts(id) ON DELETE CASCADE,
+  item_order INTEGER NOT NULL DEFAULT 0,
+  item_key TEXT NOT NULL,
+  meal_type TEXT,
+  recipe_id TEXT,
+  recipe_code TEXT,
+  recipe_name TEXT,
+  selected BOOLEAN NOT NULL DEFAULT TRUE,
+  production_covers NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  production_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  production_unit TEXT,
+  estimated_batch_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  raw_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  yielded_weight_grams NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  payload_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_plan_submission_draft_items_draft
+  ON production_plan_submission_draft_items(draft_id, item_order);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_production_plan_submission_draft_items_key
+  ON production_plan_submission_draft_items(draft_id, item_key);
+
+CREATE TABLE IF NOT EXISTS production_plan_submission_draft_lines (
+  id TEXT PRIMARY KEY,
+  draft_id TEXT NOT NULL REFERENCES production_plan_submission_drafts(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  line_order INTEGER NOT NULL DEFAULT 0,
+  line_key TEXT NOT NULL,
+  ingredient_id TEXT,
+  ingredient_name TEXT,
+  original_ingredient_id TEXT,
+  original_ingredient_name TEXT,
+  raw_quantity NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  unit TEXT,
+  inventory_unit TEXT,
+  estimated_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  production_time_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  actual_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+  production_override_action TEXT,
+  production_override_source TEXT,
+  production_override_reason TEXT,
+  payload_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_plan_submission_draft_lines_draft
+  ON production_plan_submission_draft_lines(draft_id, item_key, line_order);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_production_plan_submission_draft_lines_key
+  ON production_plan_submission_draft_lines(draft_id, item_key, line_key);
+
 CREATE TABLE IF NOT EXISTS erp_integration_configs (
   id TEXT PRIMARY KEY,
   provider_name TEXT NOT NULL DEFAULT 'Dynamics 365',

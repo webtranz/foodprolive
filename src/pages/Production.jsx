@@ -1632,6 +1632,8 @@ export default function Production() {
   const [issueAdminReissueRunId, setIssueAdminReissueRunId] = useState('');
   const [issueSubmitLocked, setIssueSubmitLocked] = useState(false);
   const issueSubmitInFlightRef = useRef(false);
+  const appliedIssueDraftIdRef = useRef('');
+  const preserveRestoredIssueDraftRef = useRef(false);
 
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -1682,6 +1684,8 @@ export default function Production() {
     setIssueAdminReissueRunId('');
     setIssueSubmitLocked(false);
     issueSubmitInFlightRef.current = false;
+    appliedIssueDraftIdRef.current = '';
+    preserveRestoredIssueDraftRef.current = false;
   };
 
   const { data: sites = [], error: sitesError, isPending: sitesLoading } = useQuery({
@@ -1803,7 +1807,18 @@ export default function Production() {
         return { mode: 'updated', records: [updated] };
       }
       const productions = mealGroups.map((group) => buildMenuIssueSubmitData(group, status, { adminReissueRunId }));
-      const queued = await base44.productionWorkflow.issueMenuProduction({ productions });
+      const savedDraft = await base44.productionWorkflow.saveMenuIssueDraft(buildMenuIssueDraftPayload({
+        status,
+        adminReissueRunId,
+        selectedItems,
+        mealGroups,
+        productions
+      }));
+      const queued = await base44.productionWorkflow.issueMenuProduction({
+        productions,
+        draft_id: savedDraft?.draft?.id || '',
+        draft_request_key: savedDraft?.draft?.request_key || ''
+      });
       return {
         mode: 'queued',
         records: [],
@@ -2030,6 +2045,77 @@ export default function Production() {
     setIssueAdminReissueRunId((current) => (enabled ? current || createMenuIssueAdminReissueRunId() : ''));
   };
 
+  const issueDraftScope = useMemo(() => {
+    if (!issueDialogOpen || editingIssueProduction) return null;
+    const sourceMenuPlanId = String(issuePlan?.id || issueSource?.menu_plan_id || '').trim();
+    const productionDate = normalizeIssueDateOnly(issuePlan?.plan_date || issueSource?.plan_date || '');
+    const siteId = String(issueSource?.site_id || issuePlan?.site_id || issueSite?.id || '').trim();
+    if (!sourceMenuPlanId || !productionDate || !siteId) return null;
+    return {
+      source_menu_plan_id: sourceMenuPlanId,
+      site_id: siteId,
+      production_date: productionDate,
+      meal_scope: issueMealView || 'all',
+      menu_type: issueSource?.menu_type || issuePlan?.menu_type || '',
+      menu_category: issueSource?.menu_category || issuePlan?.menu_category || ''
+    };
+  }, [
+    editingIssueProduction,
+    issueDialogOpen,
+    issueMealView,
+    issuePlan?.id,
+    issuePlan?.menu_category,
+    issuePlan?.menu_type,
+    issuePlan?.plan_date,
+    issuePlan?.site_id,
+    issueSite?.id,
+    issueSource?.meal_view,
+    issueSource?.menu_category,
+    issueSource?.menu_plan_id,
+    issueSource?.menu_type,
+    issueSource?.plan_date,
+    issueSource?.site_id
+  ]);
+
+  const { data: issueDraftResponse } = useQuery({
+    queryKey: ['menuIssueProductionDraft', issueDraftScope],
+    queryFn: () => base44.productionWorkflow.getMenuIssueDraft(issueDraftScope || {}),
+    enabled: Boolean(issueDraftScope && !recipesLoading && !recipesError),
+    retry: false,
+    staleTime: 0
+  });
+
+  useEffect(() => {
+    const draft = issueDraftResponse?.draft;
+    if (!issueDialogOpen || editingIssueProduction || !draft || appliedIssueDraftIdRef.current === draft.id) {
+      return;
+    }
+    const snapshot = draft.payload_snapshot || {};
+    const state = snapshot.issue_state || {};
+    const restoredItems = Array.isArray(state.items)
+      ? state.items.filter((item) => item && typeof item === 'object')
+      : [];
+    if (restoredItems.length === 0) return;
+
+    appliedIssueDraftIdRef.current = draft.id;
+    preserveRestoredIssueDraftRef.current = true;
+    setIssueMealView(normalizeIssueMealView(state.meal_view || draft.meal_scope || issueMealView));
+    setIssueItems(restoredItems);
+    setIssueSnapshots(state.snapshots && typeof state.snapshots === 'object' ? state.snapshots : {});
+    setIssueNotes(String(state.notes || ''));
+    setIssueAdminReissueEnabled(Boolean(state.admin_reissue_enabled));
+    setIssueAdminReissueRunId(String(state.admin_reissue_run_id || ''));
+    setActiveIssueItemKey(String(state.active_item_key || restoredItems[0]?.key || ''));
+    setIssueSnapshotSiteId(String(state.inventory_site_id || issueInventorySiteId || ''));
+    setActionMessage('Recovered the last saved production-plan draft for this menu.');
+  }, [
+    editingIssueProduction,
+    issueDialogOpen,
+    issueDraftResponse?.draft,
+    issueInventorySiteId,
+    issueMealView
+  ]);
+
   useEffect(() => {
     const routeIssueRequest = location.state?.issueProduction;
     if (!routeIssueRequest || routeIssueRequest.source !== 'menu_planning') {
@@ -2046,6 +2132,9 @@ export default function Production() {
     setIssueSuggestions({});
     setEditingIssueProduction(null);
     setIssueAdminReissueEnabled(false);
+    setIssueAdminReissueRunId('');
+    appliedIssueDraftIdRef.current = '';
+    preserveRestoredIssueDraftRef.current = false;
     setActionError('');
     setActionMessage('');
     if (routeIssueRequest.plan_date) {
@@ -2099,6 +2188,11 @@ export default function Production() {
 
   useEffect(() => {
     if (!issueDialogOpen || issueItems.length === 0 || !issueInventorySiteId || inventoryDataLoading || inventoryDataError) {
+      return;
+    }
+    if (preserveRestoredIssueDraftRef.current) {
+      preserveRestoredIssueDraftRef.current = false;
+      setIssueSnapshotSiteId(issueInventorySiteId);
       return;
     }
     setIssueSnapshots((currentSnapshots) => {
@@ -3338,6 +3432,55 @@ export default function Production() {
       estimated_batch_cost: estimatedBatchCost,
       estimated_cost_per_serving: Number((estimatedBatchCost / servingCount).toFixed(2)),
       status
+    };
+  };
+
+  const buildMenuIssueDraftPayload = ({
+    status,
+    adminReissueRunId: requestedAdminReissueRunId = '',
+    selectedItems = [],
+    mealGroups = [],
+    productions = []
+  } = {}) => {
+    const firstProduction = productions[0] || {};
+    const productionDate = normalizeIssueDateOnly(issuePlan?.plan_date || issueSource?.plan_date || firstProduction.production_date)
+      || format(new Date(), 'yyyy-MM-dd');
+    return {
+      source_menu_plan_id: issuePlan?.id || issueSource?.menu_plan_id || firstProduction.source_menu_plan_id || '',
+      site_id: issueSite?.id || issueSource?.site_id || firstProduction.site_id || '',
+      site_name: issueSite?.name || firstProduction.site_name || '',
+      production_date: productionDate,
+      meal_scope: issueMealView || 'all',
+      menu_type: issueSource?.menu_type || issuePlan?.menu_type || firstProduction.menu_type || firstProduction.cuisine_type || '',
+      menu_category: issueSource?.menu_category || issuePlan?.menu_category || firstProduction.menu_category || '',
+      intended_status: status || 'draft',
+      review_count: mealGroups.length,
+      item_count: issueItems.length,
+      selected_item_count: selectedItems.length,
+      ingredient_line_count: Object.values(issueSnapshots).reduce((sum, lines) => (
+        sum + (Array.isArray(lines) ? lines.length : 0)
+      ), 0),
+      productions,
+      issue_state: {
+        items: issueItems,
+        selected_item_keys: selectedItems.map((item) => item.key).filter(Boolean),
+        meal_groups: mealGroups.map((group) => ({
+          key: group.key,
+          meal_type: group.meal_type,
+          meal_label: group.meal_label,
+          item_keys: (group.items || []).map((item) => item.key).filter(Boolean),
+          estimated_batch_cost: group.estimatedBatchCost,
+          production_covers: group.production_covers,
+          production_target_quantity: group.production_target_quantity
+        })),
+        snapshots: issueSnapshots,
+        notes: issueNotes,
+        meal_view: issueMealView || 'all',
+        active_item_key: activeIssueItemKey,
+        inventory_site_id: issueInventorySiteId,
+        admin_reissue_enabled: issueAdminReissueActive,
+        admin_reissue_run_id: requestedAdminReissueRunId || issueAdminReissueRunId || ''
+      }
     };
   };
 

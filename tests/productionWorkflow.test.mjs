@@ -526,6 +526,33 @@ const cases = [
         ));
       }
     }
+  },
+  {
+    name: 'menu production issue drafts are normalized, recoverable, and deleted after queue acceptance',
+    run() {
+      const schemaSource = fs.readFileSync(new URL('../server/sql/init.sql', import.meta.url), 'utf8');
+      const serverSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+      const clientSource = fs.readFileSync(new URL('../src/api/base44Client.js', import.meta.url), 'utf8');
+      const productionPageSource = fs.readFileSync(new URL('../src/pages/Production.jsx', import.meta.url), 'utf8');
+      const draftRouteIndex = serverSource.indexOf("'/api/productions/menu-issue/draft'");
+      const jobRouteIndex = serverSource.indexOf("'/api/productions/menu-issue/:jobId'");
+
+      assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS production_plan_submission_drafts/);
+      assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS production_plan_submission_draft_items/);
+      assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS production_plan_submission_draft_lines/);
+      assert.match(schemaSource, /REFERENCES production_plan_submission_drafts\(id\) ON DELETE CASCADE/);
+      assert.match(schemaSource, /payload_hash TEXT NOT NULL/);
+      assert.ok(draftRouteIndex >= 0 && jobRouteIndex > draftRouteIndex, 'draft route must be declared before the job id route');
+      assert.match(serverSource, /saveProductionPlanSubmissionDraft/);
+      assert.match(serverSource, /findProductionPlanSubmissionDraft/);
+      assert.match(serverSource, /deleteAcceptedProductionPlanSubmissionDraft\(request\.user, request\.body \|\| \{\}\)/);
+      assert.match(clientSource, /saveMenuIssueDraft/);
+      assert.match(clientSource, /getMenuIssueDraft/);
+      assert.match(clientSource, /deleteMenuIssueDraft/);
+      assert.match(productionPageSource, /saveMenuIssueDraft\(buildMenuIssueDraftPayload/);
+      assert.match(productionPageSource, /getMenuIssueDraft\(issueDraftScope \|\| \{\}\)/);
+      assert.match(productionPageSource, /preserveRestoredIssueDraftRef/);
+    }
   }
 ];
 
