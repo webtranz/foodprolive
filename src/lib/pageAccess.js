@@ -55,8 +55,8 @@ export function canAccessPage(pageName, can, { isAdmin = false } = {}) {
     return false;
   }
 
-  if (pageName === 'BackgroundJobMonitor' && !isAdmin) {
-    return false;
+  if (pageName === 'BackgroundJobMonitor') {
+    return Boolean(isAdmin);
   }
 
   if (can(GRANULAR_PAGE_ACCESS_PERMISSION)) {

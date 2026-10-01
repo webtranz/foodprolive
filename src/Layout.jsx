@@ -55,6 +55,7 @@ import {
 import tamimiGlobalLogo from '@/assets/tamimi-global-logo.png';
 
 const NOTIFICATION_LAST_SEEN_KEY = 'foodpro_notifications_last_seen_at';
+const ADMIN_GRANULAR_BYPASS_PAGES = new Set(['BackgroundJobMonitor']);
 
 function formatNotificationAction(value) {
   return String(value || 'Activity')
@@ -93,8 +94,9 @@ function filterNavigationItems(items = [], can = () => true, { isAdmin = false }
     }
 
     let itemAllowed = true;
+    const adminGranularBypass = isAdmin && item.adminOnly && item.href && ADMIN_GRANULAR_BYPASS_PAGES.has(item.href);
     if (usesGranularPageAccess) {
-      if (item.href) {
+      if (item.href && !adminGranularBypass) {
         if (!canAccessGranularPage(item.href, can)) {
           itemAllowed = false;
         }

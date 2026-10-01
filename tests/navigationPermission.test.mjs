@@ -168,6 +168,8 @@ const cases = [
       assert.equal(canAccessPage('AuditLogs', fakeCan(['view_audit_logs'])), true);
       assert.equal(canAccessPage('BackgroundJobMonitor', fakeCan(['view_audit_logs'])), false);
       assert.equal(canAccessPage('BackgroundJobMonitor', fakeCan(['view_audit_logs']), { isAdmin: true }), true);
+      assert.equal(canAccessPage('BackgroundJobMonitor', fakeCan([GRANULAR_PAGE_ACCESS_PERMISSION]), { isAdmin: true }), true);
+      assert.match(layoutSource, /ADMIN_GRANULAR_BYPASS_PAGES = new Set\(\['BackgroundJobMonitor'\]\)/);
       assert.equal(canAccessPage('BulkUploadProgress', fakeCan(['view_bulk_upload_progress'])), true);
       assert.equal(canAccessPage('DataExports', fakeCan(['view_reports'])), false);
       assert.equal(canAccessPage('DataExports', fakeCan(['export_data'])), true);
