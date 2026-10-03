@@ -536,6 +536,7 @@ export default function FoodWaste() {
   const [wasteImages, setWasteImages] = useState([]);
   const [wasteImageProcessing, setWasteImageProcessing] = useState(false);
   const [wasteImageUploading, setWasteImageUploading] = useState(false);
+  const [wasteSavePhase, setWasteSavePhase] = useState('');
   const wasteImageCount = wasteImages.length;
   const hasWasteEvidenceImages = wasteImages.some((item) => String(item.url || item.previewUrl || '').trim());
   const [targetForm, setTargetForm] = useState({
@@ -844,6 +845,7 @@ export default function FoodWaste() {
       setFormData(createDefaultWasteForm());
       setDishWasteGramsByRecipe({});
       setWasteImages([]);
+      setWasteSavePhase('');
     },
     onError: (error) => setMessage(error.message || 'Failed to save waste record')
   });
@@ -858,9 +860,20 @@ export default function FoodWaste() {
       setFormData(createDefaultWasteForm());
       setDishWasteGramsByRecipe({});
       setWasteImages([]);
+      setWasteSavePhase('');
     },
     onError: (error) => setMessage(error.message || 'Failed to update waste record')
   });
+
+  const wasteSaveStatusMessage = wasteImageProcessing
+    ? 'Compressing selected pictures so they stay within the 36-picture / 1.2 MB daily evidence ceiling.'
+    : wasteSavePhase === 'compressing'
+      ? 'Compressing pictures, then saving the waste record. Please keep this window open.'
+      : wasteSavePhase === 'uploading'
+        ? 'Uploading compressed pictures before saving the waste record.'
+        : wasteSavePhase === 'saving'
+          ? 'Saving waste record with compressed picture evidence.'
+          : '';
 
   const reverseWasteMutation = useMutation({
     mutationFn: ({ id, reason }) => base44.foodWaste.reverse(id, { reason }),
@@ -1587,8 +1600,23 @@ export default function FoodWaste() {
           byteSize: Number.isFinite(Number(item.size)) ? Number(item.size) : null
         }))
         .filter((item) => item.url);
-      const filesToUpload = wasteImages.filter((item) => item.file);
+      let filesToUpload = wasteImages.filter((item) => item.file);
       if (filesToUpload.length) {
+        setWasteSavePhase('compressing');
+        const targetBytes = getWastePictureTargetBytes(evidenceImages.length + filesToUpload.length);
+        filesToUpload = [];
+        for (const image of wasteImages.filter((item) => item.file)) {
+          const sourceFile = image.originalFile || image.file;
+          const compressedFile = await compressWasteImageFile(sourceFile, targetBytes);
+          filesToUpload.push({
+            ...image,
+            file: compressedFile,
+            size: compressedFile.size,
+            contentType: compressedFile.type,
+            name: image.name || compressedFile.name
+          });
+        }
+        setWasteSavePhase('uploading');
         setWasteImageUploading(true);
         for (const image of filesToUpload) {
           const uploadResult = await base44.integrations.Core.UploadWasteImage({
@@ -1612,6 +1640,7 @@ export default function FoodWaste() {
         }
         setWasteImageUploading(false);
       }
+      setWasteSavePhase('saving');
       evidenceImages = evidenceImages.slice(0, MAX_WASTE_PICTURES);
       const evidenceImageUrls = evidenceImages.map((item) => item.url).filter(Boolean);
       const evidenceImageUrl = evidenceImageUrls[0] || '';
@@ -1694,8 +1723,10 @@ export default function FoodWaste() {
     };
 
     saveWasteRecord().catch((error) => {
-      setWasteImageUploading(false);
       setMessage(error.message || 'Failed to upload waste picture');
+    }).finally(() => {
+      setWasteImageUploading(false);
+      setWasteSavePhase('');
     });
   };
 
@@ -1705,6 +1736,7 @@ export default function FoodWaste() {
     setFormData(createDefaultWasteForm());
     setDishWasteGramsByRecipe({});
     setWasteImages([]);
+    setWasteSavePhase('');
     setFormOpen(true);
   };
 
@@ -1743,6 +1775,7 @@ export default function FoodWaste() {
       previewUrl: url,
       name: `Saved picture ${index + 1}`
     })));
+    setWasteSavePhase('');
     setFormOpen(true);
   };
 
@@ -2749,6 +2782,7 @@ export default function FoodWaste() {
               setFormData(createDefaultWasteForm());
               setDishWasteGramsByRecipe({});
               setWasteImages([]);
+              setWasteSavePhase('');
             }
           }}
         >
@@ -2762,6 +2796,11 @@ export default function FoodWaste() {
               {message ? (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {message}
+                </div>
+              ) : null}
+              {wasteSaveStatusMessage ? (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800" aria-live="polite">
+                  {wasteSaveStatusMessage}
                 </div>
               ) : null}
               {wasteContext ? (
@@ -3169,6 +3208,7 @@ export default function FoodWaste() {
                   setEditingWasteId(null);
                   setFormData(createDefaultWasteForm());
                   setWasteImages([]);
+                  setWasteSavePhase('');
                 }}>Cancel</Button>
                 <Button
                   type="submit"
@@ -3180,10 +3220,12 @@ export default function FoodWaste() {
                     || wasteImageUploading
                   }
                 >
-                  {wasteImageProcessing
-                    ? 'Preparing pictures...'
-                    : createWasteMutation.isPending || updateWasteMutation.isPending || wasteImageUploading
-                    ? 'Saving...'
+                  {wasteImageProcessing || wasteSavePhase === 'compressing'
+                    ? 'Compressing pictures...'
+                    : wasteSavePhase === 'uploading' || wasteImageUploading
+                    ? 'Uploading pictures...'
+                    : wasteSavePhase === 'saving' || createWasteMutation.isPending || updateWasteMutation.isPending
+                    ? 'Saving record...'
                     : editingWasteId ? 'Update Waste Record' : 'Save Waste Record'}
                 </Button>
               </DialogFooter>
