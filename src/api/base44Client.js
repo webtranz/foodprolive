@@ -861,6 +861,15 @@ export const base44 = {
         return result;
       });
     },
+    confirmZeroBatchWaste(data = {}) {
+      return apiRequest('/api/meal-service/batch-overproduction-zero', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }).then((result) => {
+        emitEntityChange('MealServiceAttendance', { action: 'meal-service-no-batch-waste', result });
+        return result;
+      });
+    },
     preview(data = {}) {
       return apiRequest('/api/meal-service/preview', {
         method: 'POST',

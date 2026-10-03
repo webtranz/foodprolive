@@ -4086,6 +4086,26 @@ CREATE TABLE IF NOT EXISTS meal_service_headers (
 CREATE INDEX IF NOT EXISTS idx_meal_service_headers_scope
   ON meal_service_headers(warehouse_id, service_date, meal_period, menu_type, menu_category, status);
 
+CREATE TABLE IF NOT EXISTS meal_service_batch_waste_reviews (
+  review_id TEXT PRIMARY KEY,
+  scope_key TEXT NOT NULL UNIQUE,
+  warehouse_id TEXT NOT NULL REFERENCES warehouses(warehouse_id) ON DELETE RESTRICT,
+  service_date DATE NOT NULL,
+  meal_period TEXT NOT NULL,
+  menu_type TEXT NOT NULL,
+  menu_category TEXT NOT NULL,
+  review_status TEXT NOT NULL DEFAULT 'confirmed_no_waste',
+  notes TEXT,
+  confirmed_by TEXT,
+  confirmed_by_name TEXT,
+  confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_meal_service_batch_waste_reviews_scope
+  ON meal_service_batch_waste_reviews(warehouse_id, service_date, meal_period, menu_type, menu_category, review_status);
+
 CREATE TABLE IF NOT EXISTS meal_service_lines (
   meal_service_line_id TEXT PRIMARY KEY,
   meal_service_id TEXT NOT NULL REFERENCES meal_service_headers(meal_service_id) ON DELETE CASCADE,

@@ -153,6 +153,10 @@ function hasEnteredCovers(dishes = [], coversByDish = {}, fallbackCategory = '')
   ));
 }
 
+function isBatchWasteReviewAllowed(review = null) {
+  return review?.allowed === true;
+}
+
 function InlineNotice({ tone = 'neutral', children }) {
   const toneClasses = {
     success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
@@ -226,6 +230,10 @@ export function CustomerMealServicePanel({
           category.value,
           String(result?.availability_snapshot || '').trim()
         ]));
+        const batchWastePrerequisitesByCategory = Object.fromEntries(categoryResults.map(({ category, result }) => [
+          category.value,
+          result?.batch_waste_prerequisite || result?.batch_waste_review || null
+        ]));
         return {
           dishes,
           items: dishes,
@@ -233,6 +241,7 @@ export function CustomerMealServicePanel({
             .map(({ category, result }) => `${category.value}:${String(result?.availability_snapshot || '').trim()}`)
             .join('|'),
           availability_snapshots_by_category: snapshotsByCategory,
+          batch_waste_prerequisites_by_category: batchWastePrerequisitesByCategory,
           confirmations_by_category: Object.fromEntries(categoryResults.map(({ category, result }) => [
             category.value,
             result?.confirmation || null
@@ -296,6 +305,10 @@ export function CustomerMealServicePanel({
     ), [availabilityQuery.data]);
     const availabilitySnapshot = String(availabilityQuery.data?.availability_snapshot || '').trim();
     const availabilitySnapshotsByCategory = availabilityQuery.data?.availability_snapshots_by_category || {};
+    const batchWastePrerequisite = availabilityQuery.data?.batch_waste_prerequisite
+      || availabilityQuery.data?.batch_waste_review
+      || null;
+    const batchWastePrerequisitesByCategory = availabilityQuery.data?.batch_waste_prerequisites_by_category || {};
     const availabilityScopeKey = [
       scope.site_id,
       scope.service_date,
@@ -326,6 +339,33 @@ export function CustomerMealServicePanel({
         || String(record.menu_category || '').toLowerCase() === scope.menu_category
       )
     )), [historyQuery.data, isAllCategoryScope, scope]);
+    const categoriesWithProducedDishes = useMemo(() => categoryOptions
+      .map((category) => ({
+        category,
+        dishes: availableDishes.filter((dish) => getDishCategory(dish, scope.menu_category) === category.value)
+      }))
+      .filter(({ dishes }) => dishes.length > 0), [availableDishes, categoryOptions, scope.menu_category]);
+    const missingBatchWasteReviewCategories = useMemo(() => {
+      if (!hasCompleteScope || availabilityQuery.isLoading || availabilityQuery.isError) return [];
+      if (!isAllCategoryScope) {
+        return isBatchWasteReviewAllowed(batchWastePrerequisite)
+          ? []
+          : [{ value: scope.menu_category, label: categoryLabelByValue[scope.menu_category] || formatLabel(scope.menu_category) }];
+      }
+      return categoriesWithProducedDishes
+        .filter(({ category }) => !isBatchWasteReviewAllowed(batchWastePrerequisitesByCategory[category.value]))
+        .map(({ category }) => category);
+    }, [
+      availabilityQuery.isError,
+      availabilityQuery.isLoading,
+      batchWastePrerequisite,
+      batchWastePrerequisitesByCategory,
+      categoriesWithProducedDishes,
+      categoryLabelByValue,
+      hasCompleteScope,
+      isAllCategoryScope,
+      scope.menu_category
+    ]);
   const activeHistoryRows = useMemo(
     () => historyRows.filter((record) => String(record.status || '').toLowerCase() !== 'reversed'),
     [historyRows]
@@ -456,6 +496,27 @@ export function CustomerMealServicePanel({
       isAllCategoryScope,
       scope
     ]);
+    const missingBatchWasteReviewForSave = useMemo(() => {
+      if (!hasCompleteScope || !displayedDishes.length) return [];
+      if (!isAllCategoryScope) {
+        return isBatchWasteReviewAllowed(batchWastePrerequisite)
+          ? []
+          : [categoryLabelByValue[scope.menu_category] || formatLabel(scope.menu_category)];
+      }
+      const requestCategories = confirmationRequests.map((request) => request.menu_category);
+      return requestCategories
+        .filter((menuCategory) => !isBatchWasteReviewAllowed(batchWastePrerequisitesByCategory[menuCategory]))
+        .map((menuCategory) => categoryLabelByValue[menuCategory] || formatLabel(menuCategory));
+    }, [
+      batchWastePrerequisite,
+      batchWastePrerequisitesByCategory,
+      categoryLabelByValue,
+      confirmationRequests,
+      displayedDishes.length,
+      hasCompleteScope,
+      isAllCategoryScope,
+      scope.menu_category
+    ]);
 
   const changeScope = (changes) => {
     lastAvailabilityRef.current = { scopeKey: '', snapshot: '' };
@@ -494,6 +555,28 @@ export function CustomerMealServicePanel({
     },
     onError: (error) => setNotice({ tone: 'error', text: error.message || 'Portion size could not be updated.' })
   });
+
+    const zeroBatchWasteMutation = useMutation({
+      mutationFn: (menuCategory) => base44.mealService.confirmZeroBatchWaste({
+        ...scope,
+        menu_category: menuCategory,
+        notes: 'Confirmed before Meal Service save: no batch overproduction waste for this scope.'
+      }),
+      onSuccess: async (result) => {
+        setNotice({
+          tone: 'success',
+          text: result?.status === 'batch_waste_recorded'
+            ? 'Batch overproduction waste is already recorded for this scope.'
+            : 'No batch overproduction waste was confirmed for this scope. Meal Service can now be saved.'
+        });
+        await queryClient.invalidateQueries({ queryKey: ['mealServiceAvailability'] });
+        await availabilityQuery.refetch();
+      },
+      onError: (error) => setNotice({
+        tone: 'error',
+        text: error.message || 'Could not confirm no batch overproduction waste for this scope.'
+      })
+    });
 
     const confirmationMutation = useMutation({
       mutationFn: async () => {
@@ -587,6 +670,13 @@ export function CustomerMealServicePanel({
         setNotice({ tone: 'error', text: 'Enter covers for at least one category before saving Meal Service.' });
         return;
       }
+      if (missingBatchWasteReviewForSave.length) {
+        setNotice({
+          tone: 'error',
+          text: `Before saving Meal Service, record batch overproduction waste or confirm no batch overproduction waste for: ${missingBatchWasteReviewForSave.join(', ')}.`
+        });
+        return;
+      }
       if (!coversValidation.valid) {
         setNotice({ tone: 'error', text: coversValidation.message });
         return;
@@ -596,6 +686,15 @@ export function CustomerMealServicePanel({
 
     const savePortionSize = (dish) => {
       const value = portionDrafts[getDishInputKey(dish, scope.menu_category)];
+      const menuCategory = getDishCategory(dish, scope.menu_category) || scope.menu_category;
+      const review = isAllCategoryScope ? batchWastePrerequisitesByCategory[menuCategory] : batchWastePrerequisite;
+      if (!isBatchWasteReviewAllowed(review)) {
+        setNotice({
+          tone: 'error',
+          text: `Before saving the portion size, record batch overproduction waste or confirm no batch overproduction waste for ${categoryLabelByValue[menuCategory] || formatLabel(menuCategory)}.`
+        });
+        return;
+      }
       if (normalizeMealServicePortionSize(value) === null) {
         setNotice({ tone: 'error', text: 'Portion size must be greater than 0 and no more than 100,000 grams.' });
         return;
@@ -822,6 +921,35 @@ export function CustomerMealServicePanel({
                     All Categories is selected. Enter covers in any category section below; only categories with entered covers will be saved.
                   </InlineNotice>
                 ) : null}
+                {missingBatchWasteReviewCategories.length ? (
+                  <InlineNotice tone="warning">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <span>
+                        Record batch overproduction waste first, or explicitly confirm no batch overproduction waste for:
+                        {' '}
+                        <span className="font-semibold">
+                          {missingBatchWasteReviewCategories.map((category) => category.label).join(', ')}
+                        </span>
+                        .
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {missingBatchWasteReviewCategories.map((category) => (
+                          <Button
+                            key={category.value}
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={zeroBatchWasteMutation.isPending || (!canConfirm && !isAdmin)}
+                            onClick={() => zeroBatchWasteMutation.mutate(category.value)}
+                          >
+                            {zeroBatchWasteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Confirm no batch waste{isAllCategoryScope ? ` · ${category.label}` : ''}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  </InlineNotice>
+                ) : null}
                 {latestConfirmation ? (
                   <InlineNotice tone="success">
                   <span className="font-medium">Latest Meal Service request saved.</span>
@@ -863,6 +991,8 @@ export function CustomerMealServicePanel({
                         && normalizedCovers > availableCovers;
                         const portionValue = portionDrafts[inputKey] ?? String(dish.service_portion_size_grams ?? '');
                         const portionChanged = normalizeMealServicePortionSize(portionValue) !== normalizeMealServicePortionSize(dish.service_portion_size_grams);
+                        const batchWasteReview = isAllCategoryScope ? batchWastePrerequisitesByCategory[dishCategory] : batchWastePrerequisite;
+                        const batchWasteReviewAllowed = isBatchWasteReviewAllowed(batchWasteReview);
                         return (
                           <React.Fragment key={inputKey}>
                             {showCategoryHeader ? (
@@ -929,6 +1059,7 @@ export function CustomerMealServicePanel({
                                     portionMutation.isPending
                                     || normalizeMealServicePortionSize(portionValue) === null
                                     || !portionChanged
+                                    || !batchWasteReviewAllowed
                                   }
                                   onClick={() => savePortionSize(dish)}
                                 >
@@ -956,10 +1087,13 @@ export function CustomerMealServicePanel({
                               aria-label={`${dish.recipe_name || 'Dish'} number of covers`}
                               placeholder="Enter covers"
                               value={coverValue}
-                              disabled={!canConfirm || availableCovers === null}
+                              disabled={!canConfirm || availableCovers === null || !batchWasteReviewAllowed}
                                 onChange={(event) => updateCovers(inputKey, event.target.value)}
-                                className={!canConfirm || availableCovers === null ? 'bg-slate-100 text-slate-500 disabled:cursor-not-allowed disabled:opacity-100' : ''}
+                                className={!canConfirm || availableCovers === null || !batchWasteReviewAllowed ? 'bg-slate-100 text-slate-500 disabled:cursor-not-allowed disabled:opacity-100' : ''}
                             />
+                            {!batchWasteReviewAllowed ? (
+                              <p className="mt-1 text-xs font-medium text-amber-700">Batch overproduction waste review required first.</p>
+                            ) : null}
                             {exceedsAvailable ? (
                               <p className="mt-1 text-xs font-medium text-red-600">Maximum available: {availableCovers}</p>
                             ) : null}
@@ -982,6 +1116,8 @@ export function CustomerMealServicePanel({
             <div className="text-sm text-slate-600">
               {hasCompleteScope && !availabilityQuery.isLoading && !availabilitySnapshot ? (
                 <span className="flex items-center gap-2 text-amber-700"><AlertTriangle className="h-4 w-4" /> Refresh the produced dishes before entering covers</span>
+              ) : missingBatchWasteReviewForSave.length ? (
+                <span className="flex items-center gap-2 text-amber-700"><AlertTriangle className="h-4 w-4" /> Batch overproduction waste review required for {missingBatchWasteReviewForSave.join(', ')}</span>
               ) : coversValidation.valid ? (
                 hasUnsavedPortionChanges ? (
                   <span className="flex items-center gap-2 text-amber-700"><AlertTriangle className="h-4 w-4" /> Save all portion-size changes before saving Meal Service</span>
@@ -1000,6 +1136,7 @@ export function CustomerMealServicePanel({
                 || !hasCompleteScope
                 || !availabilitySnapshot
                 || !coversValidation.valid
+                || missingBatchWasteReviewForSave.length > 0
                 || hasUnsavedPortionChanges
                 || availabilityQuery.isLoading
                 || availabilityQuery.isError

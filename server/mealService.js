@@ -5,6 +5,7 @@ import {
   acquireMealServiceScopeLock,
   findDocument,
   listDocuments,
+  pool,
   updateDocument,
   withTransaction
 } from './db.js';
@@ -30,6 +31,8 @@ const SERVICEABLE_MENU_PLAN_STATUSES = new Set(['planned', 'active', 'approved']
 const PRODUCED_ITEM_CUTOVER_VERSION = 1;
 const MEAL_SERVICE_REPORT_PAGE_SIZE = 1000;
 const MAX_MANUAL_PORTION_SIZE_GRAMS = 100000;
+const BATCH_WASTE_REVIEW_MESSAGE = 'Record batch overproduction waste or explicitly confirm no batch overproduction waste before saving Meal Service portion size or covers.';
+const BATCH_WASTE_REVIEW_STATUS_CONFIRMED_ZERO = 'confirmed_no_waste';
 
 function nowIso() {
   return new Date().toISOString();
@@ -148,6 +151,265 @@ export function buildMealServiceScopeKey({ site_id, service_date, meal_type, men
     menuType,
     normalizeMealServiceMenuCategory(menu_category, menuType)
   ].join('::');
+}
+
+function buildMealServiceBatchWasteReviewScope({
+  site_id,
+  service_date,
+  meal_type,
+  menu_type,
+  menu_category
+} = {}) {
+  const menuType = normalizeMealServiceMenuType(menu_type);
+  const menuCategory = normalizeMealServiceMenuCategory(menu_category, menuType);
+  return {
+    site_id: normalizeText(site_id),
+    service_date: normalizeMealServiceDate(service_date),
+    meal_type: normalizeMealServiceType(meal_type),
+    menu_type: menuType,
+    menu_category: menuCategory,
+    scope_key: buildMealServiceScopeKey({
+      site_id,
+      service_date,
+      meal_type,
+      menu_type: menuType,
+      menu_category: menuCategory
+    })
+  };
+}
+
+function normalizeMealServiceBatchWasteReviewRow(row = {}) {
+  if (!row) return null;
+  return {
+    id: row.review_id,
+    scope_key: row.scope_key,
+    site_id: row.warehouse_id,
+    service_date: row.service_date instanceof Date
+      ? row.service_date.toISOString().slice(0, 10)
+      : normalizeText(row.service_date).slice(0, 10),
+    meal_type: row.meal_period,
+    menu_type: row.menu_type,
+    menu_category: row.menu_category,
+    status: row.review_status,
+    notes: row.notes || null,
+    confirmed_by: row.confirmed_by || null,
+    confirmed_by_name: row.confirmed_by_name || null,
+    confirmed_at: row.confirmed_at ? new Date(row.confirmed_at).toISOString() : null
+  };
+}
+
+function isActiveBatchOverproductionWasteRow(row = {}, scope = {}) {
+  const status = normalizeText(row.status).toLowerCase();
+  if (['reversed', 'voided', 'cancelled', 'canceled'].includes(status)) return false;
+  const sourceType = normalizeText(row.source_type).toLowerCase();
+  const wasteCategory = normalizeText(row.waste_category).toLowerCase();
+  const wasteScope = normalizeText(row.waste_scope).toLowerCase();
+  const menuType = normalizeMenuCuisine(row.menu_type, '');
+  const menuCategory = normalizeMenuCategory(row.menu_category, '');
+  return (
+    number(row.quantity_grams, 0) > QUANTITY_EPSILON
+    && (sourceType === 'batch_overproduction' || (wasteCategory === 'batch_overproduction' && wasteScope === 'batch'))
+    && menuType === scope.menu_type
+    && menuCategory === scope.menu_category
+  );
+}
+
+async function listBatchOverproductionWasteReviewRows(scope, {
+  siteIds = [],
+  executor = null
+} = {}) {
+  const dbExecutor = executor || pool;
+  const candidateSiteIds = [...new Set([
+    scope.site_id,
+    ...siteIds
+  ].map(normalizeText).filter(Boolean))];
+  const result = await dbExecutor.query(
+    `SELECT food_waste_id,
+            waste_reference,
+            warehouse_id,
+            waste_date,
+            meal_period,
+            menu_type,
+            menu_category,
+            waste_category,
+            waste_scope,
+            source_type,
+            quantity_grams,
+            estimated_cost,
+            approval_status,
+            status,
+            recorded_by,
+            created_at
+       FROM food_waste_records
+      WHERE warehouse_id = ANY($1::text[])
+        AND waste_date = $2::date
+        AND LOWER(COALESCE(meal_period, '')) = $3
+        AND LOWER(COALESCE(waste_category, '')) = 'batch_overproduction'
+        AND LOWER(COALESCE(status, 'posted')) NOT IN ('reversed', 'voided', 'cancelled', 'canceled')
+      ORDER BY created_at DESC, food_waste_id DESC
+      LIMIT 100`,
+    [
+      candidateSiteIds,
+      scope.service_date,
+      scope.meal_type
+    ]
+  );
+  return result.rows.filter((row) => isActiveBatchOverproductionWasteRow(row, scope));
+}
+
+async function findNoBatchOverproductionWasteConfirmation(scope, { executor = null } = {}) {
+  const dbExecutor = executor || pool;
+  const result = await dbExecutor.query(
+    `SELECT review_id,
+            scope_key,
+            warehouse_id,
+            service_date,
+            meal_period,
+            menu_type,
+            menu_category,
+            review_status,
+            notes,
+            confirmed_by,
+            confirmed_by_name,
+            confirmed_at
+       FROM meal_service_batch_waste_reviews
+      WHERE scope_key = $1
+        AND review_status = $2
+      LIMIT 1`,
+    [scope.scope_key, BATCH_WASTE_REVIEW_STATUS_CONFIRMED_ZERO]
+  );
+  return normalizeMealServiceBatchWasteReviewRow(result.rows[0] || null);
+}
+
+export async function getMealServiceBatchWasteReviewStatus(rawScope = {}, {
+  productionSiteIds = [],
+  executor = null
+} = {}) {
+  const scope = buildMealServiceBatchWasteReviewScope(rawScope);
+  const wasteRecords = await listBatchOverproductionWasteReviewRows(scope, {
+    siteIds: productionSiteIds,
+    executor
+  });
+  if (wasteRecords.length > 0) {
+    return {
+      allowed: true,
+      status: 'batch_waste_recorded',
+      message: 'Batch overproduction waste has been recorded for this scope.',
+      scope,
+      waste_record_count: wasteRecords.length,
+      waste_records: wasteRecords.map((row) => ({
+        id: row.food_waste_id,
+        waste_reference: row.waste_reference || null,
+        site_id: row.warehouse_id,
+        quantity_grams: number(row.quantity_grams, 0),
+        estimated_cost: number(row.estimated_cost, 0),
+        approval_status: row.approval_status || null,
+        status: row.status || null
+      })),
+      zero_confirmation: null
+    };
+  }
+  const zeroConfirmation = await findNoBatchOverproductionWasteConfirmation(scope, { executor });
+  if (zeroConfirmation) {
+    return {
+      allowed: true,
+      status: 'confirmed_no_batch_waste',
+      message: 'No batch overproduction waste has been explicitly confirmed for this scope.',
+      scope,
+      waste_record_count: 0,
+      waste_records: [],
+      zero_confirmation: zeroConfirmation
+    };
+  }
+  return {
+    allowed: false,
+    status: 'missing_batch_waste_review',
+    message: BATCH_WASTE_REVIEW_MESSAGE,
+    scope,
+    waste_record_count: 0,
+    waste_records: [],
+    zero_confirmation: null
+  };
+}
+
+async function assertMealServiceBatchWasteReview(rawScope = {}, options = {}) {
+  const status = await getMealServiceBatchWasteReviewStatus(rawScope, options);
+  if (!status.allowed) {
+    const error = httpError(status.message, 409);
+    error.details = { batch_waste_review: status };
+    throw error;
+  }
+  return status;
+}
+
+export async function confirmNoBatchOverproductionWaste(rawScope = {}, actor = {}, {
+  executor = null,
+  location = null
+} = {}) {
+  if (!executor) {
+    return withTransaction((client) => confirmNoBatchOverproductionWaste(rawScope, actor, {
+      executor: client,
+      location
+    }));
+  }
+  const dbExecutor = executor;
+  const scope = buildMealServiceBatchWasteReviewScope(rawScope);
+  const {
+    productionSiteIds
+  } = await resolveMealServiceProductionScope(scope.site_id, dbExecutor, location);
+  await acquireMealServiceScopeLock(scope.scope_key, dbExecutor);
+  const currentStatus = await getMealServiceBatchWasteReviewStatus(scope, {
+    productionSiteIds,
+    executor: dbExecutor
+  });
+  if (currentStatus.status === 'batch_waste_recorded') return currentStatus;
+
+  const reviewId = `meal_service_batch_waste_review_${crypto.randomUUID()}`;
+  const confirmedAt = nowIso();
+  await dbExecutor.query(
+    `INSERT INTO meal_service_batch_waste_reviews (
+       review_id,
+       scope_key,
+       warehouse_id,
+       service_date,
+       meal_period,
+       menu_type,
+       menu_category,
+       review_status,
+       notes,
+       confirmed_by,
+       confirmed_by_name,
+       confirmed_at,
+       created_at,
+       updated_at
+     )
+     VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12::timestamptz, NOW(), NOW())
+     ON CONFLICT (scope_key) DO UPDATE
+       SET review_status = EXCLUDED.review_status,
+           notes = EXCLUDED.notes,
+           confirmed_by = EXCLUDED.confirmed_by,
+           confirmed_by_name = EXCLUDED.confirmed_by_name,
+           confirmed_at = EXCLUDED.confirmed_at,
+           updated_at = NOW()`,
+    [
+      reviewId,
+      scope.scope_key,
+      scope.site_id,
+      scope.service_date,
+      scope.meal_type,
+      scope.menu_type,
+      scope.menu_category,
+      BATCH_WASTE_REVIEW_STATUS_CONFIRMED_ZERO,
+      normalizeText(rawScope.notes) || null,
+      actor.email || actor.id || null,
+      actor.full_name || actor.email || null,
+      confirmedAt
+    ]
+  );
+  return getMealServiceBatchWasteReviewStatus(scope, {
+    productionSiteIds,
+    executor: dbExecutor
+  });
 }
 
 export function buildMealServiceAvailabilitySnapshot(scope = {}, batches = []) {
@@ -1863,7 +2125,8 @@ async function resolveMealServiceMenuPlan({
 async function getServiceContext(payload, executor, {
   lockBatches = false,
   location = null,
-  requireAvailabilitySnapshot = false
+  requireAvailabilitySnapshot = false,
+  requireBatchWasteReview = false
 } = {}) {
   const dbExecutor = executor || undefined;
   const siteId = normalizeText(payload.site_id);
@@ -1879,6 +2142,18 @@ async function getServiceContext(payload, executor, {
     productionSiteIds,
     productionLocation
   } = await resolveMealServiceProductionScope(siteId, dbExecutor, location);
+  if (requireBatchWasteReview) {
+    await assertMealServiceBatchWasteReview({
+      site_id: siteId,
+      service_date: serviceDate,
+      meal_type: mealType,
+      menu_type: menuType,
+      menu_category: menuCategory
+    }, {
+      productionSiteIds,
+      executor: dbExecutor
+    });
+  }
   let batches = await listMealServiceProducedItemBatchesForSites({
     siteIds: productionSiteIds,
     serviceDate,
@@ -2073,7 +2348,8 @@ async function recordMealServiceAttendanceWithExecutor(payload, actor, executor,
   const context = await getServiceContext(payload, executor, {
     lockBatches: true,
     location,
-    requireAvailabilitySnapshot: true
+    requireAvailabilitySnapshot: true,
+    requireBatchWasteReview: true
   });
   const allocation = allocateMealServiceDemand(context.demand, context.batches);
   if (allocation.items.some((item) => number(item.shortage_weight_grams, 0) > QUANTITY_EPSILON)) {
@@ -2475,6 +2751,16 @@ export async function getProducedItemAvailability(filters = {}, { executor = nul
     menu_type: menuType,
     menu_category: menuCategory
   }, eligibleBatches);
+  const batchWasteReview = await getMealServiceBatchWasteReviewStatus({
+    site_id: siteId,
+    service_date: serviceDate,
+    meal_type: mealType,
+    menu_type: menuType,
+    menu_category: menuCategory
+  }, {
+    productionSiteIds,
+    executor
+  });
   const confirmations = (await listDocuments('MealServiceAttendance', {
     filters: { scope_key: scopeKey }, sort: '-recorded_at', limit: 100, location
   }, executor || undefined)).filter((entry) => entry.status !== 'reversed');
@@ -2492,6 +2778,8 @@ export async function getProducedItemAvailability(filters = {}, { executor = nul
       production_site_ids: productionSiteIds
     },
     availability_snapshot: availabilitySnapshot,
+    batch_waste_prerequisite: batchWasteReview,
+    batch_waste_review: batchWasteReview,
     confirmed: Boolean(confirmation),
     confirmation,
     confirmations,
@@ -2529,6 +2817,16 @@ async function updateMealServicePortionSizeWithExecutor(payload, actor, executor
     menu_type: menuType, menu_category: menuCategory
   });
   await acquireMealServiceScopeLock(scopeKey, executor);
+  await assertMealServiceBatchWasteReview({
+    site_id: siteId,
+    service_date: serviceDate,
+    meal_type: mealType,
+    menu_type: menuType,
+    menu_category: menuCategory
+  }, {
+    productionSiteIds,
+    executor
+  });
   const matchedBatches = await listMealServiceProducedItemBatchesForSites({
     siteIds: productionSiteIds,
     serviceDate,

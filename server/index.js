@@ -235,6 +235,7 @@ import { hasAdminAccess } from './accessControl.js';
 import { getManagementDashboardSnapshot } from './managementDashboard.js';
 import {
   backfillProducedItemBatchesForCompletedProductions,
+  confirmNoBatchOverproductionWaste,
   getMealServiceReport,
   getProducedItemAvailability,
   previewMealService,
@@ -13044,6 +13045,37 @@ app.patch('/api/meal-service/portion-size', requireAuth, async (request, respons
       details: result
     });
     return response.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/meal-service/batch-overproduction-zero', requireAuth, requireAnyPermission([
+  'record_customer_meal_service',
+  'manage_waste'
+]), async (request, response, next) => {
+  try {
+    const scope = await getLocationScope(request.user);
+    const siteId = String(request.body?.site_id || '').trim();
+    if (!siteId || (!scope.unrestricted && !scope.accessibleSiteIds.has(siteId))) {
+      return response.status(siteId ? 403 : 400).json({
+        message: siteId
+          ? 'You do not have access to this Meal Service location'
+          : 'Select a location for Meal Service'
+      });
+    }
+    const location = scope.unrestricted
+      ? null
+      : { unrestricted: false, accessibleSiteIds: [...scope.accessibleSiteIds] };
+    const result = await confirmNoBatchOverproductionWaste(request.body || {}, request.user, { location });
+    await auditAction({
+      user: request.user,
+      action: 'MEAL_SERVICE_NO_BATCH_OVERPRODUCTION_WASTE_CONFIRMED',
+      entity: 'MealServiceAttendance',
+      entityId: result?.scope?.scope_key || null,
+      details: result
+    });
+    return response.status(201).json(result);
   } catch (error) {
     return next(error);
   }

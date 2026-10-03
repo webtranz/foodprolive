@@ -1304,3 +1304,31 @@ test('meal-service project scope includes active child store production output',
   assert.match(serviceSource, /getServiceContext[\s\S]*productionSiteIds[\s\S]*listMealServiceProducedItemBatchesForSites/);
   assert.match(serviceSource, /updateMealServicePortionSizeWithExecutor[\s\S]*productionSiteIds[\s\S]*listMealServiceProducedItemBatchesForSites/);
 });
+
+test('meal-service saves require batch overproduction waste review for the exact scope', () => {
+  const serviceSource = source('server/mealService.js');
+  const serverSource = source('server/index.js');
+  const sqlSource = source('server/sql/init.sql');
+
+  assert.match(sqlSource, /CREATE TABLE IF NOT EXISTS meal_service_batch_waste_reviews/);
+  assert.match(sqlSource, /scope_key TEXT NOT NULL UNIQUE/);
+  assert.match(serviceSource, /BATCH_WASTE_REVIEW_MESSAGE/);
+  assert.match(serviceSource, /getMealServiceBatchWasteReviewStatus/);
+  assert.match(serviceSource, /food_waste_records[\s\S]*waste_category[\s\S]*batch_overproduction/);
+  assert.match(serviceSource, /findNoBatchOverproductionWasteConfirmation/);
+  assert.match(serviceSource, /confirmNoBatchOverproductionWaste/);
+  assert.match(
+    serviceSource,
+    /recordMealServiceAttendanceWithExecutor[\s\S]*requireBatchWasteReview: true/
+  );
+  assert.match(
+    serviceSource,
+    /updateMealServicePortionSizeWithExecutor[\s\S]*assertMealServiceBatchWasteReview/
+  );
+  assert.match(
+    serviceSource,
+    /getProducedItemAvailability[\s\S]*batch_waste_prerequisite: batchWasteReview/
+  );
+  assert.match(serverSource, /\/api\/meal-service\/batch-overproduction-zero/);
+  assert.match(serverSource, /MEAL_SERVICE_NO_BATCH_OVERPRODUCTION_WASTE_CONFIRMED/);
+});
