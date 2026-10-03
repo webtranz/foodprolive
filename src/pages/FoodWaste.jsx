@@ -228,6 +228,45 @@ function getWasteRecordItemName(item = {}) {
   ).trim();
 }
 
+function isInternalLocationIdentifier(value = '') {
+  const text = String(value || '').trim();
+  return /^site_[a-z0-9-]{18,}$/i.test(text);
+}
+
+function firstReadableLocationName(values = []) {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (!text) continue;
+    if (['unknown', 'null', 'undefined', '-'].includes(text.toLowerCase())) continue;
+    if (isInternalLocationIdentifier(text)) continue;
+    return text;
+  }
+  return 'Unknown location';
+}
+
+function getWasteLocationDisplayName(item = {}, siteMap = new Map(), production = null) {
+  const siteId = String(item.site_id || production?.site_id || '').trim();
+  const mappedSite = siteMap.get(siteId) || siteMap.get(item.site_name) || null;
+  return firstReadableLocationName([
+    item.site_name,
+    item.location_name,
+    item.project_name,
+    item.site_code,
+    item.project_code,
+    production?.site_name,
+    production?.fulfillment_store_name,
+    production?.project_name,
+    mappedSite?.name,
+    mappedSite?.site_name,
+    mappedSite?.display_name,
+    mappedSite?.project_code,
+    mappedSite?.site_code,
+    mappedSite?.code,
+    mappedSite?.location_name,
+    siteId
+  ]);
+}
+
 function getWasteRecordStatus(item = {}) {
   const status = String(item.status || '').toLowerCase();
   if (status === 'reversed') return 'reversed';
@@ -1055,12 +1094,14 @@ export default function FoodWaste() {
     filteredWaste
       .filter((item) => getWasteWeightGrams(item) > 0)
       .forEach((item) => {
-        const siteKey = String(item.site_id || item.site_name || 'unknown');
+        const wasteProduction = productionMap.get(item.production_id);
+        const siteKey = String(item.site_id || wasteProduction?.site_id || item.site_name || 'unknown');
+        const siteDisplayName = getWasteLocationDisplayName(item, siteMap, wasteProduction);
         if (!grouped.has(siteKey)) {
           grouped.set(siteKey, {
             key: siteKey,
             site_id: item.site_id || siteKey,
-            site_name: item.site_name || siteKey,
+            site_name: siteDisplayName,
             records: [],
             dates: new Set(),
             categories: new Set(),
@@ -1078,13 +1119,15 @@ export default function FoodWaste() {
           });
         }
         const group = grouped.get(siteKey);
+        if (group.site_name === 'Unknown location' && siteDisplayName !== 'Unknown location') {
+          group.site_name = siteDisplayName;
+        }
         const meal = MEAL_TYPE_OPTIONS.includes(String(item.meal_type || '').toLowerCase())
           ? String(item.meal_type || '').toLowerCase()
           : 'breakfast';
         const cost = getWasteCost(item, productionMap);
         const quantityKg = getWasteQuantityKg(item);
         const itemName = getWasteRecordItemName(item);
-        const wasteProduction = productionMap.get(item.production_id);
         const categoryLabel = getWasteMealCategoryLabel(item, wasteProduction);
         group.records.push(item);
         group.dates.add(item.waste_date);
@@ -1127,7 +1170,7 @@ export default function FoodWaste() {
         totalCost: Number(group.totalCost.toFixed(2))
       };
     }).sort((left, right) => right.totalCost - left.totalCost || left.site_name.localeCompare(right.site_name));
-  }, [filteredWaste, filters.endDate, filters.startDate, productionMap]);
+  }, [filteredWaste, filters.endDate, filters.startDate, productionMap, siteMap]);
 
   const selectedWasteLocationSummary = useMemo(() => (
     wasteRecordLocationSummaries.find((item) => item.key === selectedWasteLocationKey) || null
@@ -2584,16 +2627,18 @@ export default function FoodWaste() {
                                   return (
                                     <div
                                       key={`${mealRow.meal}-${row.itemName}`}
-                                      className="grid gap-3 py-3 md:grid-cols-[1fr_auto] md:items-center"
+                                      className="space-y-3 py-3"
                                     >
                                       <div className="min-w-0">
-                                        <p className="break-words text-sm font-bold text-slate-950">{row.itemName}</p>
-                                        <p className="mt-1 text-xs text-slate-500">
+                                        <p className="break-words text-sm font-bold leading-5 text-slate-950">{row.itemName}</p>
+                                        <p className="mt-1 text-xs leading-5 text-slate-500">
                                           {formatCurrency(row.cost)} · {evidenceCount ? `${evidenceCount} photo${evidenceCount === 1 ? '' : 's'}` : 'photo not attached'}
                                         </p>
                                       </div>
-                                      <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                                        <p className="mr-2 whitespace-nowrap text-sm font-semibold text-slate-600">{formatWasteKg(row.quantityKg)}</p>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
+                                          {formatWasteKg(row.quantityKg)}
+                                        </span>
                                         <Button
                                           type="button"
                                           size="sm"
