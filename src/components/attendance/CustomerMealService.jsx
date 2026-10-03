@@ -15,6 +15,7 @@ import {
   buildMealServiceConfirmationRequest,
   buildMealServicePortionRequest,
   createMealServiceIdempotencyKey,
+  deriveMealServicePortionSizeFromCovers,
   formatMealWeight,
   normalizeMealServiceCovers,
   normalizeMealServicePortionSize,
@@ -155,6 +156,11 @@ function hasEnteredCovers(dishes = [], coversByDish = {}, fallbackCategory = '')
 
 function isBatchWasteReviewAllowed(review = null) {
   return review?.allowed === true;
+}
+
+function getEffectiveServicePortionSize(dish = {}, covers) {
+  return normalizeMealServicePortionSize(dish.service_portion_size_grams)
+    ?? deriveMealServicePortionSizeFromCovers(dish, covers);
 }
 
 function InlineNotice({ tone = 'neutral', children }) {
@@ -673,7 +679,9 @@ export function CustomerMealServicePanel({
       if (missingBatchWasteReviewForSave.length) {
         setNotice({
           tone: 'error',
-          text: `Before saving Meal Service, record batch overproduction waste or confirm no batch overproduction waste for: ${missingBatchWasteReviewForSave.join(', ')}.`
+          text: isAdmin
+            ? `Before saving Meal Service, record batch overproduction waste or confirm no batch overproduction waste for: ${missingBatchWasteReviewForSave.join(', ')}.`
+            : `Before saving Meal Service, record batch overproduction waste for: ${missingBatchWasteReviewForSave.join(', ')}.`
         });
         return;
       }
@@ -735,7 +743,10 @@ export function CustomerMealServicePanel({
     const requestedWeightGrams = availableDishes.reduce(
       (total, dish) => total + (
         (normalizeMealServiceCovers(coversByRecipe[getDishInputKey(dish, scope.menu_category)]) || 0)
-        * asNumber(dish.service_portion_size_grams)
+        * asNumber(getEffectiveServicePortionSize(
+          dish,
+          coversByRecipe[getDishInputKey(dish, scope.menu_category)]
+        ))
       ),
       0
   );
@@ -925,28 +936,32 @@ export function CustomerMealServicePanel({
                   <InlineNotice tone="warning">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <span>
-                        Record batch overproduction waste first, or explicitly confirm no batch overproduction waste for:
+                        {isAdmin
+                          ? 'Record batch overproduction waste first, or explicitly confirm no batch overproduction waste for:'
+                          : 'Record batch overproduction waste before saving Meal Service for:'}
                         {' '}
                         <span className="font-semibold">
                           {missingBatchWasteReviewCategories.map((category) => category.label).join(', ')}
                         </span>
                         .
                       </span>
-                      <div className="flex flex-wrap gap-2">
-                        {missingBatchWasteReviewCategories.map((category) => (
-                          <Button
-                            key={category.value}
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={zeroBatchWasteMutation.isPending || (!canConfirm && !isAdmin)}
-                            onClick={() => zeroBatchWasteMutation.mutate(category.value)}
-                          >
-                            {zeroBatchWasteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                            Confirm no batch waste{isAllCategoryScope ? ` · ${category.label}` : ''}
-                          </Button>
-                        ))}
-                      </div>
+                      {isAdmin ? (
+                        <div className="flex flex-wrap gap-2">
+                          {missingBatchWasteReviewCategories.map((category) => (
+                            <Button
+                              key={category.value}
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={zeroBatchWasteMutation.isPending}
+                              onClick={() => zeroBatchWasteMutation.mutate(category.value)}
+                            >
+                              {zeroBatchWasteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                              Confirm no batch waste{isAllCategoryScope ? ` · ${category.label}` : ''}
+                            </Button>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   </InlineNotice>
                 ) : null}
@@ -986,6 +1001,9 @@ export function CustomerMealServicePanel({
                         : null;
                         const coverValue = coversByRecipe[inputKey] ?? '';
                         const normalizedCovers = normalizeMealServiceCovers(coverValue);
+                        const derivedPortion = configuredPortion === null
+                          ? deriveMealServicePortionSizeFromCovers(dish, coverValue)
+                          : null;
                       const exceedsAvailable = availableCovers !== null
                         && normalizedCovers !== null
                         && normalizedCovers > availableCovers;
@@ -1028,7 +1046,7 @@ export function CustomerMealServicePanel({
                           <TableCell className="min-w-[210px]">
                             <p className="font-medium text-slate-900">{formatMealWeight(dish.available_weight_grams)}</p>
                             <p className="mt-1 text-xs text-slate-600">
-                              {availableCovers === null ? 'Covers available after portion setup' : `${availableCovers} covers available`}
+                              {availableCovers === null ? 'Enter covers to derive portion from prepared qty' : `${availableCovers} covers available`}
                             </p>
                             <p className="mt-1 text-xs text-slate-500">
                               Produced {formatMealWeight(dish.produced_weight_grams)}
@@ -1069,7 +1087,9 @@ export function CustomerMealServicePanel({
                             </div>
                             {configuredPortion === null ? (
                               <p className="mt-1 text-xs font-medium text-amber-700">
-                                Unconfigured — {isAdmin ? 'enter and save a manual service portion.' : 'ask an administrator to set the manual service portion.'}
+                                {derivedPortion === null
+                                  ? 'No saved portion — entered covers will derive it automatically.'
+                                  : `Derived from entered covers: ${formatMealWeight(derivedPortion)} per cover.`}
                               </p>
                             ) : !isAdmin ? (
                               <p className="mt-1 text-xs text-slate-500">Admin controlled</p>
@@ -1087,9 +1107,9 @@ export function CustomerMealServicePanel({
                               aria-label={`${dish.recipe_name || 'Dish'} number of covers`}
                               placeholder="Enter covers"
                               value={coverValue}
-                              disabled={!canConfirm || availableCovers === null || !batchWasteReviewAllowed}
+                              disabled={!canConfirm || !batchWasteReviewAllowed}
                                 onChange={(event) => updateCovers(inputKey, event.target.value)}
-                                className={!canConfirm || availableCovers === null || !batchWasteReviewAllowed ? 'bg-slate-100 text-slate-500 disabled:cursor-not-allowed disabled:opacity-100' : ''}
+                                className={!canConfirm || !batchWasteReviewAllowed ? 'bg-slate-100 text-slate-500 disabled:cursor-not-allowed disabled:opacity-100' : ''}
                             />
                             {!batchWasteReviewAllowed ? (
                               <p className="mt-1 text-xs font-medium text-amber-700">Batch overproduction waste review required first.</p>

@@ -20,6 +20,14 @@ export function normalizeMealServicePortionSize(value) {
   return Number(parsed.toFixed(6));
 }
 
+export function deriveMealServicePortionSizeFromCovers(dish = {}, covers) {
+  const normalizedCovers = normalizeMealServiceCovers(covers);
+  if (!normalizedCovers || normalizedCovers <= 0) return null;
+  const availableWeight = Number(dish.available_weight_grams);
+  if (!Number.isFinite(availableWeight) || availableWeight <= 0) return null;
+  return normalizeMealServicePortionSize(availableWeight / normalizedCovers);
+}
+
 export function buildMealServiceConfirmationRequest(
   scope = {},
   dishes = [],
@@ -65,33 +73,35 @@ export function validateMealServiceCovers(dishes = [], coversByRecipe = {}) {
 
   let hasPositiveCover = false;
   for (const dish of dishes) {
-    if (normalizeMealServicePortionSize(dish.service_portion_size_grams) === null) {
-      return {
-        valid: false,
-        message: `${dish.recipe_name || 'A prepared dish'} needs an administrator-saved service portion size before Meal Service can be saved.`
-      };
-    }
     const covers = normalizeMealServiceCovers(coversByRecipe[dish.recipe_id]);
     if (covers === null) {
       return { valid: false, message: `Enter a whole-number cover count for ${dish.recipe_name || 'every dish'}.` };
     }
-    const availableCovers = Number(dish.available_covers);
-    if (
-      dish.available_covers === null
-      || typeof dish.available_covers === 'undefined'
-      || dish.available_covers === ''
-      || !Number.isInteger(availableCovers)
-      || availableCovers < 0
-    ) {
+    const configuredPortion = normalizeMealServicePortionSize(dish.service_portion_size_grams);
+    if (configuredPortion !== null) {
+      const availableCovers = Number(dish.available_covers);
+      if (
+        dish.available_covers === null
+        || typeof dish.available_covers === 'undefined'
+        || dish.available_covers === ''
+        || !Number.isInteger(availableCovers)
+        || availableCovers < 0
+      ) {
+        return {
+          valid: false,
+          message: `${dish.recipe_name || 'A prepared dish'} does not have a valid available-cover balance. Refresh after its service portion is saved.`
+        };
+      }
+      if (covers > availableCovers) {
+        return {
+          valid: false,
+          message: `${dish.recipe_name || 'A dish'} has only ${availableCovers} covers available.`
+        };
+      }
+    } else if (covers > 0 && deriveMealServicePortionSizeFromCovers(dish, covers) === null) {
       return {
         valid: false,
-        message: `${dish.recipe_name || 'A prepared dish'} does not have a valid available-cover balance. Refresh after its service portion is saved.`
-      };
-    }
-    if (covers > availableCovers) {
-      return {
-        valid: false,
-        message: `${dish.recipe_name || 'A dish'} has only ${availableCovers} covers available.`
+        message: `${dish.recipe_name || 'A prepared dish'} does not have enough prepared quantity to derive a service portion from covers.`
       };
     }
     hasPositiveCover ||= covers > 0;

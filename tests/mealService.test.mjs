@@ -812,8 +812,10 @@ test('service portion is never inferred from the production or recipe portion', 
   assert.equal(dish.service_portion_size_grams, null);
   assert.equal(dish.available_covers, null);
   const service = source('server/mealService.js');
-  assert.match(service, /requires an administrator-configured service portion size before Meal Service can be saved/);
+  assert.match(service, /meal_service_covers_derived/);
+  assert.match(service, /available_weight_grams[\s\S]*\/ requiredServings/);
   assert.doesNotMatch(service, /batch\.service_portion_size_grams \?\? batch\.portion_size_grams/);
+  assert.doesNotMatch(service, /requires an administrator-configured service portion size before Meal Service can be saved/);
 });
 
 test('recipe-less grouped production lines remain selectable for Meal Service', () => {
@@ -1330,5 +1332,6 @@ test('meal-service saves require batch overproduction waste review for the exact
     /getProducedItemAvailability[\s\S]*batch_waste_prerequisite: batchWasteReview/
   );
   assert.match(serverSource, /\/api\/meal-service\/batch-overproduction-zero/);
+  assert.match(serverSource, /Only administrators can confirm no batch overproduction waste before Meal Service/);
   assert.match(serverSource, /MEAL_SERVICE_NO_BATCH_OVERPRODUCTION_WASTE_CONFIRMED/);
 });

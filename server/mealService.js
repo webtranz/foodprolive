@@ -31,7 +31,7 @@ const SERVICEABLE_MENU_PLAN_STATUSES = new Set(['planned', 'active', 'approved']
 const PRODUCED_ITEM_CUTOVER_VERSION = 1;
 const MEAL_SERVICE_REPORT_PAGE_SIZE = 1000;
 const MAX_MANUAL_PORTION_SIZE_GRAMS = 100000;
-const BATCH_WASTE_REVIEW_MESSAGE = 'Record batch overproduction waste or explicitly confirm no batch overproduction waste before saving Meal Service portion size or covers.';
+const BATCH_WASTE_REVIEW_MESSAGE = 'Record batch overproduction waste before saving Meal Service portion size or covers.';
 const BATCH_WASTE_REVIEW_STATUS_CONFIRMED_ZERO = 'confirmed_no_waste';
 
 function nowIso() {
@@ -198,17 +198,27 @@ function normalizeMealServiceBatchWasteReviewRow(row = {}) {
   };
 }
 
+function normalizeWasteReviewKey(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function isBatchOverproductionReviewKey(value) {
+  const normalized = normalizeWasteReviewKey(value);
+  return normalized === 'batch_overproduction' || normalized.includes('batch_overproduction');
+}
+
 function isActiveBatchOverproductionWasteRow(row = {}, scope = {}) {
   const status = normalizeText(row.status).toLowerCase();
   if (['reversed', 'voided', 'cancelled', 'canceled'].includes(status)) return false;
-  const sourceType = normalizeText(row.source_type).toLowerCase();
-  const wasteCategory = normalizeText(row.waste_category).toLowerCase();
-  const wasteScope = normalizeText(row.waste_scope).toLowerCase();
+  const wasteScope = normalizeWasteReviewKey(row.waste_scope);
   const menuType = normalizeMenuCuisine(row.menu_type, '');
   const menuCategory = normalizeMenuCategory(row.menu_category, '');
   return (
     number(row.quantity_grams, 0) > QUANTITY_EPSILON
-    && (sourceType === 'batch_overproduction' || (wasteCategory === 'batch_overproduction' && wasteScope === 'batch'))
+    && (isBatchOverproductionReviewKey(row.source_type) || (isBatchOverproductionReviewKey(row.waste_category) && wasteScope === 'batch'))
     && menuType === scope.menu_type
     && menuCategory === scope.menu_category
   );
@@ -244,7 +254,10 @@ async function listBatchOverproductionWasteReviewRows(scope, {
       WHERE warehouse_id = ANY($1::text[])
         AND waste_date = $2::date
         AND LOWER(COALESCE(meal_period, '')) = $3
-        AND LOWER(COALESCE(waste_category, '')) = 'batch_overproduction'
+        AND (
+          REGEXP_REPLACE(LOWER(BTRIM(COALESCE(waste_category, ''))), '[^a-z0-9]+', '_', 'g') LIKE '%batch_overproduction%'
+          OR REGEXP_REPLACE(LOWER(BTRIM(COALESCE(source_type, ''))), '[^a-z0-9]+', '_', 'g') LIKE '%batch_overproduction%'
+        )
         AND LOWER(COALESCE(status, 'posted')) NOT IN ('reversed', 'voided', 'cancelled', 'canceled')
       ORDER BY created_at DESC, food_waste_id DESC
       LIMIT 100`,
@@ -1508,7 +1521,7 @@ export function allocateMealServiceDemand(items = [], batches = []) {
     .sort(compareBatchFifo);
 
   const allocatedItems = items.map((item) => {
-    const usesManualPortion = ['meal_service_manual', 'meal_service_configured'].includes(item.portion_size_source);
+    const usesManualPortion = ['meal_service_manual', 'meal_service_configured', 'meal_service_covers_derived'].includes(item.portion_size_source);
     const servicePortionSize = number(item.portion_size_grams, 0);
     let remainingDemand = usesManualPortion
       ? number(item.required_weight_grams, 0)
@@ -1533,6 +1546,13 @@ export function allocateMealServiceDemand(items = [], batches = []) {
       const mealPortions = usesManualPortion
         ? roundQuantity(allocatedWeight / servicePortionSize)
         : productionEquivalentServings;
+      if (
+        item.portion_size_source === 'meal_service_covers_derived'
+        && servicePortionSize > QUANTITY_EPSILON
+        && !getStoredServicePortionSize(batch)
+      ) {
+        batch.service_portion_size_grams = servicePortionSize;
+      }
       const beforeWeight = number(batch.remaining_weight_grams, 0);
       batch.remaining_weight_grams = roundQuantity(Math.max(0, beforeWeight - allocatedWeight));
       batch.served_weight_grams = roundQuantity(number(batch.served_weight_grams, 0) + allocatedWeight);
@@ -2186,10 +2206,6 @@ async function getServiceContext(payload, executor, {
   if (availableDishes.length === 0) {
     throw httpError('No completed production output matches this project, date, meal period, menu type, and menu category', 409);
   }
-  const unconfiguredDish = availableDishes.find((dish) => !dish.portion_configured);
-  if (unconfiguredDish) {
-    throw httpError(`${unconfiguredDish.recipe_name} requires an administrator-configured service portion size before Meal Service can be saved`, 409);
-  }
   const covers = normalizeMealServiceDishCovers(payload.dishes);
   const coversByRecipe = new Map(covers.map((dish) => [dish.recipe_id, dish.covers]));
   const availableIds = new Set(availableDishes.map((dish) => dish.recipe_id));
@@ -2202,24 +2218,41 @@ async function getServiceContext(payload, executor, {
   }
   const demand = availableDishes.map((dish) => {
     const requiredServings = coversByRecipe.get(dish.recipe_id);
-    const requiredWeight = roundQuantity(requiredServings * dish.service_portion_size_grams);
+    const configuredPortionSize = number(dish.service_portion_size_grams, 0);
+    const derivedPortionSize = configuredPortionSize > QUANTITY_EPSILON
+      ? configuredPortionSize
+      : requiredServings > 0
+        ? roundQuantity(number(dish.available_weight_grams, 0) / requiredServings)
+        : 0;
+    if (requiredServings > 0 && derivedPortionSize <= QUANTITY_EPSILON) {
+      throw httpError(`${dish.recipe_name} has no available prepared quantity to derive a service portion size`, 409);
+    }
+    const requiredWeight = configuredPortionSize > QUANTITY_EPSILON
+      ? roundQuantity(requiredServings * configuredPortionSize)
+      : requiredServings > 0
+        ? roundQuantity(dish.available_weight_grams)
+        : 0;
     if (requiredWeight - dish.available_weight_grams > QUANTITY_EPSILON) {
       throw httpError(`${dish.recipe_name} requires ${requiredWeight} g but only ${dish.available_weight_grams} g is available`, 409);
     }
+    const remainingAvailableServings = configuredPortionSize > QUANTITY_EPSILON
+      ? dish.available_covers - requiredServings
+      : 0;
     return {
       ...dish,
-      portion_size_grams: dish.service_portion_size_grams,
-      manual_portion_size_grams: null,
-      portion_size_source: 'meal_service_configured',
+      service_portion_size_grams: derivedPortionSize || null,
+      portion_size_grams: derivedPortionSize || null,
+      manual_portion_size_grams: configuredPortionSize > QUANTITY_EPSILON ? null : derivedPortionSize || null,
+      portion_size_source: configuredPortionSize > QUANTITY_EPSILON ? 'meal_service_configured' : 'meal_service_covers_derived',
       portions_per_attendee: 1,
       servings_per_attendee: 1,
       covers: requiredServings,
       required_servings: requiredServings,
       required_weight_grams: requiredWeight,
-      available_servings: dish.available_covers,
+      available_servings: configuredPortionSize > QUANTITY_EPSILON ? dish.available_covers : requiredServings,
       allocated_servings: requiredServings,
       allocated_weight_grams: requiredWeight,
-      remaining_available_servings: dish.available_covers - requiredServings,
+      remaining_available_servings: remainingAvailableServings,
       remaining_available_weight_grams: dish.available_weight_grams - requiredWeight,
       shortage_servings: 0,
       shortage_weight_grams: 0,
@@ -2355,6 +2388,7 @@ async function recordMealServiceAttendanceWithExecutor(payload, actor, executor,
   if (allocation.items.some((item) => number(item.shortage_weight_grams, 0) > QUANTITY_EPSILON)) {
     throw httpError('Meal Service cannot be partially saved because produced output is insufficient', 409);
   }
+  const recordedAt = nowIso();
   const reconciledItems = reconcileMealServiceItemsWithWaste(allocation.items, []);
   for (const batch of allocation.batches) {
     const original = context.batches.find((candidate) => candidate.id === batch.id);
@@ -2368,8 +2402,9 @@ async function recordMealServiceAttendanceWithExecutor(payload, actor, executor,
     if (
       number(batch.remaining_servings, 0) !== number(original.remaining_servings, 0)
       || number(batch.remaining_weight_grams, 0) !== number(original.remaining_weight_grams, 0)
+      || number(batch.service_portion_size_grams, 0) !== number(original.service_portion_size_grams, 0)
     ) {
-      await updateDocument('ProducedItemBatch', batch.id, {
+      const patch = {
         served_servings: batch.served_servings,
         served_weight_grams: batch.served_weight_grams,
         wasted_servings: batch.wasted_servings,
@@ -2377,11 +2412,17 @@ async function recordMealServiceAttendanceWithExecutor(payload, actor, executor,
         remaining_servings: batch.remaining_servings,
         remaining_weight_grams: batch.remaining_weight_grams,
         status: batch.status
-      }, executor);
+      };
+      if (number(batch.service_portion_size_grams, 0) !== number(original.service_portion_size_grams, 0)) {
+        patch.service_portion_size_grams = batch.service_portion_size_grams;
+        patch.service_portion_updated_by = actor.email || null;
+        patch.service_portion_updated_by_name = actor.full_name || actor.email || null;
+        patch.service_portion_updated_at = recordedAt;
+      }
+      await updateDocument('ProducedItemBatch', batch.id, patch, executor);
     }
   }
 
-  const recordedAt = nowIso();
   const serviceReference = `MS-${context.serviceDate.replace(/-/g, '')}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
   const summary = summarizeItems(reconciledItems, context.attendeeCount);
   summary.wasted_weight_grams = 0;

@@ -13050,11 +13050,13 @@ app.patch('/api/meal-service/portion-size', requireAuth, async (request, respons
   }
 });
 
-app.post('/api/meal-service/batch-overproduction-zero', requireAuth, requireAnyPermission([
-  'record_customer_meal_service',
-  'manage_waste'
-]), async (request, response, next) => {
+app.post('/api/meal-service/batch-overproduction-zero', requireAuth, async (request, response, next) => {
   try {
+    if (!hasAdminAccess(request.user)) {
+      return response.status(403).json({
+        message: 'Only administrators can confirm no batch overproduction waste before Meal Service'
+      });
+    }
     const scope = await getLocationScope(request.user);
     const siteId = String(request.body?.site_id || '').trim();
     if (!siteId || (!scope.unrestricted && !scope.accessibleSiteIds.has(siteId))) {
