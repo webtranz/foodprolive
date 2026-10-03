@@ -355,6 +355,31 @@ const recipeImageUpload = multer({
   }
 });
 
+const FOOD_WASTE_EVIDENCE_IMAGE_LIMITS = {
+  perMealCategory: 4,
+  perCategoryDay: 12,
+  perLocationDay: 36,
+  dailyTargetBytes: 1_000_000,
+  dailyHardBytes: 1_200_000
+};
+FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perImageTargetBytes = Math.floor(
+  FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.dailyTargetBytes / FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perLocationDay
+);
+FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perImageHardBytes = Math.floor(
+  FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.dailyHardBytes / FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perLocationDay
+);
+
+const wasteImageUpload = multer({
+  storage: recipeImageStorage,
+  limits: { fileSize: FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perImageHardBytes, files: 1 },
+  fileFilter: (_request, file, callback) => {
+    if (!Object.hasOwn(RECIPE_IMAGE_MIME_TYPES, file.mimetype)) {
+      return callback(new Error('Waste pictures must be JPG, PNG, WebP, or GIF files.'));
+    }
+    return callback(null, true);
+  }
+});
+
 const bulkUpload = multer({
   storage,
   limits: {
@@ -428,7 +453,12 @@ async function persistWasteEvidenceFile(file, options = {}) {
   if (!stored) {
     throw new Error('Waste picture storage failed. The uploaded picture could not be saved to the database.');
   }
-  return stored;
+  return {
+    ...stored,
+    originalName: file.originalname || null,
+    contentType: file.mimetype || 'application/octet-stream',
+    byteSize: Buffer.isBuffer(file.buffer) ? file.buffer.length : 0
+  };
 }
 
 function absoluteFileUrl(request, fileUrl) {
@@ -3531,7 +3561,7 @@ function filterFoodWasteRows(rows, filters = {}) {
   });
 }
 
-const MAX_FOOD_WASTE_EVIDENCE_IMAGES = 8;
+const MAX_FOOD_WASTE_EVIDENCE_IMAGES = FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perMealCategory;
 
 function appendFoodWasteEvidenceValue(target, value) {
   if (Array.isArray(value)) {
@@ -3552,13 +3582,141 @@ function appendFoodWasteEvidenceValue(target, value) {
   target.push(trimmed);
 }
 
-function normalizeFoodWasteEvidenceImages(payload = {}) {
+function collectFoodWasteEvidenceImages(payload = {}) {
   const urls = [];
   appendFoodWasteEvidenceValue(urls, payload.evidence_image_urls);
   appendFoodWasteEvidenceValue(urls, payload.image_urls);
   appendFoodWasteEvidenceValue(urls, payload.evidence_image_url);
   appendFoodWasteEvidenceValue(urls, payload.image_url);
-  return [...new Set(urls)].slice(0, MAX_FOOD_WASTE_EVIDENCE_IMAGES);
+  return [...new Set(urls)];
+}
+
+function normalizeFoodWasteEvidenceImages(payload = {}) {
+  return collectFoodWasteEvidenceImages(payload).slice(0, MAX_FOOD_WASTE_EVIDENCE_IMAGES);
+}
+
+function normalizeFoodWasteEvidenceCategoryKey(payload = {}) {
+  return String(
+    payload.menu_category
+      || payload.menu_category_label
+      || payload.menu_type
+      || payload.waste_category
+      || 'uncategorized'
+  ).trim().toLowerCase() || 'uncategorized';
+}
+
+function normalizeFoodWasteEvidenceByteSizes(payload = {}) {
+  const source = Array.isArray(payload.image_byte_sizes)
+    ? payload.image_byte_sizes
+    : Array.isArray(payload.evidence_image_byte_sizes)
+      ? payload.evidence_image_byte_sizes
+      : [];
+  return source.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
+}
+
+async function countFoodWasteEvidenceImages({
+  siteId,
+  wasteDate,
+  mealType = '',
+  categoryKey = '',
+  excludeRecordId = '',
+  excludeImageUrls = []
+} = {}) {
+  const conditions = [
+    'waste.warehouse_id = $1',
+    'waste.waste_date = $2::date',
+    "LOWER(COALESCE(waste.status, '')) NOT IN ('reversed', 'voided', 'cancelled', 'canceled')"
+  ];
+  const params = [siteId, wasteDate];
+  if (mealType) {
+    params.push(mealType);
+    conditions.push(`LOWER(COALESCE(waste.meal_period, '')) = LOWER($${params.length})`);
+  }
+  if (categoryKey) {
+    params.push(categoryKey);
+    conditions.push(`LOWER(COALESCE(NULLIF(waste.menu_category, ''), NULLIF(waste.menu_type, ''), waste.waste_category, 'uncategorized')) = LOWER($${params.length})`);
+  }
+  if (excludeRecordId) {
+    params.push(excludeRecordId);
+    conditions.push(`waste.food_waste_id <> $${params.length}`);
+  }
+  const incomingUrls = uniqueTextValues(excludeImageUrls);
+  if (incomingUrls.length) {
+    params.push(incomingUrls);
+    conditions.push(`NOT (image.image_url = ANY($${params.length}::text[]))`);
+  }
+  const { rows } = await pool.query(
+    `SELECT COUNT(DISTINCT image.image_url)::int AS image_count
+     FROM food_waste_records waste
+     JOIN food_waste_images image ON image.food_waste_id = waste.food_waste_id
+     WHERE ${conditions.join(' AND ')}`,
+    params
+  );
+  return Number(rows[0]?.image_count || 0);
+}
+
+async function validateFoodWasteEvidenceLimits(payload = {}, { existingId = '' } = {}) {
+  const allEvidenceImageUrls = collectFoodWasteEvidenceImages(payload);
+  const evidenceImageUrls = allEvidenceImageUrls.slice(0, MAX_FOOD_WASTE_EVIDENCE_IMAGES);
+  if (allEvidenceImageUrls.length > FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perMealCategory) {
+    const error = new Error(`Attach no more than ${FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perMealCategory} pictures for one meal/category.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  const oversizedBytes = normalizeFoodWasteEvidenceByteSizes(payload)
+    .find((size) => size > FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perImageHardBytes);
+  if (oversizedBytes) {
+    const error = new Error(`Waste pictures must be compressed below ${Math.round(FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perImageHardBytes / 1024)} KB each before saving.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const siteId = String(payload.site_id || payload.warehouse_id || '').trim();
+  const wasteDate = normalizeDateOnly(payload.waste_date);
+  const mealType = normalizeMealType(payload.meal_type);
+  if (!siteId || !wasteDate || !evidenceImageUrls.length) return;
+
+  const categoryKey = normalizeFoodWasteEvidenceCategoryKey(payload);
+  const [mealCategoryCount, categoryDayCount, locationDayCount] = await Promise.all([
+    countFoodWasteEvidenceImages({
+      siteId,
+      wasteDate,
+      mealType,
+      categoryKey,
+      excludeRecordId: existingId,
+      excludeImageUrls: evidenceImageUrls
+    }),
+    countFoodWasteEvidenceImages({
+      siteId,
+      wasteDate,
+      categoryKey,
+      excludeRecordId: existingId,
+      excludeImageUrls: evidenceImageUrls
+    }),
+    countFoodWasteEvidenceImages({
+      siteId,
+      wasteDate,
+      excludeRecordId: existingId,
+      excludeImageUrls: evidenceImageUrls
+    })
+  ]);
+
+  const incomingCount = evidenceImageUrls.length;
+  if (mealCategoryCount + incomingCount > FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perMealCategory) {
+    const error = new Error(`This location/date/meal/category already has ${mealCategoryCount} saved picture(s). The limit is ${FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perMealCategory}.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  if (categoryDayCount + incomingCount > FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perCategoryDay) {
+    const error = new Error(`This location/date/category already has ${categoryDayCount} saved picture(s). The daily category limit is ${FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perCategoryDay}.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  if (locationDayCount + incomingCount > FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perLocationDay) {
+    const error = new Error(`This location/date already has ${locationDayCount} saved picture(s). The daily limit is ${FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perLocationDay}.`);
+    error.statusCode = 400;
+    throw error;
+  }
 }
 
 function normalizeBaseUrl(value) {
@@ -5479,6 +5637,12 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
     const siteId = String(payload.site_id || '').trim();
     const wasteDate = normalizeDateOnly(payload.waste_date);
     const mealType = normalizeMealType(payload.meal_type);
+    const submittedEvidenceImageUrls = collectFoodWasteEvidenceImages(payload);
+    if (submittedEvidenceImageUrls.length > MAX_FOOD_WASTE_EVIDENCE_IMAGES) {
+      return response.status(400).json({
+        message: `Attach no more than ${MAX_FOOD_WASTE_EVIDENCE_IMAGES} pictures for one meal/category.`
+      });
+    }
     const evidenceImageUrls = normalizeFoodWasteEvidenceImages(payload);
     const evidenceImageUrl = evidenceImageUrls[0] || '';
 
@@ -5517,6 +5681,13 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
       ...payload,
       waste_date: wasteDate,
       meal_type: mealType,
+      menu_type: batchOverproductionContextRow?.menu_type || payload.menu_type || null,
+      menu_category: batchOverproductionContextRow?.menu_category
+        || batchOverproductionContextRow?.menu_category_label
+        || payload.menu_category
+        || payload.menu_category_label
+        || payload.menu_type
+        || null,
       served_at: context.served_at,
       production_completed_at: context.production_completed_at,
       recording_window_basis: context.recording_window_basis,
@@ -5549,6 +5720,7 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
 
     authorizeEntityAction(request.user, 'FoodWaste', 'create', preparedPayload);
     const finalPayload = await prepareEntityPayload(request.user, 'FoodWaste', preparedPayload);
+    await validateFoodWasteEvidenceLimits(finalPayload);
     const created = await withTransaction(async (client) => {
       let batchWasteAllocation = null;
       let plateWasteAdjustment = null;
@@ -5802,6 +5974,11 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
       ...existing,
       ...payload
     });
+    if (!approvalOnly && collectFoodWasteEvidenceImages({ ...existing, ...payload }).length > MAX_FOOD_WASTE_EVIDENCE_IMAGES) {
+      return response.status(400).json({
+        message: `Attach no more than ${MAX_FOOD_WASTE_EVIDENCE_IMAGES} pictures for one meal/category.`
+      });
+    }
     if (!approvalOnly && !mergedEvidenceImageUrls.length) {
       return response.status(400).json({ message: 'Add at least one waste picture before saving this record.' });
     }
@@ -5857,6 +6034,9 @@ app.patch('/api/food-waste/:id', requireAuth, async (request, response, next) =>
 
     authorizeEntityAction(request.user, 'FoodWaste', 'update', payload, existing);
     const preparedPayload = await prepareEntityPayload(request.user, 'FoodWaste', merged, existing);
+    if (!approvalOnly) {
+      await validateFoodWasteEvidenceLimits(preparedPayload, { existingId: existing.id });
+    }
     const updated = editingBatchOverproductionWaste && !approvalOnly
       ? await updateBatchOverproductionFoodWasteRecord({
         user: request.user,
@@ -10225,11 +10405,11 @@ app.post('/api/integrations/recipe-image', requireAuth, (request, response, next
 });
 
 app.post('/api/integrations/waste-image', requireAuth, (request, response, next) => {
-  recipeImageUpload.single('file')(request, response, async (error) => {
+  wasteImageUpload.single('file')(request, response, async (error) => {
     if (error) {
       const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
       const message = error.code === 'LIMIT_FILE_SIZE'
-        ? 'Waste pictures must not exceed 1 MB.'
+        ? `Waste pictures must be compressed below ${Math.round(FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perImageHardBytes / 1024)} KB each.`
         : (error.message || 'Waste picture upload failed.');
       return response.status(status).json({ message });
     }
@@ -10240,7 +10420,12 @@ app.post('/api/integrations/waste-image', requireAuth, (request, response, next)
       const stored = await persistWasteEvidenceFile(request.file, { uploadedBy: request.user?.email || '' });
       return response.json({
         file_url: stored.fileUrl,
-        public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl)
+        public_file_url: absoluteFileUrl(request, stored.publicFileUrl || stored.fileUrl),
+        original_name: stored.originalName,
+        content_type: stored.contentType,
+        byte_size: stored.byteSize,
+        target_byte_size: FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perImageTargetBytes,
+        hard_byte_size: FOOD_WASTE_EVIDENCE_IMAGE_LIMITS.perImageHardBytes
       });
     } catch (storageError) {
       return next(storageError);

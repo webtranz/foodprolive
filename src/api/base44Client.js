@@ -1172,9 +1172,14 @@ export const base44 = {
           headers: {}
         });
       },
-      UploadWasteImage({ file }) {
+      UploadWasteImage({ file, ...context }) {
         const formData = new FormData();
         formData.append('file', file);
+        Object.entries(context || {}).forEach(([key, value]) => {
+          if (value !== undefined && value !== null && String(value).trim() !== '') {
+            formData.append(key, String(value));
+          }
+        });
         return apiRequest('/api/integrations/waste-image', {
           method: 'POST',
           body: formData,

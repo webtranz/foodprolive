@@ -642,22 +642,25 @@ const cases = [
       assert.match(page, /MAX_WASTE_PICTURES/);
       assert.match(page, /compressWasteImageFile/);
       assert.match(page, /!hasWasteEvidenceImages/);
-      assert.match(api, /UploadWasteImage\(\{ file \}\)/);
+      assert.match(api, /UploadWasteImage\(\{ file, \.\.\.context \}\)/);
       assert.match(api, /\/api\/integrations\/waste-image/);
       const server = read('server/index.js');
       assert.match(server, /persistWasteEvidenceFile/);
       assert.match(server, /persistDatabaseUploadedFile\(file, 'waste-images'/);
+      assert.match(server, /FOOD_WASTE_EVIDENCE_IMAGE_LIMITS/);
     }
   },
   {
-    name: 'shows all waste pictures in a record gallery with meal category',
+    name: 'shows waste records as location summaries with category details and gallery',
     run() {
       const page = read('src/pages/FoodWaste.jsx');
       assert.match(page, /const \[wastePictureGallery, setWastePictureGallery\]/);
       assert.match(page, /function getWasteMealCategoryLabel/);
-      assert.match(page, /<TableHead>Meal Category<\/TableHead>/);
-      assert.match(page, /<TableHead>Waste Category<\/TableHead>/);
-      assert.match(page, /handleOpenWastePictureGallery\(item\)/);
+      assert.match(page, /wasteRecordLocationSummaries/);
+      assert.match(page, /selectedWasteDetailCategories/);
+      assert.match(page, /One summary card per location/);
+      assert.match(page, /Breakfast · Lunch · Dinner/);
+      assert.match(page, /handleOpenWastePictureGallery\(representative\)/);
       assert.match(page, /Waste Pictures/);
       assert.match(page, /wastePictureGallery\.images\.map/);
       assert.match(page, /Open selected picture/);
@@ -699,7 +702,7 @@ const cases = [
       assert.match(api, /updateAdminWindowSettings/);
       assert.match(page, /editingBatchOverproductionWaste/);
       assert.match(page, /isBatchOverproductionEntryMode/);
-      assert.match(page, /disabled=\{String\(item\.status \|\| ''\)\.toLowerCase\(\) === 'reversed'\}/);
+      assert.match(page, /disabled=\{String\(representative\.status \|\| ''\)\.toLowerCase\(\) === 'reversed'\}/);
       assert.match(api, /emitEntityChange\('FoodWaste', \{ action: 'update'/);
       assert.match(api, /emitEntityChange\('ProducedItemBatch', \{ action: 'food-waste-update'/);
       assert.match(server, /Only administrators can edit food waste requests\./);

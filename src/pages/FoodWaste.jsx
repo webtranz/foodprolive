@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { format, subDays } from 'date-fns';
+import { format, startOfMonth } from 'date-fns';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Area,
@@ -81,10 +81,14 @@ const WASTE_REASONS = [
 const APPROVAL_THRESHOLD = 100;
 const MEAL_TYPE_OPTIONS = ['breakfast', 'lunch', 'dinner'];
 const BATCH_OVERPRODUCTION_CATEGORY = 'batch_overproduction';
-const MAX_WASTE_PICTURES = 8;
-const MAX_WASTE_PICTURE_TOTAL_BYTES = 500 * 1024;
-const MAX_WASTE_PICTURE_LONG_EDGE = 900;
-const MIN_WASTE_PICTURE_LONG_EDGE = 360;
+const MAX_WASTE_PICTURES = 4;
+const MAX_WASTE_DAILY_PICTURES = 36;
+const MAX_WASTE_PICTURE_DAILY_TARGET_BYTES = 1_000_000;
+const MAX_WASTE_PICTURE_DAILY_HARD_BYTES = 1_200_000;
+const TARGET_WASTE_PICTURE_BYTES = Math.floor(MAX_WASTE_PICTURE_DAILY_TARGET_BYTES / MAX_WASTE_DAILY_PICTURES);
+const HARD_WASTE_PICTURE_BYTES = Math.floor(MAX_WASTE_PICTURE_DAILY_HARD_BYTES / MAX_WASTE_DAILY_PICTURES);
+const MAX_WASTE_PICTURE_LONG_EDGE = 720;
+const MIN_WASTE_PICTURE_LONG_EDGE = 240;
 const DEFAULT_ADMIN_WASTE_WINDOW_DAYS = 30;
 const MAX_ADMIN_WASTE_WINDOW_DAYS = 3650;
 
@@ -106,6 +110,18 @@ function safeNumber(value, fallback = 0) {
 function matchesDate(dateValue, startDate, endDate) {
   if (!dateValue) return false;
   return dateValue >= startDate && dateValue <= endDate;
+}
+
+function createDefaultWasteFilters(today = new Date()) {
+  return {
+    startDate: format(startOfMonth(today), 'yyyy-MM-dd'),
+    endDate: format(today, 'yyyy-MM-dd'),
+    locationId: 'all',
+    wasteCategory: 'all',
+    reasonCode: 'all',
+    scope: 'all',
+    mealType: 'all'
+  };
 }
 
 function getReasonMeta(reasonCode) {
@@ -178,17 +194,6 @@ function getWasteSourceLabel(item = {}) {
   return titleCase(item.source_type || 'manual_entry');
 }
 
-function formatWasteQuantity(item = {}) {
-  if (isMealServiceLeftover(item)) {
-    const exactWeightGrams = Number(item.wasted_weight_grams);
-    if (Number.isFinite(exactWeightGrams) && exactWeightGrams >= 0) {
-      if (exactWeightGrams >= 1000) return `${Number((exactWeightGrams / 1000).toFixed(3))} kg`;
-      return `${Number(exactWeightGrams.toFixed(3))} g`;
-    }
-  }
-  return `${safeNumber(item.quantity).toFixed(2)} ${item.unit}`;
-}
-
 function getWasteWeightGrams(item = {}) {
   const explicitWeight = [
     item.wasted_weight_grams,
@@ -206,6 +211,43 @@ function getWasteWeightGrams(item = {}) {
 
 function getWasteQuantityKg(item = {}) {
   return getWasteWeightGrams(item) / 1000;
+}
+
+function formatWasteKg(value) {
+  const kg = safeNumber(value);
+  return `${Number(kg.toFixed(kg >= 100 ? 1 : 2))} kg`;
+}
+
+function getWasteRecordItemName(item = {}) {
+  return String(
+    item.recipe_name
+      || item.ingredient_name
+      || item.production_name
+      || item.batch_reference
+      || 'Waste item'
+  ).trim();
+}
+
+function getWasteRecordStatus(item = {}) {
+  const status = String(item.status || '').toLowerCase();
+  if (status === 'reversed') return 'reversed';
+  return String(item.approval_status || 'approved').toLowerCase();
+}
+
+function getWasteLocationStatus(records = []) {
+  const statuses = records.map(getWasteRecordStatus);
+  if (statuses.includes('rejected')) return 'Rejected';
+  if (statuses.includes('pending') || statuses.includes('pending_review')) return 'Pending';
+  if (statuses.includes('reversed')) return 'Mixed';
+  return 'Approved';
+}
+
+function getWasteStatusClass(status = '') {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'approved') return 'bg-emerald-100 text-emerald-800';
+  if (normalized === 'pending') return 'bg-amber-100 text-amber-800';
+  if (normalized === 'rejected') return 'bg-red-100 text-red-800';
+  return 'bg-slate-100 text-slate-700';
 }
 
 function firstPositiveSafeNumber(values = []) {
@@ -345,17 +387,16 @@ function replaceImageExtension(name = 'waste-picture', extension = 'jpg') {
 }
 
 function getWastePictureTargetBytes(imageCount = 1) {
-  const safeCount = Math.max(1, Math.min(MAX_WASTE_PICTURES, Number(imageCount) || 1));
-  return Math.floor(MAX_WASTE_PICTURE_TOTAL_BYTES / safeCount);
+  return TARGET_WASTE_PICTURE_BYTES;
 }
 
-async function compressWasteImageFile(file, targetBytes = MAX_WASTE_PICTURE_TOTAL_BYTES) {
+async function compressWasteImageFile(file, targetBytes = TARGET_WASTE_PICTURE_BYTES) {
   const image = await loadImageElementFromFile(file);
-  let quality = 0.86;
+  let quality = 0.78;
   let longEdge = MAX_WASTE_PICTURE_LONG_EDGE;
   let bestBlob = null;
 
-  for (let attempt = 0; attempt < 16; attempt += 1) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
     const scale = Math.min(1, longEdge / Math.max(image.width, image.height));
     const width = Math.max(1, Math.round(image.width * scale));
     const height = Math.max(1, Math.round(image.height * scale));
@@ -369,9 +410,13 @@ async function compressWasteImageFile(file, targetBytes = MAX_WASTE_PICTURE_TOTA
     if (blob.size <= targetBytes) break;
     if (longEdge > MIN_WASTE_PICTURE_LONG_EDGE) {
       longEdge = Math.max(MIN_WASTE_PICTURE_LONG_EDGE, Math.floor(longEdge * 0.82));
-    } else if (quality > 0.58) {
+    } else if (quality > 0.34) {
       quality = Number((quality - 0.06).toFixed(2));
     }
+  }
+
+  if (!bestBlob || bestBlob.size > HARD_WASTE_PICTURE_BYTES) {
+    throw new Error(`This picture could not be compressed below ${Math.round(HARD_WASTE_PICTURE_BYTES / 1024)} KB. Try a clearer cropped photo.`);
   }
 
   return new File([bestBlob], replaceImageExtension(file.name, 'jpg'), {
@@ -437,16 +482,9 @@ export default function FoodWaste() {
   const [formOpen, setFormOpen] = useState(false);
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
   const [message, setMessage] = useState('');
-  const [filters, setFilters] = useState({
-    startDate: format(subDays(new Date(), 29), 'yyyy-MM-dd'),
-    endDate: format(new Date(), 'yyyy-MM-dd'),
-    locationId: 'all',
-    wasteCategory: 'all',
-    reasonCode: 'all',
-    scope: 'all',
-    mealType: 'all'
-  });
+  const [filters, setFilters] = useState(() => createDefaultWasteFilters());
   const [editingWasteId, setEditingWasteId] = useState(null);
+  const [selectedWasteLocationKey, setSelectedWasteLocationKey] = useState(null);
   const [reverseWasteDialog, setReverseWasteDialog] = useState({ open: false, record: null, reason: '' });
   const [wastePictureGallery, setWastePictureGallery] = useState({
     open: false,
@@ -1012,6 +1050,178 @@ export default function FoodWaste() {
 
   const pendingApprovalWaste = analyticsWaste.filter((item) => item.approval_status === 'pending');
 
+  const wasteRecordLocationSummaries = useMemo(() => {
+    const grouped = new Map();
+    filteredWaste
+      .filter((item) => getWasteWeightGrams(item) > 0)
+      .forEach((item) => {
+        const siteKey = String(item.site_id || item.site_name || 'unknown');
+        if (!grouped.has(siteKey)) {
+          grouped.set(siteKey, {
+            key: siteKey,
+            site_id: item.site_id || siteKey,
+            site_name: item.site_name || siteKey,
+            records: [],
+            dates: new Set(),
+            categories: new Set(),
+            wasteCategories: new Set(),
+            totalRecords: 0,
+            totalQuantityKg: 0,
+            totalCost: 0,
+            meals: Object.fromEntries(MEAL_TYPE_OPTIONS.map((meal) => [meal, {
+              meal,
+              records: 0,
+              quantityKg: 0,
+              cost: 0,
+              topItems: new Map()
+            }]))
+          });
+        }
+        const group = grouped.get(siteKey);
+        const meal = MEAL_TYPE_OPTIONS.includes(String(item.meal_type || '').toLowerCase())
+          ? String(item.meal_type || '').toLowerCase()
+          : 'breakfast';
+        const cost = getWasteCost(item, productionMap);
+        const quantityKg = getWasteQuantityKg(item);
+        const itemName = getWasteRecordItemName(item);
+        const wasteProduction = productionMap.get(item.production_id);
+        const categoryLabel = getWasteMealCategoryLabel(item, wasteProduction);
+        group.records.push(item);
+        group.dates.add(item.waste_date);
+        group.categories.add(categoryLabel === '-' ? 'Unclassified' : categoryLabel);
+        group.wasteCategories.add(getCategoryMeta(item.waste_category)?.label || titleCase(item.waste_category || 'Waste'));
+        group.totalRecords += 1;
+        group.totalQuantityKg += quantityKg;
+        group.totalCost += cost;
+        group.meals[meal].records += 1;
+        group.meals[meal].quantityKg += quantityKg;
+        group.meals[meal].cost += cost;
+        group.meals[meal].topItems.set(itemName, (group.meals[meal].topItems.get(itemName) || 0) + 1);
+      });
+
+    return [...grouped.values()].map((group) => {
+      const sortedDates = [...group.dates].filter(Boolean).sort();
+      const mealRows = MEAL_TYPE_OPTIONS.map((meal) => {
+        const mealRow = group.meals[meal];
+        const topItems = [...mealRow.topItems.entries()]
+          .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+          .map(([name]) => name);
+        return {
+          ...mealRow,
+          topItems,
+          quantityKg: Number(mealRow.quantityKg.toFixed(3)),
+          cost: Number(mealRow.cost.toFixed(2))
+        };
+      });
+      const locationStatus = getWasteLocationStatus(group.records);
+      return {
+        ...group,
+        mealRows,
+        status: locationStatus,
+        dateLabel: sortedDates.length
+          ? `${sortedDates[0]}${sortedDates.length > 1 ? `–${sortedDates[sortedDates.length - 1]}` : ''}`
+          : `${filters.startDate}–${filters.endDate}`,
+        categoryLabel: [...group.categories].filter(Boolean).join(' / ') || 'Unclassified',
+        wasteCategoryLabel: [...group.wasteCategories].filter(Boolean).join(' / ') || 'Waste',
+        totalQuantityKg: Number(group.totalQuantityKg.toFixed(3)),
+        totalCost: Number(group.totalCost.toFixed(2))
+      };
+    }).sort((left, right) => right.totalCost - left.totalCost || left.site_name.localeCompare(right.site_name));
+  }, [filteredWaste, filters.endDate, filters.startDate, productionMap]);
+
+  const selectedWasteLocationSummary = useMemo(() => (
+    wasteRecordLocationSummaries.find((item) => item.key === selectedWasteLocationKey) || null
+  ), [selectedWasteLocationKey, wasteRecordLocationSummaries]);
+
+  const selectedWasteDetailCategories = useMemo(() => {
+    if (!selectedWasteLocationSummary) return [];
+    const categoryGroups = new Map();
+    selectedWasteLocationSummary.records
+      .filter((item) => getWasteWeightGrams(item) > 0)
+      .forEach((item) => {
+        const wasteProduction = productionMap.get(item.production_id);
+        const categoryLabel = getWasteMealCategoryLabel(item, wasteProduction);
+        const key = categoryLabel === '-' ? 'Unclassified' : categoryLabel;
+        if (!categoryGroups.has(key)) {
+          categoryGroups.set(key, {
+            key,
+            label: key,
+            records: [],
+            totalRecords: 0,
+            totalQuantityKg: 0,
+            totalCost: 0,
+            meals: Object.fromEntries(MEAL_TYPE_OPTIONS.map((meal) => [meal, {
+              meal,
+              records: [],
+              totalQuantityKg: 0,
+              totalCost: 0
+            }]))
+          });
+        }
+        const category = categoryGroups.get(key);
+        const meal = MEAL_TYPE_OPTIONS.includes(String(item.meal_type || '').toLowerCase())
+          ? String(item.meal_type || '').toLowerCase()
+          : 'breakfast';
+        const quantityKg = getWasteQuantityKg(item);
+        const cost = getWasteCost(item, productionMap);
+        category.records.push(item);
+        category.totalRecords += 1;
+        category.totalQuantityKg += quantityKg;
+        category.totalCost += cost;
+        category.meals[meal].records.push(item);
+        category.meals[meal].totalQuantityKg += quantityKg;
+        category.meals[meal].totalCost += cost;
+      });
+
+    return [...categoryGroups.values()].map((category) => ({
+      ...category,
+      totalQuantityKg: Number(category.totalQuantityKg.toFixed(3)),
+      totalCost: Number(category.totalCost.toFixed(2)),
+      mealRows: MEAL_TYPE_OPTIONS.map((meal) => {
+        const mealRow = category.meals[meal];
+        const itemGroups = new Map();
+        mealRow.records.forEach((record) => {
+          const itemName = getWasteRecordItemName(record);
+          if (!itemGroups.has(itemName)) {
+            itemGroups.set(itemName, {
+              itemName,
+              records: [],
+              quantityKg: 0,
+              cost: 0,
+              units: new Set(),
+              evidenceCount: 0
+            });
+          }
+          const row = itemGroups.get(itemName);
+          row.records.push(record);
+          row.quantityKg += getWasteQuantityKg(record);
+          row.cost += getWasteCost(record, productionMap);
+          row.units.add(record.unit || 'g');
+          row.evidenceCount += getWasteEvidenceUrls(record).length;
+        });
+        return {
+          meal,
+          records: mealRow.records.length,
+          quantityKg: Number(mealRow.totalQuantityKg.toFixed(3)),
+          cost: Number(mealRow.totalCost.toFixed(2)),
+          items: [...itemGroups.values()]
+            .map((item) => ({
+              ...item,
+              quantityKg: Number(item.quantityKg.toFixed(3)),
+              cost: Number(item.cost.toFixed(2))
+            }))
+            .sort((left, right) => right.cost - left.cost || right.quantityKg - left.quantityKg)
+        };
+      })
+    })).sort((left, right) => right.totalCost - left.totalCost || left.label.localeCompare(right.label));
+  }, [productionMap, selectedWasteLocationSummary]);
+
+  useEffect(() => {
+    if (selectedWasteLocationKey && !selectedWasteLocationSummary) {
+      setSelectedWasteLocationKey(null);
+    }
+  }, [selectedWasteLocationKey, selectedWasteLocationSummary]);
+
   const wasteReductionInsights = useMemo(() => {
     const productionRecipeStats = new Map();
     filteredProductions.forEach((production) => {
@@ -1292,22 +1502,42 @@ export default function FoodWaste() {
     }
 
     const saveWasteRecord = async () => {
-      let evidenceImageUrls = wasteImages
+      let evidenceImages = wasteImages
         .filter((item) => !item.file)
-        .map((item) => String(item.url || item.previewUrl || '').trim())
-        .filter(Boolean);
+        .map((item) => ({
+          url: String(item.url || item.previewUrl || '').trim(),
+          originalName: item.name || null,
+          contentType: item.contentType || null,
+          byteSize: Number.isFinite(Number(item.size)) ? Number(item.size) : null
+        }))
+        .filter((item) => item.url);
       const filesToUpload = wasteImages.filter((item) => item.file);
       if (filesToUpload.length) {
         setWasteImageUploading(true);
-        const uploadedUrls = [];
         for (const image of filesToUpload) {
-          const uploadResult = await base44.integrations.Core.UploadWasteImage({ file: image.file });
+          const uploadResult = await base44.integrations.Core.UploadWasteImage({
+            file: image.file,
+            site_id: formData.site_id,
+            waste_date: formData.waste_date,
+            meal_type: formData.meal_type,
+            waste_category: formData.waste_category
+          });
           const uploadedUrl = uploadResult.file_url || uploadResult.public_file_url || '';
-          if (uploadedUrl) uploadedUrls.push(uploadedUrl);
+          if (uploadedUrl) {
+            evidenceImages.push({
+              url: uploadedUrl,
+              originalName: uploadResult.original_name || image.name || image.file.name || null,
+              contentType: uploadResult.content_type || image.file.type || null,
+              byteSize: Number.isFinite(Number(uploadResult.byte_size))
+                ? Number(uploadResult.byte_size)
+                : Number(image.file.size || 0)
+            });
+          }
         }
-        evidenceImageUrls = [...evidenceImageUrls, ...uploadedUrls].slice(0, MAX_WASTE_PICTURES);
         setWasteImageUploading(false);
       }
+      evidenceImages = evidenceImages.slice(0, MAX_WASTE_PICTURES);
+      const evidenceImageUrls = evidenceImages.map((item) => item.url).filter(Boolean);
       const evidenceImageUrl = evidenceImageUrls[0] || '';
       if (!evidenceImageUrl) {
         throw new Error('Waste pictures could not be uploaded. Try again with a smaller image or different file.');
@@ -1324,6 +1554,8 @@ export default function FoodWaste() {
           waste_date: formData.waste_date,
           meal_type: formData.meal_type,
           waste_category: formData.waste_category,
+          menu_category: row?.menu_category || row?.menu_category_label || row?.menu_type || null,
+          menu_category_label: row?.menu_category_label || row?.menu_category || row?.menu_type || null,
           reason_code: formData.reason_code,
           reason: reason?.label || formData.reason_code,
           avoidable_type: reason?.avoidableType || (formData.preventable ? 'avoidable' : 'unavoidable'),
@@ -1358,6 +1590,9 @@ export default function FoodWaste() {
           image_url: evidenceImageUrl,
           evidence_image_urls: evidenceImageUrls,
           image_urls: evidenceImageUrls,
+          image_original_names: evidenceImages.map((item) => item.originalName),
+          image_content_types: evidenceImages.map((item) => item.contentType),
+          image_byte_sizes: evidenceImages.map((item) => item.byteSize),
           notes: formData.notes
         };
       };
@@ -1485,7 +1720,7 @@ export default function FoodWaste() {
 
     const availableSlots = MAX_WASTE_PICTURES - wasteImageCount;
     if (availableSlots <= 0) {
-      setMessage(`You can upload a maximum of ${MAX_WASTE_PICTURES} waste pictures.`);
+      setMessage(`You can upload a maximum of ${MAX_WASTE_PICTURES} waste pictures for this meal/category.`);
       return;
     }
 
@@ -1518,7 +1753,8 @@ export default function FoodWaste() {
           originalFile: source.sourceFile,
           previewUrl: URL.createObjectURL(compressedFile),
           name: source.name,
-          size: compressedFile.size
+          size: compressedFile.size,
+          contentType: compressedFile.type
         });
       }
       const previousLocalPreviews = wasteImages
@@ -2215,162 +2451,196 @@ export default function FoodWaste() {
         </div>
 
         <Card className="border-slate-200 shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-lg">Waste Records</CardTitle>
+          <CardHeader className="gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <CardTitle className="text-2xl">Waste Records</CardTitle>
+              <p className="mt-2 max-w-3xl text-sm text-slate-600">
+                One summary card per location for the selected date range. Click a location card to open category columns with only positive waste lines.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold leading-6 text-emerald-800">
+              Default: month-to-date. After date selection: selected range only.
+            </div>
           </CardHeader>
-          <CardContent className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item Code</TableHead>
-                  <TableHead>Item Name</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Meal</TableHead>
-                  <TableHead>Meal Category</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Waste Category</TableHead>
-                  <TableHead>Reason</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Quantity</TableHead>
-                  <TableHead>Cost</TableHead>
-                  <TableHead>Picture</TableHead>
-                  <TableHead>Recording Window</TableHead>
-                  <TableHead>Approval</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredWaste.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={15} className="py-10 text-center text-slate-500">No waste records found for the selected filters.</TableCell>
-                  </TableRow>
-                ) : filteredWaste.slice(0, 30).map((item) => {
-                  const evidenceUrls = getWasteEvidenceUrls(item);
-                  const evidenceUrl = evidenceUrls[0] || '';
-                  const wasteProduction = productionMap.get(item.production_id);
-                  return (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-mono text-xs text-slate-600">
-                      {getItemCodeFromRecords([
-                        ingredientMap.get(item.ingredient_id),
-                        item,
-                        { item_code: recipeMap.get(item.recipe_id || productionMap.get(item.production_id)?.recipe_id)?.recipe_code }
-                      ])}
-                    </TableCell>
-                    <TableCell>{item.ingredient_name || item.recipe_name || item.batch_reference || '-'}</TableCell>
-                    <TableCell className="font-medium">{item.waste_date}</TableCell>
-                    <TableCell>{titleCase(item.meal_type || '-')}</TableCell>
-                    <TableCell>
-                      <Badge className="bg-blue-50 text-blue-700">
-                        {getWasteMealCategoryLabel(item, wasteProduction)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{item.site_name}</TableCell>
-                    <TableCell>
-                      <Badge className={CATEGORY_BADGES[item.waste_category] || 'bg-slate-100 text-slate-700'}>
-                        {getCategoryMeta(item.waste_category)?.label || item.waste_category}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{item.reason || getReasonMeta(item.reason_code)?.label || '-'}</TableCell>
-                    <TableCell>
-                      <Badge className={isMealServiceLeftover(item) ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}>
-                        {getWasteSourceLabel(item)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{formatWasteQuantity(item)}</TableCell>
-                    <TableCell>{formatCurrency(getWasteCost(item, productionMap))}</TableCell>
-                    <TableCell>
-                      {evidenceUrl ? (
-                        <button
-                          type="button"
-                          className="group inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-1 pr-2 text-sm font-medium text-emerald-700 shadow-sm hover:border-emerald-200 hover:bg-emerald-50"
-                          onClick={() => handleOpenWastePictureGallery(item)}
-                          title={evidenceUrls.length > 1 ? `${evidenceUrls.length} waste pictures attached` : 'View waste picture'}
-                        >
-                          <span className="relative block h-10 w-10 overflow-hidden rounded-md bg-slate-100">
-                            <img src={evidenceUrl} alt="Waste evidence thumbnail" className="h-full w-full object-cover transition-transform group-hover:scale-105" />
-                            {evidenceUrls.length > 1 ? (
-                              <span className="absolute bottom-0 right-0 rounded-tl bg-black/75 px-1 text-[10px] font-bold leading-4 text-white">
-                                +{evidenceUrls.length - 1}
-                              </span>
-                            ) : null}
-                          </span>
-                          <span>View</span>
-                        </button>
-                      ) : isMealServiceLeftover(item) ? (
-                        <Badge className="bg-slate-100 text-slate-700">System generated</Badge>
-                      ) : (
-                        <Badge className="bg-red-100 text-red-700">Missing</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={
-                        item.is_within_recording_window
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : item.window_status === 'before_production'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-slate-200 text-slate-700'
-                      }>
-                        {item.window_status === 'open'
-                          ? 'Open'
-                          : item.window_status === 'before_production'
-                            ? 'Before production'
-                            : item.window_status === 'future_date'
-                              ? 'Future date'
-                            : 'Closed'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={String(item.status || '').toLowerCase() === 'reversed'
-                        ? 'bg-slate-200 text-slate-700'
-                        : APPROVAL_TONES[item.approval_status] || 'bg-slate-100 text-slate-700'}>
-                        {String(item.status || '').toLowerCase() === 'reversed' ? 'reversed' : item.approval_status || 'approved'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {isMealServiceLeftover(item) ? (
-                        <Badge
-                          className="bg-slate-100 text-slate-700"
-                          title="System managed. Reverse the related Meal Service request to correct this record."
-                        >
-                          System managed
-                        </Badge>
-                      ) : isAdmin ? (
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={String(item.status || '').toLowerCase() === 'reversed'}
-                            onClick={() => handleOpenEditDialog(item)}
-                          >
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
-                            disabled={String(item.status || '').toLowerCase() === 'reversed'}
-                            onClick={() => handleOpenReverseDialog(item)}
-                          >
-                            <RotateCcw className="mr-2 h-4 w-4" />
-                            Reverse
-                          </Button>
+          <CardContent className="space-y-5">
+            {!selectedWasteLocationSummary ? (
+              wasteRecordLocationSummaries.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                  No positive waste records found for the selected filters.
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  {wasteRecordLocationSummaries.map((location) => (
+                    <button
+                      key={location.key}
+                      type="button"
+                      onClick={() => setSelectedWasteLocationKey(location.key)}
+                      className="w-full overflow-hidden rounded-3xl border border-emerald-200 bg-emerald-50/80 text-left shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md"
+                    >
+                      <div className="grid gap-4 p-5 xl:grid-cols-[240px_1fr_150px]">
+                        <div className="min-w-0">
+                          <p className="break-words text-2xl font-bold leading-tight text-slate-950">{location.site_name}</p>
+                          <p className="mt-2 text-sm leading-5 text-slate-600">
+                            {location.dateLabel} · {location.categoryLabel} · {location.wasteCategoryLabel}
+                          </p>
+                          <p className="mt-3 text-sm font-semibold leading-5 text-slate-700">
+                            Location total: {location.totalRecords} records · {formatWasteKg(location.totalQuantityKg)} · {formatCurrency(location.totalCost)}
+                          </p>
                         </div>
-                      ) : isBatchOverproductionWasteRecord(item) ? (
-                        <Badge
-                          className="bg-amber-100 text-amber-700"
-                          title="Only administrators can edit dish-wise batch overproduction waste."
-                        >
-                          Dish-wise
-                        </Badge>
-                      ) : null}
-                    </TableCell>
-                  </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+
+                        <div className="min-w-0 divide-y divide-emerald-100 rounded-2xl bg-white/70">
+                          {location.mealRows.map((mealRow) => (
+                            <div key={mealRow.meal} className="grid gap-3 px-4 py-3 md:grid-cols-[130px_110px_140px_140px_1fr] md:items-center">
+                              <Badge className={`w-fit px-3 py-1 text-sm ${
+                                mealRow.meal === 'breakfast'
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : mealRow.meal === 'lunch'
+                                    ? 'bg-blue-100 text-blue-700'
+                                    : 'bg-purple-100 text-purple-700'
+                              }`}>
+                                {titleCase(mealRow.meal)}
+                              </Badge>
+                              <div className="min-w-0">
+                                <p className="text-base font-bold leading-5 text-slate-950">{mealRow.records || '—'}</p>
+                                <p className="text-xs text-slate-500">records</p>
+                              </div>
+                              <p className="whitespace-nowrap text-base font-bold text-slate-950">{mealRow.records ? formatWasteKg(mealRow.quantityKg) : '—'}</p>
+                              <p className="whitespace-nowrap text-base font-bold text-slate-950">{mealRow.records ? formatCurrency(mealRow.cost) : '—'}</p>
+                              <p className="min-w-0 text-sm leading-5 text-slate-600">
+                                {mealRow.topItems.length
+                                  ? `${mealRow.topItems.slice(0, 3).join(', ')}${mealRow.topItems.length > 3 ? ` +${mealRow.topItems.length - 3}` : ''}`
+                                  : 'No waste recorded'}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center justify-start xl:justify-center">
+                          <span className={`inline-flex min-w-[112px] items-center justify-center rounded-full px-4 py-3 text-base font-bold ${getWasteStatusClass(location.status)}`}>
+                            {location.status}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )
+            ) : (
+              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
+                <div className="flex flex-col gap-4 border-b border-slate-200 p-5 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="text-2xl font-bold text-slate-950">
+                      {selectedWasteLocationSummary.site_name} · {selectedWasteLocationSummary.dateLabel}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {selectedWasteLocationSummary.totalRecords} positive item entries under one location record · {formatWasteKg(selectedWasteLocationSummary.totalQuantityKg)} · {formatCurrency(selectedWasteLocationSummary.totalCost)}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Badge className={`rounded-full px-6 py-2 text-base font-bold ${getWasteStatusClass(selectedWasteLocationSummary.status)}`}>
+                      {selectedWasteLocationSummary.status}
+                    </Badge>
+                    <Button type="button" variant="outline" onClick={() => setSelectedWasteLocationKey(null)}>
+                      Back to summary cards
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 bg-slate-50 p-5 xl:grid-cols-3">
+                  {selectedWasteDetailCategories.map((category) => (
+                    <div key={category.key} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                      <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                        <p className="break-words text-xl font-bold text-slate-950">{category.label}</p>
+                        <p className="mt-1 text-sm text-slate-600">Breakfast · Lunch · Dinner</p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3 border-b border-slate-200 px-5 py-4">
+                        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Lines</p>
+                          <p className="mt-2 text-2xl font-bold text-slate-950">{category.totalRecords}</p>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Qty</p>
+                          <p className="mt-2 whitespace-nowrap text-xl font-bold text-slate-950">{formatWasteKg(category.totalQuantityKg)}</p>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Cost</p>
+                          <p className="mt-2 whitespace-nowrap text-lg font-bold text-slate-950">{formatCurrency(category.totalCost)}</p>
+                        </div>
+                      </div>
+                      <div className="space-y-3 p-5">
+                        {category.mealRows.map((mealRow) => (
+                          mealRow.records > 0 ? (
+                            <div key={mealRow.meal} className="rounded-2xl border border-slate-200 bg-white p-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                                <p className="font-bold text-slate-950">{titleCase(mealRow.meal)}</p>
+                                <p className="text-sm font-semibold text-slate-600">
+                                  {formatWasteKg(mealRow.quantityKg)} · {formatCurrency(mealRow.cost)}
+                                </p>
+                              </div>
+                              <div className="divide-y divide-slate-100">
+                                {mealRow.items.map((row) => {
+                                  const representative = row.records[0] || {};
+                                  const evidenceCount = row.records.reduce((sum, record) => sum + getWasteEvidenceUrls(record).length, 0);
+                                  return (
+                                    <div
+                                      key={`${mealRow.meal}-${row.itemName}`}
+                                      className="grid gap-3 py-3 md:grid-cols-[1fr_auto] md:items-center"
+                                    >
+                                      <div className="min-w-0">
+                                        <p className="break-words text-sm font-bold text-slate-950">{row.itemName}</p>
+                                        <p className="mt-1 text-xs text-slate-500">
+                                          {formatCurrency(row.cost)} · {evidenceCount ? `${evidenceCount} photo${evidenceCount === 1 ? '' : 's'}` : 'photo not attached'}
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                                        <p className="mr-2 whitespace-nowrap text-sm font-semibold text-slate-600">{formatWasteKg(row.quantityKg)}</p>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => handleOpenWastePictureGallery(representative)}
+                                        >
+                                          Photos
+                                        </Button>
+                                        {isAdmin && !isMealServiceLeftover(representative) ? (
+                                          <>
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="outline"
+                                              disabled={String(representative.status || '').toLowerCase() === 'reversed'}
+                                              onClick={() => handleOpenEditDialog(representative)}
+                                            >
+                                              <Pencil className="mr-1 h-3.5 w-3.5" />
+                                              Edit
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="outline"
+                                              className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                                              disabled={String(representative.status || '').toLowerCase() === 'reversed'}
+                                              onClick={() => handleOpenReverseDialog(representative)}
+                                            >
+                                              <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                                              Reverse
+                                            </Button>
+                                          </>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : null
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -2721,12 +2991,12 @@ export default function FoodWaste() {
 
               <div className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <Label>Waste Pictures <span className="text-red-600">*</span></Label>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Add up to {MAX_WASTE_PICTURES} pictures. The app compresses the attached set in the background to keep all evidence near 500 KB total.
-                    </p>
-                  </div>
+	                  <div>
+	                    <Label>Waste Pictures <span className="text-red-600">*</span></Label>
+	                    <p className="mt-1 text-xs text-slate-500">
+	                      Add up to {MAX_WASTE_PICTURES} pictures for this meal/category. Each picture is compressed near {Math.round(TARGET_WASTE_PICTURE_BYTES / 1024)} KB; daily evidence stays under 36 pictures / 1.2 MB per location.
+	                    </p>
+	                  </div>
                   <Button
                     type="button"
                     variant="outline"
@@ -2777,9 +3047,9 @@ export default function FoodWaste() {
                         </button>
                       ) : null}
                     </div>
-                    <p className="mt-2 text-xs text-slate-500">
-                      {wasteImageCount} / {MAX_WASTE_PICTURES} pictures attached. The first picture will appear as the record thumbnail.
-                    </p>
+	                    <p className="mt-2 text-xs text-slate-500">
+	                      {wasteImageCount} / {MAX_WASTE_PICTURES} pictures attached. Target {Math.round(TARGET_WASTE_PICTURE_BYTES / 1024)} KB each; hard ceiling {Math.round(HARD_WASTE_PICTURE_BYTES / 1024)} KB each.
+	                    </p>
                   </div>
                 ) : (
                   <button
