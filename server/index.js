@@ -5841,15 +5841,17 @@ app.post('/api/food-waste', requireAuth, requirePermission('manage_waste'), asyn
 
       const wasteRecord = await createDocument('FoodWaste', payloadForCreate, client);
       if (batchWasteAllocation) {
-        await Promise.all(batchWasteAllocation.batches.map((batch) => updateDocument('ProducedItemBatch', batch.id, {
-          served_servings: batch.served_servings,
-          served_weight_grams: batch.served_weight_grams,
-          wasted_servings: batch.wasted_servings,
-          wasted_weight_grams: batch.wasted_weight_grams,
-          remaining_servings: batch.remaining_servings,
-          remaining_weight_grams: batch.remaining_weight_grams,
-          status: batch.status
-        }, client)));
+        for (const batch of batchWasteAllocation.batches) {
+          await updateDocument('ProducedItemBatch', batch.id, {
+            served_servings: batch.served_servings,
+            served_weight_grams: batch.served_weight_grams,
+            wasted_servings: batch.wasted_servings,
+            wasted_weight_grams: batch.wasted_weight_grams,
+            remaining_servings: batch.remaining_servings,
+            remaining_weight_grams: batch.remaining_weight_grams,
+            status: batch.status
+          }, client);
+        }
         return wasteRecord;
       }
       if (isPlateWaste) {

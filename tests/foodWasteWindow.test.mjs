@@ -785,6 +785,7 @@ const cases = [
       assert.match(page, /Production completed:/);
       assert.match(page, /Admin window:/);
       assert.match(page, /setDishWasteGramsByRecipe/);
+      assert.doesNotMatch(server, /Promise\.all\(batchWasteAllocation\.batches\.map/);
       assert.match(server, /batch_overproduction_dishes: batchOverproductionDishes/);
       assert.match(server, /getLatestSuccessfulProductionCompletedAt/);
       assert.match(server, /getFoodWasteAdminWindowSettings/);
