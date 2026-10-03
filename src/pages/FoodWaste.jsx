@@ -1176,12 +1176,35 @@ export default function FoodWaste() {
     wasteRecordLocationSummaries.find((item) => item.key === selectedWasteLocationKey) || null
   ), [selectedWasteLocationKey, wasteRecordLocationSummaries]);
 
-  const selectedWasteDetailCategories = useMemo(() => {
+  const selectedWasteDetailDateGroups = useMemo(() => {
     if (!selectedWasteLocationSummary) return [];
-    const categoryGroups = new Map();
+    const dateGroups = new Map();
     selectedWasteLocationSummary.records
       .filter((item) => getWasteWeightGrams(item) > 0)
       .forEach((item) => {
+        const dateKey = item.waste_date || 'Undated';
+        if (!dateGroups.has(dateKey)) {
+          dateGroups.set(dateKey, {
+            key: dateKey,
+            dateLabel: dateKey,
+            records: [],
+            totalRecords: 0,
+            totalQuantityKg: 0,
+            totalCost: 0
+          });
+        }
+        const dateGroup = dateGroups.get(dateKey);
+        const quantityKg = getWasteQuantityKg(item);
+        const cost = getWasteCost(item, productionMap);
+        dateGroup.records.push(item);
+        dateGroup.totalRecords += 1;
+        dateGroup.totalQuantityKg += quantityKg;
+        dateGroup.totalCost += cost;
+      });
+
+    const buildCategoryDetails = (records = []) => {
+      const categoryGroups = new Map();
+      records.forEach((item) => {
         const wasteProduction = productionMap.get(item.production_id);
         const categoryLabel = getWasteMealCategoryLabel(item, wasteProduction);
         const key = categoryLabel === '-' ? 'Unclassified' : categoryLabel;
@@ -1216,47 +1239,57 @@ export default function FoodWaste() {
         category.meals[meal].totalCost += cost;
       });
 
-    return [...categoryGroups.values()].map((category) => ({
-      ...category,
-      totalQuantityKg: Number(category.totalQuantityKg.toFixed(3)),
-      totalCost: Number(category.totalCost.toFixed(2)),
-      mealRows: MEAL_TYPE_OPTIONS.map((meal) => {
-        const mealRow = category.meals[meal];
-        const itemGroups = new Map();
-        mealRow.records.forEach((record) => {
-          const itemName = getWasteRecordItemName(record);
-          if (!itemGroups.has(itemName)) {
-            itemGroups.set(itemName, {
-              itemName,
-              records: [],
-              quantityKg: 0,
-              cost: 0,
-              units: new Set(),
-              evidenceCount: 0
-            });
-          }
-          const row = itemGroups.get(itemName);
-          row.records.push(record);
-          row.quantityKg += getWasteQuantityKg(record);
-          row.cost += getWasteCost(record, productionMap);
-          row.units.add(record.unit || 'g');
-          row.evidenceCount += getWasteEvidenceUrls(record).length;
-        });
-        return {
-          meal,
-          records: mealRow.records.length,
-          quantityKg: Number(mealRow.totalQuantityKg.toFixed(3)),
-          cost: Number(mealRow.totalCost.toFixed(2)),
-          items: [...itemGroups.values()]
-            .map((item) => ({
-              ...item,
-              quantityKg: Number(item.quantityKg.toFixed(3)),
-              cost: Number(item.cost.toFixed(2))
-            }))
-            .sort((left, right) => right.cost - left.cost || right.quantityKg - left.quantityKg)
-        };
-      })
-    })).sort((left, right) => right.totalCost - left.totalCost || left.label.localeCompare(right.label));
+      return [...categoryGroups.values()].map((category) => ({
+        ...category,
+        totalQuantityKg: Number(category.totalQuantityKg.toFixed(3)),
+        totalCost: Number(category.totalCost.toFixed(2)),
+        mealRows: MEAL_TYPE_OPTIONS.map((meal) => {
+          const mealRow = category.meals[meal];
+          const itemGroups = new Map();
+          mealRow.records.forEach((record) => {
+            const itemName = getWasteRecordItemName(record);
+            if (!itemGroups.has(itemName)) {
+              itemGroups.set(itemName, {
+                itemName,
+                records: [],
+                quantityKg: 0,
+                cost: 0,
+                units: new Set(),
+                evidenceCount: 0
+              });
+            }
+            const row = itemGroups.get(itemName);
+            row.records.push(record);
+            row.quantityKg += getWasteQuantityKg(record);
+            row.cost += getWasteCost(record, productionMap);
+            row.units.add(record.unit || 'g');
+            row.evidenceCount += getWasteEvidenceUrls(record).length;
+          });
+          return {
+            meal,
+            records: mealRow.records.length,
+            quantityKg: Number(mealRow.totalQuantityKg.toFixed(3)),
+            cost: Number(mealRow.totalCost.toFixed(2)),
+            items: [...itemGroups.values()]
+              .map((item) => ({
+                ...item,
+                quantityKg: Number(item.quantityKg.toFixed(3)),
+                cost: Number(item.cost.toFixed(2))
+              }))
+              .sort((left, right) => right.cost - left.cost || right.quantityKg - left.quantityKg)
+          };
+        })
+      })).sort((left, right) => right.totalCost - left.totalCost || left.label.localeCompare(right.label));
+    };
+
+    return [...dateGroups.values()]
+      .map((dateGroup) => ({
+        ...dateGroup,
+        totalQuantityKg: Number(dateGroup.totalQuantityKg.toFixed(3)),
+        totalCost: Number(dateGroup.totalCost.toFixed(2)),
+        categories: buildCategoryDetails(dateGroup.records)
+      }))
+      .sort((left, right) => right.key.localeCompare(left.key));
   }, [productionMap, selectedWasteLocationSummary]);
 
   useEffect(() => {
@@ -2589,96 +2622,114 @@ export default function FoodWaste() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 bg-slate-50 p-5 xl:grid-cols-3">
-                  {selectedWasteDetailCategories.map((category) => (
-                    <div key={category.key} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-                      <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-                        <p className="break-words text-xl font-bold text-slate-950">{category.label}</p>
-                        <p className="mt-1 text-sm text-slate-600">Breakfast · Lunch · Dinner</p>
+                <div className="space-y-5 bg-slate-50 p-5">
+                  {selectedWasteDetailDateGroups.map((dateGroup) => (
+                    <div key={dateGroup.key} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
+                        <div>
+                          <p className="text-xl font-bold text-slate-950">{dateGroup.dateLabel}</p>
+                          <p className="mt-1 text-sm text-slate-600">
+                            {dateGroup.totalRecords} records · {formatWasteKg(dateGroup.totalQuantityKg)} · {formatCurrency(dateGroup.totalCost)}
+                          </p>
+                        </div>
+                        <Badge className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700">
+                          Date-specific detail
+                        </Badge>
                       </div>
-                      <div className="grid grid-cols-3 gap-3 border-b border-slate-200 px-5 py-4">
-                        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Lines</p>
-                          <p className="mt-2 text-2xl font-bold text-slate-950">{category.totalRecords}</p>
-                        </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Qty</p>
-                          <p className="mt-2 whitespace-nowrap text-xl font-bold text-slate-950">{formatWasteKg(category.totalQuantityKg)}</p>
-                        </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
-                          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Cost</p>
-                          <p className="mt-2 whitespace-nowrap text-lg font-bold text-slate-950">{formatCurrency(category.totalCost)}</p>
-                        </div>
-                      </div>
-                      <div className="space-y-3 p-5">
-                        {category.mealRows.map((mealRow) => (
-                          mealRow.records > 0 ? (
-                            <div key={mealRow.meal} className="rounded-2xl border border-slate-200 bg-white p-4">
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                                <p className="font-bold text-slate-950">{titleCase(mealRow.meal)}</p>
-                                <p className="text-sm font-semibold text-slate-600">
-                                  {formatWasteKg(mealRow.quantityKg)} · {formatCurrency(mealRow.cost)}
-                                </p>
+
+                      <div className="grid gap-4 bg-slate-50 p-5 xl:grid-cols-3">
+                        {dateGroup.categories.map((category) => (
+                          <div key={`${dateGroup.key}-${category.key}`} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                            <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                              <p className="break-words text-xl font-bold text-slate-950">{category.label}</p>
+                              <p className="mt-1 text-sm text-slate-600">Breakfast · Lunch · Dinner</p>
+                            </div>
+                            <div className="grid grid-cols-3 gap-3 border-b border-slate-200 px-5 py-4">
+                              <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Lines</p>
+                                <p className="mt-2 text-2xl font-bold text-slate-950">{category.totalRecords}</p>
                               </div>
-                              <div className="divide-y divide-slate-100">
-                                {mealRow.items.map((row) => {
-                                  const representative = row.records[0] || {};
-                                  const evidenceCount = row.records.reduce((sum, record) => sum + getWasteEvidenceUrls(record).length, 0);
-                                  return (
-                                    <div
-                                      key={`${mealRow.meal}-${row.itemName}`}
-                                      className="space-y-3 py-3"
-                                    >
-                                      <div className="min-w-0">
-                                        <p className="break-words text-sm font-bold leading-5 text-slate-950">{row.itemName}</p>
-                                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                                          {formatCurrency(row.cost)} · {evidenceCount ? `${evidenceCount} photo${evidenceCount === 1 ? '' : 's'}` : 'photo not attached'}
-                                        </p>
-                                      </div>
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
-                                          {formatWasteKg(row.quantityKg)}
-                                        </span>
-                                        <Button
-                                          type="button"
-                                          size="sm"
-                                          variant="outline"
-                                          onClick={() => handleOpenWastePictureGallery(representative)}
-                                        >
-                                          Photos
-                                        </Button>
-                                        {isAdmin && !isMealServiceLeftover(representative) ? (
-                                          <>
-                                            <Button
-                                              type="button"
-                                              size="sm"
-                                              variant="outline"
-                                              disabled={String(representative.status || '').toLowerCase() === 'reversed'}
-                                              onClick={() => handleOpenEditDialog(representative)}
-                                            >
-                                              <Pencil className="mr-1 h-3.5 w-3.5" />
-                                              Edit
-                                            </Button>
-                                            <Button
-                                              type="button"
-                                              size="sm"
-                                              variant="outline"
-                                              className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
-                                              disabled={String(representative.status || '').toLowerCase() === 'reversed'}
-                                              onClick={() => handleOpenReverseDialog(representative)}
-                                            >
-                                              <RotateCcw className="mr-1 h-3.5 w-3.5" />
-                                              Reverse
-                                            </Button>
-                                          </>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
+                              <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Qty</p>
+                                <p className="mt-2 whitespace-nowrap text-xl font-bold text-slate-950">{formatWasteKg(category.totalQuantityKg)}</p>
+                              </div>
+                              <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Cost</p>
+                                <p className="mt-2 whitespace-nowrap text-lg font-bold text-slate-950">{formatCurrency(category.totalCost)}</p>
                               </div>
                             </div>
-                          ) : null
+                            <div className="space-y-3 p-5">
+                              {category.mealRows.map((mealRow) => (
+                                mealRow.records > 0 ? (
+                                  <div key={mealRow.meal} className="rounded-2xl border border-slate-200 bg-white p-4">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                                      <p className="font-bold text-slate-950">{titleCase(mealRow.meal)}</p>
+                                      <p className="text-sm font-semibold text-slate-600">
+                                        {formatWasteKg(mealRow.quantityKg)} · {formatCurrency(mealRow.cost)}
+                                      </p>
+                                    </div>
+                                    <div className="divide-y divide-slate-100">
+                                      {mealRow.items.map((row) => {
+                                        const representative = row.records[0] || {};
+                                        const evidenceCount = row.records.reduce((sum, record) => sum + getWasteEvidenceUrls(record).length, 0);
+                                        return (
+                                          <div
+                                            key={`${dateGroup.key}-${mealRow.meal}-${row.itemName}`}
+                                            className="space-y-3 py-3"
+                                          >
+                                            <div className="min-w-0">
+                                              <p className="break-words text-sm font-bold leading-5 text-slate-950">{row.itemName}</p>
+                                              <p className="mt-1 text-xs leading-5 text-slate-500">
+                                                {dateGroup.dateLabel} · {formatCurrency(row.cost)} · {evidenceCount ? `${evidenceCount} photo${evidenceCount === 1 ? '' : 's'}` : 'photo not attached'}
+                                              </p>
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
+                                                {formatWasteKg(row.quantityKg)}
+                                              </span>
+                                              <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => handleOpenWastePictureGallery(representative)}
+                                              >
+                                                Photos
+                                              </Button>
+                                              {isAdmin && !isMealServiceLeftover(representative) ? (
+                                                <>
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    variant="outline"
+                                                    disabled={String(representative.status || '').toLowerCase() === 'reversed'}
+                                                    onClick={() => handleOpenEditDialog(representative)}
+                                                  >
+                                                    <Pencil className="mr-1 h-3.5 w-3.5" />
+                                                    Edit
+                                                  </Button>
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                                                    disabled={String(representative.status || '').toLowerCase() === 'reversed'}
+                                                    onClick={() => handleOpenReverseDialog(representative)}
+                                                  >
+                                                    <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                                                    Reverse
+                                                  </Button>
+                                                </>
+                                              ) : null}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                ) : null
+                              ))}
+                            </div>
+                          </div>
                         ))}
                       </div>
                     </div>

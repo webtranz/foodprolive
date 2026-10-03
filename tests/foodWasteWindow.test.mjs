@@ -657,8 +657,9 @@ const cases = [
       assert.match(page, /const \[wastePictureGallery, setWastePictureGallery\]/);
       assert.match(page, /function getWasteMealCategoryLabel/);
       assert.match(page, /wasteRecordLocationSummaries/);
-      assert.match(page, /selectedWasteDetailCategories/);
+      assert.match(page, /selectedWasteDetailDateGroups/);
       assert.match(page, /One summary card per location/);
+      assert.match(page, /Date-specific detail/);
       assert.match(page, /Breakfast · Lunch · Dinner/);
       assert.match(page, /handleOpenWastePictureGallery\(representative\)/);
       assert.match(page, /Waste Pictures/);
